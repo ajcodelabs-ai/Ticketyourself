@@ -64,13 +64,25 @@ async def check_slug(payload: dict):
     raw = (payload.get("slug") or payload.get("company_name") or "").strip()
     base = normalize_slug(raw)
     if not base:
-        return SlugCheckResponse(slug="", available=False, suggestion=None)
+        # Input normalised to empty (user typed only spaces / symbols).
+        return SlugCheckResponse(
+            slug="", available=False, suggestion=None, reason="empty"
+        )
+    if not is_valid_slug(base):
+        # 1 char or contains invalid characters after normalisation.
+        # Surface a specific reason so the UI explains why instead of saying
+        # "ya está en uso" (which would be misleading).
+        reason = "too_short" if len(base) < 2 else "invalid"
+        return SlugCheckResponse(
+            slug=base, available=False, suggestion=None, reason=reason
+        )
     suggestion = await find_unique_slug(base, db.organizers)
-    available = is_valid_slug(base) and (suggestion == base)
+    available = suggestion == base
     return SlugCheckResponse(
         slug=base,
         available=available,
         suggestion=suggestion if not available else None,
+        reason=None if available else "taken",
     )
 
 

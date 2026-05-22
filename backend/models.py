@@ -74,6 +74,14 @@ class SlugCheckResponse(BaseModel):
     slug: str
     available: bool
     suggestion: Optional[str] = None
+    # When `available=false`, explains *why* so the UI can show a helpful
+    # message instead of a generic "ya está en uso". Possible values:
+    #   "taken"   — valid slug already used by another tenant
+    #   "too_short" — under 2 chars after normalisation
+    #   "empty"   — input normalised to empty string
+    #   "invalid" — failed character/format validation
+    # Always null when available=true.
+    reason: Optional[Literal["taken", "too_short", "empty", "invalid"]] = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────

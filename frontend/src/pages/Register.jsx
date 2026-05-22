@@ -46,6 +46,7 @@ export default function Register() {
         available: null,
         suggestion: null,
         checking: false,
+        reason: null,
     });
 
     const autoSlug = useMemo(() => normalizeSlug(form.company_name), [form.company_name]);
@@ -66,26 +67,28 @@ export default function Register() {
     // a slug the user just changed.
     useEffect(() => {
         if (!form.slug) {
-            setSlugCheck({ available: null, suggestion: null, checking: false });
+            setSlugCheck({ available: null, suggestion: null, checking: false, reason: null });
             return;
         }
         setSlugCheck((prev) => ({ ...prev, available: null, checking: true }));
         const t = setTimeout(async () => {
             try {
                 const { data } = await api.post("/auth/check-slug", { slug: form.slug });
-                if (!data.available && data.suggestion && !slugEdited) {
-                    // Auto-adopt suggestion when the user hasn't touched the field.
+                if (!data.available && data.suggestion && data.reason === "taken" && !slugEdited) {
+                    // Auto-adopt suggestion when the user hasn't touched the field
+                    // AND the only problem is that the slug is taken.
                     setForm((f) => ({ ...f, slug: data.suggestion }));
-                    setSlugCheck({ available: true, suggestion: null, checking: false });
+                    setSlugCheck({ available: true, suggestion: null, checking: false, reason: null });
                 } else {
                     setSlugCheck({
                         available: data.available,
                         suggestion: data.suggestion,
                         checking: false,
+                        reason: data.reason || null,
                     });
                 }
             } catch {
-                setSlugCheck({ available: null, suggestion: null, checking: false });
+                setSlugCheck({ available: null, suggestion: null, checking: false, reason: null });
             }
         }, 300);
         return () => clearTimeout(t);
@@ -333,25 +336,35 @@ export default function Register() {
                                         className="text-red-600"
                                         data-testid="register-slug-taken"
                                     >
-                                        ✗ Este slug ya está en uso.
-                                        {slugCheck.suggestion && (
+                                        {slugCheck.reason === "too_short" &&
+                                            "✗ Demasiado corto (mínimo 2 caracteres)."}
+                                        {slugCheck.reason === "invalid" &&
+                                            "✗ Solo letras, números y guiones."}
+                                        {slugCheck.reason === "empty" &&
+                                            "✗ El slug no puede quedar vacío."}
+                                        {(!slugCheck.reason || slugCheck.reason === "taken") && (
                                             <>
-                                                {" "}Probá{" "}
-                                                <button
-                                                    type="button"
-                                                    className="underline font-medium"
-                                                    data-testid="register-slug-suggestion-btn"
-                                                    onClick={() => {
-                                                        setSlugEdited(true);
-                                                        setForm((f) => ({
-                                                            ...f,
-                                                            slug: slugCheck.suggestion,
-                                                        }));
-                                                    }}
-                                                >
-                                                    {slugCheck.suggestion}
-                                                </button>
-                                                .
+                                                ✗ Este slug ya está en uso.
+                                                {slugCheck.suggestion && (
+                                                    <>
+                                                        {" "}Probá{" "}
+                                                        <button
+                                                            type="button"
+                                                            className="underline font-medium"
+                                                            data-testid="register-slug-suggestion-btn"
+                                                            onClick={() => {
+                                                                setSlugEdited(true);
+                                                                setForm((f) => ({
+                                                                    ...f,
+                                                                    slug: slugCheck.suggestion,
+                                                                }));
+                                                            }}
+                                                        >
+                                                            {slugCheck.suggestion}
+                                                        </button>
+                                                        .
+                                                    </>
+                                                )}
                                             </>
                                         )}
                                     </span>

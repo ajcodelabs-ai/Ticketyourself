@@ -17,7 +17,7 @@ import time
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://d049ce64-7122-4dac-92d0-1c8f818c9d2b.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://ticket-poc.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 DEMO_TENANT = "demo-org"
