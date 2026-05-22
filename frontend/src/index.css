@@ -1,0 +1,88 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family:
+        "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv11", "ss01", "ss03";
+}
+
+code {
+    font-family:
+        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+}
+
+@layer base {
+    :root {
+        --background: 250 33% 99%;
+        --foreground: 240 18% 12%;
+        --card: 0 0% 100%;
+        --card-foreground: 240 18% 12%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 240 18% 12%;
+        --primary: 245 70% 55%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 246 60% 96%;
+        --secondary-foreground: 245 70% 35%;
+        --muted: 240 20% 96%;
+        --muted-foreground: 240 8% 45%;
+        --accent: 246 60% 96%;
+        --accent-foreground: 245 70% 35%;
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 240 14% 90%;
+        --input: 240 14% 90%;
+        --ring: 245 70% 55%;
+        --radius: 0.75rem;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+/* Subtle grid background for landing aesthetic */
+.tys-grid-bg {
+    background-image:
+        radial-gradient(
+            circle at 1px 1px,
+            hsl(245 30% 80% / 0.45) 1px,
+            transparent 0
+        );
+    background-size: 28px 28px;
+}
+
+.tys-soft-shadow {
+    box-shadow:
+        0 1px 2px hsl(245 40% 30% / 0.04),
+        0 8px 24px hsl(245 40% 30% / 0.06);
+}
+
+/* Custom selection */
+::selection {
+    background: hsl(245 70% 55% / 0.18);
+    color: hsl(245 70% 25%);
+}
+
+@layer base {
+    [data-debug-wrapper="true"] {
+        display: contents !important;
+    }
+}
