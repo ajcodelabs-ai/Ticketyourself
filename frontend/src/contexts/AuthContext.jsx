@@ -76,8 +76,10 @@ export function AuthProvider({ children }) {
     const logout = useCallback(async () => {
         try {
             await api.post("/auth/logout");
-        } catch {
-            /* ignore */
+        } catch (err) {
+            // Server-side logout is best-effort; we always clear the local
+            // session below so the user ends up logged out either way.
+            console.warn("Logout API call failed (clearing local session anyway):", err?.message);
         }
         tokenStore.clear();
         setSession(null);
@@ -88,8 +90,10 @@ export function AuthProvider({ children }) {
         try {
             const { data } = await api.get("/organizers/me");
             setOrganizer(data);
-        } catch {
-            /* organizer might not be available */
+        } catch (err) {
+            // Organizer profile is optional (e.g. super-admin user).
+            // Surface to dev console without spamming the user.
+            console.warn("refreshOrganizer failed:", err?.message);
         }
     }, []);
 

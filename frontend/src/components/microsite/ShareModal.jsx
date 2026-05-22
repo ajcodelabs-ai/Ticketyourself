@@ -24,8 +24,9 @@ export default function ShareModal({ open, onOpenChange, url, companyName, heroS
             await navigator.clipboard.writeText(url);
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
-        } catch {
-            /* clipboard unavailable */
+        } catch (err) {
+            // Some browsers block clipboard writes outside HTTPS or w/o gesture.
+            console.warn("Clipboard write failed:", err?.message);
         }
     };
 
