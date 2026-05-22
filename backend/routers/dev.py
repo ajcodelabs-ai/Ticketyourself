@@ -157,3 +157,52 @@ async def demo_activate(payload: DemoActivateBody, user=Depends(get_current_user
     refreshed = await db.organizers.find_one({"id": organizer_id}, {"_id": 0})
     logger.info("Demo shortcut activated organizer=%s plan=%s", organizer_id, plan_code)
     return refreshed
+
+
+# ── Demo shortcut — simulate ticket purchase paid ────────────────────────────
+class SimulatePurchasePaidBody(BaseModel):
+    order_number: str
+
+
+@router.post("/simulate-purchase-paid")
+async def simulate_purchase_paid(payload: SimulatePurchasePaidBody):
+    """
+    Public-safe (no auth) — accepts an `order_number` and finalizes it as paid.
+    Useful in preview where Stripe webhooks don't arrive. The order_number is
+    the secret (UUID-like sequence) so an attacker would need to guess valid
+    sequential numbers. In production with real webhooks this endpoint is off.
+    """
+    _dev_only()
+    order = await db.ticket_orders.find_one(
+        {"order_number": payload.order_number}, {"_id": 0}
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order["status"] == "paid":
+        cursor = db.tickets.find({"order_id": order["id"]}, {"_id": 0})
+        return {
+            "ok": True,
+            "already_paid": True,
+            "tickets": [t async for t in cursor],
+        }
+
+    from services import order_service
+    from services.email_service import send_purchase_confirmation
+
+    finalized, tickets = await order_service.finalize_paid_order(order=order)
+    try:
+        event = await db.events.find_one({"id": order["event_id"]}, {"_id": 0})
+        organizer = await db.organizers.find_one(
+            {"id": order["organizer_id"]}, {"_id": 0}
+        )
+        await send_purchase_confirmation(
+            order=finalized, event=event, organizer=organizer, tickets=tickets
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed sending purchase confirmation in demo simulate")
+    logger.info(
+        "Demo simulate-purchase-paid order=%s tickets=%d",
+        finalized["order_number"],
+        len(tickets),
+    )
+    return {"ok": True, "order": finalized, "tickets": tickets}

@@ -161,3 +161,109 @@ async def send_welcome_email(*, to: str, company_name: str, continue_url: str) -
         html=html,
         text=text,
     )
+
+
+# ── Ticket purchase confirmation ─────────────────────────────────────────────
+def render_purchase_html(
+    *,
+    order: dict,
+    event: dict,
+    organizer: dict,
+    tickets: list[dict],
+    primary_color: str,
+    frontend_base: str,
+) -> str:
+    rows = "".join(
+        f"""
+        <tr>
+          <td style="padding:10px 0;border-bottom:1px solid #e6e6f0;">
+            <div style="font-weight:600;color:#1f1f33;">{ t.get('holder', {}).get('name','Asistente') }</div>
+            <div style="font-size:13px;color:#6e6e84;">{ t.get('holder', {}).get('email','') }</div>
+          </td>
+          <td align="right" style="padding:10px 0;border-bottom:1px solid #e6e6f0;">
+            <a href="{frontend_base}/api/public/orders/{order['order_number']}/tickets/{t['id']}/pdf"
+               style="color:{primary_color};text-decoration:none;font-weight:600;font-size:13px;">
+              Descargar PDF →
+            </a>
+          </td>
+        </tr>
+        """
+        for t in tickets
+    )
+
+    qty = order["quantity_total"]
+    total = f"${(order['total_cents'] / 100):.2f} {order.get('currency', 'USD')}"
+    success_url = f"{frontend_base}/o/{organizer['slug']}/orden/{order['order_number']}"
+
+    return f"""
+<table cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background:#f4f4f9;padding:32px 0;font-family:Helvetica,Arial,sans-serif;color:#1f1f33;">
+  <tr><td align="center">
+    <table cellpadding="0" cellspacing="0" border="0" width="560"
+           style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e6e6f0;">
+      <tr><td style="background:{primary_color};padding:24px 32px;color:#ffffff;">
+        <div style="font-size:13px;letter-spacing:2px;text-transform:uppercase;opacity:.8;">
+          {organizer.get('company_name', 'Ticket Yourself')}
+        </div>
+        <div style="font-size:22px;font-weight:600;margin-top:4px;">
+          ¡Tu entrada está lista!
+        </div>
+      </td></tr>
+      <tr><td style="padding:32px;line-height:1.55;font-size:15px;color:#33334a;">
+        <p style="margin:0 0 6px;font-size:18px;font-weight:600;">{event.get('title','')}</p>
+        <p style="margin:0 0 16px;color:#6e6e84;">{event.get('venue_name','')}</p>
+        <p style="margin:0 0 4px;color:#6e6e84;font-size:13px;">Orden</p>
+        <p style="margin:0 0 16px;font-weight:600;">{order['order_number']} · {qty} entrada{'s' if qty != 1 else ''} · {total}</p>
+
+        <table cellpadding="0" cellspacing="0" border="0" width="100%">{rows}</table>
+
+        <table cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;">
+          <tr><td align="center" style="background:{primary_color};border-radius:10px;">
+            <a href="{success_url}"
+               style="display:inline-block;padding:12px 28px;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">
+              Ver tickets en línea
+            </a>
+          </td></tr>
+        </table>
+        <p style="margin:24px 0 0;color:#6e6e84;font-size:13px;">
+          Cada ticket es único e incluye un código QR. Presentalo en la entrada del evento.
+        </p>
+      </td></tr>
+      <tr><td style="background:#f4f4f9;padding:16px 32px;color:#8c8ca6;font-size:12px;text-align:center;">
+        Ticket Yourself · {organizer.get('company_name', '')}
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+""".strip()
+
+
+async def send_purchase_confirmation(
+    *,
+    order: dict,
+    event: dict,
+    organizer: dict,
+    tickets: list,
+) -> dict:
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    primary = "#4f46e5"
+    try:
+        microsite = await __import__("db", fromlist=["db"]).db.microsites.find_one(
+            {"organizer_id": order["organizer_id"]},
+            {"_id": 0, "branding": 1},
+        )
+        if microsite and microsite.get("branding", {}).get("primary_color"):
+            primary = microsite["branding"]["primary_color"]
+    except Exception:  # noqa: BLE001
+        pass
+
+    html = render_purchase_html(
+        order=order,
+        event=event,
+        organizer=organizer,
+        tickets=tickets,
+        primary_color=primary,
+        frontend_base=frontend or "",
+    )
+    subject = f"Tu entrada para {event.get('title','el evento')} — TYS"
+    return await send_email(to=order["buyer"]["email"], subject=subject, html=html)

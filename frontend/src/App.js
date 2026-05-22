@@ -33,6 +33,9 @@ import EventDetail from "@/pages/events/EventDetail";
 import EventEdit from "@/pages/events/EventEdit";
 import EventPublic from "@/pages/events/EventPublic";
 
+import OrderSuccess from "@/pages/orders/OrderSuccess";
+import OrderCancel from "@/pages/orders/OrderCancel";
+
 // Legacy POC pages
 import Home from "@/pages/Home";
 import Subscribe from "@/pages/Subscribe";
@@ -74,6 +77,11 @@ function App() {
                             <Route path="/registro" element={<Public><Register /></Public>} />
                             <Route path="/o/:slug" element={<MicrositePublic />} />
                             <Route path="/o/:slug/e/:event_slug" element={<EventPublic />} />
+                            <Route path="/o/:slug/orden/:order_number" element={<OrderSuccess />} />
+                            <Route
+                                path="/o/:slug/orden/:order_number/cancelado"
+                                element={<OrderCancel />}
+                            />
 
                             {/* Organizer */}
                             <Route path="/dashboard" element={<OrgArea><Dashboard /></OrgArea>} />

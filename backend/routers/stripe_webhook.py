@@ -77,7 +77,52 @@ async def _handle_event(
     subscription_status: Optional[str],
     subscription_id: Optional[str] = None,
     source: str = "webhook",
+    purpose: Optional[str] = None,
+    order_number: Optional[str] = None,
 ) -> None:
+    # ── Ticket purchase finalization (mode=payment) ─────────────────────────
+    # We branch early when the metadata says this is a ticket purchase, so the
+    # subscription side never has to know about orders.
+    if purpose == "ticket_purchase" or order_number:
+        query: Dict[str, Any] = {}
+        if order_number:
+            query["order_number"] = order_number
+        elif session_id:
+            query["stripe_session_id"] = session_id
+        if not query:
+            logger.warning("ticket_purchase webhook with no order_number/session_id")
+            return
+        order = await db.ticket_orders.find_one(query, {"_id": 0})
+        if not order:
+            logger.warning("Order not found for %s", query)
+            return
+        from services import order_service
+
+        finalized, tickets = await order_service.finalize_paid_order(
+            order=order, stripe_session_id=session_id
+        )
+        await log_audit(
+            None,
+            f"stripe.{event_type}",
+            "ticket_order",
+            order["id"],
+            {"source": source, "order_number": order["order_number"]},
+        )
+        # Email
+        try:
+            event = await db.events.find_one({"id": order["event_id"]}, {"_id": 0})
+            organizer = await db.organizers.find_one(
+                {"id": order["organizer_id"]}, {"_id": 0}
+            )
+            from services.email_service import send_purchase_confirmation
+
+            await send_purchase_confirmation(
+                order=finalized, event=event, organizer=organizer, tickets=tickets
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed sending purchase confirmation")
+        return
+
     if event_type == "checkout.session.completed":
         if not session_id:
             return
@@ -174,12 +219,15 @@ async def simulate_webhook(body: SimulateWebhookBody):
     DEV-ONLY shortcut to fire the webhook handler internally (no signature).
     Only enabled when ENV=development. Useful to test the flow under
     `sk_test_emergent` where real webhooks never arrive.
+
+    Supports both subscription and ticket_purchase finalize flows via
+    `purpose` field (or by passing `order_number`).
     """
     if os.environ.get("ENV") != "development":
         raise HTTPException(404, "Not found")
 
     organizer_id = body.organizer_id
-    if not organizer_id and body.session_id:
+    if not organizer_id and body.session_id and not body.order_number:
         intent = await db.billing_intents.find_one(
             {"session_id": body.session_id}, {"_id": 0}
         )
@@ -192,5 +240,7 @@ async def simulate_webhook(body: SimulateWebhookBody):
         organizer_id=organizer_id,
         subscription_status=body.subscription_status,
         source="simulator",
+        purpose=body.purpose,
+        order_number=body.order_number,
     )
     return {"ok": True, "applied": body.event_type}

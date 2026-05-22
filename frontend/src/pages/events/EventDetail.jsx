@@ -22,6 +22,7 @@ import {
 import api, { formatApiError } from "@/lib/api";
 import EventForm from "@/components/events/EventForm";
 import ShareModal from "@/components/microsite/ShareModal";
+import EventSalesTabs from "@/components/events/EventSalesTabs";
 import {
     EVENT_STATUS_META,
     formatEventDate,
@@ -254,12 +255,10 @@ export default function EventDetail() {
 
             <Card>
                 <CardHeader>
-                    <CardTitle className="text-lg">Tickets vendidos</CardTitle>
+                    <CardTitle className="text-lg">Ventas y tickets</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <p className="text-sm text-muted-foreground">
-                        Las ventas se habilitan en la próxima fase.
-                    </p>
+                    <EventSalesTabs event={event} />
                 </CardContent>
             </Card>
 

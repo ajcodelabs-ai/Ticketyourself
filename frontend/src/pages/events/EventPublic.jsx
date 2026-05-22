@@ -16,15 +16,9 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
 import api from "@/lib/api";
 import ShareModal from "@/components/microsite/ShareModal";
+import PurchaseModal from "@/components/orders/PurchaseModal";
 import {
     formatEventDate,
     formatPriceLabel,
@@ -40,7 +34,7 @@ export default function EventPublic() {
     const [event, setEvent] = useState(null);
     const [state, setState] = useState("loading");
     const [shareOpen, setShareOpen] = useState(false);
-    const [comingSoon, setComingSoon] = useState(false);
+    const [buyOpen, setBuyOpen] = useState(false);
 
     useEffect(() => {
         let alive = true;
@@ -188,7 +182,7 @@ export default function EventPublic() {
                             Compartir
                         </Button>
                         <Button
-                            onClick={() => setComingSoon(true)}
+                            onClick={() => setBuyOpen(true)}
                             className="bg-primary hover:bg-primary/90 text-primary-foreground"
                             size="lg"
                             data-testid="event-public-buy-btn"
@@ -208,32 +202,12 @@ export default function EventPublic() {
                 heroSubtitle={event.short_description}
             />
 
-            <Dialog open={comingSoon} onOpenChange={setComingSoon}>
-                <DialogContent data-testid="buy-coming-soon">
-                    <DialogHeader>
-                        <DialogTitle>Próximamente</DialogTitle>
-                        <DialogDescription>
-                            Las compras se habilitan en la siguiente fase. Mientras tanto, podés
-                            compartir el evento con tu audiencia.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="outline" onClick={() => setComingSoon(false)}>
-                            Cerrar
-                        </Button>
-                        <Button
-                            onClick={() => {
-                                setComingSoon(false);
-                                setShareOpen(true);
-                            }}
-                            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-                        >
-                            <Share2 className="h-4 w-4 mr-1.5" />
-                            Compartir evento
-                        </Button>
-                    </div>
-                </DialogContent>
-            </Dialog>
+            <PurchaseModal
+                open={buyOpen}
+                onOpenChange={setBuyOpen}
+                event={event}
+                tenantSlug={slug}
+            />
         </div>
     );
 }

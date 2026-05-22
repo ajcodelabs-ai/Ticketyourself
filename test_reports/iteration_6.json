@@ -1,0 +1,45 @@
+{
+  "summary": "Phase 4 backend + frontend smoke. Backend 20/20 PASS in test_phase4.py: free + paid purchase flows, Stripe checkout creation, /api/_dev/simulate-purchase-paid finalize, idempotency, PDF gen (paid OK / pending 404), buyer/qty/event/tenant validations (422/404), organizer stats+orders+tickets+CSV, refund (status=refunded + tickets revoked + tickets_sold decremented), resend-email, ticket validate (used → already_used), cross-tenant RBAC (404). Frontend visual: /o/demo-org/e/concierto-acustico-demo opens PurchaseModal with qty/buyer fields + fee breakdown ($15.00 + 5% = $15.75); OrderSuccess /o/demo-org/orden/TYS-XXXXXX renders status badge 'Pagado', tickets with QR + PDF buttons, event details and buyer confirmation.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/events/me/{event_id}/orders/{order_id}/refund", "issue": "When stripe checkout.session was created via the Emergent Stripe proxy but later not findable (404 from Stripe retrieve), refund still succeeds locally (status flipped + tickets revoked + counters updated) but logs a WARNING 'Stripe refund failed: No such checkout.session'. Acceptable for preview (sk_test_emergent), but in production this could leave Stripe charge unrefunded. Recommend: surface a 'partial_refund' flag in response if Stripe leg fails."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase4.py",
+    "/app/test_reports/pytest/phase4_results.xml"
+  ],
+  "action_items": [
+    "(LOW) refund_order: when Stripe refund leg fails (stripe.error or session 404), include partial_refund:true in API response or expose via order doc so organizer UI can warn. Currently swallowed as logger.warning."
+  ],
+  "critical_code_review_comments": [
+    "SOLID: finalize_paid_order is genuinely idempotent — second simulator call returns already_paid=true and ticket count remains correct (verified test_finalize_idempotent_does_not_duplicate_tickets).",
+    "SOLID: validate_buyer rejects malformed email (422), CreateOrderBody pydantic Field(le=10) rejects qty=11 (422), tenant+event 404 both checked. PDF endpoint correctly 404s for pending orders. Stripe-mode order pre-reserves capacity via event_capacity_reservations with 15-min TTL (good).",
+    "SOLID: refund flow decrements tickets_sold via $inc and revokes all tickets in one update_many — atomic enough; reservation already released on finalize so no leak.",
+    "SOLID: ticket validate is idempotent — second call returns valid=false reason=already_used with full ticket payload (including used_at + used_by). Invalid JWT returns reason=invalid_token.",
+    "SOLID: cross-tenant 404 enforced by `find_one({id, organizer_id})` filter — confirmed prueba organizer cannot read demo's stats/orders.",
+    "SOLID: ENV=development is set; /api/_dev/simulate-purchase-paid is reachable (404 in production). CSV export streams correctly with proper Content-Disposition.",
+    "OBSERVATION: security._extract_token reads the cookie BEFORE the Authorization header. This is correct for browser flows but makes API-level tests that reuse a requests.Session pick up the stale cookie even when Authorization is explicitly passed — easy footgun for future test agents. Documented in conftest pattern: use separate Session() per user OR call session.cookies.clear().",
+    "OBSERVATION: refund_order issues stripe.Refund.create but if the Emergent proxy doesn't recognise the session it just logs WARNING and continues. Acceptable in preview, risky in production.",
+    "OBSERVATION: PurchaseModal correctly shows fee breakdown 'Tarifa de servicio (5%)' and uses Stripe; OrderSuccess polls every 2s and exposes 'Simular pago' only when dev_enabled=true (confirmed via the test order which arrived already paid because free)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase4.py"
+  ],
+  "success_rate": {
+    "backend": "100% (20/20 phase-4 — combined with prior phases 71+20 = 91/91 baseline)",
+    "frontend": "100% (PurchaseModal + OrderSuccess visually + data-testid verified)"
+  },
+  "test_credentials": "demo@ticketyourself.com / Organizer123! (approved, demo-org); prueba@ticketyourself.com / Organizer123! (pending, used for cross-tenant RBAC test).",
+  "seed_data_creation": "Tests create ephemeral ticket orders with buyer emails prefixed maria_/juan_/pedro_/pdf_/rf_/val_/ui_test@example.com and emails timestamped. No cleanup needed — orders persist as part of analytics but are tagged TEST in the buyer.name field. Counters keep advancing (TYS-000001 through TYS-0000XX).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 4 is fully green. Regression baseline now: test_phase1.py + test_phase2.py + test_phase4.py (no test_phase3 file — phase 3a was covered via test_phase2 extension). KEY GOTCHA documented in code review: backend security._extract_token PREFERS cookie over Authorization header — when writing multi-user pytest scenarios, either (a) use a fresh requests.Session() per user, or (b) call session.cookies.clear() after login + send Authorization explicitly. Email mock dir: /app/backend/email_log/. The simulator endpoint /api/_dev/simulate-purchase-paid is the ONLY way to finalize paid orders in preview (sk_test_emergent doesn't deliver real webhooks). Counter is atomic via db.counters._id='ticket_orders'.",
+  "rca of the issue": "Initial cross-tenant RBAC test reported a false positive (200 instead of 403/404) because requests.Session retained the demo httpOnly cookie from a prior login call. Backend's _extract_token (security.py:113) reads cookie first, so the Authorization Bearer for prueba was ignored. Mitigation: switched to per-user requests.Session() + explicit cookies.clear(). The backend behaviour is correct for browser flows; this is purely a testing pattern."
+}

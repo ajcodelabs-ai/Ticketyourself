@@ -249,10 +249,13 @@ class SimulateWebhookBody(BaseModel):
         "customer.subscription.deleted",
         "invoice.paid",
         "invoice.payment_failed",
+        "payment_intent.succeeded",
     ]
     session_id: Optional[str] = None
     subscription_status: Optional[SubStatus] = None
     organizer_id: Optional[str] = None
+    order_number: Optional[str] = None  # for ticket purchase simulation
+    purpose: Optional[Literal["subscription", "ticket_purchase"]] = None
 
 
 # Resolve forward refs
