@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { PlanCard } from "@/components/PlansShowcase";
 import api from "@/lib/api";
+import { PUBLIC_DOMAIN } from "@/lib/config";
 import {
     Ticket,
     Globe,
@@ -11,14 +13,13 @@ import {
     BarChart3,
     Sparkles,
     ArrowRight,
-    Check,
 } from "lucide-react";
 
 const FEATURES = [
     {
         icon: Globe,
         title: "Microsite propio",
-        desc: "Cada organizador tiene su URL única (slug.ticketyourself.com) con branding e info de sus eventos.",
+        desc: `Cada organizador tiene su URL única (slug.${PUBLIC_DOMAIN}) con branding e info de sus eventos.`,
     },
     {
         icon: Ticket,
@@ -38,6 +39,7 @@ const FEATURES = [
 ];
 
 export default function Landing() {
+    const navigate = useNavigate();
     const [plans, setPlans] = useState([]);
     const [loadingPlans, setLoadingPlans] = useState(true);
 
@@ -157,71 +159,27 @@ export default function Landing() {
                     </p>
                 </div>
 
-                <div data-testid="plans-grid" className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
-                    {loadingPlans
-                        ? Array.from({ length: 4 }).map((_, i) => (
-                              <Card key={i} className="border-border/70 animate-pulse">
-                                  <CardContent className="pt-6 h-60" />
-                              </Card>
-                          ))
-                        : plans.map((p) => (
-                              <Card
-                                  key={p.id}
-                                  data-testid={`plan-card-${p.code}`}
-                                  className={`border-border/70 ${
-                                      p.code === "profesional"
-                                          ? "ring-2 ring-primary/40"
-                                          : ""
-                                  }`}
-                              >
-                                  <CardContent className="pt-6 space-y-4">
-                                      <div className="flex items-center justify-between">
-                                          <h3 className="font-semibold text-lg">{p.name}</h3>
-                                          {p.code === "profesional" && (
-                                              <Badge className="bg-primary text-primary-foreground">
-                                                  Recomendado
-                                              </Badge>
-                                          )}
-                                      </div>
-                                      <div className="flex items-baseline gap-1">
-                                          <span className="text-3xl font-semibold">
-                                              ${(p.price_cents / 100).toFixed(0)}
-                                          </span>
-                                          <span className="text-sm text-muted-foreground">
-                                              {p.billing_period === "monthly"
-                                                  ? "/mes"
-                                                  : " único"}
-                                          </span>
-                                      </div>
-                                      <p className="text-xs text-muted-foreground">
-                                          {p.description}
-                                      </p>
-                                      <ul className="space-y-1.5 text-sm">
-                                          {p.features.slice(0, 4).map((f) => (
-                                              <li
-                                                  key={f}
-                                                  className="flex gap-2 text-foreground/80"
-                                              >
-                                                  <Check className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                                                  {f}
-                                              </li>
-                                          ))}
-                                      </ul>
-                                      <Button
-                                          asChild
-                                          variant={
-                                              p.code === "profesional"
-                                                  ? "default"
-                                                  : "outline"
-                                          }
-                                          className="w-full"
-                                          data-testid={`plan-cta-${p.code}`}
-                                      >
-                                          <Link to="/registro">Elegir plan</Link>
-                                      </Button>
-                                  </CardContent>
-                              </Card>
-                          ))}
+                <div data-testid="plans-grid">
+                    {loadingPlans ? (
+                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
+                            {Array.from({ length: 4 }).map((_, i) => (
+                                <Card key={i} className="border-border/70 animate-pulse">
+                                    <CardContent className="pt-6 h-60" />
+                                </Card>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6 pt-2">
+                            {plans.map((p) => (
+                                <PlanCard
+                                    key={p.id}
+                                    plan={p}
+                                    onSelect={() => navigate("/registro")}
+                                    ctaLabel="Elegir plan"
+                                />
+                            ))}
+                        </div>
+                    )}
                 </div>
             </section>
 

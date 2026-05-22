@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const NAV = [
     { to: "/dashboard", label: "Dashboard" },
+    { to: "/microsite/editor", label: "Microsite" },
     { to: "/configuracion", label: "Configuración" },
 ];
 

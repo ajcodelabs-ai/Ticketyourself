@@ -16,9 +16,12 @@ from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 
 from db import close_db_client  # noqa: E402
 from seeds import run_seeds  # noqa: E402
+from routers import activation as activation_router  # noqa: E402
 from routers import admin as admin_router  # noqa: E402
 from routers import auth as auth_router  # noqa: E402
 from routers import billing as billing_router  # noqa: E402
+from routers import dev as dev_router  # noqa: E402
+from routers import microsite as microsite_router  # noqa: E402
 from routers import organizers as organizers_router  # noqa: E402
 from routers import plans as plans_router  # noqa: E402
 from routers import poc as poc_router  # noqa: E402
@@ -57,6 +60,12 @@ app.include_router(billing_router.router)
 app.include_router(stripe_webhook_router.router)
 app.include_router(admin_router.router)
 app.include_router(poc_router.router)
+app.include_router(microsite_router.router)
+app.include_router(microsite_router.public_router)
+app.include_router(microsite_router.asset_router)
+app.include_router(activation_router.router)
+app.include_router(activation_router.admin_router)
+app.include_router(dev_router.router)
 
 
 # CORS — must NOT use "*" with allow_credentials=True per browser spec.

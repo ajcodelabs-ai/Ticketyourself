@@ -101,6 +101,14 @@ async def create_checkout_session(payload: CheckoutRequest, user=Depends(require
         session["id"],
         {"plan_code": plan["code"], "mode": mode},
     )
+    # Funnel — best-effort. plan_selected + checkout_started fire together.
+    try:
+        from services.activation import log_funnel_event
+
+        await log_funnel_event(organizer_id=org["id"], event_name="plan_selected")
+        await log_funnel_event(organizer_id=org["id"], event_name="checkout_started")
+    except Exception:  # noqa: BLE001
+        pass
     return CheckoutResponse(checkout_url=session["url"], session_id=session["id"], mode=mode)
 
 

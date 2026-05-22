@@ -1,9 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import ShareModal from "@/components/microsite/ShareModal";
 import { useAuth } from "@/contexts/AuthContext";
+import { PUBLIC_DOMAIN, publicMicrositeHost, previewMicrositePath } from "@/lib/config";
 import {
     AlertTriangle,
     CheckCircle2,
@@ -13,6 +15,9 @@ import {
     MessageCircle,
     Shield,
     Sparkles,
+    Edit3,
+    Share2,
+    ExternalLink,
 } from "lucide-react";
 
 const SUB_STATUS_LABEL = {
@@ -26,6 +31,7 @@ const SUB_STATUS_LABEL = {
 export default function Dashboard() {
     const { organizer } = useAuth();
     const navigate = useNavigate();
+    const [shareOpen, setShareOpen] = useState(false);
 
     useEffect(() => {
         if (!organizer) return;
@@ -34,6 +40,11 @@ export default function Dashboard() {
             navigate("/onboarding", { replace: true });
         }
     }, [organizer, navigate]);
+
+    const micrositePublicUrl = useMemo(() => {
+        if (!organizer?.slug) return "";
+        return `${window.location.origin}${previewMicrositePath(organizer.slug)}`;
+    }, [organizer?.slug]);
 
     if (!organizer) {
         return (
@@ -67,7 +78,7 @@ export default function Dashboard() {
                 <QuickCard
                     icon={<Globe className="h-5 w-5" />}
                     title="Tu microsite"
-                    value={`/${organizer.slug}`}
+                    value={publicMicrositeHost(organizer.slug)}
                     sub="Activo cuando aprobemos tu cuenta"
                     testid="card-slug"
                 />
@@ -80,26 +91,81 @@ export default function Dashboard() {
                 />
             </section>
 
-            <section className="grid md:grid-cols-3 gap-4">
-                <FuturePlaceholder
-                    icon={<Sparkles className="h-5 w-5" />}
-                    title="Crear evento"
-                    desc="Disponible en Fase 2."
-                    testid="dash-future-event"
-                />
-                <FuturePlaceholder
-                    icon={<Globe className="h-5 w-5" />}
-                    title="Editar microsite"
-                    desc="Disponible en Fase 2."
-                    testid="dash-future-site"
-                />
-                <FuturePlaceholder
-                    icon={<MessageCircle className="h-5 w-5" />}
-                    title="Reportes"
-                    desc="Disponible cuando vendas tu primer ticket."
-                    testid="dash-future-reports"
-                />
-            </section>
+            {organizer.status === "approved" ? (
+                <Card className="border-border/70" data-testid="dash-microsite-card">
+                    <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2">
+                            <Globe className="h-5 w-5 text-primary" />
+                            Tu microsite
+                        </CardTitle>
+                        <CardDescription>
+                            Publicado en{" "}
+                            <code
+                                className="bg-secondary px-1.5 py-0.5 rounded font-mono text-foreground"
+                                data-testid="dash-microsite-host"
+                            >
+                                {publicMicrositeHost(organizer.slug)}
+                            </code>
+                            <span className="ml-2 text-xs">
+                                <Badge variant="outline" className="text-xs">
+                                    Próximamente en producción
+                                </Badge>
+                            </span>
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-wrap gap-2">
+                        <Button
+                            asChild
+                            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                            data-testid="dash-microsite-edit-btn"
+                        >
+                            <Link to="/microsite/editor">
+                                <Edit3 className="h-4 w-4 mr-1.5" />
+                                Editar microsite
+                            </Link>
+                        </Button>
+                        <Button
+                            variant="outline"
+                            onClick={() => setShareOpen(true)}
+                            data-testid="dash-microsite-share-btn"
+                        >
+                            <Share2 className="h-4 w-4 mr-1.5" />
+                            Compartir
+                        </Button>
+                        <Button
+                            variant="outline"
+                            asChild
+                            data-testid="dash-microsite-view-btn"
+                        >
+                            <Link to={previewMicrositePath(organizer.slug)} target="_blank">
+                                <ExternalLink className="h-4 w-4 mr-1.5" />
+                                Ver público
+                            </Link>
+                        </Button>
+                    </CardContent>
+                </Card>
+            ) : (
+                <section className="grid md:grid-cols-3 gap-4">
+                    <FuturePlaceholder
+                        icon={<Sparkles className="h-5 w-5" />}
+                        title="Crear evento"
+                        desc="Disponible cuando tu cuenta esté aprobada."
+                        testid="dash-future-event"
+                    />
+                    <FuturePlaceholder
+                        icon={<Globe className="h-5 w-5" />}
+                        title="Editar microsite"
+                        desc="Disponible cuando tu cuenta esté aprobada."
+                        testid="dash-future-site"
+                    />
+                    <FuturePlaceholder
+                        icon={<MessageCircle className="h-5 w-5" />}
+                        title="Reportes"
+                        desc="Disponible cuando vendas tu primer ticket."
+                        testid="dash-future-reports"
+                    />
+                </section>
+            )}
 
             {organizer.admin_comments?.length > 0 && (
                 <Card data-testid="comments-card" className="border-border/70">
@@ -135,6 +201,14 @@ export default function Dashboard() {
                 </Link>{" "}
                 · El slug es inmutable.
             </p>
+
+            <ShareModal
+                open={shareOpen}
+                onOpenChange={setShareOpen}
+                url={micrositePublicUrl}
+                companyName={organizer.company_name}
+                heroSubtitle=""
+            />
         </div>
     );
 }
@@ -145,17 +219,30 @@ function StatusCard({ organizer }) {
             <Card data-testid="status-approved" className="border-emerald-200 bg-emerald-50/50">
                 <CardHeader className="flex flex-row items-start gap-3">
                     <CheckCircle2 className="h-6 w-6 text-emerald-600 shrink-0 mt-0.5" />
-                    <div>
+                    <div className="space-y-1">
                         <CardTitle className="text-lg text-emerald-900">
                             Tu cuenta está aprobada
                         </CardTitle>
                         <CardDescription className="text-emerald-800">
-                            Microsite activo en{" "}
-                            <code className="bg-emerald-100 px-1 rounded">
-                                {organizer.slug}.ticketyourself.com
-                            </code>{" "}
-                            (en preview usá <code>?tenant={organizer.slug}</code>).
+                            Tu microsite estará disponible en{" "}
+                            <code
+                                className="bg-emerald-100 px-1.5 py-0.5 rounded font-mono"
+                                data-testid="approved-public-host"
+                            >
+                                {publicMicrositeHost(organizer.slug)}
+                            </code>
                         </CardDescription>
+                        <p className="text-xs text-emerald-700/80">
+                            Próximamente disponible en producción. Mientras tanto, accedé desde el preview en{" "}
+                            <Link
+                                to={previewMicrositePath(organizer.slug)}
+                                className="underline font-medium"
+                                data-testid="approved-preview-link"
+                            >
+                                /o/{organizer.slug}
+                            </Link>
+                            .
+                        </p>
                     </div>
                 </CardHeader>
             </Card>

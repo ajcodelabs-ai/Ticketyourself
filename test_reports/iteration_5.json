@@ -1,0 +1,37 @@
+{
+  "summary": "Phase 2 backend + frontend regression. Backend 30/30 PASS (test_phase2.py covers smoke, public microsite, organizer CRUD, asset upload/serve/delete, publish lifecycle, activation funnel + RBAC, dev email log + path traversal). Frontend critical flows verified visually: (1) /o/demo-org renders full microsite hero 'Demo Organizer · Eventos en vivo' with maroon branding + 'Quiénes somos' + events placeholder; (2) /o/prueba-eventos shows graceful fallback 'Microsite no disponible · Este organizador todavía no publicó su microsite'; (3) /dashboard (demo approved) shows 'Tu microsite' card with 'demo-org.ajcodelabs.ai' URL + 'Editar microsite'+'Compartir'+'Ver público' buttons; (4) ShareModal opens with SVG QR + copyable URL + WhatsApp+Email+Twitter buttons (visually confirmed in screenshot); (5) /microsite/editor loads split-panel with 6 tabs (Plantilla/Branding/Contenido/Redes/Secciones/Publicar) + 3 templates listed (Estándar/Galería/Evento Único) + live preview pane with Desktop/Mobile toggle + 'Despublicar' button (currently published); (6) /admin/funnel as admin shows all 6 funnel rows (Email enviado/Link clickeado/Primer documento/Plan elegido/Checkout iniciado/Suscripción activa) with progress bars + 'Lectura rápida' card; (7) pending organizer (prueba) accessing /microsite/editor is redirected to /onboarding (functionally blocked, although spec said /dashboard).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/admin/funnel — Lectura rápida card", "issues": ["The drop-off label shows raw '-1' (e.g. 'Link clickeado → Primer documento  -1'). Numbers in green for positive deltas/zero and red for negative is fine, but a raw -1 is ambiguous — recommend formatting as '-1 (-50%)' or 'Bajaron 1 organizador' for clarity in Spanish."]},
+      {"screen": "/microsite/editor — Tabs row", "issues": ["Tabs render without separators ('PlantillaBrandingContenidoRedesSecciones Publicar' run together visually in the screenshot). Add gap/padding between TabsTrigger items."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_phase2.py", "/app/test_reports/pytest/phase2_results.xml"],
+  "action_items": [
+    "(LOW) Pending organizer accessing /microsite/editor redirects to /onboarding — spec said /dashboard. Functionally equivalent (pending is blocked), but to match spec exactly redirect should be /dashboard.",
+    "(LOW) /admin/funnel 'Lectura rápida' raw '-1' label is ambiguous. Add Spanish copy or include percentage.",
+    "(LOW) /microsite/editor tab labels are visually crowded — add spacing in TabsList."
+  ],
+  "critical_code_review_comments": [
+    "SOLID: All 30 Phase-2 backend tests pass. Public microsite/asset/activation/dev-log endpoints behave per contract.",
+    "SOLID: RBAC enforced on /api/microsite/me (401 no-auth, 403 pending) and /api/admin/activation-funnel (401 no-auth, 403 organizer).",
+    "SOLID: Asset upload rejects .exe with 415, accepts PNG/JPEG, auto-binds branding.logo_url and branding.banner_url. Delete clears branding ref.",
+    "SOLID: Publish/unpublish lifecycle — /api/public/microsite/demo-org returns 404 after unpublish, 200 after republish.",
+    "SOLID: Activation funnel JWT path works (forged HS256 token with purpose='first_access' is accepted; garbage token → 401). Invalid token rejected before DB lookup.",
+    "SOLID: Email mock written to /app/backend/email_log/{ts}_{email}.html; /_dev/email-log lists + serves HTML; path traversal '..%2Fetc%2Fpasswd' rejected (404).",
+    "SOLID: Reseed remains idempotent — demo-org microsite returns to published=True after restart.",
+    "SOLID: Frontend microsite editor renders all 6 tabs + 3 templates + live preview frame with Desktop/Mobile toggle; ShareModal renders QR (SVG) + WhatsApp/Email/Twitter buttons; demo-org public renders with correct branding (maroon was current; primary_color is hex-valid and applied live).",
+    "OBSERVATION: Cloudflare in front of /api/microsite/assets/{id} overrides backend Cache-Control header from 'public, max-age=86400' to 'no-store, no-cache, must-revalidate'. Backend code is correct (microsite.py line 297); this is purely an ingress-side caching policy and out of scope.",
+    "MINOR UX: 3 design nits documented above (funnel '-1' label, editor tab spacing, pending-redirect target)."
+  ],
+  "updated_files": ["/app/backend/tests/test_phase2.py"],
+  "success_rate": {"backend": "100% (30/30 phase-2 + 41/41 phase-1 still green per regression baseline)", "frontend": "100% (7/7 critical Phase-2 flows visually verified)"},
+  "test_credentials": "admin@ticketyourself.com/Admin123!, demo@ticketyourself.com/Organizer123! (approved, demo-org), prueba@ticketyourself.com/Organizer123! (pending). Bearer auth via /api/auth/login → access_token. Activation JWT uses HS256 + JWT_SECRET from backend/.env, purpose='first_access', 7d TTL.",
+  "seed_data_creation": "Test creates ephemeral organizer test_{ts}@example.com / funnel_{ts}@example.com via /api/auth/register — these are auto-cleaned at boot per _cleanup_ephemeral_test_data().",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 2 fully green. Use /app/backend/tests/test_phase2.py + /app/backend/tests/test_phase1.py as regression baselines (71 tests combined). For asset endpoints note Cloudflare strips Cache-Control — assert content/type only. Activation JWT secret is JWT_SECRET in backend/.env, alg HS256, purpose 'first_access'. Email mock dir: /app/backend/email_log/. Editor live-preview confirmed working with template switch + color picker (per spec). Three minor UX nits documented for main agent."
+}

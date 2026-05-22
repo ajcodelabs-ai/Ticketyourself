@@ -424,6 +424,7 @@ _EPHEMERAL_SLUG_PREFIXES = (
     "new-",
     "acttest-",
     "eventos-quito-demo",
+    "demo-welcome-test",
 )
 _EPHEMERAL_EMAIL_PREFIXES = (
     "new_",
@@ -432,6 +433,7 @@ _EPHEMERAL_EMAIL_PREFIXES = (
     "acttest_",
     "slugtest_",
     "eventos.quito.demo",
+    "test_",
 )
 
 
@@ -469,10 +471,105 @@ async def _cleanup_ephemeral_test_data() -> None:
     slugs = [o["slug"] for o in orgs]
 
     await db.organizer_documents.delete_many({"organizer_id": {"$in": org_ids}})
+    await db.microsites.delete_many({"organizer_id": {"$in": org_ids}})
+    await db.microsite_assets.delete_many({"organizer_id": {"$in": org_ids}})
+    await db.activation_events.delete_many({"organizer_id": {"$in": org_ids}})
     await db.organizers.delete_many({"id": {"$in": org_ids}})
     await db.users.delete_many({"id": {"$in": user_ids}})
     await db.tenants.delete_many({"slug": {"$in": slugs}})
     logger.info("Cleaned up %d ephemeral test organizer(s): %s", len(orgs), slugs)
+
+
+async def _seed_demo_microsites() -> None:
+    """
+    Per-organizer microsite seed:
+      - demo-org → published, opinionated demo content.
+      - prueba-eventos / evento-rechazado → unpublished default.
+    Idempotent: only inserts when no microsite exists for that organizer.
+    """
+    from services.microsite_factory import default_microsite
+
+    seeds = {
+        "demo-org": {
+            "published": True,
+            "template": "estandar",
+            "branding": {
+                "primary_color": "#4f46e5",
+                "secondary_color": "#eef2ff",
+                "logo_url": None,
+                "banner_url": None,
+                "font_family": "Inter",
+            },
+            "content": {
+                "hero_title": "Demo Organizer · Eventos en vivo",
+                "hero_subtitle": "Conciertos, fiestas y experiencias únicas en Quito y Guayaquil.",
+                "hero_cta_text": "Ver próximos eventos",
+                "about_title": "Quiénes somos",
+                "about_body": (
+                    "Demo Organizer produce experiencias únicas desde 2018. "
+                    "Trabajamos con artistas locales e internacionales y "
+                    "garantizamos venues seguros y bien equipados."
+                ),
+                "contact_email": "hola@demo-org.test",
+                "contact_phone": "+593 99 123 4567",
+                "address": "Av. Amazonas N40-120, Quito, Ecuador",
+            },
+            "social_links": {
+                "instagram": "https://instagram.com/demoorg",
+                "facebook": "https://facebook.com/demoorg",
+                "whatsapp": "+593991234567",
+                "twitter": "",
+                "tiktok": "",
+                "youtube": "",
+            },
+        },
+        "prueba-eventos": {"published": False},
+        "evento-rechazado": {"published": False},
+    }
+
+    for slug, override in seeds.items():
+        organizer = await db.organizers.find_one({"slug": slug}, {"_id": 0})
+        if not organizer:
+            continue
+        existing = await db.microsites.find_one(
+            {"organizer_id": organizer["id"]}, {"_id": 0, "id": 1}
+        )
+        doc = default_microsite(
+            organizer_id=organizer["id"],
+            tenant_slug=slug,
+            company_name=organizer.get("company_name") or slug,
+        )
+        doc.update(override)
+        if "branding" in override:
+            doc["branding"] = {**doc["branding"], **override["branding"]}
+        if "content" in override:
+            doc["content"] = {**doc["content"], **override["content"]}
+        if "social_links" in override:
+            doc["social_links"] = {**doc["social_links"], **override["social_links"]}
+
+        if existing:
+            # For demo-org we re-assert the canonical microsite content (idempotent reset
+            # — same pattern as _reset_demo_organizers). Other demos keep what the user
+            # may have edited (no clobber).
+            if slug == "demo-org":
+                await db.microsites.update_one(
+                    {"id": existing["id"]},
+                    {
+                        "$set": {
+                            "template": doc["template"],
+                            "branding": doc["branding"],
+                            "content": doc["content"],
+                            "social_links": doc["social_links"],
+                            "sections_enabled": doc["sections_enabled"],
+                            "published": doc["published"],
+                            "updated_at": doc["updated_at"],
+                        }
+                    },
+                )
+                logger.info("Reset demo microsite for %s (published=%s)", slug, doc["published"])
+            continue
+        await db.microsites.insert_one(doc)
+        logger.info("Seeded microsite for %s (published=%s)", slug, doc["published"])
 
 
 async def run_seeds() -> None:
@@ -482,3 +579,4 @@ async def run_seeds() -> None:
     await _seed_plans()
     await _seed_demo_organizers()
     await _reset_demo_organizers()
+    await _seed_demo_microsites()

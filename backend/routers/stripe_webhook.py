@@ -89,6 +89,13 @@ async def _handle_event(
             if org and org.get("status") == "approved":
                 await _activate_tenant(org["slug"])
             await log_audit(None, f"stripe.{event_type}", "organizer", org_id, {"source": source, "session_id": session_id})
+            # Funnel — subscription_active fires when checkout completes for subscriptions.
+            try:
+                from services.activation import log_funnel_event
+
+                await log_funnel_event(organizer_id=org_id, event_name="subscription_active")
+            except Exception:  # noqa: BLE001
+                pass
     elif event_type == "customer.subscription.updated":
         await _apply_subscription_status(
             organizer_id=organizer_id,

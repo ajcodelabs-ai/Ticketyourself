@@ -22,6 +22,10 @@ import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminOrganizers from "@/pages/admin/AdminOrganizers";
 import AdminOrganizerDetail from "@/pages/admin/AdminOrganizerDetail";
 import AdminPlans from "@/pages/admin/AdminPlans";
+import AdminFunnel from "@/pages/admin/AdminFunnel";
+
+import MicrositeEditor from "@/pages/MicrositeEditor";
+import MicrositePublic from "@/pages/MicrositePublic";
 
 // Legacy POC pages
 import Home from "@/pages/Home";
@@ -62,10 +66,12 @@ function App() {
                             <Route path="/" element={<Public><Landing /></Public>} />
                             <Route path="/login" element={<Public><Login /></Public>} />
                             <Route path="/registro" element={<Public><Register /></Public>} />
+                            <Route path="/o/:slug" element={<MicrositePublic />} />
 
                             {/* Organizer */}
                             <Route path="/dashboard" element={<OrgArea><Dashboard /></OrgArea>} />
                             <Route path="/onboarding" element={<OrgArea><Onboarding /></OrgArea>} />
+                            <Route path="/microsite/editor" element={<OrgArea><MicrositeEditor /></OrgArea>} />
                             <Route path="/configuracion" element={<OrgArea><Settings /></OrgArea>} />
                             <Route
                                 path="/billing/success"
@@ -89,6 +95,10 @@ function App() {
                             <Route
                                 path="/admin/planes"
                                 element={<AdminArea><AdminPlans /></AdminArea>}
+                            />
+                            <Route
+                                path="/admin/funnel"
+                                element={<AdminArea><AdminFunnel /></AdminArea>}
                             />
 
                             {/* Legacy POC */}

@@ -7,9 +7,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import PlansShowcase from "@/components/PlansShowcase";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
-import { Loader2 } from "lucide-react";
+import { PUBLIC_DOMAIN } from "@/lib/config";
+import { ChevronDown, Loader2 } from "lucide-react";
 
 function normalizeSlug(value) {
     return (value || "")
@@ -39,7 +41,12 @@ export default function Register() {
     });
     const [slugEdited, setSlugEdited] = useState(false);
     const [submitting, setSubmitting] = useState(false);
-    const [slugCheck, setSlugCheck] = useState({ available: null, suggestion: null });
+    const [showPlans, setShowPlans] = useState(false);
+    const [slugCheck, setSlugCheck] = useState({
+        available: null,
+        suggestion: null,
+        checking: false,
+    });
 
     const autoSlug = useMemo(() => normalizeSlug(form.company_name), [form.company_name]);
 
@@ -54,25 +61,33 @@ export default function Register() {
     //   transparently adopt the backend-suggested unique suffix.
     // - If the user edited it manually, we leave their choice as-is and surface
     //   the conflict so they can correct it.
+    // Important: clear the check result immediately while the new value is
+    // pending verification so the UI never shows a stale "✓ disponible" for
+    // a slug the user just changed.
     useEffect(() => {
         if (!form.slug) {
-            setSlugCheck({ available: null, suggestion: null });
+            setSlugCheck({ available: null, suggestion: null, checking: false });
             return;
         }
+        setSlugCheck((prev) => ({ ...prev, available: null, checking: true }));
         const t = setTimeout(async () => {
             try {
                 const { data } = await api.post("/auth/check-slug", { slug: form.slug });
                 if (!data.available && data.suggestion && !slugEdited) {
                     // Auto-adopt suggestion when the user hasn't touched the field.
                     setForm((f) => ({ ...f, slug: data.suggestion }));
-                    setSlugCheck({ available: true, suggestion: null });
+                    setSlugCheck({ available: true, suggestion: null, checking: false });
                 } else {
-                    setSlugCheck({ available: data.available, suggestion: data.suggestion });
+                    setSlugCheck({
+                        available: data.available,
+                        suggestion: data.suggestion,
+                        checking: false,
+                    });
                 }
             } catch {
-                setSlugCheck({ available: null, suggestion: null });
+                setSlugCheck({ available: null, suggestion: null, checking: false });
             }
-        }, 350);
+        }, 300);
         return () => clearTimeout(t);
     }, [form.slug, slugEdited]);
 
@@ -200,12 +215,21 @@ export default function Register() {
 
                         <div className="grid sm:grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label htmlFor="company-input">Nombre comercial</Label>
+                                <Label htmlFor="company-input">
+                                    {form.org_type === "company"
+                                        ? "Nombre comercial"
+                                        : "Nombre completo"}
+                                </Label>
                                 <Input
                                     id="company-input"
                                     data-testid="register-company-input"
                                     value={form.company_name}
                                     onChange={update("company_name")}
+                                    placeholder={
+                                        form.org_type === "company"
+                                            ? "Ej: Eventos Quito S.A."
+                                            : "Ej: Juan Pérez García"
+                                    }
                                     required
                                 />
                             </div>
@@ -218,17 +242,31 @@ export default function Register() {
                                     data-testid="register-legal-input"
                                     value={form.legal_id}
                                     onChange={update("legal_id")}
+                                    placeholder={
+                                        form.org_type === "company"
+                                            ? "13 dígitos"
+                                            : "10 dígitos"
+                                    }
+                                    inputMode="numeric"
+                                    pattern={
+                                        form.org_type === "company"
+                                            ? "\\d{13}"
+                                            : "\\d{10}"
+                                    }
+                                    maxLength={form.org_type === "company" ? 13 : 10}
                                     required
                                 />
+                                <p className="text-xs text-muted-foreground">
+                                    {form.org_type === "company"
+                                        ? "RUC de Ecuador (13 dígitos)."
+                                        : "Cédula de Ecuador (10 dígitos)."}
+                                </p>
                             </div>
                         </div>
 
                         <div className="space-y-2">
-                            <Label htmlFor="slug-input">Slug (URL de tu microsite)</Label>
-                            <div className="flex gap-2 items-center">
-                                <span className="text-sm text-muted-foreground hidden sm:inline">
-                                    ticketyourself.com/
-                                </span>
+                            <Label htmlFor="slug-input">URL de tu microsite</Label>
+                            <div className="flex flex-wrap gap-1 items-center">
                                 <Input
                                     id="slug-input"
                                     data-testid="register-slug-input"
@@ -241,8 +279,30 @@ export default function Register() {
                                         }));
                                     }}
                                     placeholder="ej. eventos-quito"
+                                    aria-invalid={slugCheck.available === false}
+                                    className={`flex-1 min-w-[200px] ${
+                                        slugCheck.available === false
+                                            ? "border-red-500 focus-visible:ring-red-500"
+                                            : ""
+                                    }`}
                                 />
+                                <span className="text-sm text-muted-foreground whitespace-nowrap">
+                                    .{PUBLIC_DOMAIN}
+                                </span>
                             </div>
+                            {form.slug && slugCheck.available && (
+                                <div
+                                    className="text-sm text-foreground/80 flex items-center gap-1 mt-1"
+                                    data-testid="register-slug-preview"
+                                >
+                                    <span className="text-muted-foreground">
+                                        Tu URL será:
+                                    </span>
+                                    <code className="font-mono bg-secondary px-1.5 py-0.5 rounded text-primary">
+                                        {form.slug}.{PUBLIC_DOMAIN}
+                                    </code>
+                                </div>
+                            )}
                             <p
                                 className="text-xs"
                                 data-testid="register-slug-feedback"
@@ -252,27 +312,48 @@ export default function Register() {
                                         Se autocompleta desde el nombre comercial.
                                     </span>
                                 )}
-                                {form.slug && slugCheck.available === true && (
-                                    <span className="text-emerald-600">
+                                {form.slug && slugCheck.checking && (
+                                    <span
+                                        className="text-muted-foreground"
+                                        data-testid="register-slug-checking"
+                                    >
+                                        Verificando disponibilidad…
+                                    </span>
+                                )}
+                                {form.slug && !slugCheck.checking && slugCheck.available === true && (
+                                    <span
+                                        className="text-emerald-600"
+                                        data-testid="register-slug-available"
+                                    >
                                         ✓ disponible
                                     </span>
                                 )}
-                                {form.slug && slugCheck.available === false && (
-                                    <span className="text-amber-700">
-                                        Ya está tomado. Sugerencia:{" "}
-                                        <button
-                                            type="button"
-                                            className="underline"
-                                            onClick={() => {
-                                                setSlugEdited(true);
-                                                setForm((f) => ({
-                                                    ...f,
-                                                    slug: slugCheck.suggestion,
-                                                }));
-                                            }}
-                                        >
-                                            {slugCheck.suggestion}
-                                        </button>
+                                {form.slug && !slugCheck.checking && slugCheck.available === false && (
+                                    <span
+                                        className="text-red-600"
+                                        data-testid="register-slug-taken"
+                                    >
+                                        ✗ Este slug ya está en uso.
+                                        {slugCheck.suggestion && (
+                                            <>
+                                                {" "}Probá{" "}
+                                                <button
+                                                    type="button"
+                                                    className="underline font-medium"
+                                                    data-testid="register-slug-suggestion-btn"
+                                                    onClick={() => {
+                                                        setSlugEdited(true);
+                                                        setForm((f) => ({
+                                                            ...f,
+                                                            slug: slugCheck.suggestion,
+                                                        }));
+                                                    }}
+                                                >
+                                                    {slugCheck.suggestion}
+                                                </button>
+                                                .
+                                            </>
+                                        )}
                                     </span>
                                 )}
                             </p>
@@ -281,11 +362,43 @@ export default function Register() {
                             </p>
                         </div>
 
+                        <div
+                            className="rounded-xl border border-border/70 bg-secondary/30"
+                            data-testid="register-plans-section"
+                        >
+                            <button
+                                type="button"
+                                onClick={() => setShowPlans((v) => !v)}
+                                className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium hover:bg-secondary/60 rounded-xl transition-colors"
+                                data-testid="register-plans-toggle"
+                                aria-expanded={showPlans}
+                            >
+                                <span>
+                                    {showPlans ? "Ocultar planes" : "Ver planes disponibles"}
+                                </span>
+                                <ChevronDown
+                                    className={`h-4 w-4 text-muted-foreground transition-transform ${
+                                        showPlans ? "rotate-180" : ""
+                                    }`}
+                                />
+                            </button>
+                            {showPlans && (
+                                <div className="px-4 pb-4 pt-1 space-y-3" data-testid="register-plans-panel">
+                                    <p className="text-xs text-muted-foreground">
+                                        Vas a elegir tu plan después del registro, en el paso de pago.
+                                    </p>
+                                    <PlansShowcase compact columns={2} />
+                                </div>
+                            )}
+                        </div>
+
                         <Button
                             type="submit"
                             disabled={
                                 submitting ||
-                                (slugEdited && slugCheck.available === false)
+                                slugCheck.checking ||
+                                !form.slug ||
+                                slugCheck.available === false
                             }
                             data-testid="register-submit-btn"
                             size="lg"

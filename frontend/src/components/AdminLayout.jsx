@@ -7,6 +7,7 @@ const NAV = [
     { to: "/admin", label: "Dashboard" },
     { to: "/admin/organizadores", label: "Organizadores" },
     { to: "/admin/planes", label: "Planes" },
+    { to: "/admin/funnel", label: "Funnel" },
 ];
 
 export default function AdminLayout({ children }) {

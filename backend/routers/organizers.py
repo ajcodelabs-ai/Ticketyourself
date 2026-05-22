@@ -144,6 +144,13 @@ async def upload_my_doc(
         doc_id,
         {"doc_type": doc_type, "organizer_id": org["id"]},
     )
+    # Funnel — best-effort.
+    try:
+        from services.activation import log_funnel_event
+
+        await log_funnel_event(organizer_id=org["id"], event_name="first_doc_uploaded")
+    except Exception:  # noqa: BLE001
+        pass
     return _doc_to_out(record)
 
 

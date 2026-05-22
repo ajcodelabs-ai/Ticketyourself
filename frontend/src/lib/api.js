@@ -31,11 +31,19 @@ const api = axios.create({
 });
 
 // Attach Bearer token on every request when available.
+// Also: when the body is FormData, strip any forced Content-Type so axios
+// regenerates the correct multipart/form-data header with its boundary param.
 api.interceptors.request.use((config) => {
     const token = tokenStore.access;
     if (token) {
         config.headers = config.headers || {};
         config.headers.Authorization = `Bearer ${token}`;
+    }
+    if (typeof FormData !== "undefined" && config.data instanceof FormData) {
+        if (config.headers) {
+            delete config.headers["Content-Type"];
+            delete config.headers["content-type"];
+        }
     }
     return config;
 });

@@ -1,9 +1,11 @@
 """Auth router: register, login, logout, refresh, me, slug-check."""
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from db import db
@@ -27,6 +29,12 @@ from security import (
     set_auth_cookies,
     verify_password,
 )
+from services.activation import (
+    create_activation_token,
+    decode_activation_token,
+    ensure_activation_record,
+)
+from services.email_service import send_welcome_email
 from slugs import find_unique_slug, is_valid_slug, normalize_slug
 
 logger = logging.getLogger("tys.auth")
@@ -143,6 +151,31 @@ async def register(payload: RegisterRequest):
     user_doc = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     organizer_doc = await db.organizers.find_one({"id": organizer_id}, {"_id": 0})
     logger.info("Registered organizer slug=%s email=%s", slug, email)
+
+    # Fire-and-forget welcome email + activation record (best-effort).
+    try:
+        token = create_activation_token(user_id=user_id, organizer_id=organizer_id)
+        # JTI for the row — extract from the JWT itself.
+        token_payload = jwt.decode(token, options={"verify_signature": False})
+        await ensure_activation_record(
+            user_id=user_id,
+            organizer_id=organizer_id,
+            token_jti=token_payload.get("jti", ""),
+        )
+        frontend_base = os.environ.get("FRONTEND_URL", "").rstrip("/")
+        continue_url = (
+            f"{frontend_base}/onboarding?at={token}"
+            if frontend_base
+            else f"/onboarding?at={token}"
+        )
+        await send_welcome_email(
+            to=email,
+            company_name=payload.company_name.strip(),
+            continue_url=continue_url,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Welcome flow side-effects failed for %s: %s", email, exc)
+
     return AuthMeResponse(
         user=_user_to_out(user_doc),
         organizer=await _organizer_to_out(organizer_doc),

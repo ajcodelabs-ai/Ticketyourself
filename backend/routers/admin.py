@@ -150,6 +150,20 @@ async def approve_organizer(
         projection={"_id": 0},
     )
     await db.tenants.update_one({"slug": result["slug"]}, {"$set": {"status": "active"}})
+    # Auto-create default microsite (no-op if exists).
+    from services.microsite_factory import default_microsite
+
+    existing_microsite = await db.microsites.find_one(
+        {"organizer_id": organizer_id}, {"_id": 0, "id": 1}
+    )
+    if not existing_microsite:
+        await db.microsites.insert_one(
+            default_microsite(
+                organizer_id=organizer_id,
+                tenant_slug=result["slug"],
+                company_name=result.get("company_name") or result["slug"],
+            )
+        )
     await log_audit(admin["id"], "organizer.approved", "organizer", organizer_id, {"comment": payload.comment or ""})
     return await _to_out(result)
 

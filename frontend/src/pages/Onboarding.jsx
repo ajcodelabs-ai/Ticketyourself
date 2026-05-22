@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
+import { PlanCard } from "@/components/PlansShowcase";
 import api, { formatApiError } from "@/lib/api";
 import {
     Upload,
@@ -22,8 +23,6 @@ import {
     FileText,
     Trash2,
     Loader2,
-    CreditCard,
-    Check,
     ArrowRight,
 } from "lucide-react";
 
@@ -37,12 +36,24 @@ const DOC_TYPES = [
 export default function Onboarding() {
     const { organizer, refreshOrganizer } = useAuth();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const [step, setStep] = useState(1);
     const [docs, setDocs] = useState([]);
     const [plans, setPlans] = useState([]);
     const [loading, setLoading] = useState(true);
     const [docType, setDocType] = useState("ruc");
     const [uploading, setUploading] = useState(false);
+
+    // Fire `link_clicked` event when an activation token is present in the URL.
+    useEffect(() => {
+        const at = searchParams.get("at");
+        if (!at) return;
+        api.post("/activation/log-event", { token: at, event_name: "link_clicked" }).catch(
+            () => {
+                /* token may be expired — ignore */
+            },
+        );
+    }, [searchParams]);
 
     const fetchAll = useCallback(async () => {
         setLoading(true);
@@ -84,14 +95,21 @@ export default function Onboarding() {
             const fd = new FormData();
             fd.append("doc_type", docType);
             fd.append("file", file);
-            await api.post("/organizers/me/documents", fd, {
-                headers: { "Content-Type": "multipart/form-data" },
-            });
-            toast.success("Documento subido");
+            // Do NOT set Content-Type manually — axios needs to generate it
+            // with the multipart boundary parameter. The interceptor also
+            // strips any stale Content-Type from the default headers for
+            // FormData payloads.
+            await api.post("/organizers/me/documents", fd);
+            toast.success("Documento subido correctamente");
             e.target.reset();
             await fetchAll();
         } catch (err) {
-            toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+            const status = err?.response?.status;
+            const detail =
+                formatApiError(err?.response?.data?.detail) ||
+                err.message ||
+                "Error desconocido";
+            toast.error(status ? `Error ${status}: ${detail}` : detail);
         } finally {
             setUploading(false);
         }
@@ -261,40 +279,14 @@ export default function Onboarding() {
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <div className="grid md:grid-cols-2 gap-4">
+                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 pt-2">
                             {plans.map((p) => (
-                                <div
+                                <PlanCard
                                     key={p.id}
-                                    data-testid={`onboarding-plan-${p.code}`}
-                                    className="rounded-2xl border border-border/70 p-5 space-y-3 bg-card"
-                                >
-                                    <div className="flex items-baseline justify-between">
-                                        <h3 className="font-semibold">{p.name}</h3>
-                                        <span className="text-sm text-muted-foreground">
-                                            ${(p.price_cents / 100).toFixed(0)}
-                                            {p.billing_period === "monthly" ? "/mes" : " único"}
-                                        </span>
-                                    </div>
-                                    <p className="text-xs text-muted-foreground">
-                                        {p.description}
-                                    </p>
-                                    <ul className="space-y-1 text-sm">
-                                        {p.features.slice(0, 3).map((f) => (
-                                            <li key={f} className="flex gap-2">
-                                                <Check className="h-3.5 w-3.5 text-primary mt-1 shrink-0" />
-                                                {f}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                    <Button
-                                        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-                                        onClick={() => choosePlan(p.code)}
-                                        data-testid={`onboarding-plan-cta-${p.code}`}
-                                    >
-                                        <CreditCard className="h-4 w-4 mr-2" />
-                                        Pagar con Stripe
-                                    </Button>
-                                </div>
+                                    plan={p}
+                                    onSelect={() => choosePlan(p.code)}
+                                    ctaLabel="Pagar con Stripe"
+                                />
                             ))}
                         </div>
                     </CardContent>
