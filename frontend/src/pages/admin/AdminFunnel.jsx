@@ -113,6 +113,13 @@ export default function AdminFunnel() {
                                 {data.steps.slice(1).map((s, i) => {
                                     const prev = data.steps[i];
                                     const drop = prev.count - s.count;
+                                    const dropPct = prev.count > 0 ? (drop / prev.count) * 100 : 0;
+                                    let label;
+                                    if (drop > 0) {
+                                        label = `${drop} ${drop === 1 ? "organizador" : "organizadores"} (-${Math.round(dropPct)}%)`;
+                                    } else {
+                                        label = "Sin pérdida";
+                                    }
                                     return (
                                         <li key={s.event} className="flex justify-between">
                                             <span>
@@ -124,8 +131,9 @@ export default function AdminFunnel() {
                                                         ? "tabular-nums text-amber-700 font-medium"
                                                         : "tabular-nums text-emerald-700 font-medium"
                                                 }
+                                                data-testid={`funnel-drop-${s.event}`}
                                             >
-                                                {drop > 0 ? `-${drop}` : "0"}
+                                                {label}
                                             </span>
                                         </li>
                                     );

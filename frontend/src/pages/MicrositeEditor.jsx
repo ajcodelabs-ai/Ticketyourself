@@ -212,13 +212,16 @@ export default function MicrositeEditor() {
                 <Card className="lg:max-h-[calc(100vh-180px)] lg:overflow-y-auto">
                     <CardContent className="pt-6">
                         <Tabs defaultValue="template" className="w-full">
-                            <TabsList className="grid grid-cols-6 mb-4 w-full" data-testid="editor-tabs">
-                                <TabsTrigger value="template" data-testid="tab-template">Plantilla</TabsTrigger>
-                                <TabsTrigger value="branding" data-testid="tab-branding">Branding</TabsTrigger>
-                                <TabsTrigger value="content" data-testid="tab-content">Contenido</TabsTrigger>
-                                <TabsTrigger value="social" data-testid="tab-social">Redes</TabsTrigger>
-                                <TabsTrigger value="sections" data-testid="tab-sections">Secciones</TabsTrigger>
-                                <TabsTrigger value="publish" data-testid="tab-publish">Publicar</TabsTrigger>
+                            <TabsList
+                                className="grid grid-cols-3 gap-1 mb-4 w-full h-auto p-1"
+                                data-testid="editor-tabs"
+                            >
+                                <TabsTrigger value="template" data-testid="tab-template" className="text-xs">Plantilla</TabsTrigger>
+                                <TabsTrigger value="branding" data-testid="tab-branding" className="text-xs">Branding</TabsTrigger>
+                                <TabsTrigger value="content" data-testid="tab-content" className="text-xs">Contenido</TabsTrigger>
+                                <TabsTrigger value="social" data-testid="tab-social" className="text-xs">Redes</TabsTrigger>
+                                <TabsTrigger value="sections" data-testid="tab-sections" className="text-xs">Secciones</TabsTrigger>
+                                <TabsTrigger value="publish" data-testid="tab-publish" className="text-xs">Publicar</TabsTrigger>
                             </TabsList>
 
                             <TabsContent value="template" className="space-y-3">

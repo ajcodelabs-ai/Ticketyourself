@@ -6,7 +6,8 @@ Plataforma SaaS web de ticketing multi-tenant. Stack: FastAPI + React + MongoDB.
 ## Roadmap
 
 - **Fase 0 — POC integraciones riesgosas** ✅ COMPLETA (Feb 2026) — Stripe Checkout + multitenancy resolver. *Asterisco: con `sk_test_emergent` el webhook real no llega; mitigado en Fase 1 con simulador.*
-- **Fase 1 — Landing pública + auth + organizers + super-admin + Stripe subscription real** ✅ COMPLETA (Feb 2026). Iteración 4: blocker CORS resuelto migrando a Bearer tokens (el ingress de Cloudflare/k8s sobrescribe `Allow-Origin:*` haciendo imposible `credentials:true` con cookies cross-origin). Reseed idempotente + cleanup de organizers ephemeral en cada boot. Test agent: backend 41/41 + frontend 10/10.
+- **Fase 1 — Landing pública + auth + organizers + super-admin + Stripe subscription real** ✅ COMPLETA (Feb 2026).
+- **Fase 2 — Microsite editor + público + activation funnel + welcome email** ✅ COMPLETA (Feb 2026). Test agent iter 5: 71/71 backend (41 Phase 1 + 30 Phase 2) + 7/7 frontend critical flows. 3 nits LOW resueltos (funnel copy en español, editor tabs en 2 filas, redirect coherente).
 - **Fase 2 — Microsite editor + branding por tenant**
 - **Fase 3 — Eventos + tipos de ticket + tickets numerados**
 - **Fase 4 — Compra pública + emisión QR + reportes**
