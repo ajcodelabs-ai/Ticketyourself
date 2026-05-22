@@ -24,14 +24,16 @@ const KNOWN_TENANTS = [
     { slug: "prueba-eventos", name: "Prueba Eventos" },
 ];
 
+function getSwitcherLabel({ loading, tenant, tenantSlug }) {
+    if (loading) return "cargando…";
+    if (tenant) return tenant.name;
+    return tenantSlug || "sin tenant";
+}
+
 function TenantSwitcher() {
     const { tenant, tenantSlug, loading, setTenantSlug } = useTenant();
 
-    const label = loading
-        ? "cargando…"
-        : tenant
-          ? tenant.name
-          : tenantSlug || "sin tenant";
+    const label = getSwitcherLabel({ loading, tenant, tenantSlug });
 
     return (
         <DropdownMenu>

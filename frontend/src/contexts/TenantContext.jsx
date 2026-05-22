@@ -4,6 +4,7 @@ import {
     useEffect,
     useState,
     useCallback,
+    useMemo,
 } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "@/lib/api";
@@ -97,10 +98,13 @@ export function TenantProvider({ children }) {
         [fetchTenant, tenantSlug],
     );
 
+    const value = useMemo(
+        () => ({ tenantSlug, tenant, loading, setTenantSlug, refresh }),
+        [tenantSlug, tenant, loading, setTenantSlug, refresh],
+    );
+
     return (
-        <TenantContext.Provider
-            value={{ tenantSlug, tenant, loading, setTenantSlug, refresh }}
-        >
+        <TenantContext.Provider value={value}>
             {children}
         </TenantContext.Provider>
     );

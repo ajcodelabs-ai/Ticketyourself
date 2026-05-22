@@ -121,77 +121,80 @@ export default function Payments() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {loading && items.length === 0 ? (
-                                <TableRow>
-                                    <TableCell
-                                        colSpan={7}
-                                        className="text-center py-8 text-muted-foreground"
-                                        data-testid="payments-loading"
-                                    >
-                                        Cargando…
-                                    </TableCell>
-                                </TableRow>
-                            ) : items.length === 0 ? (
-                                <TableRow>
-                                    <TableCell
-                                        colSpan={7}
-                                        className="text-center py-10 text-muted-foreground"
-                                        data-testid="payments-empty"
-                                    >
-                                        {error
-                                            ? error
-                                            : "Todavía no hay pagos para este tenant."}
-                                    </TableCell>
-                                </TableRow>
-                            ) : (
-                                items.map((p) => (
-                                    <TableRow
-                                        key={p.id}
-                                        data-testid={`payment-row-${p.stripe_session_id}`}
-                                    >
-                                        <TableCell className="capitalize">
-                                            {p.type}
-                                        </TableCell>
-                                        <TableCell className="max-w-[260px] truncate">
-                                            {p.event_name ||
-                                                p.plan_name ||
-                                                p.description}
-                                        </TableCell>
-                                        <TableCell>
-                                            $
-                                            {(p.amount_cents / 100).toFixed(2)}{" "}
-                                            <span className="text-muted-foreground uppercase text-xs">
-                                                {p.currency}
-                                            </span>
-                                        </TableCell>
-                                        <TableCell>
-                                            <Badge
-                                                data-testid={`payment-status-${p.stripe_session_id}`}
-                                                className={
-                                                    STATUS_STYLE[p.status] ||
-                                                    ""
-                                                }
-                                            >
-                                                {p.status}
-                                            </Badge>
-                                        </TableCell>
-                                        <TableCell className="text-xs text-muted-foreground">
-                                            {fmtDate(p.created_at)}
-                                        </TableCell>
-                                        <TableCell className="text-xs text-muted-foreground">
-                                            {p.paid_at ? fmtDate(p.paid_at) : "—"}
-                                        </TableCell>
-                                        <TableCell className="text-xs font-mono max-w-[180px] truncate">
-                                            {p.stripe_session_id}
-                                        </TableCell>
-                                    </TableRow>
-                                ))
-                            )}
+                            <PaymentsTableBody
+                                loading={loading}
+                                items={items}
+                                error={error}
+                            />
                         </TableBody>
                     </Table>
                 </CardContent>
             </Card>
         </div>
+    );
+}
+
+function PaymentsTableBody({ loading, items, error }) {
+    if (loading && items.length === 0) {
+        return (
+            <TableRow>
+                <TableCell
+                    colSpan={7}
+                    className="text-center py-8 text-muted-foreground"
+                    data-testid="payments-loading"
+                >
+                    Cargando…
+                </TableCell>
+            </TableRow>
+        );
+    }
+    if (items.length === 0) {
+        return (
+            <TableRow>
+                <TableCell
+                    colSpan={7}
+                    className="text-center py-10 text-muted-foreground"
+                    data-testid="payments-empty"
+                >
+                    {error || "Todavía no hay pagos para este tenant."}
+                </TableCell>
+            </TableRow>
+        );
+    }
+    return items.map((p) => <PaymentRow key={p.id} p={p} />);
+}
+
+function PaymentRow({ p }) {
+    return (
+        <TableRow data-testid={`payment-row-${p.stripe_session_id}`}>
+            <TableCell className="capitalize">{p.type}</TableCell>
+            <TableCell className="max-w-[260px] truncate">
+                {p.event_name || p.plan_name || p.description}
+            </TableCell>
+            <TableCell>
+                ${(p.amount_cents / 100).toFixed(2)}{" "}
+                <span className="text-muted-foreground uppercase text-xs">
+                    {p.currency}
+                </span>
+            </TableCell>
+            <TableCell>
+                <Badge
+                    data-testid={`payment-status-${p.stripe_session_id}`}
+                    className={STATUS_STYLE[p.status] || ""}
+                >
+                    {p.status}
+                </Badge>
+            </TableCell>
+            <TableCell className="text-xs text-muted-foreground">
+                {fmtDate(p.created_at)}
+            </TableCell>
+            <TableCell className="text-xs text-muted-foreground">
+                {p.paid_at ? fmtDate(p.paid_at) : "—"}
+            </TableCell>
+            <TableCell className="text-xs font-mono max-w-[180px] truncate">
+                {p.stripe_session_id}
+            </TableCell>
+        </TableRow>
     );
 }
 

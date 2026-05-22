@@ -80,6 +80,8 @@ export default function Success() {
     const isPaid = stripeStatus === "paid" || dbStatus === "paid";
     const isPending = !isPaid && !error && !timedOut;
 
+    const headline = getHeadline({ isPaid, error, timedOut });
+
     return (
         <div data-testid="success-page" className="space-y-6 max-w-2xl">
             <header className="space-y-2">
@@ -87,13 +89,7 @@ export default function Success() {
                     Resultado del pago
                 </Badge>
                 <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
-                    {isPaid
-                        ? "Pago confirmado"
-                        : error
-                          ? "Hubo un error"
-                          : timedOut
-                            ? "Aún no confirmado"
-                            : "Procesando pago…"}
+                    {headline}
                 </h1>
                 {tenant && (
                     <p className="text-sm text-muted-foreground">
@@ -105,15 +101,7 @@ export default function Success() {
             <Card className="border-border/70 tys-soft-shadow">
                 <CardHeader>
                     <CardTitle className="text-lg flex items-center gap-2">
-                        {isPaid ? (
-                            <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-                        ) : error ? (
-                            <AlertCircle className="h-5 w-5 text-destructive" />
-                        ) : timedOut ? (
-                            <Clock className="h-5 w-5 text-amber-600" />
-                        ) : (
-                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                        )}
+                        <StatusIcon isPaid={isPaid} error={error} timedOut={timedOut} />
                         Sesión de Stripe
                     </CardTitle>
                     <CardDescription>
@@ -208,4 +196,18 @@ function Row({ label, value, testid }) {
             </span>
         </div>
     );
+}
+
+function getHeadline({ isPaid, error, timedOut }) {
+    if (isPaid) return "Pago confirmado";
+    if (error) return "Hubo un error";
+    if (timedOut) return "Aún no confirmado";
+    return "Procesando pago…";
+}
+
+function StatusIcon({ isPaid, error, timedOut }) {
+    if (isPaid) return <CheckCircle2 className="h-5 w-5 text-emerald-600" />;
+    if (error) return <AlertCircle className="h-5 w-5 text-destructive" />;
+    if (timedOut) return <Clock className="h-5 w-5 text-amber-600" />;
+    return <Loader2 className="h-5 w-5 animate-spin text-primary" />;
 }
