@@ -55,7 +55,7 @@ export default function BillingSuccess() {
     useEffect(() => {
         if (activating) return;
         if (countdown <= 0) {
-            navigate("/dashboard", { replace: true });
+            navigate("/app/dashboard", { replace: true });
             return;
         }
         const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
@@ -104,7 +104,7 @@ export default function BillingSuccess() {
                             data-testid="billing-success-go-now"
                             className="bg-primary hover:bg-primary/90 text-primary-foreground"
                         >
-                            <Link to="/dashboard">Ir al dashboard ahora</Link>
+                            <Link to="/app/dashboard">Ir al dashboard ahora</Link>
                         </Button>
                         {!activating && !error && (
                             <span

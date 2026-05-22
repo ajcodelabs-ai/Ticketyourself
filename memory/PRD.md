@@ -1,7 +1,9 @@
 # Ticket Yourself (TYS) — PRD
 
 ## Resumen del proyecto
-Plataforma SaaS web de ticketing multi-tenant. Stack: FastAPI + React + MongoDB. UI español (Ecuador), USD. Multi-tenancy por subdominio en prod (`<slug>.ticketyourself.com`); fallback `?tenant=<slug>` y `/o/<slug>` en preview.
+Plataforma SaaS web de ticketing multi-tenant. Stack: FastAPI + React + MongoDB. UI español (Ecuador), USD. Multi-tenancy por subdominio en prod (`<slug>.ajcodelabs.ai`); fallback `?tenant=<slug>` y `/o/<slug>` en preview.
+
+URL preview actual: `https://ticket-poc.preview.emergentagent.com`
 
 ## Roadmap
 
@@ -9,83 +11,91 @@ Plataforma SaaS web de ticketing multi-tenant. Stack: FastAPI + React + MongoDB.
 - **Fase 1** — Landing pública + auth + organizers + super-admin + Stripe subscription real ✅ COMPLETA.
 - **Fase 2** — Microsite editor + público + activation funnel + welcome email ✅ COMPLETA.
 - **Fase 3a** — Eventos básicos + demo shortcut ✅ COMPLETA.
-- **Fase 4** — **Compra pública de tickets + Stripe payment + JWT QR + PDFs + Dashboard de ventas** ✅ COMPLETA (Feb 2026).
-- **Fase 5** (P1) — App de validación en puerta (lector QR, offline-friendly, sync de revocaciones).
-- **Fase 3b** (P2) — Eventos avanzados (tickets numerados, multi-función, suscripciones, promo codes).
+- **Fase 4** — Compra pública de tickets + Stripe payment + JWT QR + PDFs + Dashboard de ventas ✅ COMPLETA (Feb 2026).
+- **Fase 5** — **Reestructura panel organizer: sidebar 5 items + EventWizard 7 secciones + dashboard agregado + plan features + payment methods** ✅ COMPLETA (Feb 2026).
+- **Fase 6** (P0) — Venue editor drag-and-drop + asientos numerados.
+- **Fase 5b** (P1) — Pago manual público completo: comprador elige Stripe/Transfer/Cash en el modal, ve instrucciones; organizer confirma con botón "Marcar como pagado".
+- **Fase 3b** (P1) — Tipos de tickets múltiples, multi-función, promo codes, descuentos avanzados.
+- **Fase 7** (P2) — Super-admin enriquecido (GMV, MRR, churn, eventos de todos los organizers).
 
 ## Personas
-- **Visitante**: llega a la landing, se interesa, se registra.
-- **Organizador**: registra, sube docs, paga plan, gestiona su microsite/eventos/ventas.
-- **Super-admin**: aprueba/rechaza/suspende organizadores, gestiona planes.
-- **Comprador final**: visita la página pública del evento, completa Stripe checkout (o reserva gratis), recibe ticket por email con QR.
+- **Visitante** → landing → registro.
+- **Organizador** → registra, sube docs, paga plan, gestiona dashboard/microsite/eventos/ventas.
+- **Super-admin** → aprueba/rechaza/suspende organizadores, gestiona planes, ve funnel.
+- **Comprador final** → microsite → evento → modal compra → ticket por email con QR.
 
-## Fase 4 — Implementación
+## Fase 5 — Implementación (cerrada)
 
 ### Backend
-**Modelos Mongo nuevos:**
-- `ticket_orders`: `{id, order_number (TYS-NNNNNN), event_id, organizer_id, tenant_slug, buyer{name,email,phone,document_id}, items[], quantity_total, subtotal_cents, fees_cents (5%), total_cents, currency, donation_amount_cents, status (pending|paid|refunded|cancelled), stripe_session_id, stripe_payment_intent_id, paid_at, refunded_at, expires_at}`
-- `tickets`: `{id, order_id, event_id, organizer_id, holder, qr_token (JWT), status (issued|used|revoked), issued_at, used_at, used_by}`
-- `event_capacity_reservations`: `{id, event_id, order_id, quantity, expires_at}` (TTL 15min para Stripe checkout)
-- `counters`: `{_id, seq}` para autoincrement de order_number
-
-**Servicios:**
-- `services/ticket_jwt.py` — HS256 JWT con propósito `ticket_admission`, exp = ends_at + 1 año
-- `services/pdf_service.py` — reportlab A4 con branding del organizador + QR
-- `services/order_service.py` — totals, validate_buyer, reserve_capacity, finalize_paid_order (idempotente), refund_order
-
-**Endpoints públicos (sin auth):**
-- `POST /api/public/orders` — crea orden. Free → instant paid. Paid/donation → Stripe checkout
-- `GET /api/public/orders/{order_number}` — polling status (refresca contra Stripe si pending)
-- `GET /api/public/orders/{order_number}/tickets/{ticket_id}/pdf` — PDF descargable
-
-**Endpoints organizer (auth):**
-- `GET /api/events/me/{id}/orders` — lista órdenes con filtros
-- `GET /api/events/me/{id}/tickets[.csv]` — lista o exporta tickets
-- `GET /api/events/me/{id}/stats` — ingresos, conversión, ocupación
-- `POST /api/events/me/{id}/orders/{order_id}/refund` — reembolso (revoca tickets)
-- `POST /api/events/me/{id}/orders/{order_id}/resend-email`
-- `POST /api/tickets/validate` — Fase 5 ya implementado (decode QR + mark used)
-
-**Webhooks Stripe:**
-- `POST /api/stripe/webhook` — extendido para reconocer `metadata.tys_purpose=ticket_purchase`
-- `POST /api/stripe/_simulate_webhook` — acepta `order_number` para finalizar ticket orders (dev)
-- `POST /api/_dev/simulate-purchase-paid` — shortcut sin Stripe, devuelve tickets emitidos (dev)
+- **`services/plan_features.py`** — feature flags por plan_code, `get_plan_features()`. Soporta `evento_unico`, `basico`, `profesional`, `enterprise`.
+- **`routers/plans.py`** — endpoint `GET /api/plans/me/features` (auth Bearer).
+- **`routers/dashboard.py`** (nuevo) — `GET /api/dashboard/me`: organizer + plan + stats del mes + 5 upcoming events + microsite + funnel. Single call.
+- **`routers/events.py`** — Event extendido con `gallery_urls: [str]`, `sales_start`, `sales_end`, `payment_methods` (stripe/transfer/cash), `discounts` (disability_law/presale), `access_params` (visibility/access_type/max_per_purchase/max_per_email/refund_window_hours/show_buyer_name_on_ticket).
+- **Gallery endpoints**:
+  - `POST /api/events/me/{id}/gallery` (multipart, append, hasta 10)
+  - `DELETE /api/events/me/{id}/gallery/{index}`
+  - `PATCH /api/events/me/{id}/gallery/reorder` body `{order: [int]}`
+- **`seeds.py`** — 3 eventos seed actualizados con `gallery_urls: []`, `payment_methods` (solo Stripe), `discounts` defaults, `access_params` defaults.
 
 ### Frontend
-- `pages/orders/OrderSuccess.jsx` — `/o/:slug/orden/:order_number` con polling cada 2s, QR + PDF download, simulate button (dev)
-- `pages/orders/OrderCancel.jsx` — `/o/:slug/orden/:order_number/cancelado` con retry + simulate
-- `components/orders/PurchaseModal.jsx` — modal en EventPublic con qty / buyer / donation
-- `components/events/EventSalesTabs.jsx` — tabs Estadísticas/Ventas/Tickets en `/eventos/:id`
-- `lib/orders.js` — helpers de formato y URLs
+- **`components/OrganizerLayout.jsx`** — sidebar 240px fija (mobile: drawer con `Sheet`) con 5 items y iconos (LayoutDashboard/MapPin/Ticket/Palette/Settings) + header con avatar dropdown.
+- **`App.js`** — rutas bajo `/app/*` + redirects de las rutas viejas:
+  - `/dashboard` → `/app/dashboard`
+  - `/eventos[/...]` → `/app/eventos[/...]`
+  - `/microsite/editor` → `/app/microsite`
+  - `/configuracion` → `/app/configuracion`
+- **`pages/app/DashboardHome.jsx`** — plan card + status + 4 stat cards + upcoming events table + microsite card + funnel card.
+- **`pages/app/Venues.jsx`** — empty state con ilustración fake seat map + botón "Crear venue" deshabilitado con tooltip "Próximamente — Fase 6".
+- **`pages/app/Configuracion.jsx`** — 3 tabs: Perfil / Plan y facturación (link a portal Stripe) / Seguridad (placeholder).
+- **`components/events/EventWizard.jsx`** — 7 tabs horizontales con indicadores ✓/⚠/○:
+  1. General (título, descripciones, categoría)
+  2. Fechas y ventas (start/end, timezone, sales window, multi-función deshabilitado)
+  3. Media (poster + banner + galería multi-upload + reorder)
+  4. Localidades (solo "General" editable, "Agregar localidad" deshabilitado con tooltip)
+  5. Formas de pago (Stripe siempre on; Transfer + Cash opt-in con campos completos)
+  6. Descuentos (disability_law toggle + presale con % y fecha)
+  7. Accesos y parámetros (visibility, access_type, max_per_purchase, max_per_email, refund_window_hours, show_buyer_name)
 
-### Trade-offs Fase 4
-1. **5% fee fijo** hardcoded para POC; configurable vía env `TYS_FEE_PERCENT`.
-2. **Quantity cap = 10** por orden — buyer.document_id queda opcional, no se pre-cobra por asistente.
-3. **Reservation TTL = 15min** alineado con Stripe Checkout session.
-4. **Single ticket type** ("general") — diversidad de tipos llega en Fase 3b.
-5. **Donation = 1 ticket** independiente del monto, sin tarifa de servicio.
-6. **PDF en backend** vía reportlab (no client-side) — preserva branding consistente.
-7. **JWT en QR** (no DB lookup directo) — permite validación offline en la app de puerta (Fase 5).
-8. **Webhook firmado opcional** — sin `STRIPE_WEBHOOK_SECRET` real, el simulator + GET-with-session_id refresh cubren el flujo.
+### Trade-offs Fase 5
+1. **Sin enforcement de feature flags** — la arquitectura existe (`plan_features.py` + `useFeatures` implícito), pero el wizard no bloquea features por plan. Sólo muestra "Próximamente". Decisión consciente del usuario.
+2. **Pago manual público** — los toggles + datos bancarios se guardan en el evento, **pero la página pública de compra todavía sólo ofrece Stripe**. Falta extender `PurchaseModal` con selector de método y agregar status `pending_manual_payment` + endpoint `confirm-manual-payment` en el panel del organizer. → **Fase 5b** dedicada.
+3. **Galería sin DnD nativo** — usa botones ↑↓ para reordenar en lugar de `dnd-kit`. Funcional pero no premium. Se mejora en Fase 6.
+4. **Cambio de contraseña** — placeholder deshabilitado en Configuración. El endpoint `PATCH /auth/me/password` queda como TODO.
 
-## Backlog
+## Backlog priorizado
 
-### P0 — Fase 5 (próxima)
-- App/feature de validación en puerta (lector QR, idempotente, multi-usuario, offline-first).
-- Dashboard de ventas a nivel organizer (agregado de todos sus eventos).
-- Métricas de comparación: este mes vs mes anterior.
+### P0 — Fase 5b (Pago manual público)
+- Selector de método en `PurchaseModal` (Stripe/Transfer/Cash) si están enabled
+- Backend acepta `payment_method` en POST /api/public/orders
+- Status `pending_manual_payment` + página de éxito con instrucciones
+- Botón "Marcar como pagado" en `EventDetail` → confirma orden + emite tickets + email
+
+### P0 — Fase 6 (Venue editor)
+- CRUD de venues, drag-and-drop seat map, multi-localidad por evento, compradores eligen butaca
 
 ### P1 — Fase 3b
-- Múltiples ticket types por evento (VIP, General, Estudiante).
-- Tickets numerados con seat map.
-- Multi-función (varias fechas por evento).
-- Promo codes + descuentos por grupo.
+- Tipos de tickets múltiples (VIP / Platea / General)
+- Multi-función (varias fechas)
+- Promo codes
+- Descuentos avanzados (NxM, por cantidad, por método)
+- Lista verificada + códigos de acceso
 
-### P2
-- Multi-moneda + payouts a la cuenta del organizador.
-- Custom domains.
-- IA design (Enterprise).
-- Reportes contables (TXT/PDF para SRI).
+### P1 — Onboarding mejoras
+- Demo shortcut visible solo en preview
+- Pre-llenado de plan
+- Validación de RUC/cédula EC
+
+### P2 — Super-admin enriquecido (Fase 7)
+- GMV, MRR, churn rate
+- Vista de eventos de todos los organizers
+- Análisis de uso por plan
+- Exportación de reportes
+
+### P2 — Otros
+- Multi-moneda + payouts
+- Custom domains
+- IA design (Enterprise)
+- Reportes contables (SRI Ecuador)
 
 ## Credenciales y test
 Ver `/app/memory/test_credentials.md`.

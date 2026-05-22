@@ -78,7 +78,7 @@ export default function Onboarding() {
     useEffect(() => {
         if (!organizer) return;
         if (organizer.status !== "pending" || organizer.subscription_status !== "none") {
-            navigate("/dashboard", { replace: true });
+            navigate("/app/dashboard", { replace: true });
         }
     }, [organizer, navigate]);
 
@@ -344,7 +344,7 @@ export default function Onboarding() {
                             ))}
                         </div>
 
-                        <DemoShortcut onActivated={() => navigate("/dashboard")} />
+                        <DemoShortcut onActivated={() => navigate("/app/dashboard")} />
                     </CardContent>
                 </Card>
             )}

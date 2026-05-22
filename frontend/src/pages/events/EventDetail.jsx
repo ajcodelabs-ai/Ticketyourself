@@ -47,7 +47,7 @@ export default function EventDetail() {
             setEvent(data);
         } catch (e) {
             toast.error(formatApiError(e?.response?.data?.detail) || e.message);
-            navigate("/eventos", { replace: true });
+            navigate("/app/eventos", { replace: true });
         } finally {
             setLoading(false);
         }
@@ -86,7 +86,7 @@ export default function EventDetail() {
         try {
             await api.delete(`/events/me/${event.id}`);
             toast.success("Evento eliminado");
-            navigate("/eventos");
+            navigate("/app/eventos");
         } catch (e) {
             toast.error(formatApiError(e?.response?.data?.detail) || e.message);
         }
@@ -121,7 +121,7 @@ export default function EventDetail() {
 
     return (
         <div className="space-y-5" data-testid="event-detail-page">
-            <Button variant="ghost" onClick={() => navigate("/eventos")} className="-ml-2">
+            <Button variant="ghost" onClick={() => navigate("/app/eventos")} className="-ml-2">
                 <ArrowLeft className="h-4 w-4 mr-1" />
                 Volver
             </Button>

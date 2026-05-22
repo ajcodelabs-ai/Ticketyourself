@@ -66,7 +66,7 @@ export default function EventsList() {
                     </p>
                 </div>
                 <Button
-                    onClick={() => navigate("/eventos/nuevo")}
+                    onClick={() => navigate("/app/eventos/nuevo")}
                     className="bg-primary hover:bg-primary/90 text-primary-foreground"
                     data-testid="events-new-btn"
                 >
@@ -116,7 +116,7 @@ export default function EventsList() {
                             Cuando esté listo, publicalo y aparecerá en tu microsite público.
                         </p>
                         <Button
-                            onClick={() => navigate("/eventos/nuevo")}
+                            onClick={() => navigate("/app/eventos/nuevo")}
                             className="bg-primary hover:bg-primary/90 text-primary-foreground"
                             data-testid="events-empty-cta"
                         >
@@ -176,7 +176,7 @@ export default function EventsList() {
                                             className="flex-1"
                                         >
                                             <Link
-                                                to={`/eventos/${e.id}`}
+                                                to={`/app/eventos/${e.id}`}
                                                 data-testid={`event-detail-link-${e.slug}`}
                                             >
                                                 <Edit3 className="h-3.5 w-3.5 mr-1" />

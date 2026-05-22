@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from audit import log_audit
 from db import db
 from models import PlanCreate, PlanOut, PlanUpdate
-from security import require_role
+from security import get_current_user, require_role
+from services.plan_features import get_plan_features
 
 router = APIRouter(prefix="/api/plans", tags=["plans"])
 admin_router = APIRouter(
@@ -20,6 +21,27 @@ admin_router = APIRouter(
 
 def _to_out(doc: dict) -> PlanOut:
     return PlanOut(**doc)
+
+
+@router.get("/me/features")
+async def my_plan_features(user=Depends(get_current_user)):
+    """
+    Returns the feature flags for the current organizer's plan.
+    Used by the frontend to decide what to enable / show "Próximamente".
+    Enforcement is OFF in Phase 5 (architecture only).
+    """
+    plan_code = None
+    if user.get("organizer_id"):
+        org = await db.organizers.find_one(
+            {"id": user["organizer_id"]}, {"_id": 0, "plan_id": 1}
+        )
+        if org and org.get("plan_id"):
+            plan = await db.subscription_plans.find_one(
+                {"id": org["plan_id"]}, {"_id": 0, "code": 1}
+            )
+            if plan:
+                plan_code = plan["code"]
+    return get_plan_features(plan_code)
 
 
 @router.get("", response_model=List[PlanOut])

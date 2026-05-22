@@ -13,10 +13,13 @@ import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import Onboarding from "@/pages/Onboarding";
-import Dashboard from "@/pages/Dashboard";
 import BillingSuccess from "@/pages/BillingSuccess";
 import BillingCancel from "@/pages/BillingCancel";
-import Settings from "@/pages/Settings";
+
+// Phase 5 organizer area
+import DashboardHome from "@/pages/app/DashboardHome";
+import Venues from "@/pages/app/Venues";
+import Configuracion from "@/pages/app/Configuracion";
 
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminOrganizers from "@/pages/admin/AdminOrganizers";
@@ -71,7 +74,7 @@ function App() {
                 <AuthProvider>
                     <TenantProvider>
                         <Routes>
-                            {/* Public */}
+                            {/* ── Public ──────────────────────────────────── */}
                             <Route path="/" element={<Public><Landing /></Public>} />
                             <Route path="/login" element={<Public><Login /></Public>} />
                             <Route path="/registro" element={<Public><Register /></Public>} />
@@ -83,25 +86,32 @@ function App() {
                                 element={<OrderCancel />}
                             />
 
-                            {/* Organizer */}
-                            <Route path="/dashboard" element={<OrgArea><Dashboard /></OrgArea>} />
-                            <Route path="/onboarding" element={<OrgArea><Onboarding /></OrgArea>} />
-                            <Route path="/microsite/editor" element={<OrgArea><MicrositeEditor /></OrgArea>} />
-                            <Route path="/eventos" element={<OrgArea><EventsList /></OrgArea>} />
-                            <Route path="/eventos/nuevo" element={<OrgArea><EventNew /></OrgArea>} />
-                            <Route path="/eventos/:event_id" element={<OrgArea><EventDetail /></OrgArea>} />
-                            <Route path="/eventos/:event_id/editar" element={<OrgArea><EventEdit /></OrgArea>} />
-                            <Route path="/configuracion" element={<OrgArea><Settings /></OrgArea>} />
-                            <Route
-                                path="/billing/success"
-                                element={<OrgArea><BillingSuccess /></OrgArea>}
-                            />
-                            <Route
-                                path="/billing/cancel"
-                                element={<OrgArea><BillingCancel /></OrgArea>}
-                            />
+                            {/* ── Phase 5 organizer area `/app/*` ─────────── */}
+                            <Route path="/app" element={<Navigate to="/app/dashboard" replace />} />
+                            <Route path="/app/dashboard" element={<OrgArea><DashboardHome /></OrgArea>} />
+                            <Route path="/app/venues" element={<OrgArea><Venues /></OrgArea>} />
+                            <Route path="/app/microsite" element={<OrgArea><MicrositeEditor /></OrgArea>} />
+                            <Route path="/app/eventos" element={<OrgArea><EventsList /></OrgArea>} />
+                            <Route path="/app/eventos/nuevo" element={<OrgArea><EventNew /></OrgArea>} />
+                            <Route path="/app/eventos/:event_id" element={<OrgArea><EventDetail /></OrgArea>} />
+                            <Route path="/app/eventos/:event_id/editar" element={<OrgArea><EventEdit /></OrgArea>} />
+                            <Route path="/app/configuracion" element={<OrgArea><Configuracion /></OrgArea>} />
 
-                            {/* Admin */}
+                            {/* Onboarding + billing return URLs keep old paths */}
+                            <Route path="/onboarding" element={<OrgArea><Onboarding /></OrgArea>} />
+                            <Route path="/billing/success" element={<OrgArea><BillingSuccess /></OrgArea>} />
+                            <Route path="/billing/cancel" element={<OrgArea><BillingCancel /></OrgArea>} />
+
+                            {/* ── Backwards-compatible redirects ──────────── */}
+                            <Route path="/dashboard" element={<Navigate to="/app/dashboard" replace />} />
+                            <Route path="/eventos" element={<Navigate to="/app/eventos" replace />} />
+                            <Route path="/eventos/nuevo" element={<Navigate to="/app/eventos/nuevo" replace />} />
+                            <Route path="/eventos/:event_id" element={<RedirectEvent />} />
+                            <Route path="/eventos/:event_id/editar" element={<RedirectEventEdit />} />
+                            <Route path="/microsite/editor" element={<Navigate to="/app/microsite" replace />} />
+                            <Route path="/configuracion" element={<Navigate to="/app/configuracion" replace />} />
+
+                            {/* ── Admin ──────────────────────────────────── */}
                             <Route path="/admin" element={<AdminArea><AdminDashboard /></AdminArea>} />
                             <Route
                                 path="/admin/organizadores"
@@ -111,16 +121,10 @@ function App() {
                                 path="/admin/organizadores/:id"
                                 element={<AdminArea><AdminOrganizerDetail /></AdminArea>}
                             />
-                            <Route
-                                path="/admin/planes"
-                                element={<AdminArea><AdminPlans /></AdminArea>}
-                            />
-                            <Route
-                                path="/admin/funnel"
-                                element={<AdminArea><AdminFunnel /></AdminArea>}
-                            />
+                            <Route path="/admin/planes" element={<AdminArea><AdminPlans /></AdminArea>} />
+                            <Route path="/admin/funnel" element={<AdminArea><AdminFunnel /></AdminArea>} />
 
-                            {/* Legacy POC */}
+                            {/* ── Legacy POC ─────────────────────────────── */}
                             <Route path="/poc" element={<Public><Home /></Public>} />
                             <Route path="/poc/subscribe" element={<Public><Subscribe /></Public>} />
                             <Route path="/poc/ticket" element={<Public><Ticket /></Public>} />
@@ -136,6 +140,17 @@ function App() {
             </BrowserRouter>
         </div>
     );
+}
+
+// Param-preserving redirects for old /eventos/:id URLs
+import { useParams } from "react-router-dom";
+function RedirectEvent() {
+    const { event_id } = useParams();
+    return <Navigate to={`/app/eventos/${event_id}`} replace />;
+}
+function RedirectEventEdit() {
+    const { event_id } = useParams();
+    return <Navigate to={`/app/eventos/${event_id}/editar`} replace />;
 }
 
 export default App;

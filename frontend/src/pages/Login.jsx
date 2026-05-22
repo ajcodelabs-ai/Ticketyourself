@@ -28,7 +28,7 @@ export default function Login() {
             if (data.user.role === "super_admin") {
                 navigate(from || "/admin/organizadores", { replace: true });
             } else {
-                navigate(from || "/dashboard", { replace: true });
+                navigate(from || "/app/dashboard", { replace: true });
             }
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);

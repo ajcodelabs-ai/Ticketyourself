@@ -1,6 +1,5 @@
 /**
- * /eventos/:id/editar — alias of EventDetail's edit mode.
- * Loads the event then renders the form directly.
+ * /app/eventos/:event_id/editar — edit event via the 7-section wizard.
  */
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -8,7 +7,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import api, { formatApiError } from "@/lib/api";
-import EventForm from "@/components/events/EventForm";
+import EventWizard from "@/components/events/EventWizard";
 
 export default function EventEdit() {
     const { event_id } = useParams();
@@ -21,7 +20,7 @@ export default function EventEdit() {
             .then((r) => setEvent(r.data))
             .catch((e) => {
                 toast.error(formatApiError(e?.response?.data?.detail) || e.message);
-                navigate("/eventos", { replace: true });
+                navigate("/app/eventos", { replace: true });
             })
             .finally(() => setLoading(false));
     }, [event_id, navigate]);
@@ -36,21 +35,22 @@ export default function EventEdit() {
     if (!event) return null;
 
     return (
-        <div className="space-y-4 max-w-3xl mx-auto" data-testid="event-edit-page">
+        <div className="space-y-4" data-testid="event-edit-page">
             <Button
                 variant="ghost"
-                onClick={() => navigate(`/eventos/${event.id}`)}
+                onClick={() => navigate(`/app/eventos/${event.id}`)}
                 className="-ml-2"
             >
                 <ArrowLeft className="h-4 w-4 mr-1" />
                 Volver al evento
             </Button>
-            <h1 className="text-2xl font-semibold">Editar evento</h1>
-            <EventForm
-                initial={event}
-                mode="edit"
-                onSaved={() => navigate(`/eventos/${event.id}`)}
-            />
+            <header>
+                <div className="text-sm text-muted-foreground">Editar evento</div>
+                <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight mt-1">
+                    {event.title}
+                </h1>
+            </header>
+            <EventWizard initial={event} mode="edit" />
         </div>
     );
 }

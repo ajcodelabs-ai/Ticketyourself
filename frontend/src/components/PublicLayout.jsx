@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 export default function PublicLayout({ children }) {
     const { isAuthenticated, isAdmin, isOrganizer } = useAuth();
-    const dashboardHref = isAdmin ? "/admin/organizadores" : "/dashboard";
+    const dashboardHref = isAdmin ? "/admin/organizadores" : "/app/dashboard";
 
     return (
         <div className="min-h-screen flex flex-col bg-background">

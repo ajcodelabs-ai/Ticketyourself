@@ -8,7 +8,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -47,6 +47,46 @@ asset_router = APIRouter(prefix="/api/events/assets", tags=["events-assets"])
 
 
 # ── Models ───────────────────────────────────────────────────────────────────
+class PaymentMethodConfig(BaseModel):
+    """Per-event payment methods. Stripe always present; transfer & cash opt-in."""
+    stripe: Dict[str, Any] = Field(default_factory=lambda: {"enabled": True})
+    transfer: Dict[str, Any] = Field(
+        default_factory=lambda: {
+            "enabled": False,
+            "bank_name": "",
+            "account_number": "",
+            "account_holder": "",
+            "instructions": "",
+        }
+    )
+    cash: Dict[str, Any] = Field(
+        default_factory=lambda: {
+            "enabled": False,
+            "location": "",
+            "schedule": "",
+            "contact": "",
+        }
+    )
+
+
+class EventDiscounts(BaseModel):
+    disability_law: Dict[str, Any] = Field(
+        default_factory=lambda: {"enabled": False, "percent": 50}
+    )
+    presale: Dict[str, Any] = Field(
+        default_factory=lambda: {"enabled": False, "percent": 0, "ends_at": None}
+    )
+
+
+class EventAccessParams(BaseModel):
+    visibility: Literal["public", "private"] = "public"
+    access_type: Literal["open", "link_only", "verified_list", "access_code"] = "open"
+    max_per_purchase: int = Field(default=10, ge=1, le=100)
+    max_per_email: Optional[int] = Field(default=None, ge=1)
+    refund_window_hours: int = Field(default=24, ge=0)
+    show_buyer_name_on_ticket: bool = True
+
+
 class EventBase(BaseModel):
     title: str = Field(min_length=2, max_length=140)
     description: str = Field(default="", max_length=8000)
@@ -59,11 +99,16 @@ class EventBase(BaseModel):
     starts_at: datetime
     ends_at: datetime
     timezone: str = Field(default="America/Guayaquil", max_length=64)
+    sales_start: Optional[datetime] = None
+    sales_end: Optional[datetime] = None
     pricing_type: PricingType = "free"
     base_price_cents: int = Field(default=0, ge=0)
     currency: str = Field(default="USD", max_length=3)
     capacity: Optional[int] = Field(default=None, ge=0)
     visibility: Visibility = "public"
+    payment_methods: Optional[PaymentMethodConfig] = None
+    discounts: Optional[EventDiscounts] = None
+    access_params: Optional[EventAccessParams] = None
 
     @field_validator("ends_at")
     @classmethod
@@ -90,11 +135,16 @@ class EventUpdate(BaseModel):
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
     timezone: Optional[str] = None
+    sales_start: Optional[datetime] = None
+    sales_end: Optional[datetime] = None
     pricing_type: Optional[PricingType] = None
     base_price_cents: Optional[int] = None
     currency: Optional[str] = None
     capacity: Optional[int] = None
     visibility: Optional[Visibility] = None
+    payment_methods: Optional[PaymentMethodConfig] = None
+    discounts: Optional[EventDiscounts] = None
+    access_params: Optional[EventAccessParams] = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -221,16 +271,23 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
         )
 
     now = _now_iso()
+    base = payload.model_dump()
     record = {
         "id": str(uuid.uuid4()),
         "organizer_id": org["id"],
         "tenant_slug": org["slug"],
         "slug": slug,
-        **payload.model_dump(),
+        **base,
         "starts_at": payload.starts_at.isoformat(),
         "ends_at": payload.ends_at.isoformat(),
+        "sales_start": payload.sales_start.isoformat() if payload.sales_start else None,
+        "sales_end": payload.sales_end.isoformat() if payload.sales_end else None,
         "poster_url": None,
         "banner_url": None,
+        "gallery_urls": [],
+        "payment_methods": (base.get("payment_methods") or PaymentMethodConfig().model_dump()),
+        "discounts": (base.get("discounts") or EventDiscounts().model_dump()),
+        "access_params": (base.get("access_params") or EventAccessParams().model_dump()),
         "status": "draft",
         "tickets_sold": 0,
         "created_at": now,
@@ -416,6 +473,92 @@ async def upload_banner(
         {"id": event_id}, {"$set": {"banner_url": url, "updated_at": _now_iso()}}
     )
     return {"banner_url": url}
+
+
+# ── Gallery (Fase 5) ────────────────────────────────────────────────────────
+MAX_GALLERY_IMAGES = 10
+
+
+@router.post("/{event_id}/gallery")
+async def upload_gallery_image(
+    event_id: str,
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+):
+    """Append one image to the gallery. Returns the full gallery_urls list."""
+    org = await _require_approved_organizer(user)
+    doc = await db.events.find_one(
+        {"id": event_id, "organizer_id": org["id"]},
+        {"_id": 0, "id": 1, "gallery_urls": 1},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Event not found")
+    current = doc.get("gallery_urls") or []
+    if len(current) >= MAX_GALLERY_IMAGES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Máximo {MAX_GALLERY_IMAGES} imágenes en la galería.",
+        )
+    url = await _store_event_image(event_id, org["id"], file, "gallery")
+    new_list = current + [url]
+    await db.events.update_one(
+        {"id": event_id},
+        {"$set": {"gallery_urls": new_list, "updated_at": _now_iso()}},
+    )
+    return {"gallery_urls": new_list}
+
+
+@router.delete("/{event_id}/gallery/{index}")
+async def delete_gallery_image(
+    event_id: str, index: int, user=Depends(get_current_user)
+):
+    org = await _require_approved_organizer(user)
+    doc = await db.events.find_one(
+        {"id": event_id, "organizer_id": org["id"]},
+        {"_id": 0, "id": 1, "gallery_urls": 1},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Event not found")
+    current: List[str] = doc.get("gallery_urls") or []
+    if index < 0 or index >= len(current):
+        raise HTTPException(status_code=404, detail="Image not found")
+    current.pop(index)
+    await db.events.update_one(
+        {"id": event_id},
+        {"$set": {"gallery_urls": current, "updated_at": _now_iso()}},
+    )
+    return {"gallery_urls": current}
+
+
+class GalleryReorderBody(BaseModel):
+    order: List[int] = Field(min_length=1, max_length=MAX_GALLERY_IMAGES)
+
+
+@router.patch("/{event_id}/gallery/reorder")
+async def reorder_gallery(
+    event_id: str,
+    payload: GalleryReorderBody,
+    user=Depends(get_current_user),
+):
+    org = await _require_approved_organizer(user)
+    doc = await db.events.find_one(
+        {"id": event_id, "organizer_id": org["id"]},
+        {"_id": 0, "id": 1, "gallery_urls": 1},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Event not found")
+    current: List[str] = doc.get("gallery_urls") or []
+    if sorted(payload.order) != list(range(len(current))):
+        raise HTTPException(
+            status_code=422,
+            detail="`order` debe contener exactamente los índices actuales una vez cada uno",
+        )
+    new_list = [current[i] for i in payload.order]
+    await db.events.update_one(
+        {"id": event_id},
+        {"$set": {"gallery_urls": new_list, "updated_at": _now_iso()}},
+    )
+    return {"gallery_urls": new_list}
 
 
 # ── Asset serving ───────────────────────────────────────────────────────────

@@ -69,7 +69,7 @@ export default function MicrositeEditor() {
                     toast.error(
                         "Tu cuenta debe estar aprobada para editar el microsite.",
                     );
-                    navigate("/dashboard", { replace: true });
+                    navigate("/app/dashboard", { replace: true });
                     return;
                 }
                 toast.error(formatApiError(e?.response?.data?.detail) || e.message);

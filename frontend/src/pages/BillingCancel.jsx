@@ -29,7 +29,7 @@ export default function BillingCancel() {
                         <Link to="/onboarding">Volver a elegir plan</Link>
                     </Button>
                     <Button asChild variant="outline" data-testid="cancel-go-dashboard">
-                        <Link to="/dashboard">Ir al dashboard</Link>
+                        <Link to="/app/dashboard">Ir al dashboard</Link>
                     </Button>
                 </CardContent>
             </Card>
