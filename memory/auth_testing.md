@@ -1,13 +1,19 @@
 # TYS — Auth testing guide (Fase 1)
 
-**Auth activo (JWT custom).** bcrypt + pyjwt HS256. Tokens viajan en httpOnly cookies (`tys_access`, `tys_refresh`) **y** soportan `Authorization: Bearer <token>` para curl/testing.
+**Auth activo (JWT custom).** bcrypt + pyjwt HS256. Tokens vienen en el **body** del login/refresh (`access_token`/`refresh_token`) y deben enviarse en cada request como `Authorization: Bearer <access_token>`. **Las cookies se siguen seteando como fallback** (mobile/SSR/curl con `-c`/`-b`), pero el frontend web no las usa porque el ingress de la plataforma reescribe `Access-Control-Allow-Origin: *`, lo cual es incompatible con `credentials:true`.
 
 ## Roles
 - `super_admin` — único: `admin@ticketyourself.com / Admin123!`
 - `organizer` — 3 demos (ver `test_credentials.md`)
 
-## Cookies vs Bearer
-La response de login devuelve el body con `user` + `organizer` **y** setea las cookies. Para curl con cookies usá `-c cookies.txt` en login y `-b cookies.txt` en los siguientes calls. Para Bearer, login con `withCredentials: false` no devuelve los tokens en body (los entrega vía cookies por defecto) — usá cookies en lugar de Bearer para los tests, es más cercano al uso real del frontend.
+## Bearer vs Cookies
+**Recomendado para tests y frontend web**: Bearer.
+- `POST /api/auth/login` → response body incluye `{user, organizer, access_token, refresh_token}` + setea cookies como bonus.
+- En cada call autenticado: `-H "Authorization: Bearer $TOKEN"`.
+- El frontend guarda los tokens en `localStorage` (`tys_access_token` / `tys_refresh_token`) y los inyecta automáticamente vía interceptor axios.
+- `POST /api/auth/logout` limpia las cookies (server-side); el frontend además limpia localStorage.
+
+Para tests con cookies (curl `-c`/`-b`) sigue funcionando localmente y desde mobile, pero **no funciona desde el browser web cross-origin** por el ingress.
 
 ## Endpoints auth
 - `POST /api/auth/register` body `{email, password, company_name, legal_id, org_type, phone, country, slug?}` → 200 con `{user, organizer}`. **No** autologin.

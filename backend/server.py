@@ -59,12 +59,15 @@ app.include_router(admin_router.router)
 app.include_router(poc_router.router)
 
 
-# CORS — explicit origin (credentials required for cookies)
+# CORS — must NOT use "*" with allow_credentials=True per browser spec.
+# We accept any *.preview.emergentagent.com host (current + future previews)
+# plus localhost:3000 (dev). Specific FRONTEND_URL is also added as a literal allow.
 frontend_url = os.environ.get("FRONTEND_URL", "")
-allowed = [o for o in (frontend_url, "http://localhost:3000") if o]
+explicit_allowed = [o for o in (frontend_url, "http://localhost:3000") if o]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed or ["*"],
+    allow_origins=explicit_allowed,
+    allow_origin_regex=r"^https://[a-zA-Z0-9-]+\.preview\.emergentagent\.com$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

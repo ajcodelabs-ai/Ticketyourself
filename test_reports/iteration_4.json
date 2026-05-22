@@ -1,0 +1,42 @@
+{
+  "summary": "Regression POST-blocker-fix (Bearer token migration) — TYS Fase 1. Backend 41/41 PASS in /app/backend/tests/test_phase1.py. Frontend critical flows 100% PASS: (1) Admin login → /admin/organizadores con 3 organizadores exactos (BLOCKER #1 RESUELTO — sin 'Algo salió mal'), (2) Demo approved → /dashboard mostrando 'profesional', (3) Pending (prueba) → /onboarding, (4) Rechazado → /dashboard con motivo 'Documento RUC ilegible, por favor reenvíalo.' intacto, (5) Password incorrecto → toast 'Email o contraseña incorrectos' visible (sin error genérico), (6) Token `tys_access_token` (len=284) guardado en localStorage tras login, (7) Reload preserva sesión vía Bearer (token y URL intactos), (8) Logout limpia localStorage y redirige a /login, (9) RBAC: sin token /dashboard y /admin/* → /login; organizer en /admin/* → 'Acceso denegado', (10) Registro: company_name='Demo Org' auto-adopta `demo-org-2` y muestra 'disponible' transparentemente (suffix por conflicto con demo-org). Reseed verificado: tras `supervisorctl restart backend`, los 3 demos vuelven al estado canónico (demo approved+profesional+active, prueba pending, rechazado rejected con motivo) y la lista de admin queda en exactamente 3 (cleanup borró los 2 ephemeral generados por pytest run anterior — newco-* y actco-*). Login response body ahora incluye access_token+refresh_token además de cookies (compatibilidad mantenida con suite existente).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Register.jsx — slug taken manual-edit", "issue": "Cuando el usuario edita manualmente el slug y digita uno tomado (ej. 'demo-org'), la UI muestra correctamente 'Ya está tomado. Sugerencia: demo-org-2' y el chip clickable, PERO el botón 'Crear cuenta' NO queda disabled (is_disabled=False). El spec dice 'muestra error y bloquea submit'. Backend igualmente rechaza con 409 (cubierto en test_register_slug_taken_409), así que no es un blocker de seguridad — solo UX. Sugerencia: agregar `disabled={slugStatus==='taken' && slugManuallyEdited}` en el botón submit.", "selector": "button[type='submit'] en /registro", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/admin/organizadores", "issues": ["El link 'Ver' por fila aún no tiene data-testid (ej. organizer-view-{id}). Carried over de iteration_3. No bloquea funcionalidad."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase1.py",
+    "/app/test_reports/pytest/phase1_results.xml"
+  ],
+  "action_items": [
+    "(LOW priority) Register.jsx: deshabilitar el botón 'Crear cuenta' cuando slugStatus==='taken' y el usuario editó manualmente, para cumplir con el requisito explícito 'bloquea submit'. El backend ya lo rechaza con 409 — esto es solo UX.",
+    "(Nice-to-have) Agregar data-testid='organizer-view-{id}' en links 'Ver' de /admin/organizadores."
+  ],
+  "critical_code_review_comments": [
+    "SOLID: BLOCKER #1 (CORS + Bearer migration) totalmente resuelto. Login admin desde browser funciona sin 'Algo salió mal'. La response del backend incluye `access_token` + `refresh_token` en body + cookies httpOnly fallback. localStorage.tys_access_token se setea correctamente, interceptor axios inyecta `Authorization: Bearer ...`, withCredentials removido.",
+    "SOLID: Reseed idempotente en cada boot — los 3 demos vuelven a estado canónico (approved/pending/rejected con motivo intacto). prueba-eventos vuelve a pending tras reiniciar.",
+    "SOLID: Cleanup ephemeral funciona — pytest run dejó 2 ephemeral (newco-*, actco-*) que fueron borrados al restart, dejando admin/organizadores en exactamente 3.",
+    "SOLID: Slug auto-adopt transparente funciona — typing 'Demo Org' produce 'demo-org-2' automáticamente con label 'disponible' (no requiere intervención del usuario).",
+    "SOLID: RBAC bidireccional — no-auth redirige a /login; organizer en /admin/* muestra 'Acceso denegado'; admin en organizer endpoints recibe 403.",
+    "SOLID: Reload preserva sesión vía Bearer (no depende de cookies cross-origin que el ingress de Cloudflare rompía).",
+    "SOLID: Toast 'Email o contraseña incorrectos' en login fallido — error legible, no más 'Algo salió mal' genérico.",
+    "SOLID: Stripe simulator + checkout-session ambos modos (subscription / payment) responden 200; webhook real sin secret responde 503.",
+    "MINOR: Register.jsx submit no se deshabilita cuando slug manual está tomado (ver action_items)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (41/41)", "frontend": "100% (10/10 critical flows). Slug auto-adopt OK; slug-manual-taken bloquea solo por backend, no por UI disabled-state (LOW priority gap)."},
+  "test_credentials": "admin@ticketyourself.com/Admin123! (super_admin); demo@ticketyourself.com/Organizer123! (approved/profesional/active); prueba@ticketyourself.com/Organizer123! (pending); rechazado@ticketyourself.com/Organizer123! (rejected, motivo='Documento RUC ilegible, por favor reenvíalo.'). Login response body devuelve access_token + refresh_token + cookies fallback. localStorage keys: tys_access_token, tys_refresh_token.",
+  "seed_data_creation": "No new seed creada. La suite pytest crea ephemeral organizers (new_*/acttest_*) que son borrados automáticamente al próximo restart por _cleanup_ephemeral_test_data().",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "BLOCKER #1 (CORS + Bearer) verificado RESUELTO. Backend test_phase1.py sigue siendo el contrato canónico (41 tests) y pasa 100%. Frontend usa Bearer tokens en localStorage (tys_access_token, tys_refresh_token) — para tests Playwright, dejá que el frontend haga login con el form y los tokens se guardan solos. Single remaining LOW-priority issue: Register.jsx no deshabilita el botón submit cuando el slug manual está tomado (backend igualmente rechaza con 409). El reseed + cleanup en cada boot está activo: admin/organizadores SIEMPRE tiene exactamente 3 demos tras restart."
+}

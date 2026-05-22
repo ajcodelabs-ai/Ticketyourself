@@ -59,6 +59,8 @@ class LoginRequest(BaseModel):
 class AuthMeResponse(BaseModel):
     user: UserOut
     organizer: Optional["OrganizerOut"] = None
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
 
 
 class TokenResponse(BaseModel):

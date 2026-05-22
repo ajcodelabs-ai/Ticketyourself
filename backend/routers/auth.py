@@ -175,6 +175,8 @@ async def login(payload: LoginRequest, response: Response):
     return AuthMeResponse(
         user=_user_to_out(user_safe),
         organizer=await _organizer_to_out(organizer_doc),
+        access_token=access,
+        refresh_token=refresh,
     )
 
 
@@ -193,7 +195,7 @@ async def refresh_token(request: Request, response: Response):
     access = create_access_token(user["id"], user["email"], user["role"])
     new_refresh = create_refresh_token(user["id"])
     set_auth_cookies(response, access, new_refresh)
-    return {"ok": True}
+    return {"ok": True, "access_token": access, "refresh_token": new_refresh}
 
 
 @router.get("/me", response_model=AuthMeResponse)

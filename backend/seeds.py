@@ -338,8 +338,147 @@ async def _seed_demo_organizers() -> None:
         logger.info("Seeded demo organizer %s (%s)", od["company_name"], od["status"])
 
 
+async def _reset_demo_organizers() -> None:
+    """
+    Re-asserts the canonical state of the 3 demo organizers on every startup.
+    Demo organizers are identified by their seeded email; real users are never touched.
+    This protects against side-effects from tests/manual actions (e.g. a tester accidentally
+    approving `prueba-eventos`).
+    """
+    plans_by_code = {
+        p["code"]: p
+        async for p in db.subscription_plans.find({}, {"_id": 0})
+    }
+
+    for od in DEMO_ORGANIZERS:
+        user = await db.users.find_one({"email": od["user_email"].lower()}, {"_id": 0})
+        if not user:
+            continue
+        organizer_id = user.get("organizer_id")
+        if not organizer_id:
+            continue
+
+        plan = plans_by_code.get(od["plan_code"]) if od["plan_code"] else None
+        plan_id = plan["id"] if plan else None
+        approved = od["status"] == "approved"
+
+        # Rebuild admin_comments deterministically
+        admin_comments = []
+        if od.get("approval_comment"):
+            admin_comments.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "admin_id": "system",
+                    "admin_email": "system@ticketyourself.com",
+                    "comment": od["approval_comment"],
+                    "created_at": _now_iso(),
+                }
+            )
+        if od.get("rejection_reason"):
+            admin_comments.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "admin_id": "system",
+                    "admin_email": "system@ticketyourself.com",
+                    "comment": od["rejection_reason"],
+                    "created_at": _now_iso(),
+                }
+            )
+
+        await db.organizers.update_one(
+            {"id": organizer_id},
+            {
+                "$set": {
+                    "company_name": od["company_name"],
+                    "legal_id": od["legal_id"],
+                    "org_type": od["org_type"],
+                    "phone": od["phone"],
+                    "country": od["country"],
+                    "status": od["status"],
+                    "rejection_reason": od.get("rejection_reason"),
+                    "admin_comments": admin_comments,
+                    "plan_id": plan_id,
+                    "subscription_status": od["subscription_status"],
+                    "approved_at": _now_iso() if approved else None,
+                    "approved_by": "system" if approved else None,
+                },
+            },
+        )
+
+        # Also keep tenant status aligned
+        await db.tenants.update_one(
+            {"slug": od["slug"]},
+            {"$set": {"status": "active" if approved else "inactive"}},
+        )
+        logger.info("Reset demo organizer %s → %s", od["slug"], od["status"])
+
+
+# Prefixes used by ephemeral test organizers (created by pytest fixtures / testing agent).
+# These accumulate over runs and pollute the DB. Cleaned up once per boot.
+# Matched against BOTH slug and email — pytest tends to use the email prefix while
+# the auto-slug rewrites the underscore to a dash (e.g. `new_xxx@…` → slug `newco-xxx`).
+_EPHEMERAL_SLUG_PREFIXES = (
+    "newco-",
+    "actco-",
+    "slugtest-",
+    "new-",
+    "acttest-",
+    "eventos-quito-demo",
+)
+_EPHEMERAL_EMAIL_PREFIXES = (
+    "new_",
+    "newco_",
+    "actco_",
+    "acttest_",
+    "slugtest_",
+    "eventos.quito.demo",
+)
+
+
+async def _cleanup_ephemeral_test_data() -> None:
+    """
+    Removes test-created organizers + their users + documents + tenants.
+    Only matches the well-known ephemeral prefixes (no risk of touching real users).
+    Idempotent: when there is nothing to clean it is a no-op.
+    """
+    seed_emails = {od["user_email"].lower() for od in DEMO_ORGANIZERS}
+    seed_slugs = {od["slug"] for od in DEMO_ORGANIZERS}
+
+    slug_or = "|".join(_EPHEMERAL_SLUG_PREFIXES)
+    email_or = "|".join(_EPHEMERAL_EMAIL_PREFIXES)
+    query = {
+        "$or": [
+            {"slug": {"$regex": f"^({slug_or})", "$options": "i"}},
+            {"email": {"$regex": f"^({email_or})", "$options": "i"}},
+        ]
+    }
+
+    org_cursor = db.organizers.find(
+        query, {"_id": 0, "id": 1, "user_id": 1, "slug": 1, "email": 1}
+    )
+    orgs = [o async for o in org_cursor]
+    orgs = [
+        o for o in orgs
+        if o.get("slug") not in seed_slugs and o.get("email", "").lower() not in seed_emails
+    ]
+    if not orgs:
+        return
+
+    org_ids = [o["id"] for o in orgs]
+    user_ids = [o["user_id"] for o in orgs if o.get("user_id")]
+    slugs = [o["slug"] for o in orgs]
+
+    await db.organizer_documents.delete_many({"organizer_id": {"$in": org_ids}})
+    await db.organizers.delete_many({"id": {"$in": org_ids}})
+    await db.users.delete_many({"id": {"$in": user_ids}})
+    await db.tenants.delete_many({"slug": {"$in": slugs}})
+    logger.info("Cleaned up %d ephemeral test organizer(s): %s", len(orgs), slugs)
+
+
 async def run_seeds() -> None:
     await _create_indexes()
+    await _cleanup_ephemeral_test_data()
     await _seed_admin()
     await _seed_plans()
     await _seed_demo_organizers()
+    await _reset_demo_organizers()

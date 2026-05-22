@@ -3,14 +3,44 @@ import axios from "axios";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API_BASE = `${BACKEND_URL}/api`;
 
+const ACCESS_KEY = "tys_access_token";
+const REFRESH_KEY = "tys_refresh_token";
+
+export const tokenStore = {
+    get access() {
+        return localStorage.getItem(ACCESS_KEY);
+    },
+    get refresh() {
+        return localStorage.getItem(REFRESH_KEY);
+    },
+    set({ access_token, refresh_token }) {
+        if (access_token) localStorage.setItem(ACCESS_KEY, access_token);
+        if (refresh_token) localStorage.setItem(REFRESH_KEY, refresh_token);
+    },
+    clear() {
+        localStorage.removeItem(ACCESS_KEY);
+        localStorage.removeItem(REFRESH_KEY);
+    },
+};
+
 const api = axios.create({
     baseURL: API_BASE,
     headers: { "Content-Type": "application/json" },
-    withCredentials: true,
+    // No withCredentials: the platform ingress overrides CORS headers with "*",
+    // which is incompatible with cookies. We rely on Bearer tokens instead.
 });
 
-// Global 401 handler — let the AuthContext handle redirect by emitting a
-// CustomEvent that the provider listens to. We do NOT call router here.
+// Attach Bearer token on every request when available.
+api.interceptors.request.use((config) => {
+    const token = tokenStore.access;
+    if (token) {
+        config.headers = config.headers || {};
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
+// Global 401 handler — let the AuthContext clear session via custom event.
 api.interceptors.response.use(
     (response) => response,
     (error) => {

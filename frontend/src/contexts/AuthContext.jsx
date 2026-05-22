@@ -7,7 +7,7 @@ import {
     useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
-import api, { formatApiError } from "@/lib/api";
+import api, { formatApiError, tokenStore } from "@/lib/api";
 
 const AuthContext = createContext(null);
 
@@ -23,10 +23,17 @@ export function AuthProvider({ children }) {
     }, []);
 
     const checkSession = useCallback(async () => {
+        // Skip /me when there is no token; saves a 401 round-trip on cold load.
+        if (!tokenStore.access) {
+            setSession(null);
+            setLoading(false);
+            return;
+        }
         try {
             const { data } = await api.get("/auth/me");
             setSession(data);
         } catch {
+            tokenStore.clear();
             setSession(null);
         } finally {
             setLoading(false);
@@ -39,6 +46,7 @@ export function AuthProvider({ children }) {
 
     useEffect(() => {
         const handler = () => {
+            tokenStore.clear();
             setSession(null);
         };
         window.addEventListener("tys:unauthorized", handler);
@@ -48,6 +56,12 @@ export function AuthProvider({ children }) {
     const login = useCallback(
         async (email, password) => {
             const { data } = await api.post("/auth/login", { email, password });
+            if (data.access_token) {
+                tokenStore.set({
+                    access_token: data.access_token,
+                    refresh_token: data.refresh_token,
+                });
+            }
             setSession(data);
             return data;
         },
@@ -65,6 +79,7 @@ export function AuthProvider({ children }) {
         } catch {
             /* ignore */
         }
+        tokenStore.clear();
         setSession(null);
         navigate("/login", { replace: true });
     }, [navigate, setSession]);

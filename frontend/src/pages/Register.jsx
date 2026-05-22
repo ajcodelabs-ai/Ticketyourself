@@ -50,6 +50,10 @@ export default function Register() {
     }, [autoSlug, slugEdited]);
 
     // Live slug availability check (debounced).
+    // - If the user didn't edit the slug manually and the base is taken,
+    //   transparently adopt the backend-suggested unique suffix.
+    // - If the user edited it manually, we leave their choice as-is and surface
+    //   the conflict so they can correct it.
     useEffect(() => {
         if (!form.slug) {
             setSlugCheck({ available: null, suggestion: null });
@@ -58,13 +62,19 @@ export default function Register() {
         const t = setTimeout(async () => {
             try {
                 const { data } = await api.post("/auth/check-slug", { slug: form.slug });
-                setSlugCheck({ available: data.available, suggestion: data.suggestion });
+                if (!data.available && data.suggestion && !slugEdited) {
+                    // Auto-adopt suggestion when the user hasn't touched the field.
+                    setForm((f) => ({ ...f, slug: data.suggestion }));
+                    setSlugCheck({ available: true, suggestion: null });
+                } else {
+                    setSlugCheck({ available: data.available, suggestion: data.suggestion });
+                }
             } catch {
                 setSlugCheck({ available: null, suggestion: null });
             }
         }, 350);
         return () => clearTimeout(t);
-    }, [form.slug]);
+    }, [form.slug, slugEdited]);
 
     const update = (key) => (e) => {
         const val = e?.target?.value ?? e;
