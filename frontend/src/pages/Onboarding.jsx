@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
     Select,
@@ -83,11 +82,32 @@ export default function Onboarding() {
         }
     }, [organizer, navigate]);
 
-    const uploadDoc = async (e) => {
-        e.preventDefault();
-        const file = e.target.elements["file"].files[0];
-        if (!file) {
-            toast.error("Seleccioná un archivo");
+    const uploadDoc = async (file) => {
+        if (!file) return;
+        // eslint-disable-next-line no-console
+        console.log("[onboarding] upload start", {
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            doc_type: docType,
+        });
+        // Client-side guards (mirror backend) so we fail fast with a clear toast.
+        const okTypes = [
+            "application/pdf",
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/heic",
+            "image/heif",
+        ];
+        if (file.type && !okTypes.includes(file.type)) {
+            toast.error(
+                `Formato no soportado: ${file.type}. Aceptados: PDF, JPEG, PNG, WEBP, HEIC.`,
+            );
+            return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+            toast.error("El archivo supera los 10MB.");
             return;
         }
         setUploading(true);
@@ -95,24 +115,40 @@ export default function Onboarding() {
             const fd = new FormData();
             fd.append("doc_type", docType);
             fd.append("file", file);
-            // Do NOT set Content-Type manually — axios needs to generate it
-            // with the multipart boundary parameter. The interceptor also
-            // strips any stale Content-Type from the default headers for
-            // FormData payloads.
-            await api.post("/organizers/me/documents", fd);
+            // Do NOT set Content-Type manually — axios auto-generates it with the
+            // multipart boundary. The interceptor strips any stale Content-Type.
+            const resp = await api.post("/organizers/me/documents", fd, {
+                timeout: 60000,
+            });
+            // eslint-disable-next-line no-console
+            console.log("[onboarding] upload OK", resp.status, resp.data?.id);
             toast.success("Documento subido correctamente");
-            e.target.reset();
             await fetchAll();
         } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error("[onboarding] upload FAILED", {
+                status: err?.response?.status,
+                data: err?.response?.data,
+                message: err?.message,
+            });
             const status = err?.response?.status;
             const detail =
                 formatApiError(err?.response?.data?.detail) ||
-                err.message ||
-                "Error desconocido";
+                err?.message ||
+                "Error desconocido al subir el archivo";
             toast.error(status ? `Error ${status}: ${detail}` : detail);
         } finally {
             setUploading(false);
         }
+    };
+
+    const onFileChange = (e) => {
+        const file = e.target.files?.[0];
+        // eslint-disable-next-line no-console
+        console.log("[onboarding] file selected via input", file?.name, file?.type);
+        // Reset input so selecting the same file twice still triggers onChange.
+        e.target.value = "";
+        uploadDoc(file);
     };
 
     const deleteDoc = async (id) => {
@@ -172,9 +208,9 @@ export default function Onboarding() {
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-5">
-                        <form onSubmit={uploadDoc} className="grid sm:grid-cols-[1fr_2fr_auto] gap-3 items-end">
+                        <div className="grid sm:grid-cols-[1fr_2fr] gap-3 items-end">
                             <div className="space-y-1">
-                                <Label htmlFor="doc-type">Tipo</Label>
+                                <Label htmlFor="doc-type">Tipo de documento</Label>
                                 <Select value={docType} onValueChange={setDocType}>
                                     <SelectTrigger id="doc-type" data-testid="doc-type-select">
                                         <SelectValue />
@@ -192,30 +228,48 @@ export default function Onboarding() {
                                     </SelectContent>
                                 </Select>
                             </div>
-                            <div className="space-y-1">
-                                <Label htmlFor="file-input">Archivo</Label>
-                                <Input
+                            <label
+                                htmlFor="file-input"
+                                data-testid="doc-dropzone"
+                                aria-disabled={uploading}
+                                className={`flex items-center justify-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 cursor-pointer transition-colors text-center ${
+                                    uploading
+                                        ? "border-primary bg-primary/5 cursor-wait"
+                                        : "border-border/70 hover:border-primary hover:bg-primary/5"
+                                }`}
+                            >
+                                {uploading ? (
+                                    <>
+                                        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                                        <span className="text-sm font-medium text-primary">
+                                            Subiendo documento…
+                                        </span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Upload className="h-5 w-5 text-primary" />
+                                        <span className="text-sm">
+                                            <strong className="text-primary">
+                                                Hacé click para subir
+                                            </strong>{" "}
+                                            <span className="text-muted-foreground">
+                                                — PDF, JPG, PNG, WEBP o HEIC (máx 10MB)
+                                            </span>
+                                        </span>
+                                    </>
+                                )}
+                                <input
                                     id="file-input"
                                     name="file"
                                     type="file"
-                                    accept=".pdf,.jpg,.jpeg,.png"
+                                    accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/*"
+                                    onChange={onFileChange}
+                                    disabled={uploading}
                                     data-testid="doc-file-input"
+                                    className="sr-only"
                                 />
-                            </div>
-                            <Button
-                                type="submit"
-                                disabled={uploading}
-                                data-testid="upload-doc-btn"
-                                className="bg-primary hover:bg-primary/90 text-primary-foreground"
-                            >
-                                {uploading ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                    <Upload className="h-4 w-4" />
-                                )}
-                                <span className="ml-2">Subir</span>
-                            </Button>
-                        </form>
+                            </label>
+                        </div>
 
                         <div data-testid="docs-list" className="space-y-2">
                             {docs.length === 0 && (

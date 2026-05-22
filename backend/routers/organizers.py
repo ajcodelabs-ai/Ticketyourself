@@ -22,7 +22,14 @@ UPLOAD_ROOT = Path(__file__).resolve().parent.parent / "uploads"
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
 MAX_BYTES = 10 * 1024 * 1024  # 10 MB
-ALLOWED_MIME = {"application/pdf", "image/jpeg", "image/png"}
+ALLOWED_MIME = {
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+}
 ALLOWED_DOC_TYPES = {"ruc", "id_card", "operating_permit", "other"}
 
 
@@ -111,7 +118,17 @@ async def upload_my_doc(
     if doc_type not in ALLOWED_DOC_TYPES:
         raise HTTPException(400, f"Invalid doc_type. Allowed: {sorted(ALLOWED_DOC_TYPES)}")
     if file.content_type not in ALLOWED_MIME:
-        raise HTTPException(415, f"Unsupported file type {file.content_type}")
+        logger.warning(
+            "Document upload rejected: organizer=%s mime=%s filename=%s",
+            org["id"], file.content_type, file.filename,
+        )
+        raise HTTPException(
+            415,
+            (
+                f"Tipo de archivo no permitido: {file.content_type or 'desconocido'}. "
+                "Aceptados: PDF, JPEG, PNG, WEBP, HEIC."
+            ),
+        )
 
     contents = await file.read()
     if len(contents) > MAX_BYTES:
