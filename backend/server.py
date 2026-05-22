@@ -378,11 +378,16 @@ async def stripe_webhook(request: Request):
     body = await request.body()
     stripe_sig = request.headers.get("Stripe-Signature", "")
 
+    if not body or not stripe_sig:
+        raise HTTPException(status_code=400, detail="Missing body or signature")
+
     stripe_checkout = _stripe_for_request(request)
     try:
         webhook_response = await stripe_checkout.handle_webhook(body, stripe_sig)
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("Webhook verification failed")
+        logger.warning("Webhook verification/parse failed: %s", e)
         raise HTTPException(status_code=400, detail=f"Invalid webhook: {e}")
 
     logger.info(
@@ -414,28 +419,54 @@ async def poc_stripe_status(session_id: str, request: Request):
     """
     Polling de Stripe Checkout. Actualiza el DB si el pago está confirmado.
     El frontend llama esto en /poc/success como respaldo al webhook.
+
+    Resilencia: si la lib `emergentintegrations` falla (bug conocido al
+    deserializar `metadata` como StripeObject, o "No such checkout.session"
+    transitorio), devolvemos HTTP 200 con el estado del DB y
+    payment_status='unknown' para que el frontend pueda seguir polling.
+    Cuando llegue el webhook el DB ya marcará 'paid'.
     """
     stripe_checkout = _stripe_for_request(request)
+
+    stripe_payment_status = "unknown"
+    stripe_status = "unknown"
+    amount_total = 0
+    currency = "usd"
+    stripe_error: Optional[str] = None
+
     try:
         status_obj: CheckoutStatusResponse = await stripe_checkout.get_checkout_status(session_id)
+        stripe_payment_status = status_obj.payment_status
+        stripe_status = status_obj.status
+        amount_total = status_obj.amount_total
+        currency = status_obj.currency
+        if status_obj.payment_status == "paid":
+            await _mark_payment_paid(session_id, status_obj.amount_total, status_obj.currency)
     except Exception as e:
-        logger.exception("get_checkout_status failed")
-        raise HTTPException(status_code=502, detail=f"Stripe error: {e}")
-
-    if status_obj.payment_status == "paid":
-        await _mark_payment_paid(session_id, status_obj.amount_total, status_obj.currency)
+        stripe_error = str(e)
+        logger.warning(
+            "get_checkout_status soft-failed for %s: %s",
+            session_id, stripe_error,
+        )
 
     payment = await db.poc_payments.find_one(
         {"stripe_session_id": session_id}, {"_id": 0}
     )
     db_status = payment["status"] if payment else "pending"
+    # Si el DB ya está paid (webhook ya llegó), reflejarlo aunque la lib falle.
+    if db_status == "paid" and stripe_payment_status == "unknown":
+        stripe_payment_status = "paid"
+        stripe_status = "complete"
+        if payment:
+            amount_total = payment.get("amount_cents", amount_total)
+            currency = payment.get("currency", currency)
 
     return StatusResponse(
         session_id=session_id,
-        payment_status=status_obj.payment_status,
-        status=status_obj.status,
-        amount_total=status_obj.amount_total,
-        currency=status_obj.currency,
+        payment_status=stripe_payment_status,
+        status=stripe_status,
+        amount_total=amount_total,
+        currency=currency,
         db_status=db_status,
     )
 
