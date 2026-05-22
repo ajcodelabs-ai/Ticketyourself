@@ -491,7 +491,7 @@ function SectionGeneral({ form, update, disabled }) {
                     maxLength={140}
                     disabled={disabled}
                     placeholder="Ej: Concierto Acústico"
-                    data-testid="wiz-title-input"
+                    data-testid="event-title-input"
                 />
             </Field>
             <Field label="Descripción corta (160 chars máx)">
