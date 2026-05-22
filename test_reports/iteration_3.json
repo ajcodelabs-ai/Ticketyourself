@@ -1,0 +1,37 @@
+{
+  "summary": "TYS Fase 1 regression re-verified. Backend 41/41 PASS via /app/backend/tests/test_phase1.py (health, plans, auth login/register/me/refresh/logout/check-slug, RBAC 401/403, admin stats, admin organizers filter/search/approve/reject/suspend/reactivate/comment, admin plans CRUD + delete-subscribed 409, organizer self GET/PATCH + docs upload (PDF ok, bad doctype 400, bad mime 415), Stripe checkout-session subscription + one_time both 200, simulator idempotent, openapi /api). Frontend smoke E2E PASS for all 10 critical flows: landing CTAs, protected route redirects to /login (no-auth /dashboard and /admin/organizadores), admin login → /admin/organizadores (7 rows visible), /admin/planes shows 4 plans with active toggles, approved organizer → /dashboard 'Tu cuenta está aprobada' (plan Profesional, slug demo-org), pending organizer → /onboarding (paso 1 documentos visible), rejected organizer dashboard shows rejection_reason 'Documento RUC ilegible, por favor reenvíalo' + 'Editar documentos' CTA + comments thread, organizer attempting /admin/* gets 403 UI (no privilege escalation). No new bugs found in this iteration.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Register page (/registro)", "issues": ["Form inputs still lack data-testid attributes (register-email, register-password, register-company-name, register-legal-id, register-phone, register-country, register-org-type, register-submit). Form works via HTML5 selectors but E2E robustness suffers. Carried over from iteration_2."]},
+      {"screen": "/admin/organizadores list", "issues": ["'Ver' detail link in each row lacks data-testid like 'organizer-view-{id}'. UI works (verified 7 rows with Ver buttons visible). Carried over from iteration_2."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase1.py",
+    "/app/test_reports/pytest/phase1_results.xml"
+  ],
+  "action_items": [
+    "(Nice-to-have, low priority) Add data-testid attributes on Register form inputs and admin organizer row 'Ver' link to enable stricter E2E selectors. Not blocking — UI and APIs all functional.",
+    "(Nice-to-have) Periodically clean up test-created ephemeral organizers (new_*/acttest_*/slugtest_*/newco_*/actco_* prefixes) from DB — list now shows 7 rows (3 demos + 4 leftovers). Counts in stats test use >= so tests are stable."
+  ],
+  "critical_code_review_comments": [
+    "Solid: All endpoints under /api, OpenAPI clean (no non-/api paths).",
+    "Solid: Cookies httpOnly tys_access + tys_refresh set on login and cleared on logout; refresh works; Bearer fallback supported.",
+    "Solid: Seed remains idempotent (re-running tests doesn't duplicate demos or plans).",
+    "Solid: RBAC consistently returns 401 (no cookie) vs 403 (wrong role) on /api/admin/*.",
+    "Solid: register endpoint returns 200 with user+organizer; no auto-login (no cookies set) — matches spec.",
+    "Solid: Stripe sk_test_emergent wrapper works for BOTH mode=subscription and mode=payment (no 502 in this run).",
+    "Solid: Frontend ProtectedRoute correctly redirects unauthenticated users to /login on /dashboard and /admin/*; pending→/onboarding, approved→/dashboard, rejected→/dashboard with rejection_reason visible.",
+    "Solid: /admin/planes shows 4 plans (basico, evento_unico, profesional, enterprise) with active switches and Borrar action; profesional Borrar is disabled-styled because demo-org is subscribed (backend returns 409 if attempted)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (41/41)", "frontend": "100% (10/10 critical flows verified)"},
+  "test_credentials": "admin@ticketyourself.com/Admin123! (super_admin), demo@ticketyourself.com/Organizer123! (approved/profesional/active), prueba@ticketyourself.com/Organizer123! (pending), rechazado@ticketyourself.com/Organizer123! (rejected). Also 4 ephemeral test organizers exist in DB from previous test runs.",
+  "seed_data_creation": "No new seed data created in this iteration. Existing pytest suite creates ephemeral organizers per run (new_*/acttest_*/slugtest_* prefixes) which accumulate but don't break tests due to >= comparisons.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite at /app/backend/tests/test_phase1.py (41 tests) is the canonical Fase 1 contract. Run: REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) python -m pytest backend/tests/test_phase1.py -v. Frontend BASE URL is in /app/frontend/.env (https://ticket-poc.preview.emergentagent.com) — note this differs from FRONTEND_URL in backend/.env (d049ce64-...). Cookies still work across both because backend sets domain=Secure+SameSite=None. The only outstanding items are the two data-testid coverage gaps documented in iteration_2 (Register form inputs + admin 'Ver' link); UI functionality itself is complete."
+}
