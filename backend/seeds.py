@@ -2,7 +2,7 @@
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from db import db
 from security import hash_password
@@ -474,6 +474,8 @@ async def _cleanup_ephemeral_test_data() -> None:
     await db.microsites.delete_many({"organizer_id": {"$in": org_ids}})
     await db.microsite_assets.delete_many({"organizer_id": {"$in": org_ids}})
     await db.activation_events.delete_many({"organizer_id": {"$in": org_ids}})
+    await db.events.delete_many({"organizer_id": {"$in": org_ids}})
+    await db.event_assets.delete_many({"organizer_id": {"$in": org_ids}})
     await db.organizers.delete_many({"id": {"$in": org_ids}})
     await db.users.delete_many({"id": {"$in": user_ids}})
     await db.tenants.delete_many({"slug": {"$in": slugs}})
@@ -572,6 +574,120 @@ async def _seed_demo_microsites() -> None:
         logger.info("Seeded microsite for %s (published=%s)", slug, doc["published"])
 
 
+async def _seed_demo_events() -> None:
+    """
+    Three demo events for demo-org. Reset on every boot so the public microsite
+    showcases a realistic mix (paid + paid + free, varying dates).
+    """
+    organizer = await db.organizers.find_one({"slug": "demo-org"}, {"_id": 0, "id": 1})
+    if not organizer:
+        return
+
+    now = datetime.now(timezone.utc)
+    spec = [
+        {
+            "slug": "concierto-acustico-demo",
+            "title": "Concierto Acústico Demo",
+            "short_description": "Una noche íntima con artistas locales.",
+            "description": (
+                "Disfrutá una noche acústica con tres bandas locales en un ambiente íntimo. "
+                "Sonido envolvente, luces tenues y bebida de cortesía con tu entrada."
+            ),
+            "category": "entertainment",
+            "venue_name": "Teatro Bolívar",
+            "venue_address": "Pasaje Royal 175 y Junín",
+            "venue_city": "Quito",
+            "starts_at": (now + timedelta(days=30)).replace(hour=21, minute=0).isoformat(),
+            "ends_at": (now + timedelta(days=30)).replace(hour=23, minute=30).isoformat(),
+            "pricing_type": "paid",
+            "base_price_cents": 1500,
+            "capacity": 100,
+            "poster_url": "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=800",
+        },
+        {
+            "slug": "conferencia-marketing-digital",
+            "title": "Conferencia de Marketing Digital",
+            "short_description": "Estrategias 2026 para marcas en LATAM.",
+            "description": (
+                "Una jornada completa con speakers de Ecuador, Colombia y Argentina. "
+                "Workshops prácticos por la tarde. Coffee break y networking incluidos."
+            ),
+            "category": "educational",
+            "venue_name": "Hotel Quito",
+            "venue_address": "González Suárez N27-142",
+            "venue_city": "Quito",
+            "starts_at": (now + timedelta(days=45)).replace(hour=9, minute=0).isoformat(),
+            "ends_at": (now + timedelta(days=45)).replace(hour=18, minute=0).isoformat(),
+            "pricing_type": "paid",
+            "base_price_cents": 5000,
+            "capacity": 50,
+            "poster_url": "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=800",
+        },
+        {
+            "slug": "charla-liderazgo-femenino",
+            "title": "Charla Gratuita: Liderazgo Femenino",
+            "short_description": "Encuentro abierto con líderes de la región.",
+            "description": (
+                "Conversación abierta sobre desafíos y oportunidades del liderazgo "
+                "femenino en empresas latinoamericanas. Cupos limitados — registrate gratis."
+            ),
+            "category": "corporate",
+            "venue_name": "Centro Cultural Metropolitano",
+            "venue_address": "García Moreno y Espejo",
+            "venue_city": "Quito",
+            "starts_at": (now + timedelta(days=15)).replace(hour=18, minute=30).isoformat(),
+            "ends_at": (now + timedelta(days=15)).replace(hour=20, minute=30).isoformat(),
+            "pricing_type": "free",
+            "base_price_cents": 0,
+            "capacity": None,
+            "poster_url": "https://images.unsplash.com/photo-1591115765373-5207764f72e7?w=800",
+        },
+    ]
+
+    for s in spec:
+        existing = await db.events.find_one(
+            {"organizer_id": organizer["id"], "slug": s["slug"]},
+            {"_id": 0, "id": 1},
+        )
+        record = {
+            "organizer_id": organizer["id"],
+            "tenant_slug": "demo-org",
+            "slug": s["slug"],
+            "title": s["title"],
+            "description": s["description"],
+            "short_description": s["short_description"],
+            "category": s["category"],
+            "venue_name": s["venue_name"],
+            "venue_address": s["venue_address"],
+            "venue_city": s["venue_city"],
+            "venue_country": "Ecuador",
+            "starts_at": s["starts_at"],
+            "ends_at": s["ends_at"],
+            "timezone": "America/Guayaquil",
+            "pricing_type": s["pricing_type"],
+            "base_price_cents": s["base_price_cents"],
+            "currency": "USD",
+            "capacity": s["capacity"],
+            "visibility": "public",
+            "status": "published",
+            "tickets_sold": 0,
+            "poster_url": s["poster_url"],
+            "banner_url": None,
+            "updated_at": _now_iso(),
+            "published_at": _now_iso(),
+        }
+        if existing:
+            # Keep `id` and `created_at`; refresh everything else.
+            await db.events.update_one(
+                {"id": existing["id"]}, {"$set": record}
+            )
+        else:
+            record["id"] = str(uuid.uuid4())
+            record["created_at"] = _now_iso()
+            await db.events.insert_one({**record})
+        logger.info("Seeded demo event %s", s["slug"])
+
+
 async def run_seeds() -> None:
     await _create_indexes()
     await _cleanup_ephemeral_test_data()
@@ -580,3 +696,4 @@ async def run_seeds() -> None:
     await _seed_demo_organizers()
     await _reset_demo_organizers()
     await _seed_demo_microsites()
+    await _seed_demo_events()

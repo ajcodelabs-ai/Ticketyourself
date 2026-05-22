@@ -27,6 +27,12 @@ import AdminFunnel from "@/pages/admin/AdminFunnel";
 import MicrositeEditor from "@/pages/MicrositeEditor";
 import MicrositePublic from "@/pages/MicrositePublic";
 
+import EventsList from "@/pages/events/EventsList";
+import EventNew from "@/pages/events/EventNew";
+import EventDetail from "@/pages/events/EventDetail";
+import EventEdit from "@/pages/events/EventEdit";
+import EventPublic from "@/pages/events/EventPublic";
+
 // Legacy POC pages
 import Home from "@/pages/Home";
 import Subscribe from "@/pages/Subscribe";
@@ -67,11 +73,16 @@ function App() {
                             <Route path="/login" element={<Public><Login /></Public>} />
                             <Route path="/registro" element={<Public><Register /></Public>} />
                             <Route path="/o/:slug" element={<MicrositePublic />} />
+                            <Route path="/o/:slug/e/:event_slug" element={<EventPublic />} />
 
                             {/* Organizer */}
                             <Route path="/dashboard" element={<OrgArea><Dashboard /></OrgArea>} />
                             <Route path="/onboarding" element={<OrgArea><Onboarding /></OrgArea>} />
                             <Route path="/microsite/editor" element={<OrgArea><MicrositeEditor /></OrgArea>} />
+                            <Route path="/eventos" element={<OrgArea><EventsList /></OrgArea>} />
+                            <Route path="/eventos/nuevo" element={<OrgArea><EventNew /></OrgArea>} />
+                            <Route path="/eventos/:event_id" element={<OrgArea><EventDetail /></OrgArea>} />
+                            <Route path="/eventos/:event_id/editar" element={<OrgArea><EventEdit /></OrgArea>} />
                             <Route path="/configuracion" element={<OrgArea><Settings /></OrgArea>} />
                             <Route
                                 path="/billing/success"

@@ -343,9 +343,73 @@ export default function Onboarding() {
                                 />
                             ))}
                         </div>
+
+                        <DemoShortcut onActivated={() => navigate("/dashboard")} />
                     </CardContent>
                 </Card>
             )}
+        </div>
+    );
+}
+
+function DemoShortcut({ onActivated }) {
+    const { refreshOrganizer, checkSession } = useAuth();
+    const [enabled, setEnabled] = useState(false);
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        let alive = true;
+        api.get("/_dev/enabled")
+            .then((r) => alive && setEnabled(!!r.data?.enabled))
+            .catch(() => alive && setEnabled(false));
+        return () => {
+            alive = false;
+        };
+    }, []);
+
+    if (!enabled) return null;
+
+    const activate = async () => {
+        setBusy(true);
+        try {
+            await api.post("/_dev/demo-activate", { plan_code: "profesional" });
+            // Refresh AuthContext so the dashboard sees status=approved.
+            await checkSession();
+            await refreshOrganizer();
+            toast.success(
+                "Cuenta activada en modo demo · plan Profesional · sin pago real",
+            );
+            onActivated?.();
+        } catch (e) {
+            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div
+            className="mt-6 rounded-xl border-2 border-dashed border-amber-400 bg-amber-50/60 p-4 space-y-2"
+            data-testid="demo-shortcut-block"
+        >
+            <p className="text-sm font-semibold text-amber-900 flex items-center gap-1.5">
+                <span className="text-base">⚠️</span> Modo demo (preview)
+            </p>
+            <p className="text-sm text-amber-900/80">
+                ¿Querés saltarte el pago y la aprobación para explorar el dashboard?
+                Activa tu cuenta como aprobada con plan Profesional, sin tocar Stripe ni
+                esperar a admin. Solo en este entorno de preview.
+            </p>
+            <Button
+                onClick={activate}
+                disabled={busy}
+                variant="outline"
+                className="bg-amber-100/80 border-amber-300 text-amber-900 hover:bg-amber-200/60"
+                data-testid="demo-shortcut-btn"
+            >
+                {busy ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : "⚡"}{" "}
+                Simular pago + aprobación (solo demo)
+            </Button>
         </div>
     );
 }

@@ -66,6 +66,12 @@ app.include_router(microsite_router.asset_router)
 app.include_router(activation_router.router)
 app.include_router(activation_router.admin_router)
 app.include_router(dev_router.router)
+from routers import events as events_router  # noqa: E402
+
+app.include_router(events_router.router)
+app.include_router(events_router.public_router)
+app.include_router(events_router.admin_router)
+app.include_router(events_router.asset_router)
 
 
 # CORS — must NOT use "*" with allow_credentials=True per browser spec.

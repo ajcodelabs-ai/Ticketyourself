@@ -19,11 +19,19 @@ async def get_or_create_customer(
 ) -> Tuple[str, bool]:
     """
     Returns (customer_id, created_now). Tries to reuse existing
-    organizer.stripe_customer_id; otherwise creates a new one.
+    organizer.stripe_customer_id; if Stripe says it doesn't exist
+    (organizer was created in a different test mode account, etc.),
+    transparently create a fresh one.
     """
     existing = organizer.get("stripe_customer_id")
-    if existing:
-        return existing, False
+    if existing and not existing.startswith("demo_"):
+        try:
+            stripe.Customer.retrieve(existing)
+            return existing, False
+        except stripe.error.InvalidRequestError as e:
+            # Customer not found in current Stripe account → fall through.
+            if "No such customer" not in str(e):
+                raise
     customer = stripe.Customer.create(
         email=user_email,
         name=organizer.get("company_name"),

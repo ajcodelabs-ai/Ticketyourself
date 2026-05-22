@@ -60,5 +60,5 @@ export default function MicrositePublic() {
         );
     }
 
-    return <MicrositeRenderer microsite={microsite} />;
+    return <MicrositeRenderer microsite={microsite} tenantSlug={slug} />;
 }
