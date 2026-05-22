@@ -31,8 +31,10 @@ export default function BillingSuccess() {
                             event_type: "checkout.session.completed",
                             session_id: sessionId,
                         });
-                    } catch {
-                        // ignore — real webhook may handle it
+                    } catch (err) {
+                        // 404 is expected when this is a real webhook environment.
+                        // Logged at warn level for diagnostics, never bubbled up.
+                        console.warn("Webhook simulator skipped:", err?.message);
                     }
                 }
                 await refreshOrganizer();
