@@ -1,82 +1,84 @@
 # Ticket Yourself (TYS) — PRD
 
 ## Resumen del proyecto
+Plataforma SaaS web de ticketing multi-tenant. Stack: FastAPI + React + MongoDB. UI español (Ecuador), USD. Multi-tenancy por subdominio en prod (`<slug>.ticketyourself.com`); fallback `?tenant=<slug>` en preview.
 
-Plataforma SaaS web de ticketing multi-tenant. Cada organizador (tenant) tiene su microsite y puede vender entradas para sus eventos. Stack: **FastAPI + React + MongoDB**. UI en español (Ecuador), USD.
+## Roadmap
 
-Multi-tenancy en producción será por subdominio (`<slug>.ticketyourself.com`). En preview Emergent — sin DNS wildcard — se usa fallback `?tenant=<slug>` en la URL.
+- **Fase 0 — POC integraciones riesgosas** ✅ COMPLETA (Feb 2026) — Stripe Checkout + multitenancy resolver. *Asterisco: con `sk_test_emergent` el webhook real no llega; mitigado en Fase 1 con simulador.*
+- **Fase 1 — Landing pública + auth + organizers + super-admin + Stripe subscription real** ⏳ EN PROGRESO (Feb 2026)
+- **Fase 2 — Microsite editor + branding por tenant**
+- **Fase 3 — Eventos + tipos de ticket + tickets numerados**
+- **Fase 4 — Compra pública + emisión QR + reportes**
+- Fases 5-10 — Control de acceso en puerta, multi-moneda, custom domains, IA design, integraciones externas, mobile.
 
-## Roadmap (alto nivel)
+## Personas
+- **Visitante**: llega a la landing, se interesa, se registra.
+- **Organizador**: registra, sube docs, paga plan, gestiona su microsite/eventos (Fase 2+).
+- **Super-admin** (`admin@ticketyourself.com`): aprueba/rechaza/suspende organizadores, gestiona planes.
+- **Comprador final**: aparece en Fase 3 (compra invitado).
 
-- **Fase 0 — POC integraciones riesgosas** ⏳ EN PROGRESO
-  - Stripe Checkout end-to-end (sesión + retorno + webhook + polling)
-  - Resolución de tenant (subdominio en prod, `?tenant=` en preview)
-- **Fase 1 — Auth + Organizers + Microsite básico**
-- **Fase 2 — Eventos + Tickets**
-- **Fase 3 — Compras públicas + emisión de tickets**
-- Fases 4-10 — Reportería, suscripciones recurrentes reales, branding por tenant, etc.
+## Arquitectura Fase 1 — implementado
 
-## User personas (Fase 0)
+### Backend (`/app/backend/`)
+Modular:
+- `server.py` orquesta app, routers, lifespan, CORS.
+- `db.py`, `models.py`, `security.py` (bcrypt + pyjwt HS256), `slugs.py`, `stripe_service.py` (raw SDK con `api_base=https://integrations.emergentagent.com/stripe`), `seeds.py`, `audit.py`.
+- `poc_models.py` agrupa los modelos legacy del POC.
+- `routers/`: `auth.py`, `tenants.py`, `plans.py`, `organizers.py`, `billing.py`, `stripe_webhook.py`, `admin.py`, `poc.py`.
+- Uploads en `/app/backend/uploads/{organizer_id}/{uuid}_{filename}` (PDF/JPG/PNG, máx 10MB).
 
-- **Desarrollador / fundador (vos)**: necesita validar que Stripe y la multitenancy funcionan antes de seguir.
-- *(En Fase 1+ aparecen "Organizador" y "Comprador final".)*
-
-## Fase 0 — Alcance implementado (Feb 2026)
-
-### Backend (`/app/backend/server.py`)
-- `GET  /api/health` — healthcheck.
-- `GET  /api/tenants/resolve` — resuelve por Host header (subdominio) o por `?tenant=<slug>`. Devuelve `{tenant: null}` si no hay match (HTTP 200).
-- `POST /api/poc/stripe/create-subscription-session` — crea sesión Stripe para plan `basic` ($20) o `pro` ($50). **POC**: pago único, NO subscription real. Real subscription queda para Fase 1+.
-- `POST /api/poc/stripe/create-ticket-session` — crea sesión Stripe para un ticket de monto variable.
-- `POST /api/stripe/webhook` — verifica firma y marca `poc_payments` → `paid` (idempotente).
-- `GET  /api/poc/stripe/status/{session_id}` — polling de respaldo (Emergent's `sk_test_emergent` puede no entregar webhooks). Actualiza DB igualmente.
-- `GET  /api/poc/payments?tenant_slug=...` — lista pagos POC del tenant.
-- Seed idempotente al arrancar: `demo-org`, `prueba-eventos`.
-- Índices: `tenants.slug` unique, `poc_payments.stripe_session_id` unique.
-
-### Frontend (`/app/frontend/src`)
-- `/` Landing con CTAs a subscribe / ticket.
-- `/poc/subscribe` Selector plan Básico/Pro → redirección a Stripe.
-- `/poc/ticket` Form evento + monto → redirección a Stripe.
-- `/poc/success` Polling cada 2s (10 intentos) sobre `status/{session_id}`.
-- `/poc/cancel` Retorno de cancelación.
-- `/poc/payments` Tabla de pagos del tenant con estado en vivo.
-- `TenantContext` con persistencia en `localStorage` y sync con `?tenant=`.
-- shadcn/ui + Tailwind, fuente Inter, paleta índigo `--primary: 245 70% 55%`.
+### Endpoints destacados
+- **Auth**: `POST /api/auth/{register,login,logout,refresh,check-slug}` · `GET /api/auth/me`. JWT en httpOnly cookies (`tys_access` 30 min, `tys_refresh` 7 días) + soporte `Authorization: Bearer`.
+- **Planes**: `GET /api/plans` (público), `/api/admin/plans` CRUD (super_admin).
+- **Organizers**: `/api/organizers/me*` (organizer), `/api/organizers/{id}/documents*` (admin descarga/lista).
+- **Billing**: `POST /api/billing/checkout-session` (subscription/payment), `/api/billing/portal-session`.
+- **Stripe**: `POST /api/stripe/webhook` (firma real, requiere `STRIPE_WEBHOOK_SECRET`) y `POST /api/stripe/_simulate_webhook` (sólo si `ENV=development`).
+- **Admin organizers**: list/get/approve/reject/suspend/comment + `/api/admin/dashboard/stats`. Todo registrado en `audit_log`.
 
 ### Modelos Mongo
-- `tenants { _id, id, slug (unique), name, status, created_at }`
-- `poc_payments { _id, id, tenant_slug, stripe_session_id (unique), type ('subscription'|'ticket'), status ('pending'|'paid'|'failed'), amount_cents, currency, description, plan_name?, event_name?, created_at, paid_at? }`
+`users`, `organizers`, `organizer_documents`, `tenants`, `subscription_plans`, `audit_log`, `billing_intents`, `poc_payments`. IDs como UUID strings, `_id` siempre excluido.
 
-### Decisiones / trade-offs
+### Frontend (`/app/frontend/src/`)
+- `contexts/AuthContext.jsx` (login/logout/refresh, escucha 401 globales).
+- `lib/api.js` axios con `withCredentials: true` + interceptor 401.
+- `components/{PublicLayout, OrganizerLayout, AdminLayout, ProtectedRoute}.jsx`.
+- Pages organizer: `Landing, Login, Register, Onboarding, Dashboard, BillingSuccess, BillingCancel, Settings`.
+- Pages admin: `AdminDashboard, AdminOrganizers, AdminOrganizerDetail, AdminPlans`.
+- POC sigue accesible en `/poc/*`.
 
-1. **Subscription = one-time payment en Fase 0**. `emergentintegrations.checkout` no expone `mode='subscription'`. Validamos el flujo con un cargo único equivalente al primer mes; el SetupIntent / Subscription real va en Fase 1+ cuando creemos Stripe Products.
-2. **Polling complementa el webhook**. Con `STRIPE_API_KEY=sk_test_emergent` los webhooks pueden no llegar al endpoint custom (el playbook de Emergent lo advierte). El frontend hace polling vía `/api/poc/stripe/status/{session_id}` que también actualiza el DB. Ambos caminos son idempotentes.
-3. **`amount_cents` en ticket llega del frontend**: aceptable en Fase 0 porque no hay eventos persistidos todavía. En Fase 2 los precios vivirán en `events`/`ticket_types` server-side.
-4. **Sin auth en Fase 0**. Se agrega en Fase 1.
+### Seed idempotente (al boot)
+1. Super-admin `admin@ticketyourself.com / Admin123!`
+2. 4 planes: `evento_unico` $50 one_time, `basico` $20/mes, `profesional` $50/mes, `enterprise` $200/mes.
+3. 3 organizadores demo:
+   - `demo-org` aprobado, plan `profesional`, suscripción activa.
+   - `prueba-eventos` pending, 1 doc subido, sin plan.
+   - `evento-rechazado` rechazado con motivo "Documento RUC ilegible".
+   Todos con password `Organizer123!`.
 
-## Backlog priorizado
+### Trade-offs / decisiones
+1. **Stripe SDK crudo** apunta a `integrations.emergentagent.com/stripe` (Emergent wrapper). Con `sk_test_emergent` los webhooks reales no llegan a `/api/stripe/webhook`; el simulador `POST /api/stripe/_simulate_webhook` cubre el flujo de testing. La página `/billing/success` lo invoca automáticamente.
+2. **JWT en httpOnly cookies + Bearer fallback**: cookies para web (más seguras vs. XSS), Bearer para curl/testing.
+3. **Slug auto-generado + editable**: validación on-the-fly contra `/auth/check-slug`. Inmutable post-registro.
+4. **Suspended login OK pero dashboard bloqueado** — UX prevalece sobre cierre abrupto.
+5. **`/billing/success` auto-redirige a `/dashboard` en 5s** (con botón "Ir ahora" para impacientes).
 
-### P0 (próxima fase, Fase 1)
-- Auth: JWT-based custom auth (organizer login). Llamar `integration_playbook_expert_v2` antes de codear.
-- Modelo `Organizer` (1:1 con Tenant) + onboarding.
-- Subscription Stripe **real** (mode=subscription, Products+Prices, Customer Portal).
-- Microsite público del tenant en `/o/{slug}` o subdominio.
+## Backlog
 
-### P1
-- Eventos y tipos de ticket (con precios server-side).
-- Compras públicas (sin auth de comprador, solo email).
-- Emisión de tickets con QR.
+### P0 — Fase 2 (próxima)
+- Editor del microsite del organizer (branding, descripción, hero).
+- Sub-dominio activo en producción (DNS wildcard + cert).
+- Customer Portal de Stripe testeable end-to-end con llaves propias.
+
+### P1 — Fase 3
+- Modelo `events` (con `ticket_types`, capacidad, precios server-side).
+- Compra pública del ticket (sin auth, email + nombre).
+- Emisión PDF + QR del ticket.
 
 ### P2
-- Reportería por evento / tenant.
-- Branding por tenant (logo, colores).
-- Multi-moneda real, payouts.
+- Reportes de ventas por evento/tenant.
+- Multi-moneda + payouts.
+- IA design (Enterprise feature) + custom domains.
 
-## Test credentials
-
-Ver `/app/memory/test_credentials.md` (tenants seed, tarjeta test Stripe, URLs de prueba).
-
-## Auth status
-
-Ver `/app/memory/auth_testing.md` — **no hay auth en Fase 0**.
+## Credenciales y test
+Ver `/app/memory/test_credentials.md` y `/app/memory/auth_testing.md`.
