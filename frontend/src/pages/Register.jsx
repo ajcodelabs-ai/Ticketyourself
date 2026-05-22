@@ -283,7 +283,10 @@ export default function Register() {
 
                         <Button
                             type="submit"
-                            disabled={submitting}
+                            disabled={
+                                submitting ||
+                                (slugEdited && slugCheck.available === false)
+                            }
                             data-testid="register-submit-btn"
                             size="lg"
                             className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
