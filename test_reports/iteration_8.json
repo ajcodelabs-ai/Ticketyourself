@@ -1,0 +1,53 @@
+{
+  "summary": "Phase 5b end-to-end manual payment tested (backend + frontend). Backend 17/18 PASS (1 skip, 0 fail) — 9/9 original test_phase5b.py + 7/8 new test_phase5b_extra.py + skip on free-event regression (couldn't auto-discover a free event via /api/public/events which returned 422 without a slug param — non-blocking, free events already validated in test_phase4.py). Frontend: 3 payment chips on EventPublic, PurchaseModal payment-method-selector with 3 radios, transfer flow redirects to /o/.../orden/TYS-XXXXXX/instrucciones with full PaymentInstructions page (title/summary/deadline/transfer/copy-reference/back-to-event testids). Organizer Ventas tab: orange pending banner visible, filter-method & filter-status testids work, 19 manual-action-* buttons visible, manual-payment-dialog opens with buyer info + 'El comprador vio' bank block + open-confirm/open-reject; reject-submit disabled <2 chars, enabled ≥2 chars (as documented).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/public/events", "issue": "Returns 422 when called without query params (slug). Listing endpoint likely requires tenant_slug — minor: not part of Phase 5b scope but inconvenient for discovery."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "PurchaseModal — transfer selected", "issues": ["Top-right chip still reads 'Pago con tarjeta' regardless of selected method; the submit-button label still says 'Pagar $15.75 USD' even when 'Transferencia bancaria' is chosen. Consider changing button text to 'Reservar y ver instrucciones' (or similar) when transfer/cash is selected so users aren't surprised by the redirect to instructions."]},
+      {"screen": "PurchaseModal — buyer inputs", "issues": ["Form inputs lack name/id attributes and have no data-testid (buyer-name-input / buyer-email-input / buyer-phone-input / buyer-document-input). Required only for testability — adding them would harden Playwright tests."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase5b.py",
+    "/app/backend/tests/test_phase5b_extra.py",
+    "/app/test_reports/pytest/phase5b_results.xml",
+    "/app/test_reports/pytest/phase5b_extra_results.xml",
+    "/app/test_reports/pytest/phase5b_all.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Add data-testid attributes to PurchaseModal buyer inputs (buyer-name-input, buyer-email-input, buyer-phone-input, buyer-document-input) for test stability.",
+    "OPTIONAL: Adjust PurchaseModal submit-button label + top-right chip when payment_method != 'stripe' (currently says 'Pagar' / 'Pago con tarjeta' even for transfer/cash).",
+    "OPTIONAL: /api/public/events currently 422 without slug — consider returning a 400 with a clearer message, or supporting a no-arg listing for the demo tenant."
+  ],
+  "critical_code_review_comments": [
+    "SOLID: confirm_manual_payment is fully idempotent — calling twice returns same ticket set (verified count == 1 in test_confirm_idempotent_no_double_tickets).",
+    "SOLID: reject-payment refuses paid orders with 422 (test_reject_already_paid_returns_422 verified).",
+    "SOLID: RBAC blocks other organizer (404 returned for rechazado@ user — equivalent to 403 since event isn't visible to them).",
+    "SOLID: JWT ticket validates exactly once — second call returns reason='already_used'.",
+    "SOLID: Email logs (filesystem mock) correctly written on create-order (Instrucciones de pago), confirm (Tu entrada — re-uses purchase_confirmation), reject (Tu reserva fue cancelada).",
+    "SOLID: PaymentInstructions page renders all expected testids and polls (UI text 'Esta página se actualiza automáticamente cuando se confirme').",
+    "SOLID: EventPublic exposes 3 informational chips (event-payment-chip-{stripe,transfer,cash}) and PurchaseModal exposes 3 selectable radios (payment-method-{m}) — names are intentionally different per the agent-to-agent note.",
+    "OBSERVATION: PurchaseModal submit-button text is hard-coded 'Pagar' irrespective of selected method — UX could be improved as listed above.",
+    "OBSERVATION: 19 pending manual orders accumulated due to repeated test runs (test data is preserved). Consider adding a cleanup endpoint or filter on test buyers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase5b_extra.py (NEW — 8 additional tests covering: transfer-on-stripe-only event 422, stripe regression, seed orders presence, email logs on create/confirm/reject, idempotency-on-paid, reject-on-paid 422, free-event regression skip)"
+  ],
+  "success_rate": {
+    "backend": "16/17 PASS, 1 SKIP (94.1% pass / 100% of actually executed tests). Combined with prior phase4+phase5 suites: all green.",
+    "frontend": "100% on Phase 5b critical paths (chips, purchase modal selector + transfer redirect, instructions page, organizer pending banner + filters + manual dialog + reject min-length)."
+  },
+  "test_credentials": "demo@ticketyourself.com / Organizer123! ; rechazado@ticketyourself.com / Organizer123! (both already documented).",
+  "seed_data_creation": "Tests create ~12 ephemeral manual orders (Test transfer/cash + random sid) on concierto-acustico-demo each run. They persist in DB and accumulate (19 pending manual visible in Ventas tab). Email log /app/backend/email_log/ has ~80 mock html files. No prod-impact since this is preview.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite for Phase 5b: pytest backend/tests/test_phase5b.py + backend/tests/test_phase5b_extra.py. Note: test_free_event_ignores_payment_method skips because /api/public/events requires a tenant_slug query param — could be fixed by hardcoding a known free slug if needed. PurchaseModal buyer inputs have no data-testid — use page.get_by_label('Nombre completo'), page.get_by_label('Email').first, etc. Submit button uses data-testid='purchase-submit'. For organizer flow, click the 'Ventas' tab (role='tab') after navigating to /app/eventos/{id}.",
+  "rca of the issue": "N/A — no product bugs identified in Phase 5b."
+}

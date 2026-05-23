@@ -50,6 +50,7 @@ class CreateOrderBody(BaseModel):
     buyer: BuyerIn
     donation_amount_cents: Optional[int] = None
     origin_url: Optional[str] = None  # for success/cancel URL construction
+    payment_method: str = Field(default="stripe")  # stripe | transfer | cash
 
 
 async def _load_event_or_404(tenant_slug: str, event_slug: str) -> tuple[dict, dict]:
@@ -77,18 +78,23 @@ async def create_order(payload: CreateOrderBody):
         donation_amount_cents=payload.donation_amount_cents or 0,
     )
 
+    # Free events ignore payment_method (no payment at all)
+    effective_method = (
+        "stripe" if event.get("pricing_type") == "free" else payload.payment_method
+    )
+
     order = await order_service.create_order_skeleton(
         event=event,
         organizer=organizer,
         quantity=payload.quantity,
         buyer=buyer,
         totals=totals,
+        payment_method=effective_method,
     )
 
     # FREE event — confirm instantly.
     if event.get("pricing_type") == "free":
         finalized, tickets = await order_service.finalize_paid_order(order=order)
-        # Best-effort email
         try:
             from services.email_service import send_purchase_confirmation
             await send_purchase_confirmation(
@@ -101,6 +107,37 @@ async def create_order(payload: CreateOrderBody):
             "status": "paid",
             "tickets": tickets,
             "redirect_to": f"/o/{organizer['slug']}/orden/{finalized['order_number']}",
+        }
+
+    # ── Manual payment (transfer / cash) — no Stripe, 48h reservation ─────
+    if effective_method in ("transfer", "cash"):
+        await order_service.reserve_capacity(
+            event_id=event["id"],
+            order_id=order["id"],
+            quantity=payload.quantity,
+            ttl_minutes=order_service.MANUAL_RESERVATION_TTL_HOURS * 60,
+        )
+        instructions = order_service.get_payment_instructions(
+            event=event, payment_method=effective_method
+        )
+        # Best-effort email with instructions
+        try:
+            from services.email_service import send_manual_payment_instructions
+
+            await send_manual_payment_instructions(
+                order=order,
+                event=event,
+                organizer=organizer,
+                instructions=instructions,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed sending manual payment instructions")
+        return {
+            "order_number": order["order_number"],
+            "status": "pending_manual_payment",
+            "payment_method": effective_method,
+            "payment_instructions": instructions,
+            "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}/instrucciones",
         }
 
     # Paid or donation > 0 — Stripe checkout.
@@ -183,6 +220,39 @@ async def get_order(order_number: str, session_id: Optional[str] = Query(default
             "company_name": organizer.get("company_name") if organizer else None,
         },
         "branding": (microsite or {}).get("branding") or {},
+    }
+
+
+@router.get("/{order_number}/instructions")
+async def get_payment_instructions(order_number: str):
+    """
+    Public endpoint that returns the manual-payment instructions for an order.
+    Only meaningful when status=pending_manual_payment. Buyer reaches this via
+    the `redirect_to` from create_order or the email link.
+    """
+    order = await db.ticket_orders.find_one({"order_number": order_number}, {"_id": 0})
+    if not order:
+        raise HTTPException(404, "Orden no encontrada")
+    event = await db.events.find_one({"id": order["event_id"]}, {"_id": 0})
+    organizer = await db.organizers.find_one({"id": order["organizer_id"]}, {"_id": 0})
+    microsite = await db.microsites.find_one(
+        {"organizer_id": order["organizer_id"]}, {"_id": 0}
+    )
+    method = order.get("payment_method") or "stripe"
+    instructions = order_service.get_payment_instructions(
+        event=event or {}, payment_method=method
+    )
+    return {
+        "order": order,
+        "event": event,
+        "organizer": {
+            "slug": organizer["slug"] if organizer else None,
+            "company_name": organizer.get("company_name") if organizer else None,
+            "email": organizer.get("email") if organizer else None,
+        },
+        "branding": (microsite or {}).get("branding") or {},
+        "payment_method": method,
+        "payment_instructions": instructions,
     }
 
 

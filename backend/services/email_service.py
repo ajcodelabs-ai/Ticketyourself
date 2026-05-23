@@ -11,7 +11,7 @@ import asyncio
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -266,4 +266,110 @@ async def send_purchase_confirmation(
         frontend_base=frontend or "",
     )
     subject = f"Tu entrada para {event.get('title','el evento')} — TYS"
+    return await send_email(to=order["buyer"]["email"], subject=subject, html=html)
+
+
+# ── Manual payment templates (Phase 5b) ─────────────────────────────────────
+def _format_dollars(cents: int, currency: str = "USD") -> str:
+    return f"${(cents or 0) / 100:.2f} {currency}"
+
+
+def _format_deadline(created_at_iso: str, hours: int = 48) -> str:
+    """Returns a human-readable deadline string."""
+    try:
+        t = datetime.fromisoformat(created_at_iso.replace("Z", "+00:00"))
+        dl = t + timedelta(hours=hours)
+        return dl.strftime("%d/%m/%Y %H:%M")
+    except Exception:  # noqa: BLE001
+        return f"{hours}h después de la reserva"
+
+
+def render_manual_instructions_html(
+    *, order: dict, event: dict, organizer: dict, instructions: dict, link: str
+) -> str:
+    method = instructions.get("method", "transfer")
+    rows = ""
+    if method == "transfer":
+        rows = f"""
+        <tr><td><b>Banco</b></td><td>{instructions.get("bank_name","—")}</td></tr>
+        <tr><td><b>Cuenta</b></td><td>{instructions.get("account_number","—")}</td></tr>
+        <tr><td><b>Titular</b></td><td>{instructions.get("account_holder","—")}</td></tr>
+        <tr><td colspan="2"><i>{instructions.get("instructions","")}</i></td></tr>
+        """
+        title = "Transferencia bancaria"
+    else:
+        rows = f"""
+        <tr><td><b>Lugar</b></td><td>{instructions.get("location","—")}</td></tr>
+        <tr><td><b>Horarios</b></td><td>{instructions.get("schedule","—")}</td></tr>
+        <tr><td><b>Contacto</b></td><td>{instructions.get("contact","—")}</td></tr>
+        """
+        title = "Pago en efectivo"
+
+    deadline = _format_deadline(order.get("created_at", ""), 48)
+    total = _format_dollars(order.get("total_cents", 0), order.get("currency", "USD"))
+    return f"""
+<!doctype html>
+<html><body style="font-family:Inter,sans-serif;max-width:560px;margin:auto;padding:24px;color:#1f2937">
+  <div style="background:#fef3c7;border-radius:10px;padding:16px;margin-bottom:18px">
+    <div style="font-size:13px;color:#92400e;font-weight:600">⏳ RESERVA PENDIENTE DE PAGO</div>
+    <h1 style="margin:8px 0 4px;font-size:22px">{event.get("title","Tu reserva")}</h1>
+    <div style="font-size:13px;color:#92400e">Orden <b>{order["order_number"]}</b></div>
+  </div>
+  <p>Hola {order["buyer"].get("name","")}, recibimos tu reserva. Para confirmarla
+  tenés que completar el pago vía <b>{title}</b>.</p>
+  <table style="width:100%;border-collapse:collapse;margin:16px 0">
+    <tr><td><b>Monto a pagar</b></td><td><b>{total}</b></td></tr>
+    {rows}
+    <tr><td><b>Referencia</b></td><td>{order["order_number"]}</td></tr>
+    <tr><td><b>Fecha límite</b></td><td>{deadline}</td></tr>
+  </table>
+  <p style="background:#f3f4f6;border-radius:8px;padding:12px;font-size:13px;color:#4b5563">
+    <b>Importante:</b> tu reserva se libera automáticamente si no completás el pago
+    antes de la fecha límite. Cuando confirmes el pago,
+    <b>{organizer.get("company_name","el organizador")}</b> te enviará tus tickets
+    por email.
+  </p>
+  <p><a href="{link}" style="display:inline-block;background:#4f46e5;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Ver instrucciones detalladas</a></p>
+  <p style="font-size:12px;color:#9ca3af;margin-top:24px">TYS · Ticket Yourself</p>
+</body></html>
+"""
+
+
+async def send_manual_payment_instructions(
+    *, order: dict, event: dict, organizer: dict, instructions: dict
+) -> dict:
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    link = f"{frontend}/o/{organizer.get('slug','')}/orden/{order['order_number']}/instrucciones"
+    html = render_manual_instructions_html(
+        order=order, event=event, organizer=organizer, instructions=instructions, link=link
+    )
+    subject = f"Tu reserva para {event.get('title','el evento')} — Instrucciones de pago"
+    return await send_email(to=order["buyer"]["email"], subject=subject, html=html)
+
+
+async def send_manual_payment_rejected(
+    *, order: dict, event: dict, organizer: dict, reason: str
+) -> dict:
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    event_link = (
+        f"{frontend}/o/{organizer.get('slug','')}/e/{event.get('slug','')}"
+        if event else frontend
+    )
+    html = f"""
+<!doctype html>
+<html><body style="font-family:Inter,sans-serif;max-width:520px;margin:auto;padding:24px;color:#1f2937">
+  <div style="background:#fee2e2;border-radius:10px;padding:16px;margin-bottom:18px">
+    <div style="font-size:13px;color:#991b1b;font-weight:600">❌ RESERVA CANCELADA</div>
+    <h1 style="margin:8px 0 4px;font-size:22px">{event.get("title","Tu reserva")}</h1>
+    <div style="font-size:13px;color:#991b1b">Orden <b>{order["order_number"]}</b></div>
+  </div>
+  <p>Hola {order["buyer"].get("name","")}, lamentablemente tu reserva fue cancelada por el organizador.</p>
+  <p><b>Motivo:</b><br/><i>{(reason or "Sin detalles")[:500]}</i></p>
+  <p>Tu cupo fue liberado. Si crees que es un error, contactá al organizador
+  ({organizer.get("email","")}) o reintentá la compra.</p>
+  <p><a href="{event_link}" style="display:inline-block;background:#4f46e5;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Volver al evento</a></p>
+  <p style="font-size:12px;color:#9ca3af;margin-top:24px">TYS · Ticket Yourself</p>
+</body></html>
+"""
+    subject = f"Tu reserva fue cancelada — {event.get('title','el evento')}"
     return await send_email(to=order["buyer"]["email"], subject=subject, html=html)

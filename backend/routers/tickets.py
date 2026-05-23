@@ -202,6 +202,108 @@ async def organizer_resend_email(
     return {"ok": True}
 
 
+# ── Manual payment confirm / reject (Phase 5b) ──────────────────────────────
+class ConfirmManualBody(BaseModel):
+    notes: Optional[str] = Field(default=None, max_length=500)
+    reference: Optional[str] = Field(default=None, max_length=120)
+
+
+class RejectManualBody(BaseModel):
+    reason: str = Field(min_length=2, max_length=500)
+
+
+@router.post("/events/me/{event_id}/orders/{order_id}/confirm-payment")
+async def organizer_confirm_payment(
+    event_id: str,
+    order_id: str,
+    payload: ConfirmManualBody,
+    user=Depends(get_current_user),
+):
+    """
+    Organizer confirms a `pending_manual_payment` order. Idempotent — calling
+    twice doesn't duplicate tickets. RBAC: only the organizer that owns the
+    event can confirm.
+    """
+    organizer, event = await _require_event_for_user(event_id, user)
+    order = await db.ticket_orders.find_one(
+        {"id": order_id, "event_id": event_id}, {"_id": 0}
+    )
+    if not order:
+        raise HTTPException(404, "Order not found")
+    refreshed, tickets = await order_service.confirm_manual_payment(
+        order=order,
+        confirmer_user_id=user["id"],
+        notes=payload.notes,
+        reference=payload.reference,
+    )
+    # Best-effort confirmation email with tickets
+    try:
+        from services.email_service import send_purchase_confirmation
+
+        await send_purchase_confirmation(
+            order=refreshed, event=event, organizer=organizer, tickets=tickets
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed sending manual confirmation email")
+    # Audit
+    try:
+        from audit import log_audit
+
+        await log_audit(
+            user["id"],
+            "confirm_manual_payment",
+            "ticket_order",
+            refreshed["id"],
+            {"order_number": refreshed["order_number"], "reference": payload.reference},
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Audit log failed for confirm_manual_payment")
+    return {"ok": True, "order": refreshed, "tickets": tickets}
+
+
+@router.post("/events/me/{event_id}/orders/{order_id}/reject-payment")
+async def organizer_reject_payment(
+    event_id: str,
+    order_id: str,
+    payload: RejectManualBody,
+    user=Depends(get_current_user),
+):
+    """
+    Organizer rejects a `pending_manual_payment` (or `pending`) order. Releases
+    the reservation, emails the buyer.
+    """
+    organizer, event = await _require_event_for_user(event_id, user)
+    order = await db.ticket_orders.find_one(
+        {"id": order_id, "event_id": event_id}, {"_id": 0}
+    )
+    if not order:
+        raise HTTPException(404, "Order not found")
+    rejected = await order_service.reject_manual_payment(
+        order=order, reason=payload.reason, rejecter_user_id=user["id"]
+    )
+    try:
+        from services.email_service import send_manual_payment_rejected
+
+        await send_manual_payment_rejected(
+            order=rejected, event=event, organizer=organizer, reason=payload.reason
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed sending manual rejection email")
+    try:
+        from audit import log_audit
+
+        await log_audit(
+            user["id"],
+            "reject_manual_payment",
+            "ticket_order",
+            rejected["id"],
+            {"order_number": rejected["order_number"], "reason": payload.reason},
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Audit log failed for reject_manual_payment")
+    return {"ok": True, "order": rejected}
+
+
 # ── Ticket validation (Fase 5 UI consumes this) ─────────────────────────────
 class ValidateBody(BaseModel):
     qr_token: str

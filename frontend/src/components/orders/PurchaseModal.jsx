@@ -25,17 +25,30 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import api, { formatApiError } from "@/lib/api";
 import { formatPriceLabel } from "@/lib/events";
-import { formatCents, orderSuccessPath } from "@/lib/orders";
+import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders";
 
 const FEE_PERCENT = 5;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Returns list of payment_method codes that are enabled on the event. */
+function activeMethodsFor(event) {
+    const pm = event?.payment_methods || {};
+    return ["stripe", "transfer", "cash"].filter((k) => pm[k]?.enabled);
+}
 
 export default function PurchaseModal({ open, onOpenChange, event, tenantSlug }) {
     const navigate = useNavigate();
     const pricingType = event?.pricing_type || "free";
 
+    const activeMethods = useMemo(() => {
+        if (pricingType === "free") return [];
+        const m = activeMethodsFor(event);
+        return m.length ? m : ["stripe"]; // safety fallback
+    }, [event, pricingType]);
+
     const [quantity, setQuantity] = useState(1);
     const [donation, setDonation] = useState("");
+    const [paymentMethod, setPaymentMethod] = useState("stripe");
     const [buyer, setBuyer] = useState({
         name: "",
         email: "",
@@ -51,8 +64,9 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
             setDonation("");
             setBuyer({ name: "", email: "", phone: "", document_id: "" });
             setErrors({});
+            setPaymentMethod(activeMethods[0] || "stripe");
         }
-    }, [open]);
+    }, [open, activeMethods]);
 
     const totals = useMemo(() => {
         if (!event) return { subtotal: 0, fees: 0, total: 0 };
@@ -95,6 +109,7 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
                     document_id: buyer.document_id || undefined,
                 },
                 origin_url: window.location.origin,
+                payment_method: pricingType === "free" ? "stripe" : paymentMethod,
             };
             if (pricingType === "donation") {
                 payload.donation_amount_cents = Math.round(parseFloat(donation) * 100);
@@ -107,8 +122,16 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
                 onOpenChange(false);
                 return;
             }
+            if (data.status === "pending_manual_payment" && data.redirect_to) {
+                toast.success(
+                    "Reserva creada. Te enviamos las instrucciones de pago por email.",
+                );
+                navigate(data.redirect_to);
+                onOpenChange(false);
+                return;
+            }
             if (data.checkout_url) {
-                // Redirect to Stripe checkout
+                // Stripe checkout
                 window.location.href = data.checkout_url;
                 return;
             }
@@ -226,6 +249,48 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
                         {errors.donation && (
                             <p className="text-xs text-red-600">{errors.donation}</p>
                         )}
+                    </div>
+                )}
+
+                {/* Payment method selector — only when ≥2 active */}
+                {activeMethods.length > 1 && (
+                    <div className="space-y-2" data-testid="payment-method-selector">
+                        <Label>¿Cómo quieres pagar?</Label>
+                        <div className="space-y-2">
+                            {activeMethods.map((m) => {
+                                const meta = PAYMENT_METHOD_META[m];
+                                const checked = paymentMethod === m;
+                                return (
+                                    <label
+                                        key={m}
+                                        className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition ${
+                                            checked
+                                                ? "border-primary bg-primary/5"
+                                                : "hover:bg-secondary/40"
+                                        }`}
+                                        data-testid={`payment-method-${m}`}
+                                    >
+                                        <input
+                                            type="radio"
+                                            name="payment_method"
+                                            value={m}
+                                            checked={checked}
+                                            onChange={() => setPaymentMethod(m)}
+                                            className="mt-1"
+                                        />
+                                        <div className="flex-1">
+                                            <div className="font-medium text-sm flex items-center gap-2">
+                                                <span className="text-lg">{meta.icon}</span>
+                                                {meta.label}
+                                            </div>
+                                            <div className="text-xs text-muted-foreground">
+                                                {meta.description}
+                                            </div>
+                                        </div>
+                                    </label>
+                                );
+                            })}
+                        </div>
                     </div>
                 )}
 

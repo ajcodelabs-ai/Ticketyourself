@@ -676,22 +676,41 @@ async def _seed_demo_events() -> None:
             "poster_url": s["poster_url"],
             "banner_url": None,
             "gallery_urls": [],
-            "payment_methods": {
-                "stripe": {"enabled": True},
-                "transfer": {
-                    "enabled": False,
-                    "bank_name": "",
-                    "account_number": "",
-                    "account_holder": "",
-                    "instructions": "",
-                },
-                "cash": {
-                    "enabled": False,
-                    "location": "",
-                    "schedule": "",
-                    "contact": "",
-                },
-            },
+            "payment_methods": (
+                {
+                    "stripe": {"enabled": True},
+                    "transfer": {
+                        "enabled": True,
+                        "bank_name": "Banco Pichincha",
+                        "account_number": "2100123456",
+                        "account_holder": "Eventos Demo S.A.",
+                        "instructions": "Envianos el comprobante al WhatsApp +593 98 765 4321 indicando el número de orden.",
+                    },
+                    "cash": {
+                        "enabled": True,
+                        "location": "Av. Amazonas N32-45, oficina 3, Quito",
+                        "schedule": "Lun-Vie 9:00-18:00, Sáb 10:00-14:00",
+                        "contact": "+593 98 765 4321",
+                    },
+                }
+                if s["slug"] == "concierto-acustico-demo"
+                else {
+                    "stripe": {"enabled": True},
+                    "transfer": {
+                        "enabled": False,
+                        "bank_name": "",
+                        "account_number": "",
+                        "account_holder": "",
+                        "instructions": "",
+                    },
+                    "cash": {
+                        "enabled": False,
+                        "location": "",
+                        "schedule": "",
+                        "contact": "",
+                    },
+                }
+            ),
             "discounts": {
                 "disability_law": {"enabled": False, "percent": 50},
                 "presale": {"enabled": False, "percent": 0, "ends_at": None},
@@ -719,6 +738,88 @@ async def _seed_demo_events() -> None:
         logger.info("Seeded demo event %s", s["slug"])
 
 
+async def _seed_demo_manual_orders() -> None:
+    """
+    Phase 5b — creates two demo orders in `pending_manual_payment` over the
+    concierto-acustico-demo event so the organizer can see them in the
+    Ventas tab without having to manually create them.
+
+    Idempotent: deletes any prior demo manual orders before re-inserting.
+    The buyer emails are well-known so they can be safely cleaned up.
+    """
+    # Locate the event + organizer for this seed.
+    organizer = await db.organizers.find_one({"slug": "demo-org"}, {"_id": 0, "id": 1, "slug": 1})
+    if not organizer:
+        return
+    event = await db.events.find_one(
+        {"organizer_id": organizer["id"], "slug": "concierto-acustico-demo"},
+        {"_id": 0},
+    )
+    if not event:
+        return
+
+    seed_emails = ("transfer-demo@example.com", "cash-demo@example.com")
+    # Cleanup previous demo manual orders + their reservations.
+    prior = db.ticket_orders.find(
+        {"organizer_id": organizer["id"], "buyer.email": {"$in": list(seed_emails)}},
+        {"_id": 0, "id": 1},
+    )
+    prior_ids = [d["id"] async for d in prior]
+    if prior_ids:
+        await db.event_capacity_reservations.delete_many({"order_id": {"$in": prior_ids}})
+        await db.ticket_orders.delete_many({"id": {"$in": prior_ids}})
+
+    seeds = [
+        {
+            "payment_method": "transfer",
+            "buyer": {
+                "name": "Test Transferencia",
+                "email": seed_emails[0],
+                "phone": "+593 99 111 1111",
+                "document_id": "1700000001",
+            },
+            "quantity": 2,
+        },
+        {
+            "payment_method": "cash",
+            "buyer": {
+                "name": "Test Efectivo",
+                "email": seed_emails[1],
+                "phone": "+593 99 222 2222",
+                "document_id": "1700000002",
+            },
+            "quantity": 1,
+        },
+    ]
+
+    from services import order_service
+
+    for spec in seeds:
+        totals = order_service.compute_totals(
+            event=event, quantity=spec["quantity"], donation_amount_cents=0
+        )
+        try:
+            order = await order_service.create_order_skeleton(
+                event=event,
+                organizer=organizer,
+                quantity=spec["quantity"],
+                buyer=spec["buyer"],
+                totals=totals,
+                payment_method=spec["payment_method"],
+            )
+            await order_service.reserve_capacity(
+                event_id=event["id"],
+                order_id=order["id"],
+                quantity=spec["quantity"],
+                ttl_minutes=order_service.MANUAL_RESERVATION_TTL_HOURS * 60,
+            )
+            logger.info(
+                "Seeded demo manual order %s (%s)", order["order_number"], spec["payment_method"]
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Could not seed manual order for %s", spec["payment_method"])
+
+
 async def run_seeds() -> None:
     await _create_indexes()
     await _cleanup_ephemeral_test_data()
@@ -728,3 +829,4 @@ async def run_seeds() -> None:
     await _reset_demo_organizers()
     await _seed_demo_microsites()
     await _seed_demo_events()
+    await _seed_demo_manual_orders()

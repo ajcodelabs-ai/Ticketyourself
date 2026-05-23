@@ -1,101 +1,110 @@
 # Ticket Yourself (TYS) — PRD
 
-## Resumen del proyecto
-Plataforma SaaS web de ticketing multi-tenant. Stack: FastAPI + React + MongoDB. UI español (Ecuador), USD. Multi-tenancy por subdominio en prod (`<slug>.ajcodelabs.ai`); fallback `?tenant=<slug>` y `/o/<slug>` en preview.
+## Resumen
+Plataforma SaaS web de ticketing multi-tenant. Stack: FastAPI + React + MongoDB. UI español (Ecuador), USD. Multi-tenancy `<slug>.ajcodelabs.ai` (prod) / `?tenant=<slug>` / `/o/<slug>` (preview).
 
-URL preview actual: `https://ticket-poc.preview.emergentagent.com`
+URL preview: `https://ticket-poc.preview.emergentagent.com`
 
 ## Roadmap
 
-- **Fase 0** — POC integraciones riesgosas ✅ COMPLETA (Feb 2026).
-- **Fase 1** — Landing pública + auth + organizers + super-admin + Stripe subscription real ✅ COMPLETA.
-- **Fase 2** — Microsite editor + público + activation funnel + welcome email ✅ COMPLETA.
-- **Fase 3a** — Eventos básicos + demo shortcut ✅ COMPLETA.
-- **Fase 4** — Compra pública de tickets + Stripe payment + JWT QR + PDFs + Dashboard de ventas ✅ COMPLETA (Feb 2026).
-- **Fase 5** — **Reestructura panel organizer: sidebar 5 items + EventWizard 7 secciones + dashboard agregado + plan features + payment methods** ✅ COMPLETA (Feb 2026).
-- **Fase 6** (P0) — Venue editor drag-and-drop + asientos numerados.
-- **Fase 5b** (P1) — Pago manual público completo: comprador elige Stripe/Transfer/Cash en el modal, ve instrucciones; organizer confirma con botón "Marcar como pagado".
-- **Fase 3b** (P1) — Tipos de tickets múltiples, multi-función, promo codes, descuentos avanzados.
-- **Fase 7** (P2) — Super-admin enriquecido (GMV, MRR, churn, eventos de todos los organizers).
+- **Fase 0** — POC integraciones ✅
+- **Fase 1** — Landing + auth + organizers + admin + Stripe subscription ✅
+- **Fase 2** — Microsite editor + activation funnel + welcome email ✅
+- **Fase 3a** — Eventos básicos + demo shortcut ✅
+- **Fase 4** — Compra Stripe + JWT QR + PDFs + dashboard ventas ✅
+- **Fase 5** — Reestructura panel: sidebar 5 items + EventWizard 7 secciones + dashboard agregado + plan features + galería + Fixes A/B ✅
+- **Fase 5b** — **Pago manual end-to-end (transferencia + efectivo)** ✅ (Feb 2026)
+- **Fase 6** (P0) — Venue editor drag-and-drop + asientos numerados
+- **Fase 3b** (P1) — Multi ticket types, multi-función, promo codes, descuentos avanzados
+- **Fase 7** (P2) — Super-admin enriquecido (GMV, MRR, churn, eventos cross-tenant)
 
 ## Personas
-- **Visitante** → landing → registro.
-- **Organizador** → registra, sube docs, paga plan, gestiona dashboard/microsite/eventos/ventas.
-- **Super-admin** → aprueba/rechaza/suspende organizadores, gestiona planes, ve funnel.
-- **Comprador final** → microsite → evento → modal compra → ticket por email con QR.
+- Visitante → registro
+- Organizador → dashboard / microsite / eventos / ventas
+- Super-admin → aprobaciones, planes, funnel
+- Comprador final → microsite → evento → modal compra → ticket por email (o instrucciones de pago si manual)
 
-## Fase 5 — Implementación (cerrada)
+## Fase 5b — Implementación (cerrada)
+
+### Modelo
+`ticket_orders` extendido:
+- `status` admite nuevo valor `pending_manual_payment` (entre `pending` y `paid`)
+- `payment_method`: `"stripe" | "transfer" | "cash"` (default `stripe`)
+- `manual_payment_info`: `{method, reference, paid_at, confirmed_by, confirmed_at, organizer_notes}` — null para Stripe
+- Reservas: TTL 15min para Stripe / **48h para manuales**
 
 ### Backend
-- **`services/plan_features.py`** — feature flags por plan_code, `get_plan_features()`. Soporta `evento_unico`, `basico`, `profesional`, `enterprise`.
-- **`routers/plans.py`** — endpoint `GET /api/plans/me/features` (auth Bearer).
-- **`routers/dashboard.py`** (nuevo) — `GET /api/dashboard/me`: organizer + plan + stats del mes + 5 upcoming events + microsite + funnel. Single call.
-- **`routers/events.py`** — Event extendido con `gallery_urls: [str]`, `sales_start`, `sales_end`, `payment_methods` (stripe/transfer/cash), `discounts` (disability_law/presale), `access_params` (visibility/access_type/max_per_purchase/max_per_email/refund_window_hours/show_buyer_name_on_ticket).
-- **Gallery endpoints**:
-  - `POST /api/events/me/{id}/gallery` (multipart, append, hasta 10)
-  - `DELETE /api/events/me/{id}/gallery/{index}`
-  - `PATCH /api/events/me/{id}/gallery/reorder` body `{order: [int]}`
-- **`seeds.py`** — 3 eventos seed actualizados con `gallery_urls: []`, `payment_methods` (solo Stripe), `discounts` defaults, `access_params` defaults.
+
+**Públicos (sin auth)**
+- `POST /api/public/orders` body `{..., payment_method}`:
+  - `stripe` → Stripe Checkout Session (igual que antes)
+  - `transfer`/`cash` → status `pending_manual_payment`, reserva 48h, devuelve `{order, payment_instructions, redirect_to}`. Valida que el método esté activo en el evento (400 si no).
+- `GET /api/public/orders/{order_number}/instructions` — devuelve `{order, event, organizer, payment_method, payment_instructions, branding}`. Public, sin auth.
+
+**Organizer (auth Bearer)**
+- `POST /api/events/me/{event_id}/orders/{order_id}/confirm-payment` body `{notes?, reference?}` — RBAC, idempotente, emite tickets + email + audit log
+- `POST /api/events/me/{event_id}/orders/{order_id}/reject-payment` body `{reason}` — RBAC, cancela orden + libera reserva + email + audit log
+
+**Email service**
+- `send_manual_payment_instructions` — al crear orden manual (deadline 48h + datos bancarios o ubicación)
+- `send_manual_payment_rejected` — al rechazar (con razón visible para buyer)
+- `send_purchase_confirmation` — reutilizada al confirmar manual (mismo email que paid Stripe)
 
 ### Frontend
-- **`components/OrganizerLayout.jsx`** — sidebar 240px fija (mobile: drawer con `Sheet`) con 5 items y iconos (LayoutDashboard/MapPin/Ticket/Palette/Settings) + header con avatar dropdown.
-- **`App.js`** — rutas bajo `/app/*` + redirects de las rutas viejas:
-  - `/dashboard` → `/app/dashboard`
-  - `/eventos[/...]` → `/app/eventos[/...]`
-  - `/microsite/editor` → `/app/microsite`
-  - `/configuracion` → `/app/configuracion`
-- **`pages/app/DashboardHome.jsx`** — plan card + status + 4 stat cards + upcoming events table + microsite card + funnel card.
-- **`pages/app/Venues.jsx`** — empty state con ilustración fake seat map + botón "Crear venue" deshabilitado con tooltip "Próximamente — Fase 6".
-- **`pages/app/Configuracion.jsx`** — 3 tabs: Perfil / Plan y facturación (link a portal Stripe) / Seguridad (placeholder).
-- **`components/events/EventWizard.jsx`** — 7 tabs horizontales con indicadores ✓/⚠/○:
-  1. General (título, descripciones, categoría)
-  2. Fechas y ventas (start/end, timezone, sales window, multi-función deshabilitado)
-  3. Media (poster + banner + galería multi-upload + reorder)
-  4. Localidades (solo "General" editable, "Agregar localidad" deshabilitado con tooltip)
-  5. Formas de pago (Stripe siempre on; Transfer + Cash opt-in con campos completos)
-  6. Descuentos (disability_law toggle + presale con % y fecha)
-  7. Accesos y parámetros (visibility, access_type, max_per_purchase, max_per_email, refund_window_hours, show_buyer_name)
+- **`components/orders/PurchaseModal.jsx`** — selector radio de método (visible si ≥2 activos). Si Stripe → checkout. Si manual → redirect a `/o/:slug/orden/:order_number/instrucciones`.
+- **`pages/orders/PaymentInstructions.jsx`** (nuevo) — datos bancarios o ubicación, deadline countdown, polling cada 10s (auto-redirige a éxito si el organizer confirma).
+- **`components/events/EventSalesTabs.jsx`** — banner naranja con contador de pendientes, filtros por `payment_method` y `status`, badge "Esperando pago manual", `ManualPaymentDialog` con confirmar (con reference/notes) y rechazar (con reason).
+- **`pages/events/EventPublic.jsx`** — chips informativos de métodos aceptados (`event-payment-chip-{m}`).
+- **`App.js`** — ruta nueva `/o/:slug/orden/:order_number/instrucciones`.
 
-### Trade-offs Fase 5
-1. **Sin enforcement de feature flags** — la arquitectura existe (`plan_features.py` + `useFeatures` implícito), pero el wizard no bloquea features por plan. Sólo muestra "Próximamente". Decisión consciente del usuario.
-2. **Pago manual público** — los toggles + datos bancarios se guardan en el evento, **pero la página pública de compra todavía sólo ofrece Stripe**. Falta extender `PurchaseModal` con selector de método y agregar status `pending_manual_payment` + endpoint `confirm-manual-payment` en el panel del organizer. → **Fase 5b** dedicada.
-3. **Galería sin DnD nativo** — usa botones ↑↓ para reordenar en lugar de `dnd-kit`. Funcional pero no premium. Se mejora en Fase 6.
-4. **Cambio de contraseña** — placeholder deshabilitado en Configuración. El endpoint `PATCH /auth/me/password` queda como TODO.
+### Fixes Fase 5 (incluidos)
+- **Fix A**: galería responsive 4 col desktop / 2-3 mobile con lightbox modal (← →) en `EventPublic`, métodos de pago aceptados bloque previo al CTA.
+- **Fix B**: `EventWizard` galería con `multiple={true}` en input + `uploadImages()` handler que itera files, respeta el límite de 10 (subida + advertencia si excede), agrupa el toast final.
+
+### Seeds
+- `concierto-acustico-demo` con **transfer + cash habilitados** (Banco Pichincha 2100123456, oficina Quito Lun-Sáb).
+- 2 órdenes seed en `pending_manual_payment`: `Test Transferencia` y `Test Efectivo` sobre el concierto. Idempotentes — se borran y recrean en cada boot.
+
+### Tests
+- `tests/test_phase5b.py` — **9/9 PASS** (4.0s):
+  - create transfer/cash → pending_manual
+  - GET instructions
+  - confirm full flow (status, paid_at, tickets, manual_info)
+  - **idempotencia** (2 confirms → 1 ticket)
+  - reject
+  - **RBAC** (otro organizer → 403/404)
+  - **QR validate** después de manual confirm (1ª OK, 2ª already_used)
+  - método inválido → 4xx
+
+### Trade-offs Fase 5b
+1. **Cleanup auto de reservas 48h** — no hay job en background; las reservas expiradas se descuentan lazy al consultar `compute_availability`. Suficiente por ahora.
+2. **Audit logs** — best-effort: si el módulo audit falla, no rompe el confirm/reject.
+3. **Email mocks filesystem** — sigue activo mientras no haya Resend real.
+4. **Polling cada 10s en PaymentInstructions** — simple. Podría ser SSE/websocket en una fase futura.
 
 ## Backlog priorizado
 
-### P0 — Fase 5b (Pago manual público)
-- Selector de método en `PurchaseModal` (Stripe/Transfer/Cash) si están enabled
-- Backend acepta `payment_method` en POST /api/public/orders
-- Status `pending_manual_payment` + página de éxito con instrucciones
-- Botón "Marcar como pagado" en `EventDetail` → confirma orden + emite tickets + email
-
-### P0 — Fase 6 (Venue editor)
-- CRUD de venues, drag-and-drop seat map, multi-localidad por evento, compradores eligen butaca
+### P0 — Fase 6 (Venues)
+- CRUD venues
+- Editor drag-and-drop de butacas/zonas
+- Asignar venue al evento + múltiples localidades
 
 ### P1 — Fase 3b
 - Tipos de tickets múltiples (VIP / Platea / General)
 - Multi-función (varias fechas)
 - Promo codes
-- Descuentos avanzados (NxM, por cantidad, por método)
-- Lista verificada + códigos de acceso
+- Descuentos avanzados (NxM, por método, por cantidad)
+- Lista verificada + código de acceso
 
-### P1 — Onboarding mejoras
-- Demo shortcut visible solo en preview
-- Pre-llenado de plan
-- Validación de RUC/cédula EC
+### P1 — Onboarding
+- Demo shortcut solo en preview
+- Pre-llenado plan
+- Validación RUC/cédula EC
 
-### P2 — Super-admin enriquecido (Fase 7)
-- GMV, MRR, churn rate
-- Vista de eventos de todos los organizers
-- Análisis de uso por plan
-- Exportación de reportes
+### P2 — Fase 7 (Super-admin)
+- GMV / MRR / churn
+- Eventos cross-tenant
+- Reportes contables SRI
 
-### P2 — Otros
-- Multi-moneda + payouts
-- Custom domains
-- IA design (Enterprise)
-- Reportes contables (SRI Ecuador)
-
-## Credenciales y test
+## Credenciales
 Ver `/app/memory/test_credentials.md`.

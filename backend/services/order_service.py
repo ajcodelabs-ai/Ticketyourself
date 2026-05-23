@@ -20,9 +20,11 @@ from services.ticket_jwt import issue_ticket_token
 logger = logging.getLogger("tys.orders")
 
 RESERVATION_TTL_MIN = 15
+MANUAL_RESERVATION_TTL_HOURS = 48  # transfer / cash buyers get 48h to complete
 DEFAULT_FEE_PERCENT = float(os.environ.get("TYS_FEE_PERCENT", "5"))
 MAX_QUANTITY = 10
 ORDER_PREFIX = "TYS-"
+VALID_PAYMENT_METHODS = ("stripe", "transfer", "cash")
 
 
 def _now() -> datetime:
@@ -73,14 +75,17 @@ async def compute_availability(event: dict) -> dict:
     return {"capacity": capacity, "sold": sold, "reserved": reserved, "available": available}
 
 
-async def reserve_capacity(*, event_id: str, order_id: str, quantity: int) -> None:
+async def reserve_capacity(
+    *, event_id: str, order_id: str, quantity: int, ttl_minutes: int | None = None
+) -> None:
+    minutes = ttl_minutes if ttl_minutes is not None else RESERVATION_TTL_MIN
     await db.event_capacity_reservations.insert_one(
         {
             "id": str(uuid.uuid4()),
             "event_id": event_id,
             "order_id": order_id,
             "quantity": quantity,
-            "expires_at": (_now() + timedelta(minutes=RESERVATION_TTL_MIN)).isoformat(),
+            "expires_at": (_now() + timedelta(minutes=minutes)).isoformat(),
             "created_at": _now_iso(),
         }
     )
@@ -156,13 +161,30 @@ async def create_order_skeleton(
     quantity: int,
     buyer: dict,
     totals: dict,
+    payment_method: str = "stripe",
 ) -> dict:
     if quantity < 1 or quantity > MAX_QUANTITY:
         raise HTTPException(422, f"Cantidad debe estar entre 1 y {MAX_QUANTITY}")
+    if payment_method not in VALID_PAYMENT_METHODS:
+        raise HTTPException(422, f"Método de pago inválido: {payment_method}")
 
     avail = await compute_availability(event)
     if avail["available"] is not None and quantity > avail["available"]:
         raise HTTPException(409, "No hay capacidad disponible para esa cantidad")
+
+    is_manual = payment_method in ("transfer", "cash")
+    if is_manual:
+        # Validate the chosen method is actually enabled on the event.
+        pm = (event.get("payment_methods") or {}).get(payment_method) or {}
+        if not pm.get("enabled"):
+            raise HTTPException(
+                400, f"El organizador no acepta pagos con '{payment_method}'"
+            )
+        ttl = timedelta(hours=MANUAL_RESERVATION_TTL_HOURS)
+        initial_status = "pending_manual_payment"
+    else:
+        ttl = timedelta(minutes=RESERVATION_TTL_MIN)
+        initial_status = "pending"
 
     order_id = str(uuid.uuid4())
     order_number = await _next_order_number()
@@ -187,7 +209,20 @@ async def create_order_skeleton(
         "total_cents": totals["total_cents"],
         "currency": event.get("currency", "USD"),
         "donation_amount_cents": totals["donation_amount_cents"] or None,
-        "status": "pending",
+        "status": initial_status,
+        "payment_method": payment_method,
+        "manual_payment_info": (
+            {
+                "method": payment_method,
+                "reference": None,
+                "paid_at": None,
+                "confirmed_by": None,
+                "confirmed_at": None,
+                "organizer_notes": None,
+            }
+            if is_manual
+            else None
+        ),
         "stripe_session_id": None,
         "stripe_payment_intent_id": None,
         "paid_at": None,
@@ -195,7 +230,7 @@ async def create_order_skeleton(
         "refund_reason": None,
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
-        "expires_at": (_now() + timedelta(minutes=RESERVATION_TTL_MIN)).isoformat(),
+        "expires_at": (_now() + ttl).isoformat(),
         "metadata": {"source": "web"},
     }
     await db.ticket_orders.insert_one({**order})
@@ -360,3 +395,126 @@ async def refund_order(*, order: dict, reason: str | None = None) -> dict:
         {"$inc": {"tickets_sold": -order["quantity_total"]}},
     )
     return await db.ticket_orders.find_one({"id": order["id"]}, {"_id": 0})
+
+
+# ── Manual payment confirmation ─────────────────────────────────────────────
+async def confirm_manual_payment(
+    *,
+    order: dict,
+    confirmer_user_id: str,
+    notes: str | None = None,
+    reference: str | None = None,
+) -> tuple[dict, list[dict]]:
+    """
+    Organizer flips a pending_manual_payment order to paid.
+    Idempotent — already-paid orders return tickets without side effects.
+    """
+    if order["status"] == "paid":
+        cursor = db.tickets.find({"order_id": order["id"]}, {"_id": 0})
+        return order, [t async for t in cursor]
+    if order["status"] != "pending_manual_payment":
+        raise HTTPException(
+            422,
+            f"Sólo órdenes pending_manual_payment se pueden confirmar (status={order['status']})",
+        )
+
+    now_iso = _now_iso()
+    info = (order.get("manual_payment_info") or {}).copy()
+    info.update(
+        {
+            "confirmed_by": confirmer_user_id,
+            "confirmed_at": now_iso,
+            "paid_at": now_iso,
+            "organizer_notes": (notes or "")[:500],
+            "reference": (reference or "")[:120] or info.get("reference"),
+        }
+    )
+    await db.ticket_orders.update_one(
+        {"id": order["id"]},
+        {
+            "$set": {
+                "status": "paid",
+                "paid_at": now_iso,
+                "updated_at": now_iso,
+                "manual_payment_info": info,
+            }
+        },
+    )
+
+    tickets = await issue_tickets_for_order(order)
+    await db.events.update_one(
+        {"id": order["event_id"]},
+        {"$inc": {"tickets_sold": order["quantity_total"]}, "$set": {"updated_at": now_iso}},
+    )
+    await release_reservation(order["id"])
+
+    refreshed = await db.ticket_orders.find_one({"id": order["id"]}, {"_id": 0})
+    logger.info(
+        "Order manual-confirmed: %s by=%s qty=%d total=%d",
+        refreshed["order_number"],
+        confirmer_user_id,
+        refreshed["quantity_total"],
+        refreshed["total_cents"],
+    )
+    return refreshed, tickets
+
+
+async def reject_manual_payment(
+    *,
+    order: dict,
+    reason: str,
+    rejecter_user_id: str,
+) -> dict:
+    if order["status"] not in ("pending_manual_payment", "pending"):
+        raise HTTPException(
+            422,
+            f"Sólo órdenes pendientes se pueden rechazar (status={order['status']})",
+        )
+    now_iso = _now_iso()
+    info = (order.get("manual_payment_info") or {}).copy()
+    info.update(
+        {
+            "confirmed_by": rejecter_user_id,
+            "confirmed_at": now_iso,
+            "organizer_notes": (reason or "")[:500],
+        }
+    )
+    await db.ticket_orders.update_one(
+        {"id": order["id"]},
+        {
+            "$set": {
+                "status": "cancelled",
+                "refund_reason": (reason or "")[:500],
+                "updated_at": now_iso,
+                "manual_payment_info": info,
+            }
+        },
+    )
+    await release_reservation(order["id"])
+    return await db.ticket_orders.find_one({"id": order["id"]}, {"_id": 0})
+
+
+def get_payment_instructions(*, event: dict, payment_method: str) -> dict:
+    """
+    Returns the public-safe payment instructions for a manual method.
+    None for stripe; the dict for transfer/cash with all fields filled.
+    """
+    if payment_method == "stripe":
+        return {}
+    pm = (event.get("payment_methods") or {}).get(payment_method) or {}
+    if payment_method == "transfer":
+        return {
+            "method": "transfer",
+            "bank_name": pm.get("bank_name", ""),
+            "account_number": pm.get("account_number", ""),
+            "account_holder": pm.get("account_holder", ""),
+            "instructions": pm.get("instructions", ""),
+        }
+    if payment_method == "cash":
+        return {
+            "method": "cash",
+            "location": pm.get("location", ""),
+            "schedule": pm.get("schedule", ""),
+            "contact": pm.get("contact", ""),
+        }
+    return {}

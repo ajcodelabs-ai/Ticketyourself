@@ -282,9 +282,45 @@ export default function EventWizard({ initial, mode = "create" }) {
             if (kind === "poster") setPoster(data.poster_url);
             else if (kind === "banner") setBanner(data.banner_url);
             else if (kind === "gallery") setGallery(data.gallery_urls || []);
-            toast.success(`${kind === "gallery" ? "Imagen" : kind} subido`);
+            return data;
         } catch (e) {
             toast.error(formatApiError(e?.response?.data?.detail) || e.message);
+            return null;
+        }
+    };
+
+    const uploadImages = async (files, kind) => {
+        const list = Array.from(files || []);
+        if (list.length === 0) return;
+        // Single image fields — only first file.
+        if (kind !== "gallery") {
+            const r = await uploadImage(list[0], kind);
+            if (r) toast.success(`${kind} subido`);
+            return;
+        }
+        // Gallery — iterate, respect 10-image cap.
+        const remaining = Math.max(0, 10 - (gallery?.length || 0));
+        if (remaining === 0) {
+            toast.error("Ya tenés el máximo de 10 imágenes en la galería.");
+            return;
+        }
+        const toUpload = list.slice(0, remaining);
+        let uploaded = 0;
+        for (const f of toUpload) {
+            // eslint-disable-next-line no-await-in-loop
+            const r = await uploadImage(f, "gallery");
+            if (r) uploaded += 1;
+        }
+        if (list.length > remaining) {
+            toast.warning(
+                `Subimos ${uploaded} de ${list.length}. Llegaste al límite de 10.`,
+            );
+        } else if (uploaded > 0) {
+            toast.success(
+                uploaded === 1
+                    ? "Imagen agregada a la galería"
+                    : `${uploaded} imágenes agregadas a la galería`,
+            );
         }
     };
 
@@ -350,7 +386,7 @@ export default function EventWizard({ initial, mode = "create" }) {
                         poster={poster}
                         banner={banner}
                         gallery={gallery}
-                        onUpload={uploadImage}
+                        onUpload={uploadImages}
                         onDeleteGallery={deleteGalleryAt}
                         onReorderGallery={reorderGallery}
                         eventId={eventId}
@@ -683,6 +719,7 @@ function SectionMedia({ poster, banner, gallery, onUpload, onDeleteGallery, onRe
                             testid="wiz-gallery-add"
                             aspect="square"
                             compact
+                            multiple
                         />
                     )}
                 </div>
@@ -1200,7 +1237,7 @@ function DisabledToggle({ label, helper, tooltip }) {
     );
 }
 
-function Dropzone({ label, currentUrl, onUpload, testid, aspect = "square", compact = false }) {
+function Dropzone({ label, currentUrl, onUpload, testid, aspect = "square", compact = false, multiple = false }) {
     const id = `${testid}-input`;
     const ratio = aspect === "video" ? "aspect-video" : "aspect-square";
     return (
@@ -1223,7 +1260,7 @@ function Dropzone({ label, currentUrl, onUpload, testid, aspect = "square", comp
                     <>
                         <ImageIcon className="h-7 w-7 text-muted-foreground" />
                         <span className="text-xs text-muted-foreground text-center">
-                            Click o arrastrá
+                            {multiple ? "Click o arrastrá (varias)" : "Click o arrastrá"}
                         </span>
                     </>
                 )}
@@ -1231,11 +1268,12 @@ function Dropzone({ label, currentUrl, onUpload, testid, aspect = "square", comp
                     id={id}
                     type="file"
                     accept=".jpg,.jpeg,.png,.webp,.heic,.heif,image/*"
+                    multiple={multiple}
                     className="sr-only"
                     onChange={(e) => {
-                        const f = e.target.files?.[0];
+                        const files = e.target.files;
                         e.target.value = "";
-                        onUpload(f);
+                        onUpload(files);
                     }}
                 />
             </label>

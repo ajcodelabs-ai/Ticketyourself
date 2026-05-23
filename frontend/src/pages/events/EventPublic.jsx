@@ -13,12 +13,20 @@ import {
     Share2,
     ArrowLeft,
     ExternalLink,
+    ChevronLeft,
+    ChevronRight,
+    X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+    Dialog,
+    DialogContent,
+} from "@/components/ui/dialog";
 import api from "@/lib/api";
 import ShareModal from "@/components/microsite/ShareModal";
 import PurchaseModal from "@/components/orders/PurchaseModal";
+import { assetUrl } from "@/lib/microsite";
 import {
     formatEventDate,
     formatPriceLabel,
@@ -26,6 +34,7 @@ import {
     eventPublicUrl,
 } from "@/lib/events";
 import { previewMicrositePath } from "@/lib/config";
+import { PAYMENT_METHOD_META } from "@/lib/orders";
 
 const FALLBACK_IMG = "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200";
 
@@ -35,6 +44,7 @@ export default function EventPublic() {
     const [state, setState] = useState("loading");
     const [shareOpen, setShareOpen] = useState(false);
     const [buyOpen, setBuyOpen] = useState(false);
+    const [lightbox, setLightbox] = useState(-1); // index in gallery, -1 = closed
 
     useEffect(() => {
         let alive = true;
@@ -153,6 +163,33 @@ export default function EventPublic() {
                 </div>
             </section>
 
+            {event.gallery_urls?.length > 0 && (
+                <section
+                    className="max-w-5xl mx-auto px-6 pt-10"
+                    data-testid="event-public-gallery"
+                >
+                    <h2 className="text-2xl font-semibold mb-4">Galería</h2>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                        {event.gallery_urls.map((url, i) => (
+                            <button
+                                key={`${url}-${i}`}
+                                type="button"
+                                className="aspect-square overflow-hidden rounded-lg border bg-secondary group"
+                                onClick={() => setLightbox(i)}
+                                data-testid={`gallery-thumb-${i}`}
+                            >
+                                <img
+                                    src={assetUrl(url)}
+                                    alt={`${event.title} galería ${i + 1}`}
+                                    className="w-full h-full object-cover group-hover:scale-105 transition"
+                                    loading="lazy"
+                                />
+                            </button>
+                        ))}
+                    </div>
+                </section>
+            )}
+
             {event.description && (
                 <section className="max-w-3xl mx-auto px-6 py-12">
                     <h2 className="text-2xl font-semibold mb-4">Sobre el evento</h2>
@@ -161,6 +198,44 @@ export default function EventPublic() {
                     </p>
                 </section>
             )}
+
+            {/* ── Active payment methods (skipped for free events) ─────── */}
+            {event.pricing_type !== "free" && (() => {
+                const pm = event.payment_methods || {};
+                const active = ["stripe", "transfer", "cash"].filter(
+                    (k) => pm[k]?.enabled,
+                );
+                if (active.length === 0) return null;
+                return (
+                    <section
+                        className="max-w-3xl mx-auto px-6 pb-2"
+                        data-testid="event-public-payment-methods"
+                    >
+                        <div className="rounded-2xl border bg-card p-5">
+                            <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                                Métodos de pago aceptados
+                            </h3>
+                            <div className="flex flex-wrap gap-2">
+                                {active.map((m) => {
+                                    const meta = PAYMENT_METHOD_META[m];
+                                    return (
+                                        <div
+                                            key={m}
+                                            className="inline-flex items-center gap-2 rounded-full bg-secondary px-3 py-1.5 text-sm"
+                                            data-testid={`event-payment-chip-${m}`}
+                                        >
+                                            <span className="text-lg leading-none">
+                                                {meta.icon}
+                                            </span>
+                                            <span className="font-medium">{meta.label}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </section>
+                );
+            })()}
 
             <section className="max-w-3xl mx-auto px-6 pb-16">
                 <div className="rounded-2xl border bg-secondary/30 p-6 flex flex-col sm:flex-row gap-3 items-center justify-between">
@@ -208,6 +283,63 @@ export default function EventPublic() {
                 event={event}
                 tenantSlug={slug}
             />
+
+            {/* Lightbox for gallery */}
+            <Dialog
+                open={lightbox >= 0}
+                onOpenChange={(v) => {
+                    if (!v) setLightbox(-1);
+                }}
+            >
+                <DialogContent
+                    className="max-w-4xl p-0 bg-black/95 border-0"
+                    data-testid="gallery-lightbox"
+                >
+                    {lightbox >= 0 && event.gallery_urls && (
+                        <div className="relative">
+                            <img
+                                src={assetUrl(event.gallery_urls[lightbox])}
+                                alt={`Galería ${lightbox + 1}`}
+                                className="w-full max-h-[80vh] object-contain"
+                            />
+                            <button
+                                type="button"
+                                aria-label="Cerrar"
+                                className="absolute top-2 right-2 bg-white/90 rounded-full p-1.5"
+                                onClick={() => setLightbox(-1)}
+                                data-testid="lightbox-close"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                            {lightbox > 0 && (
+                                <button
+                                    type="button"
+                                    aria-label="Anterior"
+                                    className="absolute top-1/2 left-2 -translate-y-1/2 bg-white/90 rounded-full p-2"
+                                    onClick={() => setLightbox((i) => i - 1)}
+                                    data-testid="lightbox-prev"
+                                >
+                                    <ChevronLeft className="h-5 w-5" />
+                                </button>
+                            )}
+                            {lightbox < (event.gallery_urls.length - 1) && (
+                                <button
+                                    type="button"
+                                    aria-label="Siguiente"
+                                    className="absolute top-1/2 right-2 -translate-y-1/2 bg-white/90 rounded-full p-2"
+                                    onClick={() => setLightbox((i) => i + 1)}
+                                    data-testid="lightbox-next"
+                                >
+                                    <ChevronRight className="h-5 w-5" />
+                                </button>
+                            )}
+                            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-white/90 rounded-full px-3 py-1 text-xs font-medium">
+                                {lightbox + 1} / {event.gallery_urls.length}
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

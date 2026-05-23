@@ -38,6 +38,7 @@ import EventPublic from "@/pages/events/EventPublic";
 
 import OrderSuccess from "@/pages/orders/OrderSuccess";
 import OrderCancel from "@/pages/orders/OrderCancel";
+import PaymentInstructions from "@/pages/orders/PaymentInstructions";
 
 // Legacy POC pages
 import Home from "@/pages/Home";
@@ -84,6 +85,10 @@ function App() {
                             <Route
                                 path="/o/:slug/orden/:order_number/cancelado"
                                 element={<OrderCancel />}
+                            />
+                            <Route
+                                path="/o/:slug/orden/:order_number/instrucciones"
+                                element={<PaymentInstructions />}
                             />
 
                             {/* ── Phase 5 organizer area `/app/*` ─────────── */}
