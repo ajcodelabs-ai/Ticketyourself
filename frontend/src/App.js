@@ -26,6 +26,9 @@ import AdminOrganizers from "@/pages/admin/AdminOrganizers";
 import AdminOrganizerDetail from "@/pages/admin/AdminOrganizerDetail";
 import AdminPlans from "@/pages/admin/AdminPlans";
 import AdminFunnel from "@/pages/admin/AdminFunnel";
+import AdminEvents from "@/pages/admin/AdminEvents";
+import AdminAuditLog from "@/pages/admin/AdminAuditLog";
+import AdminReports from "@/pages/admin/AdminReports";
 
 import MicrositeEditor from "@/pages/MicrositeEditor";
 import MicrositePublic from "@/pages/MicrositePublic";
@@ -128,6 +131,9 @@ function App() {
                             />
                             <Route path="/admin/planes" element={<AdminArea><AdminPlans /></AdminArea>} />
                             <Route path="/admin/funnel" element={<AdminArea><AdminFunnel /></AdminArea>} />
+                            <Route path="/admin/eventos" element={<AdminArea><AdminEvents /></AdminArea>} />
+                            <Route path="/admin/auditoria" element={<AdminArea><AdminAuditLog /></AdminArea>} />
+                            <Route path="/admin/reportes" element={<AdminArea><AdminReports /></AdminArea>} />
 
                             {/* ── Legacy POC ─────────────────────────────── */}
                             <Route path="/poc" element={<Public><Home /></Public>} />

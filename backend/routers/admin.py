@@ -36,8 +36,10 @@ async def _to_out(doc: dict) -> OrganizerOut:
     return OrganizerOut(plan_code=plan_code, **doc)
 
 
-@router.get("/dashboard/stats", response_model=AdminStats)
-async def admin_stats():
+@router.get("/dashboard/stats-legacy", response_model=AdminStats, deprecated=True)
+async def admin_stats_legacy():
+    """Deprecated — replaced by GET /api/admin/dashboard/stats (richer payload).
+    Kept around for any external clients still depending on the old shape."""
     organizers_total = await db.organizers.count_documents({})
     organizers_pending = await db.organizers.count_documents({"status": "pending"})
     organizers_approved = await db.organizers.count_documents({"status": "approved"})

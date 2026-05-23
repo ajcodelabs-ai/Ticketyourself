@@ -638,23 +638,76 @@ async def admin_list_events(
     _admin=Depends(require_role("super_admin")),
     status: Optional[EventStatus] = None,
     organizer: Optional[str] = None,
+    category: Optional[EventCategory] = None,
+    pricing_type: Optional[PricingType] = None,
+    search: Optional[str] = None,
+    starts_from: Optional[str] = None,
+    starts_to: Optional[str] = None,
+    sort: str = Query(default="created_at"),
+    direction: str = Query(default="desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
 ):
-    query: dict = {}
+    query: Dict[str, Any] = {}
     if status:
         query["status"] = status
     if organizer:
         query["organizer_id"] = organizer
+    if category:
+        query["category"] = category
+    if pricing_type:
+        query["pricing_type"] = pricing_type
+    if search:
+        query["title"] = {"$regex": search.strip(), "$options": "i"}
+    if starts_from or starts_to:
+        sq: Dict[str, Any] = {}
+        if starts_from:
+            sq["$gte"] = starts_from
+        if starts_to:
+            sq["$lte"] = starts_to
+        query["starts_at"] = sq
+
+    sort_dir = -1 if direction == "desc" else 1
+    sort_field = sort if sort in ("created_at", "starts_at", "title", "tickets_sold") else "created_at"
+
     total = await db.events.count_documents(query)
     cursor = (
         db.events.find(query, {"_id": 0})
-        .sort("created_at", -1)
+        .sort(sort_field, sort_dir)
         .skip((page - 1) * limit)
         .limit(limit)
     )
-    items = [d async for d in cursor]
-    return {"items": items, "total": total}
+    events = [d async for d in cursor]
+
+    # Enrich with organizer company_name + per-event GMV/fees
+    org_ids = list({e["organizer_id"] for e in events})
+    evt_ids = [e["id"] for e in events]
+    org_map: Dict[str, dict] = {}
+    if org_ids:
+        async for o in db.organizers.find(
+            {"id": {"$in": org_ids}},
+            {"_id": 0, "id": 1, "company_name": 1, "slug": 1},
+        ):
+            org_map[o["id"]] = o
+    sales_map: Dict[str, dict] = {}
+    if evt_ids:
+        async for r in db.ticket_orders.aggregate([
+            {"$match": {"event_id": {"$in": evt_ids}, "status": "paid"}},
+            {"$group": {
+                "_id": "$event_id",
+                "gmv": {"$sum": "$total_cents"},
+                "fees": {"$sum": "$fees_cents"},
+            }},
+        ]):
+            sales_map[r["_id"]] = r
+    for e in events:
+        org = org_map.get(e["organizer_id"], {})
+        s = sales_map.get(e["id"], {})
+        e["organizer_company_name"] = org.get("company_name")
+        e["organizer_slug"] = org.get("slug")
+        e["gmv_cents"] = s.get("gmv", 0)
+        e["fees_cents"] = s.get("fees", 0)
+    return {"items": events, "total": total, "page": page, "limit": limit}
 
 
 class ForceCancelBody(BaseModel):
