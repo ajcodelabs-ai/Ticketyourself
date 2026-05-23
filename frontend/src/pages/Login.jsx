@@ -26,7 +26,7 @@ export default function Login() {
             toast.success("Bienvenido");
             const from = location.state?.from?.pathname;
             if (data.user.role === "super_admin") {
-                navigate(from || "/admin/organizadores", { replace: true });
+                navigate(from || "/admin", { replace: true });
             } else {
                 navigate(from || "/app/dashboard", { replace: true });
             }
