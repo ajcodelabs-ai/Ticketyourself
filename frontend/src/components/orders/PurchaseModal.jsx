@@ -165,8 +165,10 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
                     </div>
                     <Badge variant="outline" className="text-xs">
                         {pricingType === "free" && "Sin costo"}
-                        {pricingType === "paid" && "Pago con tarjeta"}
                         {pricingType === "donation" && "Aporte voluntario"}
+                        {pricingType === "paid" && paymentMethod === "stripe" && "Pago con tarjeta"}
+                        {pricingType === "paid" && paymentMethod === "transfer" && "Pago por transferencia"}
+                        {pricingType === "paid" && paymentMethod === "cash" && "Pago en efectivo"}
                     </Badge>
                 </div>
 
@@ -386,10 +388,15 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
                                 <TicketIcon className="h-4 w-4 mr-1.5" />
                                 Confirmar reserva
                             </>
-                        ) : (
+                        ) : paymentMethod === "stripe" ? (
                             <>
                                 <TicketIcon className="h-4 w-4 mr-1.5" />
                                 Pagar {formatCents(totals.total, event.currency)}
+                            </>
+                        ) : (
+                            <>
+                                <TicketIcon className="h-4 w-4 mr-1.5" />
+                                Reservar y ver instrucciones
                             </>
                         )}
                     </Button>
@@ -415,7 +422,6 @@ function Field({ label, id, value, onChange, error, type = "text", testId }) {
         </div>
     );
 }
-
 function Row({ label, value, bold }) {
     return (
         <div
