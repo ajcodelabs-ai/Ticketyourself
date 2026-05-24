@@ -129,6 +129,21 @@ def render_ticket_pdf(
     c.setFillColor(colors.HexColor("#6e6e84"))
     c.drawString(info_x, body_top - 162, (holder.get("email") or "")[:42])
 
+    # Phase 7 — numbered tickets show the seat label prominently
+    seat_label = ticket.get("seat_label")
+    has_seat = bool(seat_label)
+    if has_seat:
+        c.setFont("Helvetica-Bold", 10)
+        c.setFillColor(colors.HexColor("#8c8ca6"))
+        c.drawString(info_x, body_top - 192, "ASIENTO")
+        c.setFont("Helvetica-Bold", 16)
+        c.setFillColor(primary)
+        c.drawString(info_x, body_top - 213, str(seat_label)[:42])
+
+    # Precio block — shift down when seat is present
+    price_y_label = body_top - (245 if has_seat else 195)
+    price_y_value = body_top - (263 if has_seat else 213)
+
     pricing = (event.get("pricing_type") or "free").lower()
     if pricing == "free":
         price_label = "Gratis"
@@ -140,10 +155,10 @@ def render_ticket_pdf(
         price_label = f"${unit:.2f} {event.get('currency', 'USD')}"
     c.setFont("Helvetica-Bold", 10)
     c.setFillColor(colors.HexColor("#8c8ca6"))
-    c.drawString(info_x, body_top - 195, "PRECIO")
+    c.drawString(info_x, price_y_label, "PRECIO")
     c.setFont("Helvetica-Bold", 13)
     c.setFillColor(primary)
-    c.drawString(info_x, body_top - 213, price_label)
+    c.drawString(info_x, price_y_value, price_label)
 
     # Right column: QR
     qr_img = qrcode.make(ticket.get("qr_token", ""))

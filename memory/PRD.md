@@ -18,9 +18,9 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 - **Fase 5.5** — **Super-Admin enriquecido: dashboard global + audit + exports + lista cross-tenant** ✅ (Feb 24, 2026)
 - **Fase 6a** — **Venue editor básico (escenarios + zonas + filas rectas)** ✅ (Feb 24, 2026)
 - **Fase 6b** — **Venue editor avanzado (curvas + mesas + asientos individuales + transformer + multi-select)** ✅ (Feb 24, 2026)
-- **Fase 7** — **Conexión Eventos ↔ Venues + Compra con selección de asiento (mapa interactivo)** ✅ (Feb 24, 2026)
+- **Fase 7** — **Eventos × Venues + Compra con asientos numerados** ✅ (Feb 24, 2026)
+- **Fase 9** — **QR Scanner & Door validation** ✅ (Feb 24, 2026)
 - **Fase 8** (P1) — Multi ticket types, multi-función, promo codes, descuentos avanzados
-- **Fase 9** (P2) — QR Scanner & Door validation
 - **Fase 10** (P2) — Snapshots históricos de MRR (delta real mes a mes), churn, cohorts
 
 ## Fase 5.5 — Implementación (cerrada)
@@ -239,7 +239,52 @@ Colección Mongo `venues` con elementos embebidos. Endpoints organizer (`/api/ve
 - "Extender hold" cada 2min — TTL fijo 10min suficiente.
 - Mini-mapa con el asiento highlighted en el PDF del ticket (mejora visual Fase 8).
 
+## Fase 9 — QR Scanner & Door validation ✅ (Feb 24, 2026)
+
+### Backend
+- `routers/tickets.py` extendido:
+  - `POST /api/tickets/validate` ahora es **concurrent-safe** vía `find_one_and_update({status: {$nin: [used, revoked]}}, {$set: {used}})` — 2 staff escaneando el mismo ticket → uno gana (200 valid), el otro recibe `{valid: false, reason: "already_used"}`.
+  - Cada validación (incluso rechazos por token inválido / wrong organizer / revoked) escribe una fila en `ticket_scans` para auditoría.
+  - Nueva colección `ticket_scans`: `{id, event_id, ticket_id, scanned_by, scanned_at, result, reason?, holder_name, seat_label}`.
+  - Nuevos endpoints: `GET /api/events/me/{id}/scan-log?page=&limit=`, `GET .../scan-log.csv`, `GET .../scan-stats` (total/scanned/valid/rejected/last_scan_at/scan_rate_per_minute/scanned_by_locality).
+
+### Fix paralelo
+- `services/pdf_service.py`: PDF del ticket ahora muestra **ASIENTO {seat_label}** prominente entre ASISTENTE y PRECIO (con color primary, fuente bold 16pt). Solo se renderiza si el ticket es de evento numerado. PRECIO se desplaza 50px abajo cuando aparece ASIENTO.
+
+### Frontend
+- `pages/app/EventValidation.jsx`: scanner page con `html5-qrcode` integrado.
+  - Header sticky con título + venue + fecha + counter "X de Y escaneados" + toggle sonido + drawer historial + botón "Salir".
+  - Camera frame (con `facingMode: "environment"` para móvil) + botón Iniciar/Parar cámara.
+  - Modal de resultado grande (auto-dismiss 3s) con 3 variantes: verde "VÁLIDO" / amarillo "YA USADO" / rojo "INVÁLIDO"|"REVOCADO". Muestra holder name, email, seat_label, used_at.
+  - Beeps distintos por tipo (Web Audio API): valid = 880→1320Hz, already_used = 440Hz, invalid = 180Hz.
+  - Cooldown 1.5s anti-spam por mismo JWT.
+  - Manual input para pegar JWT (cuando la cámara no funciona).
+  - Strip de stats: Escaneados / Válidos / Rechazados / Ritmo (últimos 10min).
+- `pages/events/EventDetail.jsx`: nuevo botón verde "Validar entradas" en el header del evento (solo si status=published).
+- Sidebar Sheet con últimos 50 scans (session-local) + botón "Exportar CSV completo" → descarga server-side `/scan-log.csv`.
+
+### Smoke E2E ✅
+| Caso | Resultado |
+| --- | --- |
+| First validate (issued ticket) | 200, valid=True, seat_label="B-1 · Platea" ✓ |
+| Second validate (same token) | 200, valid=False, reason="already_used", used_at presente ✓ |
+| Bogus JWT | 200, valid=False, reason="invalid_token" ✓ |
+| GET `/scan-log?limit=5` | total=2, 2 rows (valid + already_used) con holder_name + seat_label ✓ |
+| GET `/scan-stats` | total/scanned/valid/rejected/last_scan_at/rate/by_locality todo correcto ✓ |
+
+### Decisiones técnicas
+- Librería **html5-qrcode** elegida porque tiene la API más estable cross-browser para `getUserMedia` + zxing en web. Genera 23 warnings de source-map (faltan .ts upstream) — solo cosmético.
+- Concurrencia resuelta a nivel DB (find_one_and_update) en vez de mutex aplicativo — más simple y robusta.
+- Historial de scans es session-local en frontend (max 50) por velocidad; el log persistente se lee del backend vía `/scan-log` con paginación y se exporta como CSV.
+- Offline fallback NO se implementó (spec opcional): el preview siempre tiene HTTPS y red. Si en el futuro hay tablets ocasionalmente offline, agregaríamos validación local de firma JWT + cola para reintentos.
+
+### Pendiente menor (no parte del alcance)
+- Tab "Estadísticas" del wizard del evento podría sumar el bloque "Acceso al evento" con link al scanner — hoy el link está en el header del event detail, lo cual cumple el spec funcional.
+- Roles staff para que el organizer comparta el scanner sin compartir cuenta — diferido a Fase 10.
+
 ## Credenciales
 Ver `/app/memory/test_credentials.md`.
+
+
 
 

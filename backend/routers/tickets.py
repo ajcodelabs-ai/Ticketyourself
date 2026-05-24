@@ -309,43 +309,205 @@ class ValidateBody(BaseModel):
     qr_token: str
 
 
+async def _log_scan(
+    *, event_id: str, ticket_id: Optional[str], scanned_by: str,
+    result: str, reason: Optional[str] = None,
+    holder_name: Optional[str] = None, seat_label: Optional[str] = None,
+) -> None:
+    """Append one row to the per-event scan log."""
+    import uuid as _uuid
+    await db.ticket_scans.insert_one({
+        "id": str(_uuid.uuid4()),
+        "event_id": event_id,
+        "ticket_id": ticket_id,
+        "scanned_by": scanned_by,
+        "scanned_at": datetime.now(timezone.utc).isoformat(),
+        "result": result,  # valid | already_used | invalid | not_found | revoked
+        "reason": reason,
+        "holder_name": holder_name,
+        "seat_label": seat_label,
+    })
+
+
 @router.post("/tickets/validate")
 async def validate_ticket(payload: ValidateBody, user=Depends(get_current_user)):
     """
     Decodes the QR JWT, ensures the ticket belongs to one of the user's events,
-    and marks it as used (idempotent: returns reason=already_used if so).
+    and marks it as used. Concurrent-safe via find_one_and_update on `status`.
+    Always writes a row in `ticket_scans` for audit, including rejections.
     """
     try:
         claims = verify_ticket_token(payload.qr_token)
     except ValueError as e:
+        await _log_scan(
+            event_id="unknown", ticket_id=None, scanned_by=user["id"],
+            result="invalid", reason=str(e)[:200],
+        )
         return {"valid": False, "reason": "invalid_token", "detail": str(e)}
 
     ticket_id = claims.get("ticket_id")
     ticket = await db.tickets.find_one({"id": ticket_id}, {"_id": 0})
     if not ticket:
+        await _log_scan(
+            event_id=claims.get("event_id") or "unknown",
+            ticket_id=ticket_id, scanned_by=user["id"],
+            result="not_found", reason="ticket-not-found",
+        )
         return {"valid": False, "reason": "not_found"}
 
     # RBAC: super_admin can validate any; organizer only own events.
     if user.get("role") != "super_admin":
         if ticket.get("organizer_id") != user.get("organizer_id"):
+            await _log_scan(
+                event_id=ticket.get("event_id"),
+                ticket_id=ticket_id, scanned_by=user["id"],
+                result="invalid", reason="wrong_organizer",
+                holder_name=(ticket.get("holder") or {}).get("name"),
+                seat_label=ticket.get("seat_label"),
+            )
             raise HTTPException(403, "Ticket belongs to another organizer")
 
-    if ticket["status"] == "used":
+    holder = ticket.get("holder") or {}
+    seat_label = ticket.get("seat_label")
+
+    if ticket["status"] == "revoked":
+        await _log_scan(
+            event_id=ticket["event_id"], ticket_id=ticket_id,
+            scanned_by=user["id"], result="revoked",
+            holder_name=holder.get("name"), seat_label=seat_label,
+        )
+        return {"valid": False, "reason": "revoked", "ticket": ticket}
+
+    # Concurrent-safe: only mark used if currently NOT used/revoked.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    res = await db.tickets.find_one_and_update(
+        {
+            "id": ticket_id,
+            "status": {"$nin": ["used", "revoked"]},
+        },
+        {"$set": {"status": "used", "used_at": now_iso, "used_by": user["id"]}},
+        return_document=True,
+        projection={"_id": 0},
+    )
+    if not res:
+        # Lost the race — fetch fresh state.
+        fresh = await db.tickets.find_one({"id": ticket_id}, {"_id": 0})
+        await _log_scan(
+            event_id=ticket["event_id"], ticket_id=ticket_id,
+            scanned_by=user["id"], result="already_used",
+            holder_name=holder.get("name"), seat_label=seat_label,
+        )
         return {
             "valid": False,
             "reason": "already_used",
-            "used_at": ticket.get("used_at"),
-            "ticket": ticket,
+            "used_at": (fresh or {}).get("used_at"),
+            "used_by": (fresh or {}).get("used_by"),
+            "ticket": fresh,
         }
-    if ticket["status"] == "revoked":
-        return {"valid": False, "reason": "revoked", "ticket": ticket}
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    await db.tickets.update_one(
-        {"id": ticket_id},
-        {"$set": {"status": "used", "used_at": now_iso, "used_by": user["id"]}},
+    await _log_scan(
+        event_id=ticket["event_id"], ticket_id=ticket_id,
+        scanned_by=user["id"], result="valid",
+        holder_name=holder.get("name"), seat_label=seat_label,
     )
-    refreshed = await db.tickets.find_one({"id": ticket_id}, {"_id": 0})
-    holder = refreshed.get("holder") or {}
     logger.info("Ticket %s validated by user=%s", ticket_id, user["id"])
-    return {"valid": True, "ticket": refreshed, "holder": holder}
+    return {"valid": True, "ticket": res, "holder": res.get("holder") or {}}
+
+
+# ── Phase 9: scan log + stats ───────────────────────────────────────────────
+@router.get("/events/me/{event_id}/scan-log")
+async def get_scan_log(
+    event_id: str,
+    page: int = 1, limit: int = 50,
+    user=Depends(get_current_user),
+):
+    if user.get("role") != "super_admin":
+        ev = await db.events.find_one(
+            {"id": event_id, "organizer_id": user.get("organizer_id")}, {"_id": 0, "id": 1},
+        )
+        if not ev:
+            raise HTTPException(404, "Evento no encontrado")
+    skip = (max(1, page) - 1) * max(1, min(200, limit))
+    cur = (
+        db.ticket_scans
+        .find({"event_id": event_id}, {"_id": 0})
+        .sort("scanned_at", -1)
+        .skip(skip).limit(limit)
+    )
+    items = [r async for r in cur]
+    total = await db.ticket_scans.count_documents({"event_id": event_id})
+    return {"items": items, "total": total, "page": page, "limit": limit}
+
+
+@router.get("/events/me/{event_id}/scan-log.csv")
+async def get_scan_log_csv(event_id: str, user=Depends(get_current_user)):
+    import csv
+    from io import StringIO
+    from fastapi.responses import StreamingResponse
+    if user.get("role") != "super_admin":
+        ev = await db.events.find_one(
+            {"id": event_id, "organizer_id": user.get("organizer_id")}, {"_id": 0, "id": 1},
+        )
+        if not ev:
+            raise HTTPException(404, "Evento no encontrado")
+    buf = StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["scanned_at", "result", "reason", "holder_name", "seat_label", "ticket_id"])
+    cur = db.ticket_scans.find({"event_id": event_id}, {"_id": 0}).sort("scanned_at", -1)
+    async for r in cur:
+        writer.writerow([
+            r.get("scanned_at", ""), r.get("result", ""), r.get("reason") or "",
+            r.get("holder_name") or "", r.get("seat_label") or "", r.get("ticket_id") or "",
+        ])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="scan-log-{event_id}.csv"'},
+    )
+
+
+@router.get("/events/me/{event_id}/scan-stats")
+async def get_scan_stats(event_id: str, user=Depends(get_current_user)):
+    if user.get("role") != "super_admin":
+        ev = await db.events.find_one(
+            {"id": event_id, "organizer_id": user.get("organizer_id")},
+            {"_id": 0, "id": 1, "capacity": 1, "tickets_sold": 1},
+        )
+    else:
+        ev = await db.events.find_one(
+            {"id": event_id}, {"_id": 0, "id": 1, "capacity": 1, "tickets_sold": 1},
+        )
+    if not ev:
+        raise HTTPException(404, "Evento no encontrado")
+    total_tickets = await db.tickets.count_documents({"event_id": event_id})
+    scanned_count = await db.tickets.count_documents({"event_id": event_id, "status": "used"})
+    valid_count = await db.ticket_scans.count_documents({"event_id": event_id, "result": "valid"})
+    rejected_count = await db.ticket_scans.count_documents({
+        "event_id": event_id, "result": {"$ne": "valid"},
+    })
+    last = await db.ticket_scans.find_one(
+        {"event_id": event_id}, {"_id": 0, "scanned_at": 1},
+        sort=[("scanned_at", -1)],
+    )
+    # Scan rate in last 10 minutes
+    from datetime import timedelta
+    ten_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    recent_count = await db.ticket_scans.count_documents({
+        "event_id": event_id, "result": "valid",
+        "scanned_at": {"$gte": ten_min_ago},
+    })
+    by_locality_cur = db.tickets.aggregate([
+        {"$match": {"event_id": event_id, "status": "used", "locality_id": {"$ne": None}}},
+        {"$group": {"_id": "$locality_id", "count": {"$sum": 1}}},
+    ])
+    by_locality = {r["_id"]: r["count"] async for r in by_locality_cur}
+    return {
+        "total_tickets": total_tickets,
+        "scanned_count": scanned_count,
+        "valid_count": valid_count,
+        "rejected_count": rejected_count,
+        "last_scan_at": (last or {}).get("scanned_at"),
+        "scan_rate_per_minute": round(recent_count / 10, 1),
+        "scanned_by_locality": by_locality,
+    }

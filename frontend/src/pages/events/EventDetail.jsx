@@ -18,6 +18,7 @@ import {
     EyeOff,
     Eye,
     ArrowLeft,
+    ScanQrCode,
 } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import EventForm from "@/components/events/EventForm";
@@ -187,6 +188,18 @@ export default function EventDetail() {
                                 >
                                     <ExternalLink className="h-4 w-4 mr-1.5" />
                                     Ver público
+                                </Link>
+                            </Button>
+                        )}
+                        {event.status === "published" && (
+                            <Button
+                                asChild
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                data-testid="event-validate-link"
+                            >
+                                <Link to={`/app/eventos/${event.id}/validacion`}>
+                                    <ScanQrCode className="h-4 w-4 mr-1.5" />
+                                    Validar entradas
                                 </Link>
                             </Button>
                         )}

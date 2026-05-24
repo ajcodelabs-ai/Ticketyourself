@@ -39,6 +39,7 @@ import EventsList from "@/pages/events/EventsList";
 import EventNew from "@/pages/events/EventNew";
 import EventDetail from "@/pages/events/EventDetail";
 import EventEdit from "@/pages/events/EventEdit";
+import EventValidation from "@/pages/app/EventValidation";
 import EventPublic from "@/pages/events/EventPublic";
 
 import OrderSuccess from "@/pages/orders/OrderSuccess";
@@ -113,6 +114,7 @@ function App() {
                             <Route path="/app/eventos/nuevo" element={<OrgArea><EventNew /></OrgArea>} />
                             <Route path="/app/eventos/:event_id" element={<OrgArea><EventDetail /></OrgArea>} />
                             <Route path="/app/eventos/:event_id/editar" element={<OrgArea><EventEdit /></OrgArea>} />
+                            <Route path="/app/eventos/:id/validacion" element={<OrgArea><EventValidation /></OrgArea>} />
                             <Route path="/app/configuracion" element={<OrgArea><Configuracion /></OrgArea>} />
 
                             {/* Onboarding + billing return URLs keep old paths */}
