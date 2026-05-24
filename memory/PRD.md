@@ -49,9 +49,18 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 - `tests/test_phase5_5.py` — **17/17 PASS** (2.9s): payload shape, RBAC (3 niveles), filters, sort, exports válidos, monthly report con TOTAL row.
 
 ### Cleanup (Feb 24, 2026 — fix definitivo)
-- `_cleanup_ephemeral_orders` (existente) borra orders cuyo buyer.email matchea patterns test/funnel/example/test.com; protege seed manual buyers. Última corrida: **83 orders, 55 tickets, 28 reservations** purgadas.
+- `_cleanup_ephemeral_orders` (existente) borra orders cuyo buyer.email matchea patterns test/funnel/example/test.com; protege seed manual buyers. Última corrida boot: 83 orders barridas. Cleanup adicional one-shot post-pytest: **14 orders más, 6 tickets, 6 reservations** (los `phase5b+*@example.com` y `phase5bx+*@example.com` creados por pytest después del boot).
 - `_cleanup_ephemeral_test_data` (extendido): se agregaron prefijos `funnel-test`, `test-bot`, `bot-onboard`, `prueba-test` al slug-list y `funnel_`, `funnel-test-`, `testbot+`, `testbot1` al email-list. Resultado tras boot: 7 organizers test wipeados, quedan solo **4 organizers reales** (3 seed + `alvaro-perez`).
-- Resultado en KPIs: MRR pasó de $150 (contaminado por 1 testbot profesional) a **$100 (clean)**. Pending organizers: 7 → 1. Active orgs: 3 → 2.
+- Resultado en KPIs (todos en `0` mes corriente para validar limpieza):
+  - MRR: $150 → $100 ✓ (purgado testbot profesional)
+  - GMV mes: $94.50 → $0 ✓
+  - Fees mes: $4.50 → $0 ✓
+  - Pending organizers: 7 → 1 ✓
+  - Active orgs: 3 → 2 ✓
+
+### Email column (Feb 24, 2026)
+- Backend `SortableField` Literal incluye ahora `email`.
+- Frontend `AdminOrganizers.jsx` agregó columna Email ordenable entre Empresa y Plan; subtitle bajo Empresa cambió de `email` a `/slug` para evitar redundancia. `data-testid="sort-email"` + `org-email-{slug}` para tests.
 
 ### Performance
 - Dashboard stats < 200ms con datasets actuales (11 organizers + 13 órdenes paid + 8 eventos). Aggregation pipeline con `$facet` permite escalar a 10k+ ítems en un solo round-trip a Mongo.

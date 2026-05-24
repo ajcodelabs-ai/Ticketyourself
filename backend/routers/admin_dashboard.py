@@ -247,8 +247,8 @@ async def attention_items() -> Dict[str, Any]:
 
 # ── Organizers list with sort/filter/aggregations ───────────────────────────
 SortableField = Literal[
-    "created_at", "company_name", "revenue", "tickets_emitted", "events_published",
-    "last_login",
+    "created_at", "company_name", "email", "revenue", "tickets_emitted",
+    "events_published", "last_login",
 ]
 
 

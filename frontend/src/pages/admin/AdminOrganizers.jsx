@@ -71,6 +71,7 @@ const SUB_STATUS_STYLE = {
 
 const SORTABLE_COLS = [
     { id: "company_name", label: "Empresa" },
+    { id: "email", label: "Email" },
     { id: "events_published", label: "Eventos" },
     { id: "tickets_emitted", label: "Tickets" },
     { id: "revenue", label: "Ingresos" },
@@ -253,6 +254,15 @@ export default function AdminOrganizers() {
                                     >
                                         Empresa
                                     </SortHeader>
+                                    <SortHeader
+                                        col="email"
+                                        sort={sort}
+                                        direction={direction}
+                                        onClick={toggleSort}
+                                        icon={sortIcon}
+                                    >
+                                        Email
+                                    </SortHeader>
                                     <TableHead>Plan</TableHead>
                                     <TableHead>Suscripción</TableHead>
                                     <TableHead>Estado</TableHead>
@@ -310,13 +320,13 @@ export default function AdminOrganizers() {
                             <TableBody>
                                 {loading ? (
                                     <TableRow>
-                                        <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                                        <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                                             Cargando…
                                         </TableCell>
                                     </TableRow>
                                 ) : items.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                                        <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                                             Sin resultados.
                                         </TableCell>
                                     </TableRow>
@@ -331,8 +341,14 @@ export default function AdminOrganizers() {
                                                     {o.company_name}
                                                 </Link>
                                                 <div className="text-xs text-muted-foreground">
-                                                    {o.email}
+                                                    /{o.slug}
                                                 </div>
+                                            </TableCell>
+                                            <TableCell
+                                                className="text-sm text-muted-foreground"
+                                                data-testid={`org-email-${o.slug}`}
+                                            >
+                                                {o.email}
                                             </TableCell>
                                             <TableCell>
                                                 {o.plan_name ? (
