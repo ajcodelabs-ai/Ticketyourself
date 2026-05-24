@@ -425,6 +425,10 @@ _EPHEMERAL_SLUG_PREFIXES = (
     "acttest-",
     "eventos-quito-demo",
     "demo-welcome-test",
+    "funnel-test",
+    "test-bot",
+    "bot-onboard",
+    "prueba-test",
 )
 _EPHEMERAL_EMAIL_PREFIXES = (
     "new_",
@@ -434,6 +438,18 @@ _EPHEMERAL_EMAIL_PREFIXES = (
     "slugtest_",
     "eventos.quito.demo",
     "test_",
+    "funnel_",
+    "funnel-test-",
+    "testbot+",
+    "testbot1",
+)
+# Test/disposable email domains. Seed users live under @ticketyourself.com and
+# real users typically come from gmail/outlook/etc., so wiping any organizer
+# whose email lives on these domains is safe and catches the long tail of
+# pytest/playwright accounts that don't match a known prefix.
+_EPHEMERAL_EMAIL_DOMAINS = (
+    "@example.com",
+    "@test.com",
 )
 
 # Buyer email patterns used by tests / playwright runs. Orders whose

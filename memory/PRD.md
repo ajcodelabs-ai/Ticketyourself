@@ -48,8 +48,10 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 ### Tests
 - `tests/test_phase5_5.py` — **17/17 PASS** (2.9s): payload shape, RBAC (3 niveles), filters, sort, exports válidos, monthly report con TOTAL row.
 
-### Cleanup
-- Seeds ephemeral test cleanup ya existente borra orders test-* / *@example.com / *@test.com al boot. Verificado: ~30 órdenes basura barridas; quedaron solo las 2 seed (`Test Transferencia` y `Test Efectivo`).
+### Cleanup (Feb 24, 2026 — fix definitivo)
+- `_cleanup_ephemeral_orders` (existente) borra orders cuyo buyer.email matchea patterns test/funnel/example/test.com; protege seed manual buyers. Última corrida: **83 orders, 55 tickets, 28 reservations** purgadas.
+- `_cleanup_ephemeral_test_data` (extendido): se agregaron prefijos `funnel-test`, `test-bot`, `bot-onboard`, `prueba-test` al slug-list y `funnel_`, `funnel-test-`, `testbot+`, `testbot1` al email-list. Resultado tras boot: 7 organizers test wipeados, quedan solo **4 organizers reales** (3 seed + `alvaro-perez`).
+- Resultado en KPIs: MRR pasó de $150 (contaminado por 1 testbot profesional) a **$100 (clean)**. Pending organizers: 7 → 1. Active orgs: 3 → 2.
 
 ### Performance
 - Dashboard stats < 200ms con datasets actuales (11 organizers + 13 órdenes paid + 8 eventos). Aggregation pipeline con `$facet` permite escalar a 10k+ ítems en un solo round-trip a Mongo.
