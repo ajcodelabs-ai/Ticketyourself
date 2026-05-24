@@ -436,6 +436,110 @@ _EPHEMERAL_EMAIL_PREFIXES = (
     "test_",
 )
 
+# Buyer email patterns used by tests / playwright runs. Orders whose
+# buyer.email matches ANY of these (case-insensitive, regex) get wiped at
+# boot. Seed manual orders are protected by exact-email match (see SEED_*).
+_EPHEMERAL_ORDER_EMAIL_PATTERNS = [
+    r"@test\.com$",
+    r"@example\.com$",
+    r"^phase5b",
+    r"^phase5bx",
+    r"^funnel-test-",
+    r"^test_e2e_",
+    r"^new_",
+    r"^acttest_",
+    r"^slugtest_",
+    r"^maria",
+    r"^juan",
+    r"^pw@",
+    r"^ui_test@",
+    r"^transfer@",
+    r"^test\.buyer",
+    r"^comprador\.test",
+    r"^buyer\.manual",
+]
+SEED_MANUAL_BUYER_EMAILS = {
+    "transfer-demo@example.com",
+    "cash-demo@example.com",
+}
+
+
+async def _cleanup_ephemeral_orders() -> None:
+    """
+    Phase 5.5 — aggressive cleanup of test/ephemeral orders accumulated in
+    preview. Matches any `buyer.email` against the patterns list, EXCLUDING
+    the well-known seed manual orders.
+
+    Side effects per matched order:
+      - delete its tickets
+      - delete its capacity reservations
+      - if order was `paid`, decrement event.tickets_sold by quantity_total
+      - delete the order
+    Idempotent: empty match → no-op + no log.
+    """
+    pattern = "|".join(f"({p})" for p in _EPHEMERAL_ORDER_EMAIL_PATTERNS)
+    query = {
+        "buyer.email": {"$regex": pattern, "$options": "i"},
+        # Belt + suspenders: never touch the well-known seed manual orders.
+        "buyer.email": {"$nin": list(SEED_MANUAL_BUYER_EMAILS)},
+    }
+    # The 2nd $regex override in the dict above replaced the first; rebuild
+    # with $and to keep both predicates.
+    query = {
+        "$and": [
+            {"buyer.email": {"$regex": pattern, "$options": "i"}},
+            {"buyer.email": {"$nin": list(SEED_MANUAL_BUYER_EMAILS)}},
+        ]
+    }
+
+    cursor = db.ticket_orders.find(
+        query,
+        {
+            "_id": 0,
+            "id": 1,
+            "event_id": 1,
+            "status": 1,
+            "quantity_total": 1,
+            "order_number": 1,
+            "buyer": 1,
+        },
+    )
+    orders = [o async for o in cursor]
+    if not orders:
+        return
+
+    order_ids = [o["id"] for o in orders]
+
+    # Decrement event.tickets_sold for paid orders, grouped per event.
+    paid_per_event: dict[str, int] = {}
+    for o in orders:
+        if o.get("status") == "paid":
+            paid_per_event[o["event_id"]] = (
+                paid_per_event.get(o["event_id"], 0) + o.get("quantity_total", 0)
+            )
+    for event_id, decrement in paid_per_event.items():
+        await db.events.update_one(
+            {"id": event_id}, {"$inc": {"tickets_sold": -decrement}}
+        )
+
+    tickets_deleted = (
+        await db.tickets.delete_many({"order_id": {"$in": order_ids}})
+    ).deleted_count
+    reservations_deleted = (
+        await db.event_capacity_reservations.delete_many({"order_id": {"$in": order_ids}})
+    ).deleted_count
+    orders_deleted = (
+        await db.ticket_orders.delete_many({"id": {"$in": order_ids}})
+    ).deleted_count
+    logger.info(
+        "Cleanup ephemeral orders: %d orders, %d tickets, %d reservations · "
+        "decremented tickets_sold on %d event(s)",
+        orders_deleted,
+        tickets_deleted,
+        reservations_deleted,
+        len(paid_per_event),
+    )
+
 
 async def _cleanup_ephemeral_test_data() -> None:
     """
@@ -823,6 +927,7 @@ async def _seed_demo_manual_orders() -> None:
 async def run_seeds() -> None:
     await _create_indexes()
     await _cleanup_ephemeral_test_data()
+    await _cleanup_ephemeral_orders()
     await _seed_admin()
     await _seed_plans()
     await _seed_demo_organizers()

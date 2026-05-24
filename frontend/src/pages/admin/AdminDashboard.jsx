@@ -124,13 +124,12 @@ export default function AdminDashboard() {
                 </Button>
             </header>
 
-            {/* ── Attention banner ──────────────────────────────────── */}
+            {/* ── Attention banner — siempre 3 chips ──────────────── */}
             {attention && (
-                attention.pending_organizers > 0 ||
-                attention.stale_manual_orders > 0 ||
-                attention.past_due_subscriptions > 0
-            ) && (
-                <Card className="border-orange-200 bg-orange-50" data-testid="attention-card">
+                <Card
+                    className="border-orange-200 bg-orange-50"
+                    data-testid="attention-card"
+                >
                     <CardHeader className="flex flex-row items-start gap-3 pb-3">
                         <AlertTriangle className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
                         <div>
@@ -138,53 +137,29 @@ export default function AdminDashboard() {
                                 Atención requerida
                             </CardTitle>
                             <CardDescription className="text-orange-800">
-                                Items que requieren tu acción
+                                Items operativos para revisar
                             </CardDescription>
                         </div>
                     </CardHeader>
                     <CardContent className="grid sm:grid-cols-3 gap-3 text-sm">
-                        {attention.pending_organizers > 0 && (
-                            <Link
-                                to="/admin/organizadores?status=pending"
-                                className="rounded-lg bg-white border p-3 hover:border-orange-300"
-                                data-testid="attention-pending-orgs"
-                            >
-                                <div className="text-2xl font-semibold">
-                                    {attention.pending_organizers}
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                    Organizadores pendientes
-                                </div>
-                            </Link>
-                        )}
-                        {attention.stale_manual_orders > 0 && (
-                            <Link
-                                to="/admin/eventos"
-                                className="rounded-lg bg-white border p-3 hover:border-orange-300"
-                                data-testid="attention-stale-orders"
-                            >
-                                <div className="text-2xl font-semibold">
-                                    {attention.stale_manual_orders}
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                    Órdenes manuales {">"}24h sin confirmar
-                                </div>
-                            </Link>
-                        )}
-                        {attention.past_due_subscriptions > 0 && (
-                            <Link
-                                to="/admin/organizadores?subscription_status=past_due"
-                                className="rounded-lg bg-white border p-3 hover:border-orange-300"
-                                data-testid="attention-past-due"
-                            >
-                                <div className="text-2xl font-semibold">
-                                    {attention.past_due_subscriptions}
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                    Suscripciones past_due
-                                </div>
-                            </Link>
-                        )}
+                        <AttentionChip
+                            value={attention.pending_organizers}
+                            label="Organizadores pendientes"
+                            to="/admin/organizadores?status=pending"
+                            testid="attention-pending-orgs"
+                        />
+                        <AttentionChip
+                            value={attention.stale_manual_orders}
+                            label="Órdenes manuales >24h sin confirmar"
+                            to="/admin/eventos"
+                            testid="attention-stale-orders"
+                        />
+                        <AttentionChip
+                            value={attention.past_due_subscriptions}
+                            label="Suscripciones past_due"
+                            to="/admin/organizadores?subscription_status=past_due"
+                            testid="attention-past-due"
+                        />
                     </CardContent>
                 </Card>
             )}
@@ -461,5 +436,29 @@ function EmptyChart() {
         <div className="h-full grid place-items-center text-sm text-muted-foreground">
             Sin datos
         </div>
+    );
+}
+
+function AttentionChip({ value, label, to, testid }) {
+    const isWarn = value > 0;
+    return (
+        <Link
+            to={to}
+            className={`rounded-lg border p-3 transition ${
+                isWarn
+                    ? "bg-white border-red-300 hover:border-red-400"
+                    : "bg-slate-50 border-slate-200 hover:border-slate-300"
+            }`}
+            data-testid={testid}
+        >
+            <div
+                className={`text-2xl font-semibold ${
+                    isWarn ? "text-red-600" : "text-slate-400"
+                }`}
+            >
+                {value}
+            </div>
+            <div className="text-xs text-muted-foreground">{label}</div>
+        </Link>
     );
 }
