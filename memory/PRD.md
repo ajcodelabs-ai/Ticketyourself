@@ -16,8 +16,8 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 - **Fase 5** — Sidebar 5 items + EventWizard 7 secciones + galería + plan features ✅
 - **Fase 5b** — Pago manual end-to-end (transferencia + efectivo) ✅
 - **Fase 5.5** — **Super-Admin enriquecido: dashboard global + audit + exports + lista cross-tenant** ✅ (Feb 24, 2026)
-- **Fase 6a** — **Venue editor drag-and-drop básico (escenarios + zonas + filas rectas)** 🟡 EN CURSO (Feb 24, 2026)
-- **Fase 6b** (P0) — Venue editor avanzado: filas curvas, mesas, asientos individuales, multi-select avanzado
+- **Fase 6a** — **Venue editor básico (escenarios + zonas + filas rectas)** ✅ (Feb 24, 2026)
+- **Fase 6b** — **Venue editor avanzado (curvas + mesas + asientos individuales + transformer + multi-select)** ✅ (Feb 24, 2026)
 - **Fase 7** (P0) — Compra con selección de asiento en evento usando venue
 - **Fase 3b** (P1) — Multi ticket types, multi-función, promo codes, descuentos avanzados
 - **Fase 8** (P2) — Snapshots históricos de MRR (delta real mes a mes), churn, cohorts
@@ -128,9 +128,63 @@ Colección Mongo `venues` con elementos embebidos. Endpoints organizer (`/api/ve
 - Vincular venue a evento (event.venue_id) — viene en Fase 7.
 - Selección de asientos durante compra (event-level seat hold) — Fase 7.
 - Filas curvas, mesas, asientos individuales — Fase 6b.
-- Performance: probado con ~80 elementos en el seed Teatro Demo, fluido. Target spec: 500 elementos OK.
+## Fase 6b — Venue editor avanzado ✅ (Feb 24, 2026)
 
-## Credenciales
+### Elementos nuevos (4)
+- **`seat_row_curved`** — Arco circular con `curve_radius` + `curve_arc_degrees` (10°-180°). Sweep LEFT→RIGHT para que la numeración LTR sea visualmente coherente. Geometría: centro del círculo arriba del anchor (cy = -curve_radius), seats sobre el bottom-arc.
+- **`seat_individual`** — Asiento suelto. Click directo coloca; el label se auto-incrementa (`VIP-1` → `VIP-2`) con `bumpLabel`. La herramienta permanece activa hasta `Esc` para colocar varios.
+- **`table_round`** — Mesa redonda con `chairs_count` (2-12), `table_radius`, `chair_distance`, `chair_radius`. Las sillas se distribuyen en círculo equiespaciadas.
+- **`table_rect`** — Mesa rectangular con `chairs_per_side: {top, right, bottom, left}` (max 12 arriba/abajo, 8 lateral). Sillas alineadas en cada lado.
+
+### Konva Transformer
+- `<Transformer>` adjuntado dinámicamente a las refs de la selección via `tr.nodes([...])`.
+- Resize estructural según kind: stage/zone/table_rect ajustan width/height; seat_row_straight ajusta `seats_count` proporcional al ancho; table_round ajusta `table_radius`; seat_row_curved ajusta `curve_radius`; seat_individual no resize.
+- `rotationSnaps` cada 15° por defecto (configurable con Shift).
+- onTransformEnd: reset scaleX/scaleY a 1 + persist patch.
+
+### Multi-select (lo que faltaba de 6a + nuevo)
+- ✅ **Ctrl/Cmd+Click**: toggle additivo.
+- ✅ **Marquee**: drag en zona vacía con tool=select. `bboxIntersects` decide qué entra. Shift+drag para añadir a selección existente.
+- ✅ **Group drag**: al arrastrar un elemento seleccionado, todos los demás seleccionados se mueven con el mismo delta. Snapshot al primer dragMove + apply via refs Konva directos (sin re-render); persist en dragEnd.
+- ✅ **Alinear** 6 botones (L/CV/R/T/CH/B) en sidebar multi.
+- ✅ **Distribuir** H/V (requiere ≥3 elementos).
+- ✅ **Asignar localidad** batch desde panel Localidades ("Asignar a selección (N)").
+- ✅ **Eliminar**, **Duplicar (Ctrl+D)**.
+
+### Snap a alineación (5px tolerance)
+- Durante drag, se computan bboxes de TODOS los elementos no seleccionados.
+- Para cada eje (cx/minX/maxX vs cy/minY/maxY) se chequea coincidencia ±5px.
+- Si match: snap + render línea guía verde dash en `<Layer>` de elementos durante el drag.
+- Limpieza onDragEnd.
+
+### Sidebar mejorado
+- Multi-select: sección Alinear (3×2 grid) + Distribuir (2 botones) + Duplicar + Eliminar.
+- Single-select: campos polimórficos según kind (curve_radius, chairs_count, chairs_per_side, etc.) + Z-index buttons (Bring to Front / Send to Back).
+
+### Atajos
+- `Delete` / `Backspace` · `Ctrl+A` · `Ctrl+C` · `Ctrl+V` · `Ctrl+D` · `Ctrl+Z` · `Ctrl+Shift+Z` · `Esc` · Arrow keys (Shift = 10px) · Right-click menú contextual.
+
+### Context menu (right-click)
+- Editar / Duplicar / Asignar localidad / Bring to Front / Send to Back / Eliminar.
+
+### Seed
+- **Auditorio Pequeño** rediseñado a status=published, 50 cap, 11 elementos × 6 tipos:
+  1 escenario · 2 filas rectas A/B (10 + 10) · 1 fila curva C (10 seats, arc 80°) · 2 mesas redondas (6 sillas c/u) · 1 mesa rectangular (4 sillas top/bottom) · 4 asientos VIP individuales.
+
+### Smoke tests (curl)
+| Caso | Resultado |
+| --- | --- |
+| PUT con stage + curved + seat + table_round + table_rect | 200 ✓ |
+| capacity_calculated = 21 (= 8 curved + 1 seat + 6 round + 6 rect) | ✓ |
+| arc_degrees=200 → 422 | ✓ |
+| chairs_count=15 (>12) → 422 | ✓ |
+
+### Performance
+- Grid en su propio `<Layer listening={false}>` — no se re-renderiza al mover elementos.
+- Group drag mueve nodos Konva directamente sin disparar render por cada delta.
+- Probado con los 11 elementos del Auditorio: fluido. Target spec 200+ elementos viable.
+
+
 Ver `/app/memory/test_credentials.md`.
 
 

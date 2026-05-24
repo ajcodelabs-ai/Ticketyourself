@@ -54,7 +54,10 @@ async def require_organizer(user=Depends(get_current_user)) -> Dict[str, Any]:
 
 # ───────────────────────── Models ──────────────────────────────────────────
 VENUE_TYPES = {"theater", "auditorium", "stadium", "fair", "classroom", "mixed", "other"}
-ELEMENT_KINDS = {"stage", "unnumbered_zone", "seat_row_straight"}
+ELEMENT_KINDS = {
+    "stage", "unnumbered_zone", "seat_row_straight",
+    "seat_row_curved", "seat_individual", "table_round", "table_rect",
+}
 
 
 class Locality(BaseModel):
@@ -74,20 +77,23 @@ class CanvasCfg(BaseModel):
 
 class VenueElement(BaseModel):
     id: str
-    kind: Literal["stage", "unnumbered_zone", "seat_row_straight"]
+    kind: Literal[
+        "stage", "unnumbered_zone", "seat_row_straight",
+        "seat_row_curved", "seat_individual", "table_round", "table_rect",
+    ]
     x: float
     y: float
     rotation: float = 0.0
     label: str = ""
     locality_id: Optional[str] = None
     z_index: int = 0
-    # Stage / zone shared
+    # Stage / zone / table_rect shared
     width: Optional[float] = None
     height: Optional[float] = None
     color: Optional[str] = None
     # Zone-specific
     capacity: Optional[int] = None
-    # Seat row
+    # Seat row (straight + curved share most)
     seats_count: Optional[int] = None
     seat_spacing: Optional[int] = 24
     seat_radius: Optional[int] = 10
@@ -95,6 +101,16 @@ class VenueElement(BaseModel):
     numbering_start: Optional[int] = 1
     numbering_direction: Optional[Literal["ltr", "rtl"]] = "ltr"
     numbering_style: Optional[Literal["numeric", "alpha"]] = "numeric"
+    # Curved row only
+    curve_radius: Optional[int] = None
+    curve_arc_degrees: Optional[int] = None
+    # Table round
+    table_radius: Optional[int] = None
+    chairs_count: Optional[int] = None
+    chair_radius: Optional[int] = 10
+    chair_distance: Optional[int] = 20
+    # Table rect — chairs_per_side keyed by top/right/bottom/left
+    chairs_per_side: Optional[Dict[str, int]] = None
 
 
 class VenueIn(BaseModel):
@@ -126,13 +142,21 @@ def _now_iso() -> str:
 
 
 def _compute_capacity(elements: List[Dict[str, Any]]) -> int:
-    """Sum of unnumbered_zone capacities + seat row seats_count."""
+    """Sum of seat counts across all element kinds that contribute."""
     total = 0
     for e in elements:
-        if e.get("kind") == "unnumbered_zone":
+        k = e.get("kind")
+        if k == "unnumbered_zone":
             total += int(e.get("capacity") or 0)
-        elif e.get("kind") == "seat_row_straight":
+        elif k == "seat_row_straight" or k == "seat_row_curved":
             total += int(e.get("seats_count") or 0)
+        elif k == "seat_individual":
+            total += 1
+        elif k == "table_round":
+            total += int(e.get("chairs_count") or 0)
+        elif k == "table_rect":
+            cps = e.get("chairs_per_side") or {}
+            total += sum(int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left"))
     return total
 
 
@@ -151,11 +175,30 @@ def _validate_elements(elements: List[VenueElement]) -> None:
         if el.kind == "unnumbered_zone":
             if not el.capacity or el.capacity <= 0:
                 raise HTTPException(422, f"Zone '{el.label or el.id}' must have capacity > 0")
-        if el.kind == "seat_row_straight":
+        if el.kind in ("seat_row_straight", "seat_row_curved"):
             n = el.seats_count or 0
             if not (1 <= n <= 200):
                 raise HTTPException(
                     422, f"Row '{el.row_label or el.id}' seats_count must be 1..200 (got {n})"
+                )
+        if el.kind == "seat_row_curved":
+            arc = el.curve_arc_degrees or 0
+            if not (10 <= arc <= 180):
+                raise HTTPException(
+                    422, f"Row '{el.row_label or el.id}' curve_arc_degrees must be 10..180 (got {arc})"
+                )
+        if el.kind == "table_round":
+            n = el.chairs_count or 0
+            if not (2 <= n <= 12):
+                raise HTTPException(
+                    422, f"Table '{el.label or el.id}' chairs_count must be 2..12 (got {n})"
+                )
+        if el.kind == "table_rect":
+            cps = el.chairs_per_side or {}
+            total = sum(int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left"))
+            if total < 1:
+                raise HTTPException(
+                    422, f"Table '{el.label or el.id}' must have at least 1 chair"
                 )
 
 

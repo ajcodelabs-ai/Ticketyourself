@@ -1035,46 +1035,111 @@ async def _seed_demo_venues() -> None:
         "published_at": now,
     })
 
-    # ── 2. Auditorio Pequeño ──────────────────────────────────────────────
+    # ── 2. Auditorio Pequeño (Phase 6b: showcases all new element kinds) ──
     loc_aud_gen = {"id": str(uuid.uuid4()), "name": "General", "color": "#6366F1",
                    "description": "Asientos numerados generales", "default_price_cents": 1500}
+    loc_aud_vip = {"id": str(uuid.uuid4()), "name": "VIP", "color": "#F59E0B",
+                   "description": "Asientos VIP frente al escenario", "default_price_cents": 5000}
+    loc_aud_mesa = {"id": str(uuid.uuid4()), "name": "Mesa", "color": "#10B981",
+                    "description": "Sillas en mesa", "default_price_cents": 3000}
     aud_elements = [
         {
             "id": str(uuid.uuid4()), "kind": "stage",
-            "x": 200, "y": 50, "rotation": 0, "label": "Escenario",
+            "x": 240, "y": 40, "rotation": 0, "label": "Escenario",
             "locality_id": None, "z_index": 0,
-            "width": 400, "height": 60, "color": "#9CA3AF",
+            "width": 320, "height": 60, "color": "#9CA3AF",
         },
-    ]
-    for i, row_label in enumerate(["A", "B", "C", "D", "E"]):
-        aud_elements.append({
+        # 2 filas rectas
+        {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 220, "y": 200 + i * 60, "rotation": 0, "label": f"Fila {row_label}",
+            "x": 240, "y": 160, "rotation": 0, "label": "Fila A",
             "locality_id": loc_aud_gen["id"], "z_index": 1,
-            "seats_count": 10, "seat_spacing": 30, "seat_radius": 11,
-            "row_label": row_label, "numbering_start": 1,
+            "seats_count": 10, "seat_spacing": 28, "seat_radius": 10,
+            "row_label": "A", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
-        })
-    aud_cap = sum(
-        (e.get("seats_count") or 0) for e in aud_elements if e["kind"] == "seat_row_straight"
-    )
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 240, "y": 200, "rotation": 0, "label": "Fila B",
+            "locality_id": loc_aud_gen["id"], "z_index": 1,
+            "seats_count": 10, "seat_spacing": 28, "seat_radius": 10,
+            "row_label": "B", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        # 1 fila curva
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_curved",
+            "x": 400, "y": 360, "rotation": 0, "label": "Fila C (curva)",
+            "locality_id": loc_aud_gen["id"], "z_index": 1,
+            "seats_count": 10, "seat_spacing": 26, "seat_radius": 10,
+            "curve_radius": 220, "curve_arc_degrees": 80,
+            "row_label": "C", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        # 2 mesas redondas
+        {
+            "id": str(uuid.uuid4()), "kind": "table_round",
+            "x": 180, "y": 460, "rotation": 0, "label": "Mesa 1",
+            "locality_id": loc_aud_mesa["id"], "z_index": 1,
+            "table_radius": 40, "chairs_count": 6,
+            "chair_radius": 10, "chair_distance": 22,
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "table_round",
+            "x": 320, "y": 460, "rotation": 0, "label": "Mesa 2",
+            "locality_id": loc_aud_mesa["id"], "z_index": 1,
+            "table_radius": 40, "chairs_count": 6,
+            "chair_radius": 10, "chair_distance": 22,
+        },
+        # 1 mesa rectangular
+        {
+            "id": str(uuid.uuid4()), "kind": "table_rect",
+            "x": 480, "y": 440, "rotation": 0, "label": "Mesa larga",
+            "locality_id": loc_aud_mesa["id"], "z_index": 1,
+            "width": 160, "height": 60,
+            "chairs_per_side": {"top": 2, "bottom": 2, "left": 0, "right": 0},
+            "chair_radius": 10, "chair_distance": 20,
+        },
+        # 4 asientos individuales VIP cerca del escenario
+        *[
+            {
+                "id": str(uuid.uuid4()), "kind": "seat_individual",
+                "x": 240 + i * 60, "y": 115, "rotation": 0,
+                "label": f"VIP-{i + 1}",
+                "locality_id": loc_aud_vip["id"], "z_index": 2,
+                "seat_radius": 12,
+            }
+            for i in range(4)
+        ],
+    ]
+    aud_cap = 0
+    for e in aud_elements:
+        if e["kind"] in ("seat_row_straight", "seat_row_curved"):
+            aud_cap += e.get("seats_count", 0)
+        elif e["kind"] == "seat_individual":
+            aud_cap += 1
+        elif e["kind"] == "table_round":
+            aud_cap += e.get("chairs_count", 0)
+        elif e["kind"] == "table_rect":
+            cps = e.get("chairs_per_side") or {}
+            aud_cap += sum(int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left"))
     await db.venues.insert_one({
         "id": str(uuid.uuid4()),
         "organizer_id": organizer["id"],
         "tenant_slug": "demo-org",
         "name": "Auditorio Pequeño",
         "slug": "auditorio-pequeno",
-        "description": "Auditorio con 5 filas frontales, modo borrador para probar el editor.",
+        "description": "Showcase de Fase 6b: filas rectas, fila curva, mesas redondas, mesa rectangular y asientos VIP individuales.",
         "type": "auditorium",
         "canvas": {"width": 800, "height": 600, "background_color": "#FAFAFA", "grid_size": 20},
         "elements": aud_elements,
-        "localities": [loc_aud_gen],
+        "localities": [loc_aud_gen, loc_aud_vip, loc_aud_mesa],
         "capacity_calculated": aud_cap,
-        "status": "draft",
+        "status": "published",
         "is_template": False,
         "created_at": now,
         "updated_at": now,
-        "published_at": None,
+        "published_at": now,
     })
     logger.info("Seeded 2 demo venues for demo-org (Teatro Demo + Auditorio Pequeño)")
 
