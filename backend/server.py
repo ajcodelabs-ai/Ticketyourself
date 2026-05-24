@@ -72,6 +72,7 @@ from routers import tickets as tickets_router  # noqa: E402
 from routers import dashboard as dashboard_router  # noqa: E402
 from routers import admin_dashboard as admin_dashboard_router  # noqa: E402
 from routers import admin_exports as admin_exports_router  # noqa: E402
+from routers import venues as venues_router  # noqa: E402
 
 app.include_router(events_router.router)
 app.include_router(events_router.public_router)
@@ -82,6 +83,8 @@ app.include_router(tickets_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(admin_dashboard_router.router)
 app.include_router(admin_exports_router.router)
+app.include_router(venues_router.router)
+app.include_router(venues_router.public_router)
 
 
 # CORS — must NOT use "*" with allow_credentials=True per browser spec.

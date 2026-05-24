@@ -940,6 +940,145 @@ async def _seed_demo_manual_orders() -> None:
             logger.exception("Could not seed manual order for %s", spec["payment_method"])
 
 
+async def _seed_demo_venues() -> None:
+    """
+    Phase 6a — seed 2 demo venues for demo-org so the editor lands on real data.
+    Idempotent: deletes existing demo venues by well-known slug, recreates.
+    """
+    organizer = await db.organizers.find_one({"slug": "demo-org"}, {"_id": 0, "id": 1, "slug": 1})
+    if not organizer:
+        return
+    demo_slugs = ("teatro-demo", "auditorio-pequeno")
+    # Skip seed when an existing demo venue is referenced by events (avoid breaking those FKs).
+    bound = await db.events.count_documents(
+        {"venue_id": {"$exists": True, "$ne": None}}
+    )
+    if bound:
+        # If any events bind to venues, leave as-is — admin/operator must clean up.
+        existing = await db.venues.count_documents(
+            {"organizer_id": organizer["id"], "slug": {"$in": list(demo_slugs)}}
+        )
+        if existing >= 2:
+            return
+
+    await db.venues.delete_many(
+        {"organizer_id": organizer["id"], "slug": {"$in": list(demo_slugs)}}
+    )
+
+    now = _now_iso()
+    # ── 1. Teatro Demo ────────────────────────────────────────────────────
+    loc_platea = {"id": str(uuid.uuid4()), "name": "Platea", "color": "#3B82F6",
+                  "description": "Filas frontales", "default_price_cents": 2500}
+    loc_tribuna = {"id": str(uuid.uuid4()), "name": "Tribuna", "color": "#10B981",
+                   "description": "Filas posteriores", "default_price_cents": 1500}
+    loc_general = {"id": str(uuid.uuid4()), "name": "General", "color": "#6B7280",
+                   "description": "Gradería", "default_price_cents": 1000}
+
+    teatro_elements = [
+        {
+            "id": str(uuid.uuid4()), "kind": "stage",
+            "x": 250, "y": 50, "rotation": 0, "label": "Escenario",
+            "locality_id": None, "z_index": 0,
+            "width": 700, "height": 80, "color": "#9CA3AF",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 300, "y": 180, "rotation": 0, "label": "Fila A",
+            "locality_id": loc_platea["id"], "z_index": 1,
+            "seats_count": 10, "seat_spacing": 30, "seat_radius": 11,
+            "row_label": "A", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 270, "y": 240, "rotation": 0, "label": "Fila B",
+            "locality_id": loc_platea["id"], "z_index": 1,
+            "seats_count": 12, "seat_spacing": 30, "seat_radius": 11,
+            "row_label": "B", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 270, "y": 300, "rotation": 0, "label": "Fila C",
+            "locality_id": loc_tribuna["id"], "z_index": 1,
+            "seats_count": 12, "seat_spacing": 30, "seat_radius": 11,
+            "row_label": "C", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "unnumbered_zone",
+            "x": 200, "y": 540, "rotation": 0, "label": "Gradería",
+            "locality_id": loc_general["id"], "z_index": 1,
+            "width": 800, "height": 150, "capacity": 50, "color": None,
+        },
+    ]
+    teatro_cap = sum(
+        (e.get("seats_count") or 0) if e["kind"] == "seat_row_straight" else (e.get("capacity") or 0)
+        for e in teatro_elements
+    )
+    await db.venues.insert_one({
+        "id": str(uuid.uuid4()),
+        "organizer_id": organizer["id"],
+        "tenant_slug": "demo-org",
+        "name": "Teatro Demo",
+        "slug": "teatro-demo",
+        "description": "Sala chica con escenario frontal, ideal para shows íntimos.",
+        "type": "theater",
+        "canvas": {"width": 1200, "height": 800, "background_color": "#FAFAFA", "grid_size": 20},
+        "elements": teatro_elements,
+        "localities": [loc_platea, loc_tribuna, loc_general],
+        "capacity_calculated": teatro_cap,
+        "status": "published",
+        "is_template": False,
+        "created_at": now,
+        "updated_at": now,
+        "published_at": now,
+    })
+
+    # ── 2. Auditorio Pequeño ──────────────────────────────────────────────
+    loc_aud_gen = {"id": str(uuid.uuid4()), "name": "General", "color": "#6366F1",
+                   "description": "Asientos numerados generales", "default_price_cents": 1500}
+    aud_elements = [
+        {
+            "id": str(uuid.uuid4()), "kind": "stage",
+            "x": 200, "y": 50, "rotation": 0, "label": "Escenario",
+            "locality_id": None, "z_index": 0,
+            "width": 400, "height": 60, "color": "#9CA3AF",
+        },
+    ]
+    for i, row_label in enumerate(["A", "B", "C", "D", "E"]):
+        aud_elements.append({
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 220, "y": 200 + i * 60, "rotation": 0, "label": f"Fila {row_label}",
+            "locality_id": loc_aud_gen["id"], "z_index": 1,
+            "seats_count": 10, "seat_spacing": 30, "seat_radius": 11,
+            "row_label": row_label, "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        })
+    aud_cap = sum(
+        (e.get("seats_count") or 0) for e in aud_elements if e["kind"] == "seat_row_straight"
+    )
+    await db.venues.insert_one({
+        "id": str(uuid.uuid4()),
+        "organizer_id": organizer["id"],
+        "tenant_slug": "demo-org",
+        "name": "Auditorio Pequeño",
+        "slug": "auditorio-pequeno",
+        "description": "Auditorio con 5 filas frontales, modo borrador para probar el editor.",
+        "type": "auditorium",
+        "canvas": {"width": 800, "height": 600, "background_color": "#FAFAFA", "grid_size": 20},
+        "elements": aud_elements,
+        "localities": [loc_aud_gen],
+        "capacity_calculated": aud_cap,
+        "status": "draft",
+        "is_template": False,
+        "created_at": now,
+        "updated_at": now,
+        "published_at": None,
+    })
+    logger.info("Seeded 2 demo venues for demo-org (Teatro Demo + Auditorio Pequeño)")
+
+
 async def run_seeds() -> None:
     await _create_indexes()
     await _cleanup_ephemeral_test_data()
@@ -951,3 +1090,4 @@ async def run_seeds() -> None:
     await _seed_demo_microsites()
     await _seed_demo_events()
     await _seed_demo_manual_orders()
+    await _seed_demo_venues()

@@ -19,6 +19,8 @@ import BillingCancel from "@/pages/BillingCancel";
 // Phase 5 organizer area
 import DashboardHome from "@/pages/app/DashboardHome";
 import Venues from "@/pages/app/Venues";
+import VenueEditor from "@/pages/app/VenueEditor";
+import VenuePreview from "@/pages/VenuePreview";
 import Configuracion from "@/pages/app/Configuracion";
 
 import AdminDashboard from "@/pages/admin/AdminDashboard";
@@ -84,6 +86,10 @@ function App() {
                             <Route path="/registro" element={<Public><Register /></Public>} />
                             <Route path="/o/:slug" element={<MicrositePublic />} />
                             <Route path="/o/:slug/e/:event_slug" element={<EventPublic />} />
+                            <Route
+                                path="/o/:tenantSlug/venues/:venueSlug/preview"
+                                element={<VenuePreview />}
+                            />
                             <Route path="/o/:slug/orden/:order_number" element={<OrderSuccess />} />
                             <Route
                                 path="/o/:slug/orden/:order_number/cancelado"
@@ -98,6 +104,10 @@ function App() {
                             <Route path="/app" element={<Navigate to="/app/dashboard" replace />} />
                             <Route path="/app/dashboard" element={<OrgArea><DashboardHome /></OrgArea>} />
                             <Route path="/app/venues" element={<OrgArea><Venues /></OrgArea>} />
+                            <Route
+                                path="/app/venues/:id/editor"
+                                element={<OrgArea><VenueEditor /></OrgArea>}
+                            />
                             <Route path="/app/microsite" element={<OrgArea><MicrositeEditor /></OrgArea>} />
                             <Route path="/app/eventos" element={<OrgArea><EventsList /></OrgArea>} />
                             <Route path="/app/eventos/nuevo" element={<OrgArea><EventNew /></OrgArea>} />
