@@ -323,6 +323,14 @@ function TicketCard({ ticket, order, idx, primaryColor }) {
                     <p className="text-xs text-muted-foreground truncate">
                         {holder.email}
                     </p>
+                    {ticket.seat_label && (
+                        <p
+                            className="text-xs font-medium text-primary mt-1 truncate"
+                            data-testid={`ticket-seat-${ticket.id}`}
+                        >
+                            🎫 {ticket.seat_label}
+                        </p>
+                    )}
                     <Button
                         asChild
                         size="sm"

@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import EventVenueLink from "@/components/events/EventVenueLink";
 import {
     Loader2,
     Save,
@@ -397,6 +398,8 @@ export default function EventWizard({ initial, mode = "create" }) {
                         form={form}
                         update={update}
                         disabled={lockCritical}
+                        event={initial}
+                        onEventUpdated={(e) => onSaved?.(e)}
                     />
                 </TabsContent>
                 <TabsContent value="payments" className="mt-4">
@@ -732,14 +735,20 @@ function SectionMedia({ poster, banner, gallery, onUpload, onDeleteGallery, onRe
 }
 
 // ── Section: Locations ──────────────────────────────────────────────────────
-function SectionLocations({ form, update, disabled }) {
+function SectionLocations({ form, update, disabled, event, onEventUpdated }) {
     return (
         <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="section-locations">
+            {/* Phase 7 — venue numbering link */}
+            {event?.id && (
+                <EventVenueLink event={event} onUpdated={onEventUpdated} disabled={disabled} />
+            )}
+
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900 flex gap-2">
                 <Info className="h-4 w-4 shrink-0 mt-0.5" />
                 <span>
-                    Cuando hayas creado tu venue (Fase 6), acá vas a poder agregar
-                    localidades múltiples (VIP, Platea, etc.) con precios distintos.
+                    {event?.venue_id
+                        ? "Este evento usa asientos numerados. Los precios del listado de abajo solo aplican si desvinculás el venue."
+                        : "Para eventos no numerados podés definir un precio base único y la capacidad acá."}
                 </span>
             </div>
 

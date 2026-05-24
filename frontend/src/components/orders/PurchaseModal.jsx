@@ -36,9 +36,10 @@ function activeMethodsFor(event) {
     return ["stripe", "transfer", "cash"].filter((k) => pm[k]?.enabled);
 }
 
-export default function PurchaseModal({ open, onOpenChange, event, tenantSlug }) {
+export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, seatHoldsInfo }) {
     const navigate = useNavigate();
     const pricingType = event?.pricing_type || "free";
+    const isSeatNumbered = !!seatHoldsInfo;
 
     const activeMethods = useMemo(() => {
         if (pricingType === "free") return [];
@@ -70,6 +71,14 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
 
     const totals = useMemo(() => {
         if (!event) return { subtotal: 0, fees: 0, total: 0 };
+        // Phase 7 — numbered events: totals come from seatHoldsInfo
+        if (isSeatNumbered) {
+            return {
+                subtotal: seatHoldsInfo.subtotal_cents,
+                fees: seatHoldsInfo.fees_cents,
+                total: seatHoldsInfo.total_cents,
+            };
+        }
         if (pricingType === "free") return { subtotal: 0, fees: 0, total: 0 };
         if (pricingType === "donation") {
             const cents = Math.round(parseFloat(donation || "0") * 100);
@@ -79,7 +88,7 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
         const subtotal = unit * quantity;
         const fees = Math.round((subtotal * FEE_PERCENT) / 100);
         return { subtotal, fees, total: subtotal + fees };
-    }, [event, pricingType, quantity, donation]);
+    }, [event, pricingType, quantity, donation, isSeatNumbered, seatHoldsInfo]);
 
     const validate = () => {
         const e = {};
@@ -101,7 +110,7 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
             const payload = {
                 tenant_slug: tenantSlug,
                 event_slug: event.slug,
-                quantity,
+                quantity: isSeatNumbered ? seatHoldsInfo.seat_ids.length : quantity,
                 buyer: {
                     name: buyer.name.trim(),
                     email: buyer.email.trim().toLowerCase(),
@@ -114,6 +123,11 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
             if (pricingType === "donation") {
                 payload.donation_amount_cents = Math.round(parseFloat(donation) * 100);
                 payload.quantity = 1;
+            }
+            // Phase 7 — numbered event: attach seat info
+            if (isSeatNumbered) {
+                payload.seat_ids = seatHoldsInfo.seat_ids;
+                payload.seat_holds_session_token = seatHoldsInfo.session_token;
             }
             const { data } = await api.post("/public/orders", payload);
             if (data.status === "paid") {
@@ -172,8 +186,35 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug })
                     </Badge>
                 </div>
 
-                {/* Quantity (no donation) */}
-                {pricingType !== "donation" && (
+                {/* Phase 7 — seats summary (numbered events) */}
+                {isSeatNumbered && (
+                    <div
+                        className="rounded-lg border bg-secondary/40 p-3 space-y-1.5"
+                        data-testid="purchase-seats-summary"
+                    >
+                        <p className="text-xs font-medium">
+                            Estás reservando {seatHoldsInfo.seats.length} asiento(s):
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                            {seatHoldsInfo.seats.map((s) => (
+                                <Badge
+                                    key={s.seat_id}
+                                    variant="outline"
+                                    className="text-xs"
+                                    data-testid={`purchase-seat-${s.seat_id}`}
+                                >
+                                    {s.label}
+                                </Badge>
+                            ))}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                            Tu reserva vence en 10 minutos. Si no completás el pago, los asientos vuelven a estar disponibles.
+                        </p>
+                    </div>
+                )}
+
+                {/* Quantity (hidden for numbered events + donation) */}
+                {pricingType !== "donation" && !isSeatNumbered && (
                     <div className="space-y-1.5">
                         <Label htmlFor="qty">Cantidad de entradas</Label>
                         <div className="flex items-center gap-2">

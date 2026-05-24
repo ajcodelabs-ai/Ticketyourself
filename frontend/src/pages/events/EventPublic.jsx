@@ -26,6 +26,7 @@ import {
 import api from "@/lib/api";
 import ShareModal from "@/components/microsite/ShareModal";
 import PurchaseModal from "@/components/orders/PurchaseModal";
+import NumberedSeatSection from "@/components/events/NumberedSeatSection";
 import { assetUrl } from "@/lib/microsite";
 import {
     formatEventDate,
@@ -44,6 +45,7 @@ export default function EventPublic() {
     const [state, setState] = useState("loading");
     const [shareOpen, setShareOpen] = useState(false);
     const [buyOpen, setBuyOpen] = useState(false);
+    const [seatHoldsInfo, setSeatHoldsInfo] = useState(null);
     const [lightbox, setLightbox] = useState(-1); // index in gallery, -1 = closed
 
     useEffect(() => {
@@ -238,36 +240,62 @@ export default function EventPublic() {
             })()}
 
             <section className="max-w-3xl mx-auto px-6 pb-16">
-                <div className="rounded-2xl border bg-secondary/30 p-6 flex flex-col sm:flex-row gap-3 items-center justify-between">
-                    <div>
-                        <p className="text-sm text-muted-foreground">
-                            {event.capacity != null
-                                ? `Capacidad: ${event.capacity} entradas`
-                                : "Capacidad sin límite"}
-                        </p>
-                        <p className="text-2xl font-bold">{formatPriceLabel(event)}</p>
+                {event.venue_id ? null : (
+                    <div className="rounded-2xl border bg-secondary/30 p-6 flex flex-col sm:flex-row gap-3 items-center justify-between">
+                        <div>
+                            <p className="text-sm text-muted-foreground">
+                                {event.capacity != null
+                                    ? `Capacidad: ${event.capacity} entradas`
+                                    : "Capacidad sin límite"}
+                            </p>
+                            <p className="text-2xl font-bold">{formatPriceLabel(event)}</p>
+                        </div>
+                        <div className="flex gap-2">
+                            <Button
+                                onClick={() => setShareOpen(true)}
+                                variant="outline"
+                                data-testid="event-public-share-btn"
+                            >
+                                <Share2 className="h-4 w-4 mr-1.5" />
+                                Compartir
+                            </Button>
+                            <Button
+                                onClick={() => setBuyOpen(true)}
+                                className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                                size="lg"
+                                data-testid="event-public-buy-btn"
+                            >
+                                <Ticket className="h-4 w-4 mr-1.5" />
+                                Comprar entradas
+                            </Button>
+                        </div>
                     </div>
-                    <div className="flex gap-2">
+                )}
+                {event.venue_id && (
+                    <div className="flex justify-end pb-2">
                         <Button
                             onClick={() => setShareOpen(true)}
                             variant="outline"
+                            size="sm"
                             data-testid="event-public-share-btn"
                         >
                             <Share2 className="h-4 w-4 mr-1.5" />
                             Compartir
                         </Button>
-                        <Button
-                            onClick={() => setBuyOpen(true)}
-                            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-                            size="lg"
-                            data-testid="event-public-buy-btn"
-                        >
-                            <Ticket className="h-4 w-4 mr-1.5" />
-                            Comprar entradas
-                        </Button>
                     </div>
-                </div>
+                )}
             </section>
+
+            {event.venue_id && (
+                <NumberedSeatSection
+                    tenantSlug={slug}
+                    event={event}
+                    onLaunchPurchase={(info) => {
+                        setSeatHoldsInfo(info);
+                        setBuyOpen(true);
+                    }}
+                />
+            )}
 
             <ShareModal
                 open={shareOpen}
@@ -279,9 +307,13 @@ export default function EventPublic() {
 
             <PurchaseModal
                 open={buyOpen}
-                onOpenChange={setBuyOpen}
+                onOpenChange={(v) => {
+                    setBuyOpen(v);
+                    if (!v) setSeatHoldsInfo(null);
+                }}
                 event={event}
                 tenantSlug={slug}
+                seatHoldsInfo={seatHoldsInfo}
             />
 
             {/* Lightbox for gallery */}

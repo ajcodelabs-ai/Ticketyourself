@@ -153,6 +153,44 @@ def compute_totals(*, event: dict, quantity: int, donation_amount_cents: int = 0
     }
 
 
+# Phase 7 — totals for a numbered event with explicit seat_ids.
+def compute_totals_with_seats(
+    *, event: dict, venue: dict, seat_ids: list[str],
+) -> dict:
+    """Per-locality pricing for seat-numbered events."""
+    from services.seats import seats_by_id
+
+    if not seat_ids:
+        raise HTTPException(422, "No seleccionaste asientos.")
+    pricing_map = {
+        lp["locality_id"]: int(lp.get("price_cents") or 0)
+        for lp in (event.get("locality_pricing") or [])
+    }
+    by_id = seats_by_id(venue)
+    subtotal = 0
+    missing_loc = []
+    for sid in seat_ids:
+        seat = by_id.get(sid)
+        if not seat:
+            raise HTTPException(422, f"Asiento {sid} no existe en el venue.")
+        loc_id = seat.get("locality_id")
+        if loc_id not in pricing_map:
+            missing_loc.append(loc_id or "(sin localidad)")
+            continue
+        subtotal += pricing_map[loc_id]
+    if missing_loc:
+        raise HTTPException(422, f"El evento no tiene precio para: {set(missing_loc)}")
+    fees = int(round(subtotal * DEFAULT_FEE_PERCENT / 100))
+    avg_unit = subtotal // max(1, len(seat_ids))
+    return {
+        "unit_price_cents": avg_unit,
+        "subtotal_cents": subtotal,
+        "fees_cents": fees,
+        "total_cents": subtotal + fees,
+        "donation_amount_cents": 0,
+    }
+
+
 # ── Create order ────────────────────────────────────────────────────────────
 async def create_order_skeleton(
     *,
@@ -162,6 +200,8 @@ async def create_order_skeleton(
     buyer: dict,
     totals: dict,
     payment_method: str = "stripe",
+    seat_ids: list[str] | None = None,
+    seat_holds_session_token: str | None = None,
 ) -> dict:
     if quantity < 1 or quantity > MAX_QUANTITY:
         raise HTTPException(422, f"Cantidad debe estar entre 1 y {MAX_QUANTITY}")
@@ -232,8 +272,18 @@ async def create_order_skeleton(
         "updated_at": _now_iso(),
         "expires_at": (_now() + ttl).isoformat(),
         "metadata": {"source": "web"},
+        # Phase 7 — numbered events: persist the seats this order is buying
+        "seat_ids": seat_ids or None,
+        "seat_holds_session_token": seat_holds_session_token,
     }
     await db.ticket_orders.insert_one({**order})
+    # If numbered, convert the matching held rows to "converted"
+    if seat_ids and seat_holds_session_token:
+        from services.seats import consume_holds_for_order
+        await consume_holds_for_order(
+            event_id=event["id"], session_token=seat_holds_session_token,
+            seat_ids=seat_ids, order_id=order_id,
+        )
     return order
 
 
@@ -285,6 +335,23 @@ async def issue_tickets_for_order(order: dict) -> list[dict]:
     return tickets
 
 
+# ── Phase 7 — seat assignment helper ────────────────────────────────────────
+async def _assign_seats_if_needed(order: dict, tickets: list[dict]) -> None:
+    """Calls services.seats.assign_seats_to_tickets if this order is for a numbered event."""
+    if not order.get("seat_ids"):
+        return
+    event_doc = await db.events.find_one({"id": order["event_id"]}, {"_id": 0})
+    if not event_doc or not event_doc.get("venue_id"):
+        return
+    venue_doc = await db.venues.find_one({"id": event_doc["venue_id"]}, {"_id": 0})
+    if not venue_doc:
+        return
+    from services.seats import assign_seats_to_tickets
+    await assign_seats_to_tickets(
+        event_id=event_doc["id"], venue=venue_doc, order=order, tickets=tickets,
+    )
+
+
 # ── Mark paid + emit ────────────────────────────────────────────────────────
 async def finalize_paid_order(
     *, order: dict, stripe_session_id: str | None = None
@@ -304,6 +371,7 @@ async def finalize_paid_order(
     await db.ticket_orders.update_one({"id": order["id"]}, {"$set": update})
 
     tickets = await issue_tickets_for_order(order)
+    await _assign_seats_if_needed(order, tickets)
     await db.events.update_one(
         {"id": order["event_id"]},
         {"$inc": {"tickets_sold": order["quantity_total"]}, "$set": {"updated_at": now_iso}},
@@ -442,6 +510,7 @@ async def confirm_manual_payment(
     )
 
     tickets = await issue_tickets_for_order(order)
+    await _assign_seats_if_needed(order, tickets)
     await db.events.update_one(
         {"id": order["event_id"]},
         {"$inc": {"tickets_sold": order["quantity_total"]}, "$set": {"updated_at": now_iso}},

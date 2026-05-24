@@ -18,9 +18,10 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 - **Fase 5.5** — **Super-Admin enriquecido: dashboard global + audit + exports + lista cross-tenant** ✅ (Feb 24, 2026)
 - **Fase 6a** — **Venue editor básico (escenarios + zonas + filas rectas)** ✅ (Feb 24, 2026)
 - **Fase 6b** — **Venue editor avanzado (curvas + mesas + asientos individuales + transformer + multi-select)** ✅ (Feb 24, 2026)
-- **Fase 7** (P0) — Compra con selección de asiento en evento usando venue
-- **Fase 3b** (P1) — Multi ticket types, multi-función, promo codes, descuentos avanzados
-- **Fase 8** (P2) — Snapshots históricos de MRR (delta real mes a mes), churn, cohorts
+- **Fase 7** — **Conexión Eventos ↔ Venues + Compra con selección de asiento (mapa interactivo)** ✅ (Feb 24, 2026)
+- **Fase 8** (P1) — Multi ticket types, multi-función, promo codes, descuentos avanzados
+- **Fase 9** (P2) — QR Scanner & Door validation
+- **Fase 10** (P2) — Snapshots históricos de MRR (delta real mes a mes), churn, cohorts
 
 ## Fase 5.5 — Implementación (cerrada)
 
@@ -185,6 +186,60 @@ Colección Mongo `venues` con elementos embebidos. Endpoints organizer (`/api/ve
 - Probado con los 11 elementos del Auditorio: fluido. Target spec 200+ elementos viable.
 
 
+## Fase 7 — Eventos × Venues + Compra con asientos numerados ✅ (Feb 24, 2026)
+
+### Modelo
+- `events` extendido con `venue_id`, `venue_slug`, `locality_pricing: [{locality_id, price_cents, max_tickets_per_purchase}]`, `seat_holds_window_minutes` (default 10).
+- Nueva colección `seat_holds`: `{id, event_id, venue_id, seat_id, holder.{session_token, buyer_email}, status: held|converted, held_at, expires_at, order_id}`.
+- Nueva colección `event_seat_assignments`: `{event_id, venue_id, seat_id, ticket_id, order_id, holder_email, locality_id, assigned_at}` (one row per sold seat).
+- `tickets` ahora tiene `seat_label`, `seat_id`, `locality_id` cuando el evento es numerado.
+
+### Seat-id schema (en `services/seats.py`)
+- `seat_row_straight`/`seat_row_curved`: `"{element_id}::s::{index}"` con label `"{row_label}-{N}"` (respeta numbering_direction).
+- `seat_individual`: `"{element_id}"`, label = `element.label`.
+- `table_round`/`table_rect`: `"{element_id}::c::{index}"`, label `"{table_label}-{index+1}"`.
+- Stage y unnumbered_zone NO tienen seat_id.
+
+### Endpoints nuevos
+- Organizer: `PUT /api/events/me/{id}/venue` (body `{venue_id, locality_pricing[], seat_holds_window_minutes}`) → valida ownership + coverage + ticket-lock; `DELETE /api/events/me/{id}/venue`.
+- Público: `GET /api/public/events/...` ahora incluye `venue` completo + `locality_pricing` + `seats_status[]` cuando es numerado.
+- Público: `POST /api/public/events/.../seat-holds` body `{seat_ids[], session_token}` — atomic check + crea holds 10min; 409 con `unavailable_seat_ids` si choque.
+- Público: `DELETE /api/public/events/.../seat-holds` body `{session_token}` — libera holds.
+- `POST /api/public/orders` extendido: acepta `seat_ids[]` + `seat_holds_session_token`. Recalcula total con `compute_totals_with_seats` + transiciona holds `held → converted`.
+
+### Flow de pago
+- Stripe webhook + Manual confirm → `_assign_seats_if_needed` → `assign_seats_to_tickets` (crea event_seat_assignments + actualiza tickets con seat_label).
+- Validación publicar: requiere `locality_pricing` completo cuando hay `venue_id`.
+
+### Frontend
+- `lib/seats.js`: session_token UUID v4 (localStorage), `seatWorldPos` (geometría por kind), totals helpers.
+- `SeatPickerCanvas.jsx`: readonly + clickable seats (colores por status/locality), drag-to-pan, wheel-zoom, auto-fit.
+- `NumberedSeatSection.jsx`: grid mapa + sidebar (localidades/selección/total), refresh seats cada 15s, "Reservar y continuar".
+- `EventPublic.jsx`: modo dual — `venue_id` ⇒ NumberedSeatSection; si no ⇒ CTA actual.
+- `EventVenueLink.jsx`: dialog en wizard tab Localidades — lista venues published + grid precios por locality activa + preview + desvincular.
+- `PurchaseModal.jsx`: si recibe `seatHoldsInfo`, oculta quantity + muestra seats summary + pasa `seat_ids` + `seat_holds_session_token` al POST.
+- `OrderSuccess.jsx`: cada ticket muestra `🎫 {seat_label}`.
+
+### Seed
+- **"Función Especial — Demo Numerado"** linkeado a `teatro-demo`, status=published, +20 días.
+- Pricing: Platea $25 · Tribuna $15 · General $10.
+- Pre-cargados: 3 seats vendidos (A-1/A-2/C-5) + 1 hold (A-3) → los 3 estados visuales se ven al instante.
+
+### Smoke E2E ✅
+| Caso | Resultado |
+| --- | --- |
+| Hold 2 seats | 200 + expires_at +10min ✓ |
+| Create order con seat_ids + session_token (transfer) | 200 + total recalculado por locality ✓ |
+| Confirm manual payment | 200 + 2 tickets `seat_label="A-4 · Platea"` / `"A-5 · Platea"` ✓ |
+| Public seats_status post-venta | A-4 y A-5 → sold ✓ |
+| Counts finales | 5 sold / 1 held / 28 available ✓ |
+
+### Pendiente (no parte del alcance)
+- Comprar tickets de unnumbered_zone — se venderá como cupo en Fase 8.
+- "Extender hold" cada 2min — TTL fijo 10min suficiente.
+- Mini-mapa con el asiento highlighted en el PDF del ticket (mejora visual Fase 8).
+
+## Credenciales
 Ver `/app/memory/test_credentials.md`.
 
 

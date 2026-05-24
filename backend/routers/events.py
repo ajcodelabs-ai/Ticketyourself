@@ -204,11 +204,104 @@ def _publish_validation(doc: dict) -> None:
         missing.append("nombre del venue")
     if not doc.get("poster_url"):
         missing.append("poster")
+    # Phase 7 — numbered events must have a price per active locality
+    if doc.get("venue_id"):
+        pricing = doc.get("locality_pricing") or []
+        if not pricing:
+            missing.append("precios por localidad (evento numerado)")
+        else:
+            missing_loc = [
+                lp for lp in pricing
+                if lp.get("price_cents") is None or int(lp.get("price_cents") or 0) < 0
+            ]
+            if missing_loc:
+                missing.append("precio válido en cada localidad")
     if missing:
         raise HTTPException(
             status_code=422,
             detail=f"Faltan campos para publicar: {', '.join(missing)}",
         )
+
+
+# ── Phase 7: Venue link ─────────────────────────────────────────────────────
+class LocalityPriceIn(BaseModel):
+    locality_id: str
+    price_cents: int = Field(ge=0)
+    max_tickets_per_purchase: Optional[int] = Field(default=None, ge=1, le=20)
+
+
+class LinkVenueBody(BaseModel):
+    venue_id: str
+    locality_pricing: List[LocalityPriceIn]
+    seat_holds_window_minutes: int = Field(default=10, ge=1, le=60)
+
+
+@router.put("/{event_id}/venue")
+async def link_venue_to_event(
+    event_id: str,
+    body: LinkVenueBody,
+    user=Depends(get_current_user),
+):
+    from services.seats import active_localities
+
+    org = await _require_approved_organizer(user)
+    event = await db.events.find_one({"id": event_id, "organizer_id": org["id"]}, {"_id": 0})
+    if not event:
+        raise HTTPException(404, "Evento no encontrado")
+
+    venue = await db.venues.find_one(
+        {"id": body.venue_id, "organizer_id": org["id"], "status": "published"},
+        {"_id": 0},
+    )
+    if not venue:
+        raise HTTPException(404, "Venue no encontrado o no publicado")
+
+    needed_loc_ids = set(active_localities(venue))
+    provided_loc_ids = {lp.locality_id for lp in body.locality_pricing}
+    if not needed_loc_ids.issubset(provided_loc_ids):
+        missing = needed_loc_ids - provided_loc_ids
+        raise HTTPException(
+            422,
+            f"Faltan precios para las localidades: {', '.join(sorted(missing))}",
+        )
+
+    # If event already has tickets sold AND venue is changing → reject.
+    sold = event.get("tickets_sold") or 0
+    if sold > 0 and event.get("venue_id") and event["venue_id"] != body.venue_id:
+        raise HTTPException(
+            409, f"El evento ya tiene {sold} ticket(s) vendido(s); no se puede cambiar el venue."
+        )
+
+    venue_capacity = venue.get("capacity_calculated") or 0
+    await db.events.update_one(
+        {"id": event_id},
+        {"$set": {
+            "venue_id": body.venue_id,
+            "venue_slug": venue["slug"],
+            "venue_name": venue.get("name") or event.get("venue_name"),
+            "locality_pricing": [lp.model_dump() for lp in body.locality_pricing],
+            "seat_holds_window_minutes": body.seat_holds_window_minutes,
+            "capacity": venue_capacity,
+            "updated_at": _now_iso(),
+        }},
+    )
+    return await db.events.find_one({"id": event_id}, {"_id": 0})
+
+
+@router.delete("/{event_id}/venue")
+async def unlink_venue_from_event(event_id: str, user=Depends(get_current_user)):
+    org = await _require_approved_organizer(user)
+    event = await db.events.find_one({"id": event_id, "organizer_id": org["id"]}, {"_id": 0})
+    if not event:
+        raise HTTPException(404, "Evento no encontrado")
+    if (event.get("tickets_sold") or 0) > 0:
+        raise HTTPException(409, "El evento ya tiene tickets vendidos; no se puede desvincular.")
+    await db.events.update_one(
+        {"id": event_id},
+        {"$unset": {"venue_id": "", "venue_slug": "", "locality_pricing": ""},
+         "$set": {"updated_at": _now_iso()}},
+    )
+    return {"ok": True}
 
 
 # ── Organizer endpoints ─────────────────────────────────────────────────────
@@ -629,7 +722,76 @@ async def get_public_event(tenant_slug: str, event_slug: str):
         "slug": organizer["slug"],
         "company_name": organizer.get("company_name"),
     }
+    # Phase 7 — if event has a linked venue, attach the venue + live seat status.
+    if event.get("venue_id"):
+        from services.seats import compute_event_seats_status
+        venue = await db.venues.find_one({"id": event["venue_id"]}, {"_id": 0})
+        if venue:
+            event["venue"] = venue
+            event["seats_status"] = await compute_event_seats_status(event=event, venue=venue)
     return event
+
+
+# ── Phase 7 — public seat-holds endpoints ────────────────────────────────
+class SeatHoldsBody(BaseModel):
+    seat_ids: List[str]
+    session_token: str = Field(min_length=8, max_length=80)
+    buyer_email: Optional[str] = Field(default=None, max_length=140)
+
+
+class SeatHoldsRelease(BaseModel):
+    session_token: str = Field(min_length=8, max_length=80)
+
+
+async def _resolve_public_event(tenant_slug: str, event_slug: str) -> tuple:
+    organizer = await db.organizers.find_one(
+        {"slug": tenant_slug, "status": "approved"}, {"_id": 0},
+    )
+    if not organizer:
+        raise HTTPException(404, "Organizador no encontrado")
+    event = await db.events.find_one(
+        {"organizer_id": organizer["id"], "slug": event_slug, "status": "published"},
+        {"_id": 0},
+    )
+    if not event:
+        raise HTTPException(404, "Evento no encontrado")
+    if not event.get("venue_id"):
+        raise HTTPException(409, "Este evento no usa asientos numerados.")
+    venue = await db.venues.find_one({"id": event["venue_id"]}, {"_id": 0})
+    if not venue:
+        raise HTTPException(409, "El venue del evento ya no está disponible.")
+    return organizer, event, venue
+
+
+@public_router.post("/{tenant_slug}/{event_slug}/seat-holds")
+async def public_create_holds(tenant_slug: str, event_slug: str, body: SeatHoldsBody):
+    from services.seats import create_seat_holds, compute_event_seats_status
+    _, event, venue = await _resolve_public_event(tenant_slug, event_slug)
+    if not body.seat_ids:
+        raise HTTPException(422, "Tenés que elegir al menos un asiento.")
+    if len(body.seat_ids) > 20:
+        raise HTTPException(422, "Máximo 20 asientos por compra.")
+    window = event.get("seat_holds_window_minutes") or 10
+    holds = await create_seat_holds(
+        event_id=event["id"], venue_id=venue["id"], seat_ids=body.seat_ids,
+        session_token=body.session_token, buyer_email=body.buyer_email,
+        window_minutes=window,
+    )
+    return {
+        "holds": holds,
+        "expires_at": holds[0]["expires_at"] if holds else None,
+        "seats_status": await compute_event_seats_status(event=event, venue=venue),
+    }
+
+
+@public_router.delete("/{tenant_slug}/{event_slug}/seat-holds")
+async def public_release_holds(tenant_slug: str, event_slug: str, body: SeatHoldsRelease):
+    from services.seats import release_holds_for_session
+    _, event, _venue = await _resolve_public_event(tenant_slug, event_slug)
+    deleted = await release_holds_for_session(
+        event_id=event["id"], session_token=body.session_token,
+    )
+    return {"released": deleted}
 
 
 # ── Admin endpoints ─────────────────────────────────────────────────────────

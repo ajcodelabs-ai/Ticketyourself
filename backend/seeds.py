@@ -1144,6 +1144,168 @@ async def _seed_demo_venues() -> None:
     logger.info("Seeded 2 demo venues for demo-org (Teatro Demo + Auditorio Pequeño)")
 
 
+async def _seed_demo_numbered_event() -> None:
+    """
+    Phase 7 — Creates "Función Especial — Demo Numerado" linked to Teatro Demo,
+    with pricing per locality + a couple of pre-sold seats + a held seat so the
+    public seat-picker shows all 3 visual states out of the box.
+    Idempotent: matches by slug.
+    """
+    organizer = await db.organizers.find_one({"slug": "demo-org"}, {"_id": 0, "id": 1})
+    if not organizer:
+        return
+    venue = await db.venues.find_one(
+        {"organizer_id": organizer["id"], "slug": "teatro-demo"}, {"_id": 0},
+    )
+    if not venue:
+        return
+
+    # Resolve locality ids by name
+    loc_by_name = {loc["name"]: loc["id"] for loc in venue.get("localities", [])}
+    pricing = []
+    if "Platea" in loc_by_name:
+        pricing.append({"locality_id": loc_by_name["Platea"], "price_cents": 2500,
+                        "max_tickets_per_purchase": None})
+    if "Tribuna" in loc_by_name:
+        pricing.append({"locality_id": loc_by_name["Tribuna"], "price_cents": 1500,
+                        "max_tickets_per_purchase": None})
+    if "General" in loc_by_name:
+        pricing.append({"locality_id": loc_by_name["General"], "price_cents": 1000,
+                        "max_tickets_per_purchase": None})
+
+    now = datetime.now(timezone.utc)
+    slug = "funcion-especial-demo-numerado"
+    record = {
+        "organizer_id": organizer["id"],
+        "tenant_slug": "demo-org",
+        "slug": slug,
+        "title": "Función Especial — Demo Numerado",
+        "description": (
+            "Función con asientos numerados. Elegí tus butacas directamente sobre "
+            "el mapa del Teatro Demo. Tres localidades disponibles: Platea, Tribuna y Gradería General."
+        ),
+        "short_description": "Función con asientos numerados — mapa interactivo.",
+        "category": "entertainment",
+        "venue_name": "Teatro Demo",
+        "venue_address": "Pasaje Royal 175 y Junín",
+        "venue_city": "Quito",
+        "venue_country": "Ecuador",
+        "starts_at": (now + timedelta(days=20)).replace(hour=20, minute=0).isoformat(),
+        "ends_at": (now + timedelta(days=20)).replace(hour=22, minute=30).isoformat(),
+        "timezone": "America/Guayaquil",
+        "sales_start": None, "sales_end": None,
+        "pricing_type": "paid",
+        "base_price_cents": 1000,  # ignored when venue_id is set
+        "currency": "USD",
+        "capacity": venue.get("capacity_calculated") or 0,
+        "visibility": "public",
+        "status": "published",
+        "tickets_sold": 0,
+        "poster_url": "https://images.unsplash.com/photo-1503095396549-807759245b35?w=800",
+        "banner_url": None,
+        "gallery_urls": [],
+        "payment_methods": {
+            "stripe": {"enabled": True},
+            "transfer": {
+                "enabled": True, "bank_name": "Banco Pichincha",
+                "account_number": "2100123456",
+                "account_holder": "Eventos Demo S.A.",
+                "instructions": "Envianos el comprobante al WhatsApp +593 98 765 4321.",
+            },
+            "cash": {
+                "enabled": False, "location": "", "schedule": "", "contact": "",
+            },
+        },
+        "discounts": {
+            "disability_law": {"enabled": False, "percent": 50},
+            "presale": {"enabled": False, "percent": 0, "ends_at": None},
+        },
+        "access_params": {
+            "visibility": "public", "access_type": "open",
+            "max_per_purchase": 10, "max_per_email": None,
+            "refund_window_hours": 24, "show_buyer_name_on_ticket": True,
+        },
+        # Phase 7 fields
+        "venue_id": venue["id"],
+        "venue_slug": venue["slug"],
+        "locality_pricing": pricing,
+        "seat_holds_window_minutes": 10,
+        "updated_at": _now_iso(),
+        "published_at": _now_iso(),
+    }
+    existing = await db.events.find_one(
+        {"organizer_id": organizer["id"], "slug": slug}, {"_id": 0, "id": 1},
+    )
+    if existing:
+        event_id = existing["id"]
+        await db.events.update_one({"id": event_id}, {"$set": record})
+    else:
+        event_id = str(uuid.uuid4())
+        record["id"] = event_id
+        record["created_at"] = _now_iso()
+        await db.events.insert_one({**record})
+    logger.info("Seeded numbered event %s linked to %s", slug, venue["slug"])
+
+    # ── Pre-sold + pre-held seats for visual demo ─────────────────────────
+    # Find the first seat-row element ("Fila A") and pre-sell seats A-1 / A-2,
+    # then put A-3 on hold. Find Fila C (Tribuna) and pre-sell C-5.
+    fila_a = next(
+        (e for e in venue["elements"]
+         if e.get("kind") == "seat_row_straight" and (e.get("row_label") or "").upper() == "A"),
+        None,
+    )
+    fila_c = next(
+        (e for e in venue["elements"]
+         if e.get("kind") == "seat_row_straight" and (e.get("row_label") or "").upper() == "C"),
+        None,
+    )
+    # Clear any prior demo holds/assignments for this event so it's idempotent
+    await db.event_seat_assignments.delete_many({"event_id": event_id})
+    await db.seat_holds.delete_many({"event_id": event_id})
+
+    pre_sold_seats = []
+    if fila_a:
+        pre_sold_seats.append((fila_a["id"], 0, "A-1", fila_a.get("locality_id")))
+        pre_sold_seats.append((fila_a["id"], 1, "A-2", fila_a.get("locality_id")))
+    if fila_c:
+        pre_sold_seats.append((fila_c["id"], 4, "C-5", fila_c.get("locality_id")))
+
+    assignments = []
+    sold_qty = 0
+    for el_id, idx, label, loc_id in pre_sold_seats:
+        sid = f"{el_id}::s::{idx}"
+        assignments.append({
+            "id": str(uuid.uuid4()),
+            "event_id": event_id, "venue_id": venue["id"],
+            "seat_id": sid, "ticket_id": f"seed-demo-{sid}",
+            "order_id": "seed-demo",
+            "holder_email": "demo-buyer@example.com",
+            "locality_id": loc_id,
+            "assigned_at": _now_iso(),
+        })
+        sold_qty += 1
+    if assignments:
+        await db.event_seat_assignments.insert_many(assignments)
+        await db.events.update_one(
+            {"id": event_id}, {"$set": {"tickets_sold": sold_qty}},
+        )
+
+    # Pre-held: one seat held for 1 hour (visible to public as "held" by another)
+    if fila_a:
+        expires = (now + timedelta(hours=1)).isoformat()
+        sid_held = f"{fila_a['id']}::s::2"
+        await db.seat_holds.insert_one({
+            "id": str(uuid.uuid4()),
+            "event_id": event_id, "venue_id": venue["id"],
+            "seat_id": sid_held,
+            "holder": {"session_token": "seed-held-session-fixed", "buyer_email": None},
+            "status": "held",
+            "held_at": _now_iso(),
+            "expires_at": expires,
+            "order_id": None,
+        })
+
+
 async def run_seeds() -> None:
     await _create_indexes()
     await _cleanup_ephemeral_test_data()
@@ -1156,3 +1318,4 @@ async def run_seeds() -> None:
     await _seed_demo_events()
     await _seed_demo_manual_orders()
     await _seed_demo_venues()
+    await _seed_demo_numbered_event()

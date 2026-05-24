@@ -46,11 +46,14 @@ class BuyerIn(BaseModel):
 class CreateOrderBody(BaseModel):
     tenant_slug: str
     event_slug: str
-    quantity: int = Field(ge=1, le=10)
+    quantity: int = Field(ge=1, le=20)
     buyer: BuyerIn
     donation_amount_cents: Optional[int] = None
     origin_url: Optional[str] = None  # for success/cancel URL construction
     payment_method: str = Field(default="stripe")  # stripe | transfer | cash
+    # Phase 7 — numbered events
+    seat_holds_session_token: Optional[str] = None
+    seat_ids: Optional[list[str]] = None
 
 
 async def _load_event_or_404(tenant_slug: str, event_slug: str) -> tuple[dict, dict]:
@@ -72,11 +75,26 @@ async def create_order(payload: CreateOrderBody):
         raise HTTPException(409, "El evento no está disponible para compra")
 
     buyer = order_service.validate_buyer(payload.buyer.model_dump())
-    totals = order_service.compute_totals(
-        event=event,
-        quantity=payload.quantity,
-        donation_amount_cents=payload.donation_amount_cents or 0,
-    )
+
+    # Phase 7 — numbered event: use seat-based totals
+    seat_ids = payload.seat_ids or None
+    if seat_ids and event.get("venue_id"):
+        venue = await db.venues.find_one({"id": event["venue_id"]}, {"_id": 0})
+        if not venue:
+            raise HTTPException(409, "El venue del evento ya no está disponible.")
+        if not payload.seat_holds_session_token:
+            raise HTTPException(422, "Falta el token de reservas (seat_holds_session_token).")
+        totals = order_service.compute_totals_with_seats(
+            event=event, venue=venue, seat_ids=seat_ids,
+        )
+        quantity = len(seat_ids)
+    else:
+        totals = order_service.compute_totals(
+            event=event,
+            quantity=payload.quantity,
+            donation_amount_cents=payload.donation_amount_cents or 0,
+        )
+        quantity = payload.quantity
 
     # Free events ignore payment_method (no payment at all)
     effective_method = (
@@ -86,10 +104,12 @@ async def create_order(payload: CreateOrderBody):
     order = await order_service.create_order_skeleton(
         event=event,
         organizer=organizer,
-        quantity=payload.quantity,
+        quantity=quantity,
         buyer=buyer,
         totals=totals,
         payment_method=effective_method,
+        seat_ids=seat_ids,
+        seat_holds_session_token=payload.seat_holds_session_token,
     )
 
     # FREE event — confirm instantly.
