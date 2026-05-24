@@ -279,8 +279,11 @@ Colección Mongo `venues` con elementos embebidos. Endpoints organizer (`/api/ve
 - Offline fallback NO se implementó (spec opcional): el preview siempre tiene HTTPS y red. Si en el futuro hay tablets ocasionalmente offline, agregaríamos validación local de firma JWT + cola para reintentos.
 
 ### Pendiente menor (no parte del alcance)
-- Tab "Estadísticas" del wizard del evento podría sumar el bloque "Acceso al evento" con link al scanner — hoy el link está en el header del event detail, lo cual cumple el spec funcional.
+- ~~Tab "Estadísticas" del wizard del evento podría sumar el bloque "Acceso al evento" con link al scanner~~ ✅ **CERRADO (Feb 24, 2026)** — agregado en `EventSalesTabs.StatsTab`: bloque "Acceso al evento" con 3 metric cards (escaneados X/Y · %, % asistencia, último escaneo con ritmo) + tabla por localidad con dot de color + botón verde "Abrir scanner" hacia `/app/eventos/:id/validacion`. Endpoint `scan-stats` enriquecido con `tickets_issued`, `scanned_pct`, `attendance_pct` y `localities[]` (joinea `venues.localities` para name+color, sort desc by scanned). Bonus: arreglada la card vieja "Tickets escaneados" del header del tab que mostraba `1/0` (issued contaba solo status=issued, ahora incluye status=used como debe).
 - Roles staff para que el organizer comparta el scanner sin compartir cuenta — diferido a Fase 10.
+
+### Verificación PDF seat_label (Feb 24, 2026)
+- Confirmado con `pdfplumber` sobre `TYS-000201` ticket numerado: el bloque `ASIENTO` aparece a y=366 con font 10pt y `B-1 · Platea` a y=382 con font Helvetica-Bold 16pt + color primary, layout ASISTENTE → ASIENTO → PRECIO correcto. Fix original sigue aplicado, sin regresiones.
 
 ## Credenciales
 Ver `/app/memory/test_credentials.md`.

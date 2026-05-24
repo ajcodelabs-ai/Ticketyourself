@@ -136,8 +136,11 @@ async def event_stats(event_id: str, user=Depends(get_current_user)):
         revenue_cents += o.get("subtotal_cents") or 0
         fees_cents += o.get("fees_cents") or 0
 
+    # `tickets_issued` is the cumulative count of tickets that were emitted
+    # (still issued or already used at the door). Without the "used" bucket
+    # the UI shows "scanned / 0" once everyone scans, which is misleading.
     issued = await db.tickets.count_documents(
-        {"event_id": event_id, "status": "issued"}
+        {"event_id": event_id, "status": {"$in": ["issued", "used"]}}
     )
     used = await db.tickets.count_documents({"event_id": event_id, "status": "used"})
 
@@ -469,18 +472,19 @@ async def get_scan_log_csv(event_id: str, user=Depends(get_current_user)):
 
 @router.get("/events/me/{event_id}/scan-stats")
 async def get_scan_stats(event_id: str, user=Depends(get_current_user)):
+    proj = {"_id": 0, "id": 1, "capacity": 1, "tickets_sold": 1, "venue_id": 1}
     if user.get("role") != "super_admin":
         ev = await db.events.find_one(
-            {"id": event_id, "organizer_id": user.get("organizer_id")},
-            {"_id": 0, "id": 1, "capacity": 1, "tickets_sold": 1},
+            {"id": event_id, "organizer_id": user.get("organizer_id")}, proj,
         )
     else:
-        ev = await db.events.find_one(
-            {"id": event_id}, {"_id": 0, "id": 1, "capacity": 1, "tickets_sold": 1},
-        )
+        ev = await db.events.find_one({"id": event_id}, proj)
     if not ev:
         raise HTTPException(404, "Evento no encontrado")
     total_tickets = await db.tickets.count_documents({"event_id": event_id})
+    tickets_issued = await db.tickets.count_documents({
+        "event_id": event_id, "status": {"$in": ["issued", "used"]},
+    })
     scanned_count = await db.tickets.count_documents({"event_id": event_id, "status": "used"})
     valid_count = await db.ticket_scans.count_documents({"event_id": event_id, "result": "valid"})
     rejected_count = await db.ticket_scans.count_documents({
@@ -502,12 +506,40 @@ async def get_scan_stats(event_id: str, user=Depends(get_current_user)):
         {"$group": {"_id": "$locality_id", "count": {"$sum": 1}}},
     ])
     by_locality = {r["_id"]: r["count"] async for r in by_locality_cur}
+
+    # Enrich with locality names/colors when the event has a venue linked
+    localities = []
+    if ev.get("venue_id"):
+        venue = await db.venues.find_one(
+            {"id": ev["venue_id"]}, {"_id": 0, "localities": 1},
+        )
+        for loc in (venue or {}).get("localities", []) or []:
+            lid = loc.get("id")
+            localities.append({
+                "locality_id": lid,
+                "name": loc.get("name"),
+                "color": loc.get("color"),
+                "scanned": int(by_locality.get(lid, 0)),
+            })
+        # Keep only localities that have a scanned ticket or appear in event pricing
+        localities.sort(key=lambda x: (-x["scanned"], x["name"] or ""))
+
+    attendance_pct = (
+        round(100.0 * valid_count / tickets_issued, 1) if tickets_issued > 0 else 0.0
+    )
+    scanned_pct = (
+        round(100.0 * scanned_count / tickets_issued, 1) if tickets_issued > 0 else 0.0
+    )
     return {
         "total_tickets": total_tickets,
+        "tickets_issued": tickets_issued,
         "scanned_count": scanned_count,
+        "scanned_pct": scanned_pct,
         "valid_count": valid_count,
         "rejected_count": rejected_count,
+        "attendance_pct": attendance_pct,
         "last_scan_at": (last or {}).get("scanned_at"),
         "scan_rate_per_minute": round(recent_count / 10, 1),
         "scanned_by_locality": by_locality,
+        "localities": localities,
     }

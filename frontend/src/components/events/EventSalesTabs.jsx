@@ -7,6 +7,7 @@
  *   /api/events/me/:id/tickets.csv  (download)
  */
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
     Loader2,
@@ -17,10 +18,13 @@ import {
     Download,
     RefreshCw,
     Mail,
+    ScanQrCode,
+    Clock,
+    DoorOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
     Tabs,
     TabsContent,
@@ -83,15 +87,20 @@ export default function EventSalesTabs({ event }) {
 // ── Stats ────────────────────────────────────────────────────────────────────
 function StatsTab({ event }) {
     const [stats, setStats] = useState(null);
+    const [scanStats, setScanStats] = useState(null);
     const [loading, setLoading] = useState(true);
 
     const load = async () => {
         setLoading(true);
         try {
-            const { data } = await api.get(`/events/me/${event.id}/stats`);
-            setStats(data);
-        } catch (e) {
-            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
+            const [salesRes, scanRes] = await Promise.allSettled([
+                api.get(`/events/me/${event.id}/stats`),
+                api.get(`/events/me/${event.id}/scan-stats`),
+            ]);
+            if (salesRes.status === "fulfilled") setStats(salesRes.value.data);
+            else toast.error(formatApiError(salesRes.reason?.response?.data?.detail) || salesRes.reason?.message);
+            if (scanRes.status === "fulfilled") setScanStats(scanRes.value.data);
+            // scan-stats failures are silent — block is optional
         } finally {
             setLoading(false);
         }
@@ -161,6 +170,156 @@ function StatsTab({ event }) {
                     </CardContent>
                 </Card>
             )}
+
+            <DoorAccessSection event={event} scanStats={scanStats} />
+        </div>
+    );
+}
+
+// ── Door access (Phase 9 closing item) ──────────────────────────────────────
+function DoorAccessSection({ event, scanStats }) {
+    // Show only when we actually have a published numbered/free event with tickets
+    // issued so far OR the org explicitly wants to monitor scans. If the event has
+    // no tickets issued and no scans, render a minimal CTA instead of empty cards.
+    const isPublished = event.status === "published";
+    if (!scanStats && !isPublished) return null;
+
+    const hasData = scanStats && (scanStats.tickets_issued > 0 || scanStats.scanned_count > 0);
+    const lastScan = scanStats?.last_scan_at
+        ? new Date(scanStats.last_scan_at).toLocaleString("es-EC", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              day: "2-digit",
+              month: "2-digit",
+          })
+        : null;
+
+    return (
+        <Card data-testid="door-access-section">
+            <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
+                <div className="flex items-center gap-2">
+                    <DoorOpen className="h-5 w-5 text-emerald-600" />
+                    <CardTitle className="text-lg">Acceso al evento</CardTitle>
+                </div>
+                {isPublished && (
+                    <Button
+                        asChild
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                        data-testid="door-open-scanner"
+                    >
+                        <Link to={`/app/eventos/${event.id}/validacion`}>
+                            <ScanQrCode className="h-4 w-4 mr-1.5" />
+                            Abrir scanner
+                        </Link>
+                    </Button>
+                )}
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {!hasData ? (
+                    <p className="text-sm text-muted-foreground" data-testid="door-empty-state">
+                        Todavía no hay escaneos. Cuando empiece el control en la puerta,
+                        verás aquí cuántos asistentes ingresaron, en qué localidades y a qué hora.
+                    </p>
+                ) : (
+                    <>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <DoorMetric
+                                label="Tickets escaneados"
+                                value={`${scanStats.scanned_count} / ${scanStats.tickets_issued}`}
+                                sub={`${scanStats.scanned_pct}% de tickets emitidos`}
+                                testid="door-scanned"
+                            />
+                            <DoorMetric
+                                label="% Asistencia"
+                                value={`${scanStats.attendance_pct}%`}
+                                sub={`${scanStats.valid_count} escaneos válidos${
+                                    scanStats.rejected_count
+                                        ? ` · ${scanStats.rejected_count} rechazados`
+                                        : ""
+                                }`}
+                                testid="door-attendance"
+                                accent={scanStats.attendance_pct >= 50 ? "emerald" : "amber"}
+                            />
+                            <DoorMetric
+                                label="Último escaneo"
+                                value={lastScan || "—"}
+                                sub={
+                                    scanStats.scan_rate_per_minute > 0
+                                        ? `Ritmo: ${scanStats.scan_rate_per_minute}/min (últ. 10 min)`
+                                        : "Sin escaneos recientes"
+                                }
+                                testid="door-last-scan"
+                                icon={<Clock className="h-4 w-4" />}
+                            />
+                        </div>
+
+                        {scanStats.localities?.length > 0 && (
+                            <div
+                                className="rounded-lg border overflow-hidden"
+                                data-testid="door-locality-table"
+                            >
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Localidad</TableHead>
+                                            <TableHead className="text-right">
+                                                Escaneados
+                                            </TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {scanStats.localities.map((loc) => (
+                                            <TableRow
+                                                key={loc.locality_id}
+                                                data-testid={`door-loc-${loc.locality_id}`}
+                                            >
+                                                <TableCell className="flex items-center gap-2">
+                                                    <span
+                                                        className="inline-block h-3 w-3 rounded-sm border"
+                                                        style={{
+                                                            backgroundColor:
+                                                                loc.color || "#94a3b8",
+                                                        }}
+                                                    />
+                                                    {loc.name || "Sin nombre"}
+                                                </TableCell>
+                                                <TableCell className="text-right font-medium">
+                                                    {loc.scanned}
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        )}
+                    </>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
+function DoorMetric({ label, value, sub, accent, icon, testid }) {
+    const accentClass =
+        accent === "emerald"
+            ? "text-emerald-600"
+            : accent === "amber"
+            ? "text-amber-600"
+            : "text-foreground";
+    return (
+        <div
+            className="rounded-lg border bg-secondary/30 p-3"
+            data-testid={testid}
+        >
+            <div className="flex items-center justify-between mb-1 text-xs text-muted-foreground">
+                <span>{label}</span>
+                {icon}
+            </div>
+            <div className={`text-xl font-semibold leading-tight ${accentClass}`}>
+                {value}
+            </div>
+            {sub && <div className="text-xs text-muted-foreground mt-1">{sub}</div>}
         </div>
     );
 }
