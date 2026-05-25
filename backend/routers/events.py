@@ -165,6 +165,12 @@ class EventBase(BaseModel):
     timezone: str = Field(default="America/Guayaquil", max_length=64)
     sales_start: Optional[datetime] = None
     sales_end: Optional[datetime] = None
+    # Phase 9.6 — UI presets so the wizard can re-open the form on the same
+    # dropdown option the user chose. Values are opaque strings; the canonical
+    # truth is still `ends_at` / `sales_start` / `sales_end`.
+    duration_preset: Optional[str] = Field(default=None, max_length=40)
+    sales_window_preset_start: Optional[str] = Field(default=None, max_length=40)
+    sales_window_preset_end: Optional[str] = Field(default=None, max_length=40)
     pricing_type: PricingType = "free"
     base_price_cents: int = Field(default=0, ge=0)
     currency: str = Field(default="USD", max_length=3)
@@ -201,6 +207,9 @@ class EventUpdate(BaseModel):
     timezone: Optional[str] = None
     sales_start: Optional[datetime] = None
     sales_end: Optional[datetime] = None
+    duration_preset: Optional[str] = None
+    sales_window_preset_start: Optional[str] = None
+    sales_window_preset_end: Optional[str] = None
     pricing_type: Optional[PricingType] = None
     base_price_cents: Optional[int] = None
     currency: Optional[str] = None

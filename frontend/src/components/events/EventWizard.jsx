@@ -13,6 +13,17 @@ import { toast } from "sonner";
 import EventVenueSection from "@/components/events/EventVenueSection";
 import DiscountRulesPanel from "@/components/events/DiscountRulesPanel";
 import {
+    DURATION_PRESETS,
+    SALES_START_PRESETS,
+    SALES_END_PRESETS,
+    inferDurationPreset,
+    inferSalesStartPreset,
+    inferSalesEndPreset,
+    computeEndsAt,
+    computeSalesStart,
+    computeSalesEnd,
+} from "@/lib/eventPresets";
+import {
     Loader2,
     Save,
     Send,
@@ -134,6 +145,11 @@ function makeInitial(d) {
             timezone: "America/Guayaquil",
             sales_start: "",
             sales_end: "",
+            // Phase 9.6 — preset metadata for the new dropdown UX
+            duration_preset: "2h",
+            duration_minutes_custom: 120,
+            sales_window_preset_start: "immediate",
+            sales_window_preset_end: "at_start",
             pricing_type: "free",
             base_price_dollars: "",
             currency: "USD",
@@ -147,6 +163,9 @@ function makeInitial(d) {
             access_params: defaultAccessParams(),
         };
     }
+    const startsIso = d.starts_at || null;
+    const endsIso = d.ends_at || null;
+    const durInfer = inferDurationPreset(startsIso, endsIso);
     return {
         title: d.title || "",
         description: d.description || "",
@@ -161,6 +180,12 @@ function makeInitial(d) {
         timezone: d.timezone || "America/Guayaquil",
         sales_start: d.sales_start ? isoToLocalInput(d.sales_start) : "",
         sales_end: d.sales_end ? isoToLocalInput(d.sales_end) : "",
+        duration_preset: d.duration_preset || durInfer.preset,
+        duration_minutes_custom: durInfer.minutes,
+        sales_window_preset_start:
+            d.sales_window_preset_start || inferSalesStartPreset(startsIso, d.sales_start),
+        sales_window_preset_end:
+            d.sales_window_preset_end || inferSalesEndPreset(startsIso, d.sales_end),
         pricing_type: d.pricing_type || "free",
         base_price_dollars:
             d.base_price_cents != null ? (d.base_price_cents / 100).toFixed(2) : "",
@@ -168,8 +193,6 @@ function makeInitial(d) {
         capacity: d.capacity != null ? String(d.capacity) : "",
         unlimited_capacity: d.capacity == null,
         visibility: d.visibility || "public",
-        // When the event already has a venue we assume seated mode; otherwise
-        // remember the user's last choice on the toggle (default false = seated).
         no_seating_mode: !d.venue_id && d.pricing_type !== undefined ? false : false,
         venue_id: d.venue_id || null,
         payment_methods: d.payment_methods || defaultPayments(),
