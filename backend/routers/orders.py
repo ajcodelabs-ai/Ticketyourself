@@ -16,6 +16,7 @@ import stripe
 
 from db import db
 from services import order_service
+from services import discount_service
 from services.pdf_service import render_ticket_pdf
 
 logger = logging.getLogger("tys.public_orders")
@@ -54,6 +55,82 @@ class CreateOrderBody(BaseModel):
     # Phase 7 — numbered events
     seat_holds_session_token: Optional[str] = None
     seat_ids: Optional[list[str]] = None
+    # Phase 9.5 — promo codes (Bloque E)
+    promo_code: Optional[str] = Field(default=None, max_length=40)
+
+
+class PreviewOrderBody(BaseModel):
+    tenant_slug: str
+    event_slug: str
+    quantity: int = Field(ge=1, le=20)
+    seat_ids: Optional[list[str]] = None
+    promo_code: Optional[str] = Field(default=None, max_length=40)
+
+
+async def _resolve_event_for_pricing(tenant_slug: str, event_slug: str):
+    organizer, event = await _load_event_or_404(tenant_slug, event_slug)
+    venue = None
+    if event.get("venue_id"):
+        venue = await db.venues.find_one({"id": event["venue_id"]}, {"_id": 0})
+    return organizer, event, venue
+
+
+def _apply_discount_breakdown(totals: dict, applied: list[dict]) -> dict:
+    """Subtract discount amounts from `subtotal_cents` and recompute fees +
+    total. The original totals dict is returned in-place (mutated copy)."""
+    if not applied:
+        return {**totals, "discounts_applied": [], "discount_total_cents": 0}
+    discount_total = sum(int(a.get("amount_cents") or 0) for a in applied)
+    new_subtotal = max(0, int(totals.get("subtotal_cents") or 0) - discount_total)
+    # Re-apply 5% service fee on net (only when the original totals had fees,
+    # i.e. paid pricing — donations and free events leave fees at 0).
+    fees = totals.get("fees_cents") or 0
+    if fees > 0:
+        fees = int(round(new_subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
+    return {
+        **totals,
+        "discount_total_cents": discount_total,
+        "fees_cents": fees,
+        "total_cents": new_subtotal + fees,
+        "discounts_applied": applied,
+    }
+
+
+@router.post("/preview")
+async def preview_order(payload: PreviewOrderBody):
+    """Computes the price breakdown for a tentative purchase (no DB commit).
+    Lets the buyer see the discount before paying. Soft warnings — e.g.
+    rejected promo code — are returned in `warnings` so the frontend can
+    surface a toast without aborting the rest of the preview."""
+    organizer, event, venue = await _resolve_event_for_pricing(
+        payload.tenant_slug, payload.event_slug,
+    )
+    if event["status"] != "published":
+        raise HTTPException(409, "El evento no está disponible para compra")
+
+    # Gross totals (re-uses the existing pricing helpers so we never diverge).
+    if payload.seat_ids and venue:
+        totals = order_service.compute_totals_with_seats(
+            event=event, venue=venue, seat_ids=payload.seat_ids,
+        )
+        quantity = len(payload.seat_ids)
+    else:
+        totals = order_service.compute_totals(
+            event=event, quantity=payload.quantity,
+        )
+        quantity = payload.quantity
+
+    items = discount_service.items_from_payload(
+        event=event, venue=venue, seat_ids=payload.seat_ids, quantity=quantity,
+    )
+    applied, warnings = discount_service.evaluate_discounts(
+        event=event, items=items, promo_code=payload.promo_code,
+    )
+    out = _apply_discount_breakdown(totals, applied)
+    out["organizer_id"] = organizer["id"]
+    out["currency"] = event.get("currency", "USD")
+    out["warnings"] = warnings
+    return out
 
 
 async def _load_event_or_404(tenant_slug: str, event_slug: str) -> tuple[dict, dict]:
@@ -78,6 +155,7 @@ async def create_order(payload: CreateOrderBody):
 
     # Phase 7 — numbered event: use seat-based totals
     seat_ids = payload.seat_ids or None
+    venue = None
     if seat_ids and event.get("venue_id"):
         venue = await db.venues.find_one({"id": event["venue_id"]}, {"_id": 0})
         if not venue:
@@ -95,6 +173,23 @@ async def create_order(payload: CreateOrderBody):
             donation_amount_cents=payload.donation_amount_cents or 0,
         )
         quantity = payload.quantity
+
+    # Phase 9.5 — apply discount rules (promo_code + best auto/quantity) BEFORE
+    # creating the order so the persisted totals match what the buyer was shown.
+    items = discount_service.items_from_payload(
+        event=event, venue=venue, seat_ids=seat_ids, quantity=quantity,
+    )
+    applied_discounts, discount_warnings = discount_service.evaluate_discounts(
+        event=event, items=items, promo_code=payload.promo_code,
+    )
+    if payload.promo_code and not any(
+        a.get("type") == "promo_code" for a in applied_discounts
+    ):
+        # Buyer typed a code but it didn't resolve into a real discount — fail hard
+        # so they don't pay for a code that won't apply.
+        reason = discount_warnings[0] if discount_warnings else "Código no válido."
+        raise HTTPException(422, reason)
+    totals = _apply_discount_breakdown(totals, applied_discounts)
 
     # Free events ignore payment_method (no payment at all)
     effective_method = (

@@ -10,7 +10,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, Ticket as TicketIcon, ShieldCheck } from "lucide-react";
+import { Loader2, Ticket as TicketIcon, ShieldCheck, Tag } from "lucide-react";
 import { toast } from "sonner";
 import {
     Dialog,
@@ -59,6 +59,10 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
     });
     const [submitting, setSubmitting] = useState(false);
     const [errors, setErrors] = useState({});
+    // Phase 9.5 — promo code (Bloque E)
+    const [promoCodeInput, setPromoCodeInput] = useState("");
+    const [appliedPromo, setAppliedPromo] = useState(null); // {code, name, amount_cents}
+    const [applyingPromo, setApplyingPromo] = useState(false);
 
     useEffect(() => {
         if (open) {
@@ -67,29 +71,89 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
             setBuyer({ name: "", email: "", phone: "", document_id: "" });
             setErrors({});
             setPaymentMethod(activeMethods[0] || "stripe");
+            setPromoCodeInput("");
+            setAppliedPromo(null);
         }
     }, [open, activeMethods]);
 
     const totals = useMemo(() => {
-        if (!event) return { subtotal: 0, fees: 0, total: 0 };
+        if (!event) return { subtotal: 0, fees: 0, total: 0, discount: 0 };
         // Phase 7 — numbered events: totals come from seatHoldsInfo
+        let base;
         if (isSeatNumbered) {
-            return {
+            base = {
                 subtotal: seatHoldsInfo.subtotal_cents,
                 fees: seatHoldsInfo.fees_cents,
                 total: seatHoldsInfo.total_cents,
             };
-        }
-        if (pricingType === "free") return { subtotal: 0, fees: 0, total: 0 };
-        if (pricingType === "donation") {
+        } else if (pricingType === "free") {
+            base = { subtotal: 0, fees: 0, total: 0 };
+        } else if (pricingType === "donation") {
             const cents = Math.round(parseFloat(donation || "0") * 100);
-            return { subtotal: cents, fees: 0, total: cents };
+            base = { subtotal: cents, fees: 0, total: cents };
+        } else {
+            const unit = event.base_price_cents || 0;
+            const subtotal = unit * quantity;
+            const fees = Math.round((subtotal * FEE_PERCENT) / 100);
+            base = { subtotal, fees, total: subtotal + fees };
         }
-        const unit = event.base_price_cents || 0;
-        const subtotal = unit * quantity;
-        const fees = Math.round((subtotal * FEE_PERCENT) / 100);
-        return { subtotal, fees, total: subtotal + fees };
-    }, [event, pricingType, quantity, donation, isSeatNumbered, seatHoldsInfo]);
+        // Phase 9.5 — overlay discount when buyer applied a promo successfully.
+        if (appliedPromo) {
+            const discount = appliedPromo.amount_cents || 0;
+            const subtotalAfterDiscount = Math.max(0, base.subtotal - discount);
+            const fees = base.fees > 0
+                ? Math.round((subtotalAfterDiscount * FEE_PERCENT) / 100)
+                : 0;
+            return {
+                ...base,
+                discount,
+                fees,
+                total: subtotalAfterDiscount + fees,
+            };
+        }
+        return { ...base, discount: 0 };
+    }, [event, pricingType, quantity, donation, isSeatNumbered, seatHoldsInfo, appliedPromo]);
+
+    // Phase 9.5 — apply a promo code via /public/orders/preview so the buyer
+    // sees the discount before committing.
+    const applyPromo = async () => {
+        const code = (promoCodeInput || "").trim().toUpperCase();
+        if (!code) return;
+        setApplyingPromo(true);
+        try {
+            const body = {
+                tenant_slug: tenantSlug,
+                event_slug: event.slug,
+                quantity: isSeatNumbered ? seatHoldsInfo.seat_ids.length : quantity,
+                promo_code: code,
+            };
+            if (isSeatNumbered) body.seat_ids = seatHoldsInfo.seat_ids;
+            const { data } = await api.post("/public/orders/preview", body);
+            const applied = (data.discounts_applied || []).find(
+                (a) => a.type === "promo_code",
+            );
+            if (!applied) {
+                const reason = data.warnings?.[0] || "Código no válido.";
+                toast.error(reason);
+                return;
+            }
+            setAppliedPromo({
+                code,
+                name: applied.name,
+                amount_cents: applied.amount_cents,
+            });
+            toast.success(`Descuento "${applied.name}" aplicado`);
+        } catch (e) {
+            toast.error(formatApiError(e?.response?.data?.detail) || "No se pudo validar el código.");
+        } finally {
+            setApplyingPromo(false);
+        }
+    };
+
+    const removePromo = () => {
+        setAppliedPromo(null);
+        setPromoCodeInput("");
+    };
 
     const validate = () => {
         const e = {};
@@ -129,6 +193,11 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
             if (isSeatNumbered) {
                 payload.seat_ids = seatHoldsInfo.seat_ids;
                 payload.seat_holds_session_token = seatHoldsInfo.session_token;
+            }
+            // Phase 9.5 — forward the buyer-applied promo code so the backend
+            // re-validates and persists the discount on the order.
+            if (appliedPromo?.code) {
+                payload.promo_code = appliedPromo.code;
             }
             const { data } = await api.post("/public/orders", payload);
             if (data.status === "paid") {
@@ -377,6 +446,58 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                     />
                 </div>
 
+                {/* Phase 9.5 — promo code */}
+                {pricingType !== "free" && (
+                    <div className="border-t pt-3 space-y-2" data-testid="promo-code-block">
+                        {appliedPromo ? (
+                            <div
+                                className="flex items-center justify-between gap-2 rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm"
+                                data-testid="promo-applied"
+                            >
+                                <div className="flex items-center gap-2">
+                                    <Tag className="h-4 w-4 text-emerald-700" />
+                                    <span className="text-emerald-900">
+                                        <strong>{appliedPromo.name}</strong>{" "}
+                                        <code className="text-xs bg-white/60 rounded px-1">
+                                            {appliedPromo.code}
+                                        </code>
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={removePromo}
+                                    className="text-xs text-emerald-800 hover:underline"
+                                    data-testid="promo-remove"
+                                >
+                                    Quitar
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex gap-2">
+                                <Input
+                                    placeholder="¿Tenés un código promocional?"
+                                    value={promoCodeInput}
+                                    onChange={(e) =>
+                                        setPromoCodeInput(e.target.value.toUpperCase())
+                                    }
+                                    maxLength={40}
+                                    className="h-9"
+                                    data-testid="promo-input"
+                                />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={applyPromo}
+                                    disabled={applyingPromo || !promoCodeInput.trim()}
+                                    data-testid="promo-apply"
+                                >
+                                    {applyingPromo ? "..." : "Aplicar"}
+                                </Button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* Totals */}
                 {pricingType !== "free" && (
                     <div className="border-t pt-3 space-y-1 text-sm" data-testid="totals">
@@ -388,6 +509,14 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                             }
                             value={formatCents(totals.subtotal, event.currency)}
                         />
+                        {totals.discount > 0 && (
+                            <Row
+                                label={`Descuento ${appliedPromo?.name || ""}`}
+                                value={`–${formatCents(totals.discount, event.currency)}`}
+                                accent="emerald"
+                                testid="row-discount"
+                            />
+                        )}
                         {totals.fees > 0 && (
                             <Row
                                 label={`Tarifa de servicio (${FEE_PERCENT}%)`}
@@ -468,13 +597,22 @@ function Field({ label, id, value, onChange, error, type = "text", testId }) {
         </div>
     );
 }
-function Row({ label, value, bold }) {
+function Row({ label, value, bold, accent, testid }) {
+    const accentClass =
+        accent === "emerald"
+            ? "text-emerald-700"
+            : accent === "amber"
+            ? "text-amber-700"
+            : "";
     return (
         <div
-            className={`flex justify-between ${bold ? "font-semibold text-foreground pt-1" : "text-muted-foreground"}`}
+            className={`flex justify-between ${
+                bold ? "font-semibold text-foreground pt-1" : "text-muted-foreground"
+            }`}
+            data-testid={testid}
         >
             <span>{label}</span>
-            <span>{value}</span>
+            <span className={accentClass}>{value}</span>
         </div>
     );
 }

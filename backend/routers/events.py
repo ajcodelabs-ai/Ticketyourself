@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from db import db
 from security import get_current_user, require_role
@@ -69,6 +69,55 @@ class PaymentMethodConfig(BaseModel):
     )
 
 
+class DiscountConditions(BaseModel):
+    locality_ids: Optional[List[str]] = None
+    max_per_buyer: Optional[int] = Field(default=None, ge=1)
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
+
+
+class DiscountBenefit(BaseModel):
+    type: Literal["percent", "fixed"]
+    value: int = Field(gt=0)  # 25 = 25% or 25 USD according to type
+
+
+class DiscountRule(BaseModel):
+    id: Optional[str] = None
+    name: str = Field(min_length=2, max_length=80)
+    type: Literal["promo_code", "auto", "quantity"]
+    enabled: bool = True
+    # promo_code-only
+    code: Optional[str] = Field(default=None, max_length=40)
+    max_uses: Optional[int] = Field(default=None, ge=1)
+    uses_count: int = Field(default=0, ge=0)
+    # quantity-only
+    min_quantity: Optional[int] = Field(default=None, ge=1)
+    # common
+    conditions: DiscountConditions = Field(default_factory=DiscountConditions)
+    discount: DiscountBenefit
+
+    @model_validator(mode="after")
+    def _check_shape(self):
+        if self.type == "promo_code":
+            if not self.code:
+                raise ValueError("promo_code rules require a `code`")
+            # Canonicalise to uppercase + strip — codes are compared case-insensitive.
+            self.code = self.code.strip().upper()
+            if not self.code:
+                raise ValueError("Code cannot be empty after trimming.")
+        if self.type == "quantity" and not self.min_quantity:
+            raise ValueError("quantity rules require `min_quantity`")
+        if (
+            self.conditions.valid_from
+            and self.conditions.valid_until
+            and self.conditions.valid_until <= self.conditions.valid_from
+        ):
+            raise ValueError("`valid_until` debe ser posterior a `valid_from`")
+        if self.discount.type == "percent" and self.discount.value > 100:
+            raise ValueError("Un porcentaje no puede superar 100")
+        return self
+
+
 class EventDiscounts(BaseModel):
     disability_law: Dict[str, Any] = Field(
         default_factory=lambda: {"enabled": False, "percent": 50}
@@ -76,6 +125,17 @@ class EventDiscounts(BaseModel):
     presale: Dict[str, Any] = Field(
         default_factory=lambda: {"enabled": False, "percent": 0, "ends_at": None}
     )
+    rules: List[DiscountRule] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_unique_codes(self):
+        codes = [r.code for r in self.rules if r.type == "promo_code" and r.code]
+        seen = set()
+        for c in codes:
+            if c in seen:
+                raise ValueError(f"Código promocional duplicado: {c}")
+            seen.add(c)
+        return self
 
 
 class EventAccessParams(BaseModel):

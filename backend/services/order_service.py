@@ -249,6 +249,10 @@ async def create_order_skeleton(
         "total_cents": totals["total_cents"],
         "currency": event.get("currency", "USD"),
         "donation_amount_cents": totals["donation_amount_cents"] or None,
+        # Phase 9.5 — preserve discounts applied so finalize_paid_order can
+        # increment promo_code uses atomically once payment confirms.
+        "discounts_applied": totals.get("discounts_applied") or [],
+        "discount_total_cents": int(totals.get("discount_total_cents") or 0),
         "status": initial_status,
         "payment_method": payment_method,
         "manual_payment_info": (
@@ -377,6 +381,22 @@ async def finalize_paid_order(
         {"$inc": {"tickets_sold": order["quantity_total"]}, "$set": {"updated_at": now_iso}},
     )
     await release_reservation(order["id"])
+
+    # Phase 9.5 — bump uses_count for every promo_code rule that contributed
+    # to this order. Atomic per-rule so concurrent buyers can't slip past
+    # `max_uses`. Failures are logged but don't break payment.
+    for applied in order.get("discounts_applied") or []:
+        if applied.get("type") != "promo_code" or not applied.get("rule_id"):
+            continue
+        try:
+            from services.discount_service import consume_promo_code
+
+            await consume_promo_code(order["event_id"], applied["rule_id"])
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to bump uses_count for promo code rule %s",
+                applied.get("rule_id"),
+            )
 
     refreshed = await db.ticket_orders.find_one({"id": order["id"]}, {"_id": 0})
     logger.info(

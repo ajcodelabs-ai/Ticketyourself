@@ -10,7 +10,7 @@
  *  - Alignment + distribute helpers for multi-selection.
  */
 import { useEffect, useState, useMemo, useRef } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams, Link } from "react-router-dom";
 import {
     ArrowLeft, Save, Send, AlertCircle, Lock, ExternalLink, Loader2,
 } from "lucide-react";
@@ -54,7 +54,11 @@ function nextRowLabel(elements) {
 export default function VenueEditor() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const { organizer } = useAuth();
+    // When the user landed here from the event wizard, the URL carries
+    // `?return_to=` and we send them back automatically right after publishing.
+    const returnTo = searchParams.get("return_to");
     const [venue, setVenue] = useState(null);
     const [loading, setLoading] = useState(true);
     const [tool, setTool] = useState("select");
@@ -392,6 +396,11 @@ export default function VenueEditor() {
             toast.success("Venue publicado");
             const v = await venuesApi.get(venue.id);
             setVenue(v);
+            // Came here from the event wizard → bounce back to the linked tab.
+            if (returnTo) {
+                toast.success("Volvemos a tu evento para vincular este venue");
+                navigate(returnTo, { replace: true });
+            }
         } catch (e) {
             const code = e?.response?.data?.detail?.error;
             if (code === "organizer_pending_review") {

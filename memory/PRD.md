@@ -41,7 +41,47 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 - **Tests**: actualizado `test_phase2.py::test_get_me_pending_200_publish_403` (verifica nueva semántica + estructura de error). 156 passed / 1 skipped — cero regresiones.
 - Verificado E2E: pending `prueba@ticketyourself.com` puede entrar al dashboard, ve banner ámbar, ve sidebar completa, abre microsite, intenta publicar → dialog con copy "Una vez aprobada vas a poder publicar tu microsite...", botón "Entendido" cierra. Rejected/suspended siguen 403 en todos los endpoints del panel.
 
-### Bloque C — Upload imágenes Media (fix UX + clarity) ✅ (Feb 25, 2026)
+### Bloque D — Wizard restructurado 7→6 tabs ✅ (Feb 25, 2026)
+- **Tabs**: nuevo orden `info` (unifica antiguo General + Fechas y ventas), `venue_localidades` (combinado, central), `media`, `payments`, `discounts`, `access`. Eliminado el tab placeholder "Localidades".
+- **`SectionInfo`** (nuevo): título/descripción/categoría/fechas/timezone/ventana de venta en una sola tab con sub-headers. Toggle "Multi-función" disabled con tooltip "Próximamente".
+- **`SectionVenueLocalidades`** (nuevo): toggle al tope "Este es un evento sin asientos (general)" — desactivado por default. Cuando ON muestra inputs legacy (venue_name, address, city, pricing_type, base_price, capacity). Cuando OFF (modo asientos): `EventVenueSection`.
+- **`EventVenueSection`** (componente nuevo, 380 líneas):
+  - Empty state ilustrado con `Building2` icon + CTA "Crear mi primer venue" → deep-link `/app/venues/nuevo?return_to=...`
+  - Cards grid de venues published (`venue-card-{slug}`) con nombre + descripción + capacidad + número de localidades
+  - Cuando vinculado: header con venue info + botones "Vista previa pública" / "Cambiar venue" (deshabilitado si tickets_sold > 0)
+  - Canvas readonly (reusa `EditorCanvas` con `readOnly`) que renderiza el mapa completo del venue
+  - Click sobre un elemento del canvas → resalta la locality en la tabla abajo + scroll-into-view
+  - Tabla de localidades: dot color + nombre/descripción + input USD + input max/compra. Auto-save on blur via `PUT /events/me/{id}/venue`.
+  - Footer con summary: "Total capacidad: X · Localidades: Y · Precio: $A – $B"
+- **Deep-linking**: `?tab=info|venue_localidades|media|payments|discounts|access` lee al mount y sincroniza al cambiar tab (`useSearchParams`). El stepper visual + nav prev/next usan `handleTabChange`.
+- **Return-to**: `VenueEditor` lee `?return_to=` del URL. Tras publicar exitosamente, muestra toast "Volvemos a tu evento para vincular este venue" y navega de vuelta. Cierre del loop end-to-end del flujo "no tengo venue → creo uno → vinculo al evento".
+- Eliminada dependencia de `EventVenueLink` (componente dialog viejo); reemplazado por `EventVenueSection` inline.
+- **Verificado E2E**: el wizard tab `venue_localidades` del evento "Demo Numerado" muestra 6 tabs en orden correcto, venue Teatro Demo vinculado, mapa interactivo con escenario + 3 filas A/B/C, 3 pricing rows con precios `$10–$25`, summary "Localidades: 3 · Precio: $10.00 – $25.00", URL refleja `?tab=venue_localidades`.
+
+### Bloque E — Descuentos avanzados con promo codes ✅ (Feb 25, 2026)
+- **Backend models** (`routers/events.py`):
+  - Nuevos `DiscountConditions`, `DiscountBenefit`, `DiscountRule` Pydantic models (campos: `id`, `name`, `type: promo_code|auto|quantity`, `enabled`, `code/max_uses/uses_count` (promo), `min_quantity` (quantity), `conditions: {locality_ids, max_per_buyer, valid_from, valid_until}`, `discount: {type: percent|fixed, value}`).
+  - Validators: `code` se canoniza a uppercase + trim; rules `quantity` requieren `min_quantity`; `valid_until > valid_from`; `percent ≤ 100`; códigos únicos por evento.
+  - `EventDiscounts.rules: List[DiscountRule]` con validator de unicidad case-insensitive.
+- **`services/discount_service.py`** (nuevo, 200 líneas):
+  - `items_from_payload` reconstruye line-items con `seat_id/locality_id/price_cents` desde seat_ids+venue o desde quantity+base_price.
+  - `evaluate_promo_code` resuelve el código + valida ventana + cuota + locality applicability; devuelve `(rule|None, error|None)`.
+  - `evaluate_auto_quantity` elige la mejor regla auto/quantity por monto sobre items elegibles.
+  - `evaluate_discounts` orquesta el stacking (1 promo + 1 auto), retorna `(applied_rules, soft_warnings)`.
+  - `consume_promo_code` incrementa `uses_count` atómicamente con guard `uses_count < max_uses`.
+- **Endpoints** (`routers/orders.py`):
+  - **`POST /api/public/orders/preview`** — calcula breakdown completo sin commit. Retorna `{subtotal_cents, discount_total_cents, discounts_applied, fees_cents, total_cents, warnings, organizer_id}`. Mensajes de rechazo de código vienen como soft warnings (no rompe).
+  - **`POST /api/public/orders`** extendido con `promo_code`. Si el buyer pasó un código y no resuelve → **422** con razón explícita (ej: "Este código no aplica a las localidades seleccionadas"). Las reglas aplicadas se persisten en `order.discounts_applied` + `order.discount_total_cents`.
+  - **`finalize_paid_order`** bumpea `uses_count` atómicamente por cada `promo_code` aplicado al confirmarse el pago.
+- **Frontend**:
+  - **`components/events/DiscountRulesPanel.jsx`** (nuevo, 360 líneas): lista de reglas con badges + toggle + edit/delete, dialog amplio para crear/editar con 4 secciones (datos / condiciones / beneficio / activación), multi-select de localidades con color-dots, preview "en un ticket de $20 ahorrás $X.XX".
+  - Insertado en el tab Descuentos del wizard (`SectionDiscounts` ahora recibe `venueLocalities` cargados via `useEffect` desde el venue del evento si está vinculado).
+  - **`PurchaseModal`** extendido con sección "¿Tenés un código promocional?": input + botón Aplicar. Llama a `/public/orders/preview`. Si válido muestra card verde con nombre + código + botón Quitar; si no, toast rojo con la razón. Totales se recalculan con la discount row visible (`–$X.XX USD`). `promo_code` forwarded al `POST /orders` en el submit final.
+- **Verificado E2E**: organizer agrega regla "Early Bird 20%" tipo promo_code código `EARLYBIRD`, max 50 usos, sin filtros. Buyer abre el modal con 2 entradas de `concierto-acustico-demo` ($15 c/u). Aplica EARLYBIRD → toast verde "Descuento 'Early Bird 20%' aplicado", card visible, totales recalculados: subtotal $30 → descuento -$6 → fees 5% sobre $24 = $1.20 → **total $25.20**. Código WRONG → toast rojo "Código no válido." Order persistida con `discount_total_cents: 600`, `discounts_applied[0].amount_cents: 600`. Cash payment queda `pending_manual_payment` → `uses_count` aún en 0 (se bumpea recién en finalize).
+- **Tests**: 156 passed / 1 skipped — sin regresiones tras los cambios de orders/order_service/events.
+
+### Pendiente menor (para Fase 8 o cuando aparezca demanda)
+- Per-buyer history para `max_per_buyer` necesita una colección `promo_code_uses`. Hoy se valida la cuota global; la cuota por buyer queda como TODO documentado en `discount_service.assert_buyer_allowed`.
 - **Diagnóstico del bug reportado** ("no se cargan las imágenes"): backend OK (curl POST `/poster`/`/banner`/`/gallery` → 200), axios interceptor preserva FormData correctamente. El problema era **UX**: el wizard mostraba poster/banner side-by-side sin descripciones, las dropzones se estiraban a full-width (1390×1390 px), no había feedback visual durante la subida, ni explicación de dónde aparecía cada imagen.
 - **`SectionMedia`** reescrito: 3 cards verticales con header propio (icon + título + descripción con dimensiones recomendadas y formatos). Poster `max-w-xs`, Banner `max-w-2xl`, Gallery en grid 2/3/4 columnas con counter `X / 10` visible.
 - **`Dropzone`** extendido con prop `uploading`: overlay blanco semitransparente con `Loader2` animado mientras el upload está en curso, border-color cambia a primary, input deshabilitado para evitar dobles uploads.
