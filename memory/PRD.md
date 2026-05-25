@@ -20,8 +20,17 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 - **Fase 6b** — **Venue editor avanzado (curvas + mesas + asientos individuales + transformer + multi-select)** ✅ (Feb 24, 2026)
 - **Fase 7** — **Eventos × Venues + Compra con asientos numerados** ✅ (Feb 24, 2026)
 - **Fase 9** — **QR Scanner & Door validation** ✅ (Feb 24, 2026)
+- **Fase 9.5** — **UX refinement & flow fixes (feedback usuario)** 🟡 EN PROGRESO (Feb 25, 2026)
 - **Fase 8** (P1) — Multi ticket types, multi-función, promo codes, descuentos avanzados
 - **Fase 10** (P2) — Snapshots históricos de MRR (delta real mes a mes), churn, cohorts
+
+## Fase 9.5 — UX refinement (feedback usuario, Feb 25 2026)
+
+### Bloque A — Polish UI ✅ (Feb 25, 2026)
+- **A1. Selector de país en teléfonos**: nuevo componente `components/ui/phone-input.jsx` que envuelve `react-phone-number-input` con styling shadcn (bandera + dial-code + input E.164). Default Ecuador. Aplicado en Register, Configuración → Perfil, PurchaseModal del buyer. Validación E.164 al submit.
+- **A2. Sin "Made with Emergent"**: reescrito `public/index.html` quitando badge, script `emergent-main.js`, title "Emergent | Fullstack App" y meta "A product of emergent.sh". Title ahora "Ticket Yourself". Footer Layout cambia a `© {year} Ticket Yourself`.
+- **A3. Toggle ojo en passwords**: nuevo `components/ui/password-input.jsx` con `Eye`/`EyeOff` lucide. Aplicado en Login, Register (×2), Configuración → Seguridad (×3, disabled). Toggle accesible (`aria-label`, `aria-pressed`, `tabIndex=-1` para no capturar tabulación).
+- **A4. Centrar / fit en venue editor**: agregado botón "Centrar" (icono `Maximize2`) en toolbar bottom-right del canvas. Calcula bounding box agregado de todos los elementos vía `elementBBox` + margen 40px + cap a [0.25, 3]. Atajos de teclado `F` (fit) y `0` (reset). Skip cuando el usuario está typing en input/textarea/contentEditable.
 
 ## Fase 5.5 — Implementación (cerrada)
 

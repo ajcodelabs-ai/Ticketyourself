@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import PasswordInput from "@/components/ui/password-input";
+import PhoneInput from "@/components/ui/phone-input";
 import PlansShowcase from "@/components/PlansShowcase";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
@@ -159,13 +161,12 @@ export default function Register() {
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="phone-input">Teléfono</Label>
-                                <Input
+                                <PhoneInput
                                     id="phone-input"
                                     data-testid="register-phone-input"
                                     value={form.phone}
                                     onChange={update("phone")}
-                                    placeholder="+593..."
-                                    required
+                                    placeholder="99 123 4567"
                                 />
                             </div>
                         </div>
@@ -173,10 +174,9 @@ export default function Register() {
                         <div className="grid sm:grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label htmlFor="password-input">Contraseña</Label>
-                                <Input
+                                <PasswordInput
                                     id="password-input"
                                     data-testid="register-password-input"
-                                    type="password"
                                     value={form.password}
                                     onChange={update("password")}
                                     minLength={8}
@@ -185,10 +185,9 @@ export default function Register() {
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="confirm-input">Confirmar contraseña</Label>
-                                <Input
+                                <PasswordInput
                                     id="confirm-input"
                                     data-testid="register-confirm-input"
-                                    type="password"
                                     value={form.confirmPassword}
                                     onChange={update("confirmPassword")}
                                     minLength={8}

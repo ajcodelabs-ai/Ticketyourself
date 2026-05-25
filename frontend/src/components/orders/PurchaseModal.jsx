@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import PhoneInput from "@/components/ui/phone-input";
 import api, { formatApiError } from "@/lib/api";
 import { formatPriceLabel } from "@/lib/events";
 import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders";
@@ -356,13 +357,17 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                         error={errors.email}
                         testId="buyer-email"
                     />
-                    <Field
-                        label="Teléfono"
-                        id="buyer-phone"
-                        value={buyer.phone}
-                        onChange={(v) => setBuyer((b) => ({ ...b, phone: v }))}
-                        testId="buyer-phone"
-                    />
+                    <div className="space-y-1.5">
+                        <Label htmlFor="buyer-phone">Teléfono</Label>
+                        <PhoneInput
+                            id="buyer-phone"
+                            value={buyer.phone}
+                            onChange={(v) =>
+                                setBuyer((b) => ({ ...b, phone: v || "" }))
+                            }
+                            data-testid="buyer-phone"
+                        />
+                    </div>
                     <Field
                         label="Documento / cédula"
                         id="buyer-doc"

@@ -86,3 +86,64 @@ code {
         display: contents !important;
     }
 }
+
+/* ── PhoneInput (react-phone-number-input) ──────────────────────────────────
+ * The library renders: <div> [country-select] [input] </div>.
+ * We restyle the wrapper to match the shadcn <Input/> height + ring focus.
+ */
+.tys-phone-input {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 2.5rem; /* match shadcn Input */
+    padding: 0 0.75rem;
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--input));
+    border-radius: calc(var(--radius) - 2px);
+    transition: border-color 120ms, box-shadow 120ms;
+}
+.tys-phone-input:focus-within {
+    border-color: hsl(var(--ring));
+    box-shadow: 0 0 0 2px hsl(var(--ring) / 0.18);
+}
+.tys-phone-input .PhoneInputCountry {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding-right: 0.5rem;
+    border-right: 1px solid hsl(var(--border));
+    height: 1.75rem;
+}
+.tys-phone-input .PhoneInputCountrySelect {
+    background: transparent;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: hsl(var(--foreground));
+    padding-right: 0.25rem;
+}
+.tys-phone-input .PhoneInputCountryIcon {
+    width: 1.5rem;
+    height: 1rem;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px hsl(var(--border));
+}
+.tys-phone-input input.PhoneInputInput {
+    flex: 1;
+    height: 100%;
+    border: none;
+    background: transparent;
+    outline: none;
+    font-size: 0.875rem;
+    color: hsl(var(--foreground));
+}
+.tys-phone-input input.PhoneInputInput::placeholder {
+    color: hsl(var(--muted-foreground));
+}
+.tys-phone-input.PhoneInput--disabled,
+.tys-phone-input[aria-disabled="true"] {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+

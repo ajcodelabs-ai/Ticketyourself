@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import PasswordInput from "@/components/ui/password-input";
+import PhoneInput from "@/components/ui/phone-input";
 import {
     Loader2,
     CreditCard,
@@ -107,11 +109,9 @@ function ProfileTab() {
                 </Field>
                 <div className="grid sm:grid-cols-2 gap-3">
                     <Field label="Teléfono">
-                        <Input
+                        <PhoneInput
                             value={form.phone}
-                            onChange={(e) =>
-                                setForm((f) => ({ ...f, phone: e.target.value }))
-                            }
+                            onChange={(v) => setForm((f) => ({ ...f, phone: v || "" }))}
                             data-testid="cfg-phone"
                         />
                     </Field>
@@ -249,13 +249,13 @@ function SecurityTab() {
             </CardHeader>
             <CardContent className="space-y-3 opacity-60">
                 <Field label="Contraseña actual">
-                    <Input type="password" disabled />
+                    <PasswordInput disabled />
                 </Field>
                 <Field label="Nueva contraseña">
-                    <Input type="password" disabled />
+                    <PasswordInput disabled />
                 </Field>
                 <Field label="Confirmar nueva contraseña">
-                    <Input type="password" disabled />
+                    <PasswordInput disabled />
                 </Field>
                 <Button disabled data-testid="cfg-pwd-save">
                     Próximamente

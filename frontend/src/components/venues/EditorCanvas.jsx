@@ -12,6 +12,7 @@
  */
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Stage, Layer, Rect, Line, Group, Transformer } from "react-konva";
+import { Maximize2 } from "lucide-react";
 import ElementShape from "./ElementShape";
 import { GRID, elementBBox, bboxIntersects } from "@/lib/venues";
 
@@ -19,6 +20,24 @@ const ALIGN_TOLERANCE = 5; // px in world space — must be reachable visually
 
 function snapVal(v) {
     return Math.round(v / GRID) * GRID;
+}
+
+/**
+ * Aggregate the bounding box of a list of elements. Returns null when empty.
+ * Used by fit-to-view to compute the zoom + pan that frames everything.
+ */
+function computeBoundingBox(elements) {
+    if (!elements || elements.length === 0) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const el of elements) {
+        const b = elementBBox(el);
+        if (b.minX < minX) minX = b.minX;
+        if (b.minY < minY) minY = b.minY;
+        if (b.maxX > maxX) maxX = b.maxX;
+        if (b.maxY > maxY) maxY = b.maxY;
+    }
+    if (!isFinite(minX)) return null;
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
 export default function EditorCanvas({
@@ -95,10 +114,57 @@ export default function EditorCanvas({
         });
     }, []);
 
-    const resetView = () => {
+    const resetView = useCallback(() => {
         setZoom(1);
         setPan({ x: 0, y: 0 });
-    };
+    }, []);
+
+    /**
+     * Compute bounding box of all elements and fit into the visible viewport,
+     * leaving a 40px margin on each side. Falls back to resetView when the
+     * canvas is empty. Triggered by toolbar button + keyboard `F` / `0`.
+     */
+    const fitToView = useCallback(() => {
+        if (!elements || elements.length === 0) {
+            resetView();
+            return;
+        }
+        const bbox = computeBoundingBox(elements);
+        if (!bbox) {
+            resetView();
+            return;
+        }
+        const margin = 40;
+        const cw = containerSize.width;
+        const ch = containerSize.height;
+        const scaleX = (cw - margin * 2) / Math.max(1, bbox.width);
+        const scaleY = (ch - margin * 2) / Math.max(1, bbox.height);
+        const next = Math.min(3, Math.max(0.25, Math.min(scaleX, scaleY)));
+        setZoom(next);
+        setPan({
+            x: cw / 2 - (bbox.x + bbox.width / 2) * next,
+            y: ch / 2 - (bbox.y + bbox.height / 2) * next,
+        });
+    }, [elements, containerSize.width, containerSize.height, resetView]);
+
+    // Keyboard shortcuts: `F` (fit) and `0` (reset). Skip when typing.
+    useEffect(() => {
+        if (readOnly) return undefined;
+        const onKey = (e) => {
+            const tag = e.target?.tagName;
+            if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable) return;
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+            if (e.key === "f" || e.key === "F") {
+                e.preventDefault();
+                fitToView();
+            } else if (e.key === "0") {
+                e.preventDefault();
+                resetView();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [fitToView, resetView, readOnly]);
 
     const screenToWorld = (sx, sy) => ({
         x: (sx - pan.x) / zoom,
@@ -446,8 +512,19 @@ export default function EditorCanvas({
                 </span>
                 <button onClick={() => setZoom((z) => Math.min(3, z * 1.15))}
                         className="px-2 hover:bg-slate-100 rounded" data-testid="zoom-in">+</button>
+                <button
+                    onClick={fitToView}
+                    className="px-2 py-0.5 hover:bg-slate-100 rounded ml-1 flex items-center gap-1"
+                    data-testid="zoom-fit"
+                    title="Centrar y ajustar todo (F)"
+                >
+                    <Maximize2 className="h-3 w-3" />
+                    Centrar
+                </button>
                 <button onClick={resetView}
-                        className="px-2 hover:bg-slate-100 rounded ml-1" data-testid="zoom-reset">Reset</button>
+                        className="px-2 hover:bg-slate-100 rounded"
+                        data-testid="zoom-reset"
+                        title="Volver a zoom 1:1 (0)">Reset</button>
             </div>
         </div>
     );

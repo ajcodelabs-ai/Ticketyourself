@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import PasswordInput from "@/components/ui/password-input";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatApiError } from "@/lib/api";
 import { Loader2, LogIn } from "lucide-react";
@@ -62,10 +63,9 @@ export default function Login() {
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="password-input">Contraseña</Label>
-                            <Input
+                            <PasswordInput
                                 id="password-input"
                                 data-testid="login-password-input"
-                                type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 required

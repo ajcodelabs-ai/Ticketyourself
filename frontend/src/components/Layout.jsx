@@ -157,7 +157,7 @@ export default function Layout({ children }) {
             <footer className="border-t border-border/70 mt-8">
                 <div className="mx-auto max-w-6xl px-5 sm:px-8 py-6 text-xs text-muted-foreground flex flex-wrap items-center justify-between gap-2">
                     <span data-testid="footer-tag">
-                        Ticket Yourself · POC Fase 0 · Stripe modo test
+                        © {new Date().getFullYear()} Ticket Yourself
                     </span>
                     <span>USD · Ecuador</span>
                 </div>

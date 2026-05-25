@@ -59,10 +59,10 @@ export default function PublicLayout({ children }) {
 
             <footer className="border-t border-border/70 mt-8">
                 <div className="mx-auto max-w-6xl px-5 sm:px-8 py-6 text-xs text-muted-foreground flex flex-wrap items-center justify-between gap-2">
-                    <span>© {new Date().getFullYear()} Ticket Yourself · Ecuador</span>
-                    <Link to="/poc" className="hover:text-foreground transition-colors">
-                        POC interno
-                    </Link>
+                    <span data-testid="public-footer-tag">
+                        © {new Date().getFullYear()} Ticket Yourself
+                    </span>
+                    <span>Ecuador · USD</span>
                 </div>
             </footer>
         </div>
