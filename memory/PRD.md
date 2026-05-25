@@ -20,7 +20,7 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 - **Fase 6b** — **Venue editor avanzado (curvas + mesas + asientos individuales + transformer + multi-select)** ✅ (Feb 24, 2026)
 - **Fase 7** — **Eventos × Venues + Compra con asientos numerados** ✅ (Feb 24, 2026)
 - **Fase 9** — **QR Scanner & Door validation** ✅ (Feb 24, 2026)
-- **Fase 9.5** — **UX refinement & flow fixes (feedback usuario)** 🟡 EN PROGRESO (Feb 25, 2026)
+- **Fase 9.5** — **UX refinement & flow fixes (feedback usuario)** ✅ CERRADA (Feb 25, 2026)
 - **Fase 8** (P1) — Multi ticket types, multi-función, promo codes, descuentos avanzados
 - **Fase 10** (P2) — Snapshots históricos de MRR (delta real mes a mes), churn, cohorts
 
@@ -79,6 +79,12 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
   - **`PurchaseModal`** extendido con sección "¿Tenés un código promocional?": input + botón Aplicar. Llama a `/public/orders/preview`. Si válido muestra card verde con nombre + código + botón Quitar; si no, toast rojo con la razón. Totales se recalculan con la discount row visible (`–$X.XX USD`). `promo_code` forwarded al `POST /orders` en el submit final.
 - **Verificado E2E**: organizer agrega regla "Early Bird 20%" tipo promo_code código `EARLYBIRD`, max 50 usos, sin filtros. Buyer abre el modal con 2 entradas de `concierto-acustico-demo` ($15 c/u). Aplica EARLYBIRD → toast verde "Descuento 'Early Bird 20%' aplicado", card visible, totales recalculados: subtotal $30 → descuento -$6 → fees 5% sobre $24 = $1.20 → **total $25.20**. Código WRONG → toast rojo "Código no válido." Order persistida con `discount_total_cents: 600`, `discounts_applied[0].amount_cents: 600`. Cash payment queda `pending_manual_payment` → `uses_count` aún en 0 (se bumpea recién en finalize).
 - **Tests**: 156 passed / 1 skipped — sin regresiones tras los cambios de orders/order_service/events.
+
+### Bug latente fixed post-tester report (Feb 25, 2026)
+- **DiscountRule.id**: cambiado de `Optional[str] = None` a `str = Field(default_factory=lambda: str(uuid.uuid4()))`. Sin esto, dos rules persistidas sin id explícito colisionaban en `evaluate_discounts` (`auto_rule.id != promo_rule.id` daba `False` con ambos None → stacking se rompía silenciosamente descartando una regla).
+- **PUT /events/me/{id}**: el `model_dump(exclude_unset=True)` estaba excluyendo campos rellenados por `default_factory` (Pydantic los marca como "not set"). Agregado un re-dump explícito del bloque `discounts` con `exclude_none=False` para preservar los UUIDs generados.
+- **Migration one-shot** en `seeds._backfill_discount_rule_ids`: itera eventos con `discounts.rules.id == None`, asigna UUIDs únicos por rule, idempotente (`if not any(missing): continue`). Corre al boot dentro de `run_seeds()`.
+- **Verificado**: PUT con 2 rules sin id → ambos resultan con UUIDs válidos únicos. Preview de `concierto-acustico-demo` qty=3 con `PROMO10` → 2 reglas aplican (PROMO10 $4.50 + QTYBONUS $2.25 = $6.75 total discount). Backfill manual sobre rules con id=None: se asignan UUIDs en 1er run, 2do run no modifica nada.
 
 ### Pendiente menor (para Fase 8 o cuando aparezca demanda)
 - Per-buyer history para `max_per_buyer` necesita una colección `promo_code_uses`. Hoy se valida la cuota global; la cuota por buyer queda como TODO documentado en `discount_service.assert_buyer_allowed`.

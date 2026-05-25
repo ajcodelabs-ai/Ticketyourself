@@ -1306,6 +1306,32 @@ async def _seed_demo_numbered_event() -> None:
         })
 
 
+async def _backfill_discount_rule_ids() -> None:
+    """One-shot migration: any `event.discounts.rules[*]` persisted before the
+    Phase 9.5 model change may have `id == null`. Two such rules would compare
+    equal in `evaluate_discounts` and break stacking. Idempotent — only events
+    that actually need patching get a write."""
+    cursor = db.events.find(
+        {"discounts.rules.id": None},
+        {"_id": 0, "id": 1, "discounts": 1},
+    )
+    fixed = 0
+    async for ev in cursor:
+        rules = (ev.get("discounts") or {}).get("rules") or []
+        if not any(r.get("id") in (None, "") for r in rules):
+            continue
+        for r in rules:
+            if not r.get("id"):
+                r["id"] = str(uuid.uuid4())
+        await db.events.update_one(
+            {"id": ev["id"]},
+            {"$set": {"discounts.rules": rules}},
+        )
+        fixed += 1
+    if fixed:
+        logger.info("backfilled discount-rule UUIDs on %d event(s)", fixed)
+
+
 async def run_seeds() -> None:
     await _create_indexes()
     await _cleanup_ephemeral_test_data()
@@ -1319,3 +1345,4 @@ async def run_seeds() -> None:
     await _seed_demo_manual_orders()
     await _seed_demo_venues()
     await _seed_demo_numbered_event()
+    await _backfill_discount_rule_ids()

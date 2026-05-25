@@ -82,7 +82,11 @@ class DiscountBenefit(BaseModel):
 
 
 class DiscountRule(BaseModel):
-    id: Optional[str] = None
+    # UUID is generated server-side at model construction time so two rules
+    # without explicit IDs never collide. Earlier we accepted `None` here,
+    # which broke `evaluate_discounts` stacking (`auto_rule.id != promo_rule.id`
+    # was False when both were None — one rule got silently dropped).
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = Field(min_length=2, max_length=80)
     type: Literal["promo_code", "auto", "quantity"]
     enabled: bool = True
@@ -496,6 +500,12 @@ async def update_my_event(
         raise HTTPException(status_code=404, detail="Event not found")
 
     diff = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+
+    # `exclude_unset=True` drops nested fields filled by `default_factory` —
+    # which would silently strip generated `DiscountRule.id` UUIDs on every
+    # PUT. We re-dump the discounts block in full to preserve them.
+    if "discounts" in diff and payload.discounts is not None:
+        diff["discounts"] = payload.discounts.model_dump(exclude_none=False)
 
     # Lock critical fields once tickets are sold.
     if (current.get("tickets_sold") or 0) > 0:
