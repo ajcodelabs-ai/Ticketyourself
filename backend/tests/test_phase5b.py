@@ -15,10 +15,10 @@ BASE_URL = os.environ.get(
 ).rstrip("/")
 API = f"{BASE_URL}/api"
 
-DEMO_EMAIL = "demo@ticketyourself.com"
-DEMO_PASSWORD = "Organizer123!"
-RECHAZADO_EMAIL = "rechazado@ticketyourself.com"
-RECHAZADO_PASSWORD = "Organizer123!"
+DEMO_EMAIL = os.environ.get("TYS_DEMO_EMAIL", "demo@ticketyourself.com")
+DEMO_PASSWORD = os.environ.get("TYS_DEMO_PASSWORD", "Organizer123!")
+RECHAZADO_EMAIL = os.environ.get("TYS_REJECTED_EMAIL", "rechazado@ticketyourself.com")
+RECHAZADO_PASSWORD = os.environ.get("TYS_REJECTED_PASSWORD", "Organizer123!")
 EVENT_SLUG = "concierto-acustico-demo"
 TENANT = "demo-org"
 

@@ -24,12 +24,12 @@ def _read_base() -> str:
 BASE_URL = _read_base()
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "admin@ticketyourself.com"
-ADMIN_PASSWORD = "Admin123!"
-DEMO_EMAIL = "demo@ticketyourself.com"
-DEMO_PASSWORD = "Organizer123!"
-PRUEBA_EMAIL = "prueba@ticketyourself.com"
-PRUEBA_PASSWORD = "Organizer123!"
+ADMIN_EMAIL = os.environ.get("TYS_ADMIN_EMAIL", "admin@ticketyourself.com")
+ADMIN_PASSWORD = os.environ.get("TYS_ADMIN_PASSWORD", "Admin123!")
+DEMO_EMAIL = os.environ.get("TYS_DEMO_EMAIL", "demo@ticketyourself.com")
+DEMO_PASSWORD = os.environ.get("TYS_DEMO_PASSWORD", "Organizer123!")
+PRUEBA_EMAIL = os.environ.get("TYS_PRUEBA_EMAIL", "prueba@ticketyourself.com")
+PRUEBA_PASSWORD = os.environ.get("TYS_PRUEBA_PASSWORD", "Organizer123!")
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────

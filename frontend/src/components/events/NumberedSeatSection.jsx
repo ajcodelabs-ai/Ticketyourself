@@ -34,8 +34,10 @@ export default function NumberedSeatSection({
             setRefreshing(true);
             const r = await api.get(`/public/events/${tenantSlug}/${event.slug}`);
             setSeatsStatus(r.data.seats_status || []);
-        } catch (_e) {
-            // silent
+        } catch (e) {
+            // Refresh runs every 15s in background; users have a manual retry
+            // via the "Reservar y continuar" flow if it really fails. Log only.
+            console.debug("[seats] refresh failed:", e?.message || e);
         } finally {
             setRefreshing(false);
         }

@@ -79,7 +79,6 @@ export default function OrderSuccess() {
             alive = false;
             if (timer) clearTimeout(timer);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [order_number, sessionId, polls]);
 
     const simulatePaid = async () => {

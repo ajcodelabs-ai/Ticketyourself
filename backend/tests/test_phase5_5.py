@@ -11,10 +11,10 @@ BASE_URL = os.environ.get(
 ).rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "admin@ticketyourself.com"
-ADMIN_PASSWORD = "Admin123!"
-ORG_EMAIL = "demo@ticketyourself.com"
-ORG_PASSWORD = "Organizer123!"
+ADMIN_EMAIL = os.environ.get("TYS_ADMIN_EMAIL", "admin@ticketyourself.com")
+ADMIN_PASSWORD = os.environ.get("TYS_ADMIN_PASSWORD", "Admin123!")
+ORG_EMAIL = os.environ.get("TYS_DEMO_EMAIL", "demo@ticketyourself.com")
+ORG_PASSWORD = os.environ.get("TYS_DEMO_PASSWORD", "Organizer123!")
 
 
 @pytest.fixture(scope="module")

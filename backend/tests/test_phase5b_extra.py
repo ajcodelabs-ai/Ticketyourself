@@ -22,8 +22,8 @@ BASE_URL = os.environ.get(
 ).rstrip("/")
 API = f"{BASE_URL}/api"
 
-DEMO_EMAIL = "demo@ticketyourself.com"
-DEMO_PASSWORD = "Organizer123!"
+DEMO_EMAIL = os.environ.get("TYS_DEMO_EMAIL", "demo@ticketyourself.com")
+DEMO_PASSWORD = os.environ.get("TYS_DEMO_PASSWORD", "Organizer123!")
 TENANT = "demo-org"
 EVENT_WITH_MANUAL = "concierto-acustico-demo"           # transfer + cash enabled
 EVENT_STRIPE_ONLY = "conferencia-marketing-digital"      # only stripe

@@ -48,7 +48,12 @@ function playBeep(type) {
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
         osc.start();
         osc.stop(ctx.currentTime + 0.3);
-    } catch (_e) { /* swallow */ }
+    } catch (e) {
+        // AudioContext can throw when no user gesture has happened yet on
+        // Safari/iOS. We don't want to alert the staff for a missing beep —
+        // log to dev console only.
+        console.debug("[validation] playBeep skipped:", e?.message || e);
+    }
 }
 
 function fmtTime(iso) {
@@ -79,7 +84,10 @@ export default function EventValidation() {
         try {
             const r = await api.get(`/events/me/${eventId}/scan-stats`);
             setStats(r.data);
-        } catch (_e) { /* silent */ }
+        } catch (e) {
+            // Stats are non-critical for the scanner UX; surface only to dev console.
+            console.debug("[validation] refreshStats failed:", e?.message || e);
+        }
     }, [eventId]);
 
     useEffect(() => {
@@ -165,7 +173,11 @@ export default function EventValidation() {
             try {
                 await inst.stop();
                 await inst.clear();
-            } catch (_e) { /* ignore */ }
+            } catch (e) {
+                // html5-qrcode throws "scanner not running" if stopped twice
+                // (e.g. unmount race). Log to dev console without alerting.
+                console.debug("[validation] stopScanner cleanup:", e?.message || e);
+            }
         }
         html5QrRef.current = null;
         setScanning(false);
