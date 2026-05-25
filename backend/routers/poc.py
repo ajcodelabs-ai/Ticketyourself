@@ -1,6 +1,6 @@
 """POC routes (Fase 0) — kept under /api/poc/*."""
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List
 import logging
 import uuid
 

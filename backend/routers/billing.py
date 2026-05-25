@@ -1,6 +1,5 @@
 """Billing router: Stripe Checkout (subscription/payment) + Customer Portal."""
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 

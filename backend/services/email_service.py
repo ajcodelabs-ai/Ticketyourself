@@ -17,6 +17,8 @@ from typing import Optional
 
 import resend
 
+from db import db
+
 logger = logging.getLogger("tys.email")
 
 EMAIL_LOG_DIR = Path(__file__).resolve().parent.parent / "email_log"
@@ -248,7 +250,7 @@ async def send_purchase_confirmation(
     frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
     primary = "#4f46e5"
     try:
-        microsite = await __import__("db", fromlist=["db"]).db.microsites.find_one(
+        microsite = await db.microsites.find_one(
             {"organizer_id": order["organizer_id"]},
             {"_id": 0, "branding": 1},
         )

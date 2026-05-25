@@ -11,7 +11,7 @@ Joins:
 Single call avoids N+1 from the dashboard page.
 """
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends

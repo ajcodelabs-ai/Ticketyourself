@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from audit import log_audit
 from db import db
 from models import OrganizerDocumentOut, OrganizerOut, OrganizerProfileUpdate
-from security import get_current_user, require_role
+from security import require_role
 
 logger = logging.getLogger("tys.organizers")
 
@@ -117,6 +117,7 @@ async def upload_my_doc(
 ):
     if doc_type not in ALLOWED_DOC_TYPES:
         raise HTTPException(400, f"Invalid doc_type. Allowed: {sorted(ALLOWED_DOC_TYPES)}")
+    org = await _get_my_organizer(user)
     if file.content_type not in ALLOWED_MIME:
         logger.warning(
             "Document upload rejected: organizer=%s mime=%s filename=%s",
@@ -134,7 +135,6 @@ async def upload_my_doc(
     if len(contents) > MAX_BYTES:
         raise HTTPException(413, "File too large (max 10MB)")
 
-    org = await _get_my_organizer(user)
     doc_id = str(uuid.uuid4())
     safe_name = (file.filename or "file").replace("/", "_").replace("\\", "_")[:120]
     dest_dir = UPLOAD_ROOT / org["id"]

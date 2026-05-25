@@ -11,7 +11,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
 
 from db import db
 from security import require_role

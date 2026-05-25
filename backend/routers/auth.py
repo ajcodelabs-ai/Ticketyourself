@@ -18,8 +18,6 @@ from models import (
     UserOut,
 )
 from security import (
-    ACCESS_COOKIE,
-    REFRESH_COOKIE,
     clear_auth_cookies,
     create_access_token,
     create_refresh_token,
@@ -31,7 +29,6 @@ from security import (
 )
 from services.activation import (
     create_activation_token,
-    decode_activation_token,
     ensure_activation_record,
 )
 from services.email_service import send_welcome_email

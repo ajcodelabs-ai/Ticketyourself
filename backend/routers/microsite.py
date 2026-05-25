@@ -1,14 +1,13 @@
 """Microsite endpoints (organizer-owned editor + public read-only views)."""
 import logging
 import mimetypes
-import os
 import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 

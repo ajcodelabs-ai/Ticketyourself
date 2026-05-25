@@ -1,7 +1,7 @@
 """Admin router: organizer management + stats."""
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
