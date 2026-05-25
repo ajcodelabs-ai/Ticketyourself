@@ -17,6 +17,12 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import {
     Select,
     SelectContent,
     SelectItem,
@@ -32,13 +38,13 @@ import api, { formatApiError } from "@/lib/api";
 import { TEMPLATE_OPTIONS, FONT_OPTIONS, assetUrl } from "@/lib/microsite";
 import { PUBLIC_DOMAIN, previewMicrositePath } from "@/lib/config";
 import {
-    Eye,
     ExternalLink,
     Monitor,
     Smartphone,
     Share2,
     Upload,
     Loader2,
+    Maximize2,
 } from "lucide-react";
 
 const TEXT_LIMITS = {
@@ -59,7 +65,26 @@ export default function MicrositeEditor() {
     const [shareOpen, setShareOpen] = useState(false);
     const [uploadingAsset, setUploadingAsset] = useState(null);
     const [publishPendingOpen, setPublishPendingOpen] = useState(false);
+    const [previewWidth, setPreviewWidth] = useState(0);
+    const [fullscreenOpen, setFullscreenOpen] = useState(false);
+    const previewRef = useRef(null);
     const saveTimer = useRef(null);
+
+    // Live-track the preview frame width so the organizer sees how wide their
+    // microsite is being rendered right now (Phase 9.6 — Item 5).
+    useEffect(() => {
+        if (!previewRef.current || typeof ResizeObserver === "undefined") return;
+        const el = previewRef.current;
+        const update = () => setPreviewWidth(Math.round(el.getBoundingClientRect().width));
+        update();
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        window.addEventListener("resize", update);
+        return () => {
+            ro.disconnect();
+            window.removeEventListener("resize", update);
+        };
+    }, [microsite, previewMode]);
 
     // Initial load
     useEffect(() => {
@@ -221,7 +246,7 @@ export default function MicrositeEditor() {
                 </div>
             </div>
 
-            <div className="grid lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-4">
+            <div className="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,9fr)] gap-4">
                 {/* PANEL LEFT */}
                 <Card className="lg:max-h-[calc(100vh-180px)] lg:overflow-y-auto">
                     <CardContent className="pt-6">
@@ -437,32 +462,53 @@ export default function MicrositeEditor() {
 
                 {/* PREVIEW RIGHT */}
                 <div className="flex flex-col gap-3">
-                    <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium text-muted-foreground">
-                            Vista previa en vivo
-                        </p>
-                        <div className="flex gap-1 border rounded-full p-1 bg-secondary/40">
-                            <button
-                                onClick={() => setPreviewMode("desktop")}
-                                className={`px-2.5 py-1 rounded-full text-xs flex items-center gap-1 ${
-                                    previewMode === "desktop" ? "bg-background shadow" : ""
-                                }`}
-                                data-testid="preview-desktop-btn"
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-3">
+                            <p className="text-sm font-medium text-muted-foreground">
+                                Vista previa en vivo
+                            </p>
+                            <span
+                                className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 text-muted-foreground tabular-nums"
+                                data-testid="preview-width-indicator"
+                                aria-live="polite"
                             >
-                                <Monitor className="h-3.5 w-3.5" /> Desktop
-                            </button>
-                            <button
-                                onClick={() => setPreviewMode("mobile")}
-                                className={`px-2.5 py-1 rounded-full text-xs flex items-center gap-1 ${
-                                    previewMode === "mobile" ? "bg-background shadow" : ""
-                                }`}
-                                data-testid="preview-mobile-btn"
+                                {previewWidth ? `${previewWidth}px` : "—"}
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="flex gap-1 border rounded-full p-1 bg-secondary/40">
+                                <button
+                                    onClick={() => setPreviewMode("desktop")}
+                                    className={`px-2.5 py-1 rounded-full text-xs flex items-center gap-1 ${
+                                        previewMode === "desktop" ? "bg-background shadow" : ""
+                                    }`}
+                                    data-testid="preview-desktop-btn"
+                                >
+                                    <Monitor className="h-3.5 w-3.5" /> Desktop
+                                </button>
+                                <button
+                                    onClick={() => setPreviewMode("mobile")}
+                                    className={`px-2.5 py-1 rounded-full text-xs flex items-center gap-1 ${
+                                        previewMode === "mobile" ? "bg-background shadow" : ""
+                                    }`}
+                                    data-testid="preview-mobile-btn"
+                                >
+                                    <Smartphone className="h-3.5 w-3.5" /> Mobile
+                                </button>
+                            </div>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setFullscreenOpen(true)}
+                                data-testid="preview-fullscreen-btn"
                             >
-                                <Smartphone className="h-3.5 w-3.5" /> Mobile
-                            </button>
+                                <Maximize2 className="h-3.5 w-3.5 mr-1.5" />
+                                Vista grande
+                            </Button>
                         </div>
                     </div>
                     <div
+                        ref={previewRef}
                         className={`rounded-2xl border bg-background overflow-hidden shadow-sm transition-all mx-auto ${
                             previewMode === "mobile" ? "w-[380px]" : "w-full"
                         }`}
@@ -474,6 +520,32 @@ export default function MicrositeEditor() {
                     </div>
                 </div>
             </div>
+
+            <Dialog open={fullscreenOpen} onOpenChange={setFullscreenOpen}>
+                <DialogContent
+                    className="max-w-[min(1280px,96vw)] w-[min(1280px,96vw)] h-[92vh] p-0 gap-0 overflow-hidden flex flex-col"
+                    data-testid="preview-fullscreen-dialog"
+                >
+                    <DialogHeader className="px-5 py-3 border-b shrink-0">
+                        <DialogTitle className="text-base flex items-center gap-2">
+                            <Maximize2 className="h-4 w-4 text-primary" />
+                            Vista grande del microsite
+                            <span className="text-xs font-normal text-muted-foreground ml-auto">
+                                Resolución desktop · {organizer?.slug}.{PUBLIC_DOMAIN}
+                            </span>
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 bg-secondary/30 overflow-auto p-4">
+                        <div
+                            className="mx-auto bg-background rounded-xl border shadow-sm overflow-hidden"
+                            style={{ maxWidth: "1200px" }}
+                            data-testid="preview-fullscreen-content"
+                        >
+                            <MicrositeRenderer microsite={microsite} />
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <ShareModal
                 open={shareOpen}

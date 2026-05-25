@@ -21,6 +21,7 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 - **Fase 7** — **Eventos × Venues + Compra con asientos numerados** ✅ (Feb 24, 2026)
 - **Fase 9** — **QR Scanner & Door validation** ✅ (Feb 24, 2026)
 - **Fase 9.5** — **UX refinement & flow fixes (feedback usuario)** ✅ CERRADA (Feb 25, 2026)
+- **Fase 9.6** — **UX iteración: presets + venue picker en Info + media mockups + preview grande** ✅ CERRADA (Feb 25, 2026)
 - **Fase 8** (P1) — Multi ticket types, multi-función, promo codes, descuentos avanzados
 - **Fase 10** (P2) — Snapshots históricos de MRR (delta real mes a mes), churn, cohorts
 
@@ -356,8 +357,59 @@ Colección Mongo `venues` con elementos embebidos. Endpoints organizer (`/api/ve
 ### Verificación PDF seat_label (Feb 24, 2026)
 - Confirmado con `pdfplumber` sobre `TYS-000201` ticket numerado: el bloque `ASIENTO` aparece a y=366 con font 10pt y `B-1 · Platea` a y=382 con font Helvetica-Bold 16pt + color primary, layout ASISTENTE → ASIENTO → PRECIO correcto. Fix original sigue aplicado, sin regresiones.
 
-## Credenciales
-Ver `/app/memory/test_credentials.md`.
+## Fase 9.6 — UX iteración (feedback usuario, Feb 25 2026) ✅ CERRADA
+
+6 items aplicados en orden 6 → 1+2 → 3 → 4 → 5. Cero regresiones (156/156 pytest pasando).
+
+### Item 6 — "Made with Emergent" eliminado del DOM
+- `frontend/src/lib/badgeSweeper.js` (nuevo): sweeper defensivo con `MutationObserver` que elimina cualquier elemento que el host platform inyecte post-build matching selectores `a[href*="emergent.sh"]`, `[id^="emergent"]`, `[class*="emergent-badge"]`, etc. Throttled con `requestAnimationFrame` para evitar hot-loops.
+- `frontend/src/index.js`: `startBadgeSweeper()` corre antes de `ReactDOM.createRoot()` para capturar elementos inyectados durante bootstrap.
+- `public/index.html` ya limpio de Fase 9.5 (title `Ticket Yourself`, sin script `emergent-main.js`, sin meta `A product of emergent.sh`).
+- Verificado: `document.querySelectorAll('a[href*="emergent.sh"], [class*="emergent-badge"], [id*="emergent"]').length === 0` en runtime. Screenshot dashboard del organizer demo limpio.
+
+### Items 1 + 2 — Ventana de venta + duración con dropdowns
+- `frontend/src/lib/eventPresets.js` (Fase 9.5+): expone `DURATION_PRESETS` (30m/1h/2h/3h/4h/6h/8h/12h/2d/3d/1w/custom), `SALES_START_PRESETS` (immediate/1d/1w/2w/1m/2m/custom), `SALES_END_PRESETS` (at_start/1h/4h/24h/1w/custom) + helpers `infer*` y `compute*` que derivan ISO desde `starts_at + offset`.
+- `EventWizard.makeInitial` ahora setea `duration_preset`, `duration_minutes_custom`, `sales_window_preset_start`, `sales_window_preset_end` (con `inferDurationPreset`/`infer*Preset` para eventos legacy).
+- `EventWizard.buildPayload` calcula `ends_at = computeEndsAt(starts_at, duration_preset, custom_minutes)` y `sales_start`/`sales_end` con `compute*` desde el offset del preset. Envía además los 3 preset keys al backend para re-abrir el form en la misma opción.
+- Backend `EventBase` / `EventUpdate` (`routers/events.py`) acepta `duration_preset`, `sales_window_preset_start`, `sales_window_preset_end` opcionales.
+- UI del bloque "📅 Cuándo" (en `SectionInfo`):
+  - Grid 2-col: `Fecha y hora de inicio *` (`datetime-local`) · `Duración *` (Select con 12 opciones).
+  - Si `duration_preset === "custom"` aparece input `Duración personalizada (minutos)`.
+  - Zona horaria (Select sin cambios).
+  - Card de "Ventana de venta" con grid 2-col: `Inicio de venta` · `Fin de venta` (Selects). Custom expone `datetime-local` debajo del bloque.
+  - Toggle "Evento multi-función" disabled con tooltip "Próximamente — Fase 8".
+
+### Item 3 — Venue selector movido a "Información general → Dónde"
+- Bloque `DondeBlock` en `SectionInfo` con: toggle `¿Tu evento tiene venue con asientos asignados?` (default ON = numbered seating).
+- Si ON: Select shadcn con todos los venues `published` del organizer (etiqueta `nombre · N asientos`). Empty state cuando no hay venues con CTA `Crear mi primer venue`.
+- Si OFF: inputs simples `Nombre del lugar *` + `Dirección` + `Ciudad` (modo general legacy).
+- **Bug fix (raíz)**: el wizard ahora mantiene `currentEvent` en state (sincronizado con `initial` + cada `persist()` + cada link-venue). Antes el `SectionVenueLocalidades` recibía `event={initial}` y llamaba `onEventUpdated={(e) => onSaved?.(e)}` con `onSaved` **undefined** → la card de "venue linkeado" nunca aparecía aunque el `PUT /events/me/{id}/venue` viniera 200. Ahora `setCurrentEvent` propaga la respuesta del PUT a las 2 secciones (Info + Venue/localidades) y la card aparece inmediatamente.
+- Flujo de selección: `handlePickVenue` → `ensureEventId()` (crea draft si no existe) → `PUT /events/me/{id}/venue` con `locality_pricing` defaultado desde `loc.default_price_cents` → `setCurrentEvent(data)`. Verificado E2E: organizer demo navega a `/app/eventos/nuevo`, completa título + fecha, scrollea a "Dónde", abre dropdown, elige "Napoles" → backend logs `POST /api/events/me 201` + `PUT /api/events/me/.../venue 200` → toast verde "Venue 'Napoles' vinculado al evento" + card visible con `24 asientos · 0 localidades` + botones `Ver mapa` / `Cambiar`.
+- `SectionVenueLocalidades` simplificado: solo muestra el pricing + canvas si el evento ya tiene `venue_id`. Si general mode → card informativa con la tabla `Tipo / Precio / Capacidad`. Si modo asientos pero sin venue → banner ámbar con link "Información general → Dónde".
+
+### Item 4 — Mockups ilustrativos en tab Media
+- 3 SVG inline (`PosterMockup`, `BannerMockup`, `GalleryMockup`) al lado de cada dropzone:
+  - Poster: mini-card de evento (1080×1080 cuadrado tintado + título + barra + CTA).
+  - Banner: mini-página con hero 16:9 tintado + texto + botón Comprar.
+  - Gallery: mini-grid 4 thumbs + controles de carousel. Los thumbs se "llenan" según `count` real.
+- Layout: dropzone + mockup side-by-side en grid responsive (poster: `1fr_auto`, banner: `1fr_minmax(0,2fr)`, gallery idem). Cada mockup tiene caption "Cómo se ve en la grilla / Header de la página pública / Sección galería de la página pública".
+
+### Item 5 — Preview del microsite más grande + Vista grande modal
+- Grid split: `lg:grid-cols-[minmax(0,5fr)_minmax(0,9fr)]` (≈64% para el preview, antes 60%).
+- Indicador de ancho live: `<span data-testid="preview-width-indicator">730px</span>` actualizado por `ResizeObserver` sobre el frame. `aria-live="polite"`.
+- Botón "Vista grande" (icon `Maximize2`) en la toolbar superior → abre `<Dialog>` shadcn full-screen (`max-w-[min(1280px,96vw)]` × `h-[92vh]`) con `<MicrositeRenderer>` renderizado a ancho desktop fijo (1200px). Decisión: renderizar el componente directo (no iframe) porque la URL `{slug}.{PUBLIC_DOMAIN}` aún no resuelve en preview y el iframe quedaba blanco.
+- Header del dialog muestra "Resolución desktop · {slug}.{PUBLIC_DOMAIN}" para contexto.
+
+### Cambios técnicos
+- `EventNew.jsx`: copy actualizado "7 secciones" → "6 secciones".
+- `EventWizard.makeInitial` para edición de eventos legacy: si tiene `venue_name` pero no `venue_id` defaultea `no_seating_mode = true` (preserva compatibilidad).
+- Step status: la tab "info" valida `titleOk && startsOk && durationOk && whereOk` (whereOk = venue picked o general mode con venue_name).
+- `model_dump` PUT respeta los preset fields aún cuando viajan `null` (no se filtran).
+
+### Verificación
+- Pytest 156/156 ✓ (test_phase2 fail durante screenshot fue por mutación manual del template — restaurado vía API).
+- Screenshots con `mcp_screenshot_tool` muestran: dashboard sin badges Emergent, wizard "6 secciones" con 3 sub-bloques, venue dropdown poblado (4 venues), card linked con toast, mockups SVG en Media, preview microsite con indicador "730px" y botón "Vista grande" + dialog full-screen renderizando hero real "Demo Organizer · Eventos en vivo" con 3 event cards.
+
 
 
 

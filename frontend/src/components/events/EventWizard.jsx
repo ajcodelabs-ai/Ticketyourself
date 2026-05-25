@@ -1,11 +1,27 @@
 /**
- * EventWizard — Phase 5. 7-section horizontal tabs.
- *  1. General           5. Formas de pago
- *  2. Fechas y ventas   6. Descuentos
- *  3. Media             7. Accesos y parámetros
- *  4. Localidades
+ * EventWizard — Phase 9.6.
+ *
+ * 6 sections (horizontal tabs):
+ *  1. Información general — Datos · Cuándo (duration + sales presets) · Dónde (venue selector)
+ *  2. Venue y localidades — pricing tables for the linked venue (or hint to pick one)
+ *  3. Media — illustrated mockups + uploads (poster · banner · gallery)
+ *  4. Formas de pago
+ *  5. Descuentos
+ *  6. Accesos y parámetros
  *
  * Used in both create (/app/eventos/nuevo) and edit (/app/eventos/:id/editar).
+ *
+ * Phase 9.6 changes:
+ *  • Sales-window presets (start/end) and event duration are picked from dropdowns
+ *    rather than raw datetime-local inputs. Internally we still persist
+ *    `starts_at`/`ends_at`/`sales_start`/`sales_end`; the preset key is stored
+ *    alongside so the form re-opens on the option the organizer chose.
+ *  • Venue selection moved from the "Venue y localidades" tab into the "Dónde"
+ *    sub-section of Información general. Linked-venue updates from PUT /venue
+ *    propagate through `setCurrentEvent`, which fixes the previous bug where
+ *    selecting a venue silently failed because `onSaved` was undefined.
+ *  • Media tab now has inline SVG mockups above each dropzone so the organizer
+ *    sees exactly where each image surfaces.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -34,17 +50,21 @@ import {
     Circle,
     Lock,
     ImageIcon,
-    Upload,
     Trash2,
-    GripVertical,
     Info,
+    MapPin,
+    Building2,
+    PlusCircle,
+    ArrowRight,
+    Unlink,
+    Eye,
+    CalendarClock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
 import {
     Tabs,
     TabsContent,
@@ -65,6 +85,7 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip";
 import api, { formatApiError } from "@/lib/api";
+import { venuesApi } from "@/lib/venues";
 import { assetUrl } from "@/lib/microsite";
 import {
     EVENT_CATEGORIES,
@@ -115,6 +136,7 @@ function defaultDiscounts() {
     return {
         disability_law: { enabled: false, percent: 50 },
         presale: { enabled: false, percent: 0, ends_at: null },
+        rules: [],
     };
 }
 
@@ -141,11 +163,12 @@ function makeInitial(d) {
             venue_city: "Quito",
             venue_country: "Ecuador",
             starts_at: "",
+            // ends_at is now computed from starts_at + duration_preset on submit
             ends_at: "",
             timezone: "America/Guayaquil",
-            sales_start: "",
-            sales_end: "",
-            // Phase 9.6 — preset metadata for the new dropdown UX
+            // Sales-window stored as ISO when "custom"; otherwise derived from presets.
+            sales_start_custom: "",
+            sales_end_custom: "",
             duration_preset: "2h",
             duration_minutes_custom: 120,
             sales_window_preset_start: "immediate",
@@ -156,6 +179,8 @@ function makeInitial(d) {
             capacity: "",
             unlimited_capacity: true,
             visibility: "public",
+            // ON by default => event uses numbered seating with a venue.
+            // (Internally `no_seating_mode === true` means "general / no seats".)
             no_seating_mode: false,
             venue_id: null,
             payment_methods: defaultPayments(),
@@ -178,8 +203,8 @@ function makeInitial(d) {
         starts_at: isoToLocalInput(d.starts_at),
         ends_at: isoToLocalInput(d.ends_at),
         timezone: d.timezone || "America/Guayaquil",
-        sales_start: d.sales_start ? isoToLocalInput(d.sales_start) : "",
-        sales_end: d.sales_end ? isoToLocalInput(d.sales_end) : "",
+        sales_start_custom: d.sales_start ? isoToLocalInput(d.sales_start) : "",
+        sales_end_custom: d.sales_end ? isoToLocalInput(d.sales_end) : "",
         duration_preset: d.duration_preset || durInfer.preset,
         duration_minutes_custom: durInfer.minutes,
         sales_window_preset_start:
@@ -193,7 +218,10 @@ function makeInitial(d) {
         capacity: d.capacity != null ? String(d.capacity) : "",
         unlimited_capacity: d.capacity == null,
         visibility: d.visibility || "public",
-        no_seating_mode: !d.venue_id && d.pricing_type !== undefined ? false : false,
+        // If event has a venue_id, force numbered mode regardless of legacy flags.
+        no_seating_mode: !d.venue_id && !!d.venue_name && d.pricing_type !== undefined
+            ? !d.venue_id // legacy events with venue_name but no venue_id default to general
+            : false,
         venue_id: d.venue_id || null,
         payment_methods: d.payment_methods || defaultPayments(),
         discounts: d.discounts || defaultDiscounts(),
@@ -205,16 +233,35 @@ export default function EventWizard({ initial, mode = "create" }) {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const [form, setForm] = useState(() => makeInitial(initial));
+    // `currentEvent` is the live event document mirrored from the backend after
+    // each save / venue link. It feeds the venue picker + the pricing panel.
+    const [currentEvent, setCurrentEvent] = useState(initial || null);
+    const [venuesList, setVenuesList] = useState([]);
     const [venueLocalities, setVenueLocalities] = useState([]);
+
+    // Pull the organizer's published venues once for the dropdown picker.
+    useEffect(() => {
+        let alive = true;
+        venuesApi
+            .list({ status: "published" })
+            .then((d) => {
+                if (!alive) return;
+                setVenuesList((d.items || []).filter((v) => v.status === "published"));
+            })
+            .catch(() => alive && setVenuesList([]));
+        return () => {
+            alive = false;
+        };
+    }, []);
 
     // Phase 9.5 — fetch venue localities so the discounts panel can offer a
     // locality multi-select for promo-code conditions.
     useEffect(() => {
-        if (!initial?.venue_id) {
+        if (!currentEvent?.venue_id) {
             setVenueLocalities([]);
             return;
         }
-        api.get(`/venues/me/${initial.venue_id}`)
+        api.get(`/venues/me/${currentEvent.venue_id}`)
             .then((r) => {
                 const elementsLocs = new Set();
                 for (const el of r.data.elements || []) {
@@ -225,7 +272,8 @@ export default function EventWizard({ initial, mode = "create" }) {
                 );
             })
             .catch(() => setVenueLocalities([]));
-    }, [initial?.venue_id]);
+    }, [currentEvent?.venue_id]);
+
     // Deep-linking: ?tab=info|venue_localidades|... wins over default.
     const initialStep =
         STEPS.find((s) => s.id === searchParams.get("tab"))?.id || "info";
@@ -236,11 +284,12 @@ export default function EventWizard({ initial, mode = "create" }) {
     const [poster, setPoster] = useState(initial?.poster_url || null);
     const [banner, setBanner] = useState(initial?.banner_url || null);
     const [gallery, setGallery] = useState(initial?.gallery_urls || []);
-    const [uploadingKind, setUploadingKind] = useState(null); // "poster"|"banner"|"gallery"
+    const [uploadingKind, setUploadingKind] = useState(null);
 
     useEffect(() => {
         if (initial) {
             setForm(makeInitial(initial));
+            setCurrentEvent(initial);
             setPoster(initial.poster_url || null);
             setBanner(initial.banner_url || null);
             setGallery(initial.gallery_urls || []);
@@ -250,7 +299,10 @@ export default function EventWizard({ initial, mode = "create" }) {
 
     const lockCritical = mode === "edit" && (initial?.tickets_sold || 0) > 0;
 
-    const stepStatus = useMemo(() => evalStepStatus(form, poster), [form, poster]);
+    const stepStatus = useMemo(
+        () => evalStepStatus(form, poster, currentEvent),
+        [form, poster, currentEvent],
+    );
     const allValid = Object.values(stepStatus).every((s) => s !== "error");
 
     const update = (path, value) => {
@@ -273,8 +325,16 @@ export default function EventWizard({ initial, mode = "create" }) {
             return null;
         }
         const payload = buildPayload(form);
+        if (!payload.starts_at) {
+            toast.error("Definí la fecha y hora de inicio.");
+            return null;
+        }
+        if (!payload.ends_at) {
+            toast.error("Elegí la duración del evento.");
+            return null;
+        }
         if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
-            toast.error("La fecha de fin debe ser posterior al inicio.");
+            toast.error("La duración debe ser mayor a cero.");
             return null;
         }
         setSaving(true);
@@ -289,6 +349,7 @@ export default function EventWizard({ initial, mode = "create" }) {
                 setEventId(data.id);
                 window.history.replaceState(null, "", `/app/eventos/${data.id}/editar`);
             }
+            setCurrentEvent(result);
             if (publish) {
                 if (!result.poster_url) {
                     toast.error("Subí un poster antes de publicar.");
@@ -351,13 +412,11 @@ export default function EventWizard({ initial, mode = "create" }) {
     const uploadImages = async (files, kind) => {
         const list = Array.from(files || []);
         if (list.length === 0) return;
-        // Single-image fields take only the first file selected.
         if (kind !== "gallery") {
             const r = await uploadImage(list[0], kind);
             if (r) toast.success(kind === "poster" ? "Póster actualizado" : "Banner actualizado");
             return;
         }
-        // Gallery — iterate, respect 10-image cap.
         const remaining = Math.max(0, 10 - (gallery?.length || 0));
         if (remaining === 0) {
             toast.error("Ya tenés el máximo de 10 imágenes en la galería.");
@@ -406,8 +465,6 @@ export default function EventWizard({ initial, mode = "create" }) {
         }
     };
 
-    // Keep ?tab= in sync when user manually switches tab — supports deep
-    // linking and back-from-venue-creation flow without remounting the wizard.
     const handleTabChange = (next) => {
         setActiveStep(next);
         const params = new URLSearchParams(searchParams);
@@ -443,15 +500,24 @@ export default function EventWizard({ initial, mode = "create" }) {
                 </TabsList>
 
                 <TabsContent value="info" className="mt-4">
-                    <SectionInfo form={form} update={update} disabled={lockCritical} />
+                    <SectionInfo
+                        form={form}
+                        update={update}
+                        disabled={lockCritical}
+                        venues={venuesList}
+                        currentEvent={currentEvent}
+                        onEventUpdated={setCurrentEvent}
+                        ensureEventId={ensureEventId}
+                    />
                 </TabsContent>
                 <TabsContent value="venue_localidades" className="mt-4">
                     <SectionVenueLocalidades
                         form={form}
                         update={update}
                         disabled={lockCritical}
-                        event={initial}
-                        onEventUpdated={(e) => onSaved?.(e)}
+                        event={currentEvent}
+                        onEventUpdated={setCurrentEvent}
+                        onJumpToInfo={() => handleTabChange("info")}
                     />
                 </TabsContent>
                 <TabsContent value="media" className="mt-4">
@@ -524,22 +590,25 @@ export default function EventWizard({ initial, mode = "create" }) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-function evalStepStatus(form, poster) {
+function evalStepStatus(form, poster, currentEvent) {
     const s = {};
-    // Combined info: title required + dates valid.
     const titleOk = form.title?.length >= 2;
-    const datesOk =
-        form.starts_at && form.ends_at && new Date(form.ends_at) > new Date(form.starts_at);
-    s.info = titleOk && datesOk ? "ok" : titleOk || form.title ? "warn" : "error";
+    const startsOk = !!form.starts_at;
+    // Duration is "ok" if a preset other than custom is picked, or custom with positive minutes.
+    const durationOk = form.duration_preset && form.duration_preset !== "custom"
+        ? true
+        : Number(form.duration_minutes_custom || 0) > 0;
+    // Venue picked OR general mode with required fields.
+    const whereOk = form.no_seating_mode
+        ? !!form.venue_name
+        : !!(form.venue_id || currentEvent?.venue_id);
+    s.info = titleOk && startsOk && durationOk && whereOk ? "ok" : titleOk ? "warn" : "error";
     s.media = poster ? "ok" : "warn";
-    // Venue/localidades is OK when:
-    //  • organizer marked the event as "general" (no seats) AND has pricing/free, OR
-    //  • a venue is linked (locality pricing handled via separate endpoint).
     s.venue_localidades = form.no_seating_mode
         ? form.pricing_type === "free" || form.base_price_dollars
             ? "ok"
             : "warn"
-        : form.venue_id
+        : form.venue_id || currentEvent?.venue_id
         ? "ok"
         : "warn";
     s.payments = "ok";
@@ -549,8 +618,24 @@ function evalStepStatus(form, poster) {
 }
 
 function buildPayload(form) {
-    const sa = form.sales_start ? localInputToIso(form.sales_start) : null;
-    const se = form.sales_end ? localInputToIso(form.sales_end) : null;
+    const startsIso = form.starts_at ? localInputToIso(form.starts_at) : null;
+    const endsIso = startsIso
+        ? computeEndsAt(
+              startsIso,
+              form.duration_preset,
+              Number(form.duration_minutes_custom || 0),
+          )
+        : null;
+    const salesStart = computeSalesStart(
+        startsIso,
+        form.sales_window_preset_start,
+        form.sales_start_custom ? localInputToIso(form.sales_start_custom) : null,
+    );
+    const salesEnd = computeSalesEnd(
+        startsIso,
+        form.sales_window_preset_end,
+        form.sales_end_custom ? localInputToIso(form.sales_end_custom) : null,
+    );
     return {
         title: form.title,
         description: form.description,
@@ -560,20 +645,24 @@ function buildPayload(form) {
         venue_address: form.venue_address,
         venue_city: form.venue_city,
         venue_country: form.venue_country,
-        starts_at: localInputToIso(form.starts_at),
-        ends_at: localInputToIso(form.ends_at),
-        sales_start: sa,
-        sales_end: se,
+        starts_at: startsIso,
+        ends_at: endsIso,
+        sales_start: salesStart,
+        sales_end: salesEnd,
         timezone: form.timezone,
+        duration_preset: form.duration_preset,
+        sales_window_preset_start: form.sales_window_preset_start,
+        sales_window_preset_end: form.sales_window_preset_end,
         pricing_type: form.pricing_type,
         base_price_cents:
             form.pricing_type === "free"
                 ? 0
                 : Math.round(parseFloat(form.base_price_dollars || "0") * 100),
         currency: form.currency,
-        capacity: form.unlimited_capacity || form.capacity === ""
-            ? null
-            : parseInt(form.capacity, 10),
+        capacity:
+            form.unlimited_capacity || form.capacity === ""
+                ? null
+                : parseInt(form.capacity, 10),
         visibility: form.access_params?.visibility || form.visibility,
         payment_methods: form.payment_methods,
         discounts: form.discounts,
@@ -591,136 +680,691 @@ function StepIcon({ status }) {
     return <Circle className="h-3.5 w-3.5 text-muted-foreground" />;
 }
 
-// ── Section: Info (general + dates + sales window) ──────────────────────────
-function SectionInfo({ form, update, disabled }) {
+// ── Section: Info (datos + cuándo + dónde) ──────────────────────────────────
+function SectionInfo({
+    form,
+    update,
+    disabled,
+    venues,
+    currentEvent,
+    onEventUpdated,
+    ensureEventId,
+}) {
     return (
         <div className="space-y-5">
-            {/* Datos generales */}
-            <div className="space-y-4 rounded-xl border p-5 bg-card">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                    Datos del evento
-                </h3>
-                <Field label="Título del evento *" testId="wiz-title">
+            <DatosBlock form={form} update={update} disabled={disabled} />
+            <CuandoBlock form={form} update={update} disabled={disabled} />
+            <DondeBlock
+                form={form}
+                update={update}
+                disabled={disabled}
+                venues={venues}
+                currentEvent={currentEvent}
+                onEventUpdated={onEventUpdated}
+                ensureEventId={ensureEventId}
+            />
+        </div>
+    );
+}
+
+function DatosBlock({ form, update, disabled }) {
+    return (
+        <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="info-datos-block">
+            <SubHeader icon="📝" title="Datos del evento" />
+            <Field label="Título del evento *" testId="wiz-title">
+                <Input
+                    value={form.title}
+                    onChange={(e) => update("title", e.target.value)}
+                    maxLength={140}
+                    disabled={disabled}
+                    placeholder="Ej: Concierto Acústico"
+                    data-testid="event-title-input"
+                />
+            </Field>
+            <Field label="Descripción corta (160 chars máx)">
+                <Textarea
+                    value={form.short_description}
+                    onChange={(e) => update("short_description", e.target.value)}
+                    maxLength={160}
+                    rows={2}
+                    data-testid="wiz-short-input"
+                />
+            </Field>
+            <Field label="Descripción completa">
+                <Textarea
+                    value={form.description}
+                    onChange={(e) => update("description", e.target.value)}
+                    maxLength={8000}
+                    rows={6}
+                    data-testid="wiz-desc-input"
+                />
+            </Field>
+            <Field label="Categoría">
+                <Select
+                    value={form.category}
+                    onValueChange={(v) => update("category", v)}
+                >
+                    <SelectTrigger data-testid="wiz-category">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {EVENT_CATEGORIES.map((c) => (
+                            <SelectItem key={c.code} value={c.code}>
+                                {c.label}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            </Field>
+        </div>
+    );
+}
+
+function CuandoBlock({ form, update, disabled }) {
+    const startsValid = !!form.starts_at;
+    return (
+        <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="info-cuando-block">
+            <SubHeader icon="📅" title="Cuándo" />
+
+            <div className="grid sm:grid-cols-2 gap-3">
+                <Field label="Fecha y hora de inicio *">
                     <Input
-                        value={form.title}
-                        onChange={(e) => update("title", e.target.value)}
-                        maxLength={140}
+                        type="datetime-local"
+                        value={form.starts_at}
+                        onChange={(e) => update("starts_at", e.target.value)}
                         disabled={disabled}
-                        placeholder="Ej: Concierto Acústico"
-                        data-testid="event-title-input"
+                        data-testid="wiz-starts"
                     />
                 </Field>
-                <Field label="Descripción corta (160 chars máx)">
-                    <Textarea
-                        value={form.short_description}
-                        onChange={(e) => update("short_description", e.target.value)}
-                        maxLength={160}
-                        rows={2}
-                        data-testid="wiz-short-input"
-                    />
-                </Field>
-                <Field label="Descripción completa">
-                    <Textarea
-                        value={form.description}
-                        onChange={(e) => update("description", e.target.value)}
-                        maxLength={8000}
-                        rows={6}
-                        data-testid="wiz-desc-input"
-                    />
-                </Field>
-                <Field label="Categoría">
-                    <Select value={form.category} onValueChange={(v) => update("category", v)}>
-                        <SelectTrigger data-testid="wiz-category">
+                <Field label="Duración *">
+                    <Select
+                        value={form.duration_preset}
+                        onValueChange={(v) => update("duration_preset", v)}
+                        disabled={disabled}
+                    >
+                        <SelectTrigger data-testid="wiz-duration-preset">
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            {EVENT_CATEGORIES.map((c) => (
-                                <SelectItem key={c.code} value={c.code}>
-                                    {c.label}
+                            {DURATION_PRESETS.map((p) => (
+                                <SelectItem key={p.key} value={p.key}>
+                                    {p.label}
                                 </SelectItem>
                             ))}
                         </SelectContent>
                     </Select>
                 </Field>
             </div>
-
-            {/* Fechas */}
-            <div className="space-y-4 rounded-xl border p-5 bg-card">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                    Cuándo
-                </h3>
-                <div className="grid sm:grid-cols-2 gap-3">
-                    <Field label="Inicio *">
-                        <Input
-                            type="datetime-local"
-                            value={form.starts_at}
-                            onChange={(e) => update("starts_at", e.target.value)}
-                            data-testid="wiz-starts"
-                        />
-                    </Field>
-                    <Field label="Fin *">
-                        <Input
-                            type="datetime-local"
-                            value={form.ends_at}
-                            onChange={(e) => update("ends_at", e.target.value)}
-                            data-testid="wiz-ends"
-                        />
-                    </Field>
-                </div>
-                <Field label="Zona horaria">
-                    <Select value={form.timezone} onValueChange={(v) => update("timezone", v)}>
-                        <SelectTrigger data-testid="wiz-tz">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {TIMEZONES.map((t) => (
-                                <SelectItem key={t} value={t}>
-                                    {t}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
+            {form.duration_preset === "custom" && (
+                <Field label="Duración personalizada (minutos)">
+                    <Input
+                        type="number"
+                        min="5"
+                        step="5"
+                        value={form.duration_minutes_custom || ""}
+                        onChange={(e) =>
+                            update(
+                                "duration_minutes_custom",
+                                parseInt(e.target.value || "0", 10),
+                            )
+                        }
+                        disabled={disabled}
+                        placeholder="Ej: 90"
+                        data-testid="wiz-duration-custom"
+                    />
                 </Field>
-                <div className="rounded-lg bg-secondary/40 border p-4 space-y-3">
-                    <div className="text-sm font-medium flex items-center gap-2">
-                        <Info className="h-4 w-4 text-primary" />
-                        Ventana de venta
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                        Cuándo se habilita y cierra la compra de tickets. Si dejás vacíos,
-                        abre ya y cierra al iniciar el evento.
+            )}
+
+            <Field label="Zona horaria">
+                <Select
+                    value={form.timezone}
+                    onValueChange={(v) => update("timezone", v)}
+                    disabled={disabled}
+                >
+                    <SelectTrigger data-testid="wiz-tz">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {TIMEZONES.map((t) => (
+                            <SelectItem key={t} value={t}>
+                                {t}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            </Field>
+
+            <div className="rounded-lg bg-secondary/40 border p-4 space-y-3">
+                <div className="text-sm font-medium flex items-center gap-2">
+                    <CalendarClock className="h-4 w-4 text-primary" />
+                    Ventana de venta
+                </div>
+                <p className="text-xs text-muted-foreground">
+                    Cuándo se habilita y se cierra la compra de tickets. Las opciones se
+                    calculan desde tu fecha de inicio.
+                </p>
+
+                <div className="grid sm:grid-cols-2 gap-3">
+                    <Field label="Inicio de venta">
+                        <Select
+                            value={form.sales_window_preset_start}
+                            onValueChange={(v) => update("sales_window_preset_start", v)}
+                            disabled={disabled || !startsValid}
+                        >
+                            <SelectTrigger data-testid="wiz-sales-start-preset">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {SALES_START_PRESETS.map((p) => (
+                                    <SelectItem key={p.key} value={p.key}>
+                                        {p.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </Field>
+                    <Field label="Fin de venta">
+                        <Select
+                            value={form.sales_window_preset_end}
+                            onValueChange={(v) => update("sales_window_preset_end", v)}
+                            disabled={disabled || !startsValid}
+                        >
+                            <SelectTrigger data-testid="wiz-sales-end-preset">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {SALES_END_PRESETS.map((p) => (
+                                    <SelectItem key={p.key} value={p.key}>
+                                        {p.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </Field>
+                </div>
+
+                {form.sales_window_preset_start === "custom" && (
+                    <Field label="Inicio de venta — fecha personalizada">
+                        <Input
+                            type="datetime-local"
+                            value={form.sales_start_custom}
+                            onChange={(e) => update("sales_start_custom", e.target.value)}
+                            disabled={disabled}
+                            data-testid="wiz-sales-start-custom"
+                        />
+                    </Field>
+                )}
+                {form.sales_window_preset_end === "custom" && (
+                    <Field label="Fin de venta — fecha personalizada">
+                        <Input
+                            type="datetime-local"
+                            value={form.sales_end_custom}
+                            onChange={(e) => update("sales_end_custom", e.target.value)}
+                            disabled={disabled}
+                            data-testid="wiz-sales-end-custom"
+                        />
+                    </Field>
+                )}
+            </div>
+
+            <DisabledToggle
+                label="Evento multi-función"
+                helper="Múltiples fechas para el mismo evento"
+                tooltip="Próximamente — Fase 8"
+            />
+        </div>
+    );
+}
+
+function DondeBlock({
+    form,
+    update,
+    disabled,
+    venues,
+    currentEvent,
+    onEventUpdated,
+    ensureEventId,
+}) {
+    const seatedMode = !form.no_seating_mode; // ON => numbered venue
+    const linkedVenueId = currentEvent?.venue_id || form.venue_id || null;
+    const linkedVenue = useMemo(
+        () => venues.find((v) => v.id === linkedVenueId) || null,
+        [venues, linkedVenueId],
+    );
+    const [linking, setLinking] = useState(false);
+
+    const handlePickVenue = async (vid) => {
+        if (!vid) return;
+        const venue = venues.find((v) => v.id === vid);
+        if (!venue) return;
+        setLinking(true);
+        try {
+            const eid = await ensureEventId();
+            if (!eid) return;
+            const activeIds = new Set();
+            for (const el of venue.elements || []) {
+                if (el.locality_id) activeIds.add(el.locality_id);
+            }
+            const body = {
+                venue_id: vid,
+                locality_pricing: Array.from(activeIds).map((id) => {
+                    const loc = venue.localities?.find((l) => l.id === id);
+                    return {
+                        locality_id: id,
+                        price_cents: loc?.default_price_cents || 0,
+                        max_tickets_per_purchase: null,
+                    };
+                }),
+                seat_holds_window_minutes: 10,
+            };
+            const { data } = await api.put(`/events/me/${eid}/venue`, body);
+            onEventUpdated(data);
+            update("venue_id", vid);
+            update("no_seating_mode", false);
+            toast.success(`Venue "${venue.name}" vinculado al evento`);
+        } catch (e) {
+            toast.error(
+                formatApiError(e?.response?.data?.detail) ||
+                    e.message ||
+                    "No se pudo vincular el venue.",
+            );
+        } finally {
+            setLinking(false);
+        }
+    };
+
+    const handleUnlink = async () => {
+        if (!currentEvent?.id) {
+            update("venue_id", null);
+            return;
+        }
+        if ((currentEvent.tickets_sold || 0) > 0) {
+            toast.error(
+                "No podés cambiar el venue después de la primera venta.",
+            );
+            return;
+        }
+        const ok = window.confirm(
+            "¿Desvincular el venue? Los precios por localidad se perderán.",
+        );
+        if (!ok) return;
+        setLinking(true);
+        try {
+            await api.delete(`/events/me/${currentEvent.id}/venue`);
+            onEventUpdated({
+                ...currentEvent,
+                venue_id: null,
+                venue_slug: null,
+                locality_pricing: [],
+            });
+            update("venue_id", null);
+            toast.success("Venue desvinculado");
+        } catch (e) {
+            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
+        } finally {
+            setLinking(false);
+        }
+    };
+
+    const handleModeChange = (numbered) => {
+        if (!numbered && linkedVenueId) {
+            toast.error(
+                "Para cambiar a evento general primero desvinculá el venue actual.",
+            );
+            return;
+        }
+        update("no_seating_mode", !numbered);
+    };
+
+    return (
+        <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="info-donde-block">
+            <SubHeader icon="📍" title="Dónde" />
+
+            <div className="flex items-start gap-3 rounded-lg border bg-secondary/30 p-3">
+                <Switch
+                    checked={seatedMode}
+                    onCheckedChange={handleModeChange}
+                    disabled={disabled || linking}
+                    data-testid="wiz-seated-toggle"
+                />
+                <div className="text-sm">
+                    <p className="font-medium leading-tight">
+                        ¿Tu evento tiene venue con asientos asignados?
                     </p>
-                    <div className="grid sm:grid-cols-2 gap-3">
-                        <Field label="Inicio venta">
-                            <Input
-                                type="datetime-local"
-                                value={form.sales_start}
-                                onChange={(e) => update("sales_start", e.target.value)}
-                                data-testid="wiz-sales-start"
-                            />
-                        </Field>
-                        <Field label="Fin venta">
-                            <Input
-                                type="datetime-local"
-                                value={form.sales_end}
-                                onChange={(e) => update("sales_end", e.target.value)}
-                                data-testid="wiz-sales-end"
-                            />
-                        </Field>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        Activado: usás un mapa de asientos numerados. Apagado: ingresás
+                        nombre, dirección y precio único (eventos generales).
+                    </p>
+                </div>
+            </div>
+
+            {seatedMode ? (
+                <SeatedVenuePicker
+                    venues={venues}
+                    linkedVenue={linkedVenue}
+                    linkedVenueId={linkedVenueId}
+                    onPick={handlePickVenue}
+                    onUnlink={handleUnlink}
+                    disabled={disabled || linking}
+                    linking={linking}
+                    currentEventId={currentEvent?.id}
+                />
+            ) : (
+                <GeneralLocationFields form={form} update={update} disabled={disabled} />
+            )}
+        </div>
+    );
+}
+
+function SeatedVenuePicker({
+    venues,
+    linkedVenue,
+    linkedVenueId,
+    onPick,
+    onUnlink,
+    disabled,
+    linking,
+    currentEventId,
+}) {
+    if (venues.length === 0 && !linkedVenue) {
+        const returnTo = currentEventId
+            ? encodeURIComponent(`/app/eventos/${currentEventId}/editar?tab=info`)
+            : encodeURIComponent("/app/eventos/nuevo");
+        return (
+            <div
+                className="rounded-xl border-2 border-dashed p-6 text-center bg-secondary/30 space-y-3"
+                data-testid="venue-empty-state"
+            >
+                <div className="mx-auto h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Building2 className="h-6 w-6 text-primary" />
+                </div>
+                <div className="space-y-1">
+                    <p className="font-medium">Todavía no tenés un venue publicado</p>
+                    <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                        Un venue es el mapa de tu lugar (asientos, zonas, palcos). Creá
+                        uno publicado y volvé a este evento para vincularlo.
+                    </p>
+                </div>
+                <Button asChild size="sm" data-testid="venue-create-cta">
+                    <a href={`/app/venues?return_to=${returnTo}`}>
+                        <PlusCircle className="h-4 w-4 mr-1.5" />
+                        Crear mi primer venue
+                        <ArrowRight className="h-4 w-4 ml-1.5" />
+                    </a>
+                </Button>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-3" data-testid="venue-picker">
+            <Field label="Venue del evento">
+                <Select
+                    value={linkedVenueId || ""}
+                    onValueChange={onPick}
+                    disabled={disabled}
+                >
+                    <SelectTrigger data-testid="wiz-venue-select">
+                        <SelectValue placeholder="Elegí un venue…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {venues.map((v) => (
+                            <SelectItem
+                                key={v.id}
+                                value={v.id}
+                                data-testid={`venue-opt-${v.slug}`}
+                            >
+                                <span className="inline-flex items-center gap-2">
+                                    <MapPin className="h-3.5 w-3.5" />
+                                    {v.name}
+                                    <span className="text-xs text-muted-foreground">
+                                        · {v.capacity_calculated || 0} asientos
+                                    </span>
+                                </span>
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            </Field>
+
+            {linkedVenue && (
+                <div
+                    className="rounded-lg border bg-primary/5 p-3 flex flex-wrap items-center justify-between gap-3"
+                    data-testid="venue-linked-card"
+                >
+                    <div className="flex items-center gap-3 text-sm">
+                        <div className="h-9 w-9 rounded-md bg-primary/15 grid place-items-center">
+                            <MapPin className="h-4 w-4 text-primary" />
+                        </div>
+                        <div>
+                            <div className="font-medium leading-tight">
+                                {linkedVenue.name}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                                {linkedVenue.capacity_calculated || 0} asientos ·{" "}
+                                {(linkedVenue.localities || []).length} localidad
+                                {(linkedVenue.localities || []).length !== 1 ? "es" : ""}
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex gap-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            asChild
+                            data-testid="venue-preview"
+                        >
+                            <a
+                                href={`/o/${linkedVenue.tenant_slug}/venues/${linkedVenue.slug}/preview`}
+                                target="_blank"
+                                rel="noreferrer"
+                            >
+                                <Eye className="h-4 w-4 mr-1.5" />
+                                Ver mapa
+                            </a>
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={onUnlink}
+                            disabled={disabled || linking}
+                            className="text-red-600 hover:bg-red-50"
+                            data-testid="venue-unlink"
+                        >
+                            {linking ? (
+                                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                            ) : (
+                                <Unlink className="h-4 w-4 mr-1.5" />
+                            )}
+                            Cambiar
+                        </Button>
                     </div>
                 </div>
-                <DisabledToggle
-                    label="Evento multi-función"
-                    helper="Múltiples fechas para el mismo evento"
-                    tooltip="Próximamente — Fase 8"
+            )}
+
+            <p className="text-xs text-muted-foreground">
+                Configurás los precios por localidad en la pestaña <strong>Venue y
+                localidades</strong>.
+            </p>
+        </div>
+    );
+}
+
+function GeneralLocationFields({ form, update, disabled }) {
+    return (
+        <div className="space-y-3" data-testid="general-location-fields">
+            <Field label="Nombre del lugar *">
+                <Input
+                    value={form.venue_name}
+                    onChange={(e) => update("venue_name", e.target.value)}
+                    disabled={disabled}
+                    placeholder="Ej: Centro Cultural Metropolitano"
+                    data-testid="wiz-venue-name"
                 />
+            </Field>
+            <div className="grid sm:grid-cols-2 gap-3">
+                <Field label="Dirección">
+                    <Input
+                        value={form.venue_address}
+                        onChange={(e) => update("venue_address", e.target.value)}
+                        disabled={disabled}
+                        placeholder="Calle García Moreno N3-50"
+                        data-testid="wiz-venue-address"
+                    />
+                </Field>
+                <Field label="Ciudad">
+                    <Input
+                        value={form.venue_city}
+                        onChange={(e) => update("venue_city", e.target.value)}
+                        disabled={disabled}
+                        data-testid="wiz-venue-city"
+                    />
+                </Field>
             </div>
         </div>
     );
 }
 
-// ── Section: General (legacy alias kept for reference) ──────────────────────
-// SectionGeneral and SectionDates were merged into SectionInfo above.
+// ── Section: Venue y localidades (now: pricing + canvas only) ───────────────
+function SectionVenueLocalidades({
+    form,
+    update,
+    disabled,
+    event,
+    onEventUpdated,
+    onJumpToInfo,
+}) {
+    const hasVenue = !!event?.venue_id;
+    const isGeneralMode = form.no_seating_mode && !hasVenue;
+
+    if (isGeneralMode) {
+        return (
+            <div className="space-y-4" data-testid="section-venue-localidades-general">
+                <div className="rounded-xl border-l-4 border-l-primary bg-secondary/30 p-4">
+                    <p className="text-sm font-medium flex items-center gap-2">
+                        <Info className="h-4 w-4 text-primary" />
+                        Evento general (sin asientos numerados)
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        Definí el precio base y la capacidad total. Si querés usar un
+                        mapa con localidades, volvé a <strong>Información general → Dónde</strong>
+                        {" "}y activá el toggle.
+                    </p>
+                </div>
+
+                <div className="space-y-3 rounded-xl border p-5 bg-card">
+                    <h4 className="font-semibold text-sm">Precio y capacidad</h4>
+                    <div className="rounded-lg border overflow-hidden">
+                        <div className="grid grid-cols-3 bg-secondary/40 px-3 py-2 text-xs font-medium uppercase">
+                            <div>Tipo</div>
+                            <div>Precio</div>
+                            <div>Capacidad</div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 px-3 py-3 items-center">
+                            <Select
+                                value={form.pricing_type}
+                                onValueChange={(v) => update("pricing_type", v)}
+                                disabled={disabled}
+                            >
+                                <SelectTrigger
+                                    data-testid="wiz-pricing-type"
+                                    className="h-8"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="free">Gratis</SelectItem>
+                                    <SelectItem value="paid">Pago</SelectItem>
+                                    <SelectItem value="donation">Donación</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <div>
+                                {form.pricing_type === "free" ? (
+                                    <span className="text-sm text-muted-foreground">
+                                        Sin costo
+                                    </span>
+                                ) : (
+                                    <div className="relative">
+                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                            $
+                                        </span>
+                                        <Input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            className="pl-6 h-8"
+                                            value={form.base_price_dollars}
+                                            onChange={(e) =>
+                                                update("base_price_dollars", e.target.value)
+                                            }
+                                            disabled={disabled}
+                                            data-testid="wiz-price"
+                                        />
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Input
+                                    type="number"
+                                    min="0"
+                                    className="h-8"
+                                    value={form.unlimited_capacity ? "" : form.capacity}
+                                    onChange={(e) => update("capacity", e.target.value)}
+                                    disabled={form.unlimited_capacity}
+                                    placeholder={
+                                        form.unlimited_capacity ? "Sin límite" : "ej: 100"
+                                    }
+                                    data-testid="wiz-capacity"
+                                />
+                                <Switch
+                                    checked={form.unlimited_capacity}
+                                    onCheckedChange={(v) => update("unlimited_capacity", v)}
+                                    data-testid="wiz-unlimited"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (!hasVenue) {
+        return (
+            <div className="space-y-3" data-testid="section-venue-localidades-empty">
+                <div className="rounded-xl border-l-4 border-l-amber-500 bg-amber-50 border-amber-200 p-5 text-sm text-amber-900">
+                    <div className="flex items-start gap-2">
+                        <Info className="h-5 w-5 flex-shrink-0" />
+                        <div className="space-y-1">
+                            <p className="font-medium">Primero elegí un venue</p>
+                            <p className="text-amber-900/80">
+                                Configurá el venue en{" "}
+                                <button
+                                    type="button"
+                                    onClick={onJumpToInfo}
+                                    className="underline font-medium"
+                                    data-testid="jump-to-info"
+                                >
+                                    Información general → Dónde
+                                </button>
+                                . Una vez vinculado, acá vas a ver el mapa interactivo y
+                                la tabla de precios por localidad.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <EventVenueSection
+            event={event}
+            disabled={disabled}
+            onUpdated={onEventUpdated}
+        />
+    );
+}
 
 // ── Section: Media ──────────────────────────────────────────────────────────
 function SectionMedia({
@@ -754,15 +1398,18 @@ function SectionMedia({
                         máx.
                     </p>
                 </header>
-                <div className="max-w-xs">
-                    <Dropzone
-                        label=""
-                        currentUrl={assetUrl(poster)}
-                        onUpload={(f) => onUpload(f, "poster")}
-                        uploading={uploadingKind === "poster"}
-                        testid="wiz-poster"
-                        aspect="square"
-                    />
+                <div className="grid sm:grid-cols-[1fr_auto] gap-4 items-start">
+                    <PosterMockup hasImage={!!poster} />
+                    <div className="w-full max-w-xs">
+                        <Dropzone
+                            label=""
+                            currentUrl={assetUrl(poster)}
+                            onUpload={(f) => onUpload(f, "poster")}
+                            uploading={uploadingKind === "poster"}
+                            testid="wiz-poster"
+                            aspect="square"
+                        />
+                    </div>
                 </div>
             </div>
 
@@ -771,16 +1418,20 @@ function SectionMedia({
                 <header className="mb-3">
                     <div className="flex items-center gap-2 text-base font-semibold">
                         <ImageIcon className="h-5 w-5 text-amber-600" />
-                        Banner del evento <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
+                        Banner del evento{" "}
+                        <span className="text-xs font-normal text-muted-foreground">
+                            (opcional)
+                        </span>
                     </div>
                     <p className="text-sm text-muted-foreground mt-1 leading-snug">
-                        Imagen <strong>wide 16:9</strong>: se muestra como header
-                        en la página pública del evento. Recomendado{" "}
+                        Imagen <strong>wide 16:9</strong>: se muestra como header en
+                        la página pública del evento. Recomendado{" "}
                         <strong>1920 × 1080 px</strong>. JPG/PNG/WEBP/HEIC · 5 MB
                         máx.
                     </p>
                 </header>
-                <div className="max-w-2xl">
+                <div className="grid sm:grid-cols-[1fr_minmax(0,2fr)] gap-4 items-start">
+                    <BannerMockup hasImage={!!banner} />
                     <Dropzone
                         label=""
                         currentUrl={assetUrl(banner)}
@@ -798,222 +1449,91 @@ function SectionMedia({
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 text-base font-semibold">
                             <ImageIcon className="h-5 w-5 text-emerald-600" />
-                            Galería <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
+                            Galería{" "}
+                            <span className="text-xs font-normal text-muted-foreground">
+                                (opcional)
+                            </span>
                         </div>
-                        <span className="text-xs text-muted-foreground" data-testid="wiz-gallery-counter">
+                        <span
+                            className="text-xs text-muted-foreground"
+                            data-testid="wiz-gallery-counter"
+                        >
                             {gallery.length} / 10
                         </span>
                     </div>
                     <p className="text-sm text-muted-foreground mt-1 leading-snug">
-                        Hasta <strong>10 imágenes</strong> adicionales que se
-                        muestran en la página pública. Podés arrastrar varias a
-                        la vez y reordenarlas. JPG/PNG/WEBP/HEIC · 5 MB cada una.
+                        Hasta <strong>10 imágenes</strong> adicionales que se muestran
+                        en la página pública. Podés arrastrar varias a la vez y
+                        reordenarlas. JPG/PNG/WEBP/HEIC · 5 MB cada una.
                     </p>
                 </header>
-                <div
-                    className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2"
-                    data-testid="wiz-gallery"
-                >
-                    {gallery.map((url, i) => (
-                        <div
-                            key={`${url}-${i}`}
-                            className="relative rounded-lg overflow-hidden border group bg-secondary"
-                            data-testid={`gallery-item-${i}`}
-                        >
-                            <img
-                                src={assetUrl(url)}
-                                alt={`gallery-${i + 1}`}
-                                className="w-full aspect-square object-cover"
-                            />
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition flex items-end justify-between p-1.5">
-                                <div className="opacity-0 group-hover:opacity-100 flex gap-1">
+                <div className="grid md:grid-cols-[1fr_minmax(0,2fr)] gap-4 items-start">
+                    <GalleryMockup count={gallery.length} />
+                    <div
+                        className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2"
+                        data-testid="wiz-gallery"
+                    >
+                        {gallery.map((url, i) => (
+                            <div
+                                key={`${url}-${i}`}
+                                className="relative rounded-lg overflow-hidden border group bg-secondary"
+                                data-testid={`gallery-item-${i}`}
+                            >
+                                <img
+                                    src={assetUrl(url)}
+                                    alt={`gallery-${i + 1}`}
+                                    className="w-full aspect-square object-cover"
+                                />
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition flex items-end justify-between p-1.5">
+                                    <div className="opacity-0 group-hover:opacity-100 flex gap-1">
+                                        <button
+                                            type="button"
+                                            className="bg-white/90 rounded p-1 text-xs disabled:opacity-50"
+                                            onClick={() => move(i, i - 1)}
+                                            disabled={i === 0}
+                                            data-testid={`gallery-up-${i}`}
+                                            title="Mover antes"
+                                        >
+                                            ↑
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="bg-white/90 rounded p-1 text-xs disabled:opacity-50"
+                                            onClick={() => move(i, i + 1)}
+                                            disabled={i === gallery.length - 1}
+                                            data-testid={`gallery-down-${i}`}
+                                            title="Mover después"
+                                        >
+                                            ↓
+                                        </button>
+                                    </div>
                                     <button
                                         type="button"
-                                        className="bg-white/90 rounded p-1 text-xs disabled:opacity-50"
-                                        onClick={() => move(i, i - 1)}
-                                        disabled={i === 0}
-                                        data-testid={`gallery-up-${i}`}
-                                        title="Mover antes"
+                                        className="opacity-0 group-hover:opacity-100 bg-red-600 text-white rounded p-1"
+                                        onClick={() => onDeleteGallery(i)}
+                                        data-testid={`gallery-delete-${i}`}
+                                        title="Eliminar"
                                     >
-                                        ↑
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="bg-white/90 rounded p-1 text-xs disabled:opacity-50"
-                                        onClick={() => move(i, i + 1)}
-                                        disabled={i === gallery.length - 1}
-                                        data-testid={`gallery-down-${i}`}
-                                        title="Mover después"
-                                    >
-                                        ↓
+                                        <Trash2 className="h-3 w-3" />
                                     </button>
                                 </div>
-                                <button
-                                    type="button"
-                                    className="opacity-0 group-hover:opacity-100 bg-red-600 text-white rounded p-1"
-                                    onClick={() => onDeleteGallery(i)}
-                                    data-testid={`gallery-delete-${i}`}
-                                    title="Eliminar"
-                                >
-                                    <Trash2 className="h-3 w-3" />
-                                </button>
                             </div>
-                        </div>
-                    ))}
-                    {gallery.length < 10 && (
-                        <Dropzone
-                            label=""
-                            currentUrl={null}
-                            onUpload={(f) => onUpload(f, "gallery")}
-                            uploading={uploadingKind === "gallery"}
-                            testid="wiz-gallery-add"
-                            aspect="square"
-                            compact
-                            multiple
-                        />
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-}
-
-// ── Section: Locations ──────────────────────────────────────────────────────
-// ── Section: Venue y localidades (combined Phase 9.5 tab) ───────────────────
-function SectionVenueLocalidades({ form, update, disabled, event, onEventUpdated }) {
-    const hasVenue = !!event?.venue_id;
-    const noSeating = form.no_seating_mode && !hasVenue;
-    return (
-        <div className="space-y-4" data-testid="section-venue-localidades">
-            {/* Toggle: evento sin asientos */}
-            <div className="rounded-xl border bg-card p-4 flex items-start gap-3">
-                <Switch
-                    checked={noSeating}
-                    onCheckedChange={(v) => {
-                        if (v && hasVenue) {
-                            toast.error(
-                                "Para cambiar a evento general primero desvinculá el venue actual.",
-                            );
-                            return;
-                        }
-                        update("no_seating_mode", v);
-                    }}
-                    disabled={disabled || hasVenue}
-                    data-testid="wiz-no-seating-toggle"
-                />
-                <div className="text-sm">
-                    <p className="font-medium leading-tight">
-                        Este es un evento sin asientos (general)
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                        Activá esto si tu evento no usa un mapa de asientos numerados (ej:
-                        feria abierta, conferencia de pie). Mostramos un precio base único
-                        y la capacidad total.
-                    </p>
-                </div>
-            </div>
-
-            {noSeating ? (
-                /* Legacy general mode */
-                <div className="space-y-3 rounded-xl border p-5 bg-card">
-                    <h4 className="font-semibold text-sm">Datos del lugar</h4>
-                    <div className="grid sm:grid-cols-2 gap-3">
-                        <Field label="Nombre del lugar">
-                            <Input
-                                value={form.venue_name}
-                                onChange={(e) => update("venue_name", e.target.value)}
-                                data-testid="wiz-venue-name"
+                        ))}
+                        {gallery.length < 10 && (
+                            <Dropzone
+                                label=""
+                                currentUrl={null}
+                                onUpload={(f) => onUpload(f, "gallery")}
+                                uploading={uploadingKind === "gallery"}
+                                testid="wiz-gallery-add"
+                                aspect="square"
+                                compact
+                                multiple
                             />
-                        </Field>
-                        <Field label="Ciudad">
-                            <Input
-                                value={form.venue_city}
-                                onChange={(e) => update("venue_city", e.target.value)}
-                                data-testid="wiz-venue-city"
-                            />
-                        </Field>
-                    </div>
-                    <Field label="Dirección">
-                        <Input
-                            value={form.venue_address}
-                            onChange={(e) => update("venue_address", e.target.value)}
-                            data-testid="wiz-venue-address"
-                        />
-                    </Field>
-
-                    <div className="rounded-lg border overflow-hidden">
-                        <div className="grid grid-cols-3 bg-secondary/40 px-3 py-2 text-xs font-medium uppercase">
-                            <div>Tipo</div>
-                            <div>Precio</div>
-                            <div>Capacidad</div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2 px-3 py-3 items-center">
-                            <Select
-                                value={form.pricing_type}
-                                onValueChange={(v) => update("pricing_type", v)}
-                                disabled={disabled}
-                            >
-                                <SelectTrigger data-testid="wiz-pricing-type" className="h-8">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="free">Gratis</SelectItem>
-                                    <SelectItem value="paid">Pago</SelectItem>
-                                    <SelectItem value="donation">Donación</SelectItem>
-                                </SelectContent>
-                            </Select>
-                            <div>
-                                {form.pricing_type === "free" ? (
-                                    <span className="text-sm text-muted-foreground">Sin costo</span>
-                                ) : (
-                                    <div className="relative">
-                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
-                                        <Input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            className="pl-6 h-8"
-                                            value={form.base_price_dollars}
-                                            onChange={(e) => update("base_price_dollars", e.target.value)}
-                                            disabled={disabled}
-                                            data-testid="wiz-price"
-                                        />
-                                    </div>
-                                )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Input
-                                    type="number"
-                                    min="0"
-                                    className="h-8"
-                                    value={form.unlimited_capacity ? "" : form.capacity}
-                                    onChange={(e) => update("capacity", e.target.value)}
-                                    disabled={form.unlimited_capacity}
-                                    placeholder={form.unlimited_capacity ? "Sin límite" : "ej: 100"}
-                                    data-testid="wiz-capacity"
-                                />
-                                <Switch
-                                    checked={form.unlimited_capacity}
-                                    onCheckedChange={(v) => update("unlimited_capacity", v)}
-                                    data-testid="wiz-unlimited"
-                                />
-                            </div>
-                        </div>
+                        )}
                     </div>
                 </div>
-            ) : event?.id ? (
-                /* Seated mode with venue */
-                <EventVenueSection
-                    event={event}
-                    disabled={disabled}
-                    onUpdated={onEventUpdated}
-                />
-            ) : (
-                <div className="rounded-xl border bg-amber-50 border-amber-200 p-4 text-sm text-amber-900">
-                    <Info className="h-4 w-4 inline mr-1" />
-                    Guardá el evento (tab "Información general") antes de vincular un venue.
-                </div>
-            )}
+            </div>
         </div>
     );
 }
@@ -1034,7 +1554,6 @@ function SectionPayments({ form, update }) {
     const pm = form.payment_methods;
     return (
         <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="section-payments">
-            {/* Stripe */}
             <PaymentRow
                 title="Tarjeta de crédito/débito (Stripe)"
                 description="Pago automático con confirmación inmediata. No se puede desactivar."
@@ -1043,7 +1562,6 @@ function SectionPayments({ form, update }) {
                 testid="pay-stripe"
             />
 
-            {/* Transfer */}
             <PaymentRow
                 title="Transferencia bancaria"
                 description="El comprador transfiere y vos confirmás manualmente desde el panel."
@@ -1106,7 +1624,6 @@ function SectionPayments({ form, update }) {
                 )}
             </PaymentRow>
 
-            {/* Cash */}
             <PaymentRow
                 title="Pago en efectivo"
                 description="Pago en persona. Tickets se entregan al confirmar."
@@ -1373,6 +1890,15 @@ function SectionAccess({ form, update }) {
 }
 
 // ── Small atoms ─────────────────────────────────────────────────────────────
+function SubHeader({ icon, title }) {
+    return (
+        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+            <span aria-hidden>{icon}</span>
+            {title}
+        </h3>
+    );
+}
+
 function Field({ label, children, testId }) {
     return (
         <div className="space-y-1.5" data-testid={testId}>
@@ -1468,5 +1994,154 @@ function Dropzone({
                 />
             </label>
         </div>
+    );
+}
+
+// ── Media mockups (Item 4) ──────────────────────────────────────────────────
+function PosterMockup({ hasImage }) {
+    return (
+        <figure
+            className="rounded-xl border bg-secondary/30 p-3 max-w-[200px]"
+            data-testid="poster-mockup"
+        >
+            <svg viewBox="0 0 180 240" className="w-full h-auto" aria-hidden="true">
+                <rect width="180" height="240" rx="14" fill="#FFFFFF" stroke="#E2E8F0" />
+                <rect
+                    x="14"
+                    y="14"
+                    width="152"
+                    height="152"
+                    rx="8"
+                    fill={hasImage ? "#6366F1" : "#EEF2FF"}
+                    stroke="#6366F1"
+                    strokeWidth="1.5"
+                    strokeDasharray={hasImage ? "0" : "5 4"}
+                    fillOpacity={hasImage ? "0.18" : "1"}
+                />
+                <text
+                    x="90"
+                    y="93"
+                    fontSize="10"
+                    textAnchor="middle"
+                    fill="#6366F1"
+                    fontWeight="600"
+                >
+                    Tu póster
+                </text>
+                <rect x="14" y="180" width="120" height="8" rx="3" fill="#94A3B8" />
+                <rect x="14" y="196" width="80" height="6" rx="3" fill="#CBD5E1" />
+                <rect x="14" y="212" width="60" height="14" rx="7" fill="#6366F1" opacity="0.9" />
+                <text x="44" y="222" fontSize="7" textAnchor="middle" fill="#FFFFFF" fontWeight="600">
+                    Ver evento
+                </text>
+            </svg>
+            <figcaption className="text-[11px] text-muted-foreground text-center mt-1.5">
+                Cómo se ve en la grilla
+            </figcaption>
+        </figure>
+    );
+}
+
+function BannerMockup({ hasImage }) {
+    return (
+        <figure
+            className="rounded-xl border bg-secondary/30 p-3"
+            data-testid="banner-mockup"
+        >
+            <svg viewBox="0 0 320 200" className="w-full h-auto" aria-hidden="true">
+                <rect width="320" height="200" rx="12" fill="#FFFFFF" stroke="#E2E8F0" />
+                <rect
+                    x="10"
+                    y="10"
+                    width="300"
+                    height="90"
+                    rx="6"
+                    fill={hasImage ? "#F59E0B" : "#FEF3C7"}
+                    stroke="#D97706"
+                    strokeWidth="1.5"
+                    strokeDasharray={hasImage ? "0" : "5 4"}
+                    fillOpacity={hasImage ? "0.25" : "1"}
+                />
+                <text
+                    x="160"
+                    y="60"
+                    fontSize="11"
+                    textAnchor="middle"
+                    fill="#92400E"
+                    fontWeight="600"
+                >
+                    Banner del evento (1920×1080)
+                </text>
+                <rect x="20" y="112" width="160" height="10" rx="3" fill="#1E293B" />
+                <rect x="20" y="128" width="220" height="6" rx="3" fill="#94A3B8" />
+                <rect x="20" y="140" width="180" height="6" rx="3" fill="#CBD5E1" />
+                <rect x="20" y="158" width="80" height="22" rx="11" fill="#6366F1" />
+                <text x="60" y="174" fontSize="9" textAnchor="middle" fill="#FFFFFF" fontWeight="700">
+                    Comprar
+                </text>
+            </svg>
+            <figcaption className="text-[11px] text-muted-foreground text-center mt-1.5">
+                Header de la página pública del evento
+            </figcaption>
+        </figure>
+    );
+}
+
+function GalleryMockup({ count }) {
+    const filled = Math.min(count, 4);
+    return (
+        <figure
+            className="rounded-xl border bg-secondary/30 p-3"
+            data-testid="gallery-mockup"
+        >
+            <svg viewBox="0 0 240 180" className="w-full h-auto" aria-hidden="true">
+                <rect width="240" height="180" rx="12" fill="#FFFFFF" stroke="#E2E8F0" />
+                <text x="120" y="18" fontSize="9" textAnchor="middle" fill="#475569" fontWeight="600">
+                    Galería del evento
+                </text>
+                {[0, 1, 2, 3].map((i) => {
+                    const x = 16 + (i % 4) * 54;
+                    const isFilled = i < filled;
+                    return (
+                        <g key={i}>
+                            <rect
+                                x={x}
+                                y={32}
+                                width="48"
+                                height="48"
+                                rx="6"
+                                fill={isFilled ? "#10B981" : "#ECFDF5"}
+                                stroke="#10B981"
+                                strokeWidth="1.2"
+                                strokeDasharray={isFilled ? "0" : "4 3"}
+                                fillOpacity={isFilled ? "0.3" : "1"}
+                            />
+                            {isFilled && (
+                                <text
+                                    x={x + 24}
+                                    y={59}
+                                    fontSize="8"
+                                    textAnchor="middle"
+                                    fill="#047857"
+                                    fontWeight="700"
+                                >
+                                    {i + 1}
+                                </text>
+                            )}
+                        </g>
+                    );
+                })}
+                <rect x="16" y="98" width="208" height="60" rx="6" fill="#F8FAFC" stroke="#E2E8F0" />
+                <text x="120" y="125" fontSize="8" textAnchor="middle" fill="#64748B">
+                    Carousel scroll
+                </text>
+                <text x="120" y="140" fontSize="7" textAnchor="middle" fill="#94A3B8">
+                    ←  ●  ○  ○  →
+                </text>
+            </svg>
+            <figcaption className="text-[11px] text-muted-foreground text-center mt-1.5">
+                Sección galería de la página pública
+            </figcaption>
+        </figure>
     );
 }
