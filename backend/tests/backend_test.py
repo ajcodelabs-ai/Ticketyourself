@@ -67,13 +67,6 @@ class TestTenantsResolve:
         assert data["tenant"]["name"] == "Demo Organizer"
         assert data["tenant"]["status"] == "active"
 
-    def test_resolve_prueba_eventos(self, api):
-        r = api.get(f"{BASE_URL}/api/tenants/resolve", params={"tenant": "prueba-eventos"})
-        assert r.status_code == 200
-        data = r.json()
-        assert data["tenant"]["slug"] == "prueba-eventos"
-        assert data["tenant"]["status"] == "active"
-
     def test_resolve_non_existent(self, api):
         r = api.get(f"{BASE_URL}/api/tenants/resolve", params={"tenant": "non-existent"})
         assert r.status_code == 200
@@ -250,10 +243,12 @@ class TestWebhook:
         assert r.status_code == 400, f"Got {r.status_code}: {r.text}"
 
 
-# ── Seed idempotency ──────────────────────────────────────────────────────────
+# ── Seed idempotency (Fase 0 demo tenants) ────────────────────────────────────
 class TestSeed:
-    def test_exactly_two_tenants(self, mongo_db):
-        count = mongo_db.tenants.count_documents({})
-        assert count == 2, f"Expected 2 tenants, got {count}"
-        slugs = sorted([t["slug"] for t in mongo_db.tenants.find({}, {"slug": 1})])
-        assert slugs == ["demo-org", "prueba-eventos"]
+    def test_demo_tenants_present(self, mongo_db):
+        # Phase 0+ seed must always include these two POC tenants; additional
+        # tenants from later phases (rejected demo, system tenants, etc.) are
+        # allowed without breaking this check.
+        slugs = {t["slug"] for t in mongo_db.tenants.find({}, {"slug": 1})}
+        assert "demo-org" in slugs
+        assert "prueba-eventos" in slugs

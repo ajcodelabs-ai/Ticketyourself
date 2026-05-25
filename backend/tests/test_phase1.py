@@ -229,23 +229,10 @@ class TestRBAC:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Admin Stats + Organizers
+# Admin Organizers
+# (Note: dashboard /stats payload shape moved in Phase 5.5 — coverage lives in
+# test_phase5_5.py::test_dashboard_stats_payload_shape; do not re-assert it here.)
 # ──────────────────────────────────────────────────────────────────────────────
-class TestAdminStats:
-    def test_stats(self, admin_session):
-        r = admin_session.get(f"{API}/admin/dashboard/stats")
-        assert r.status_code == 200
-        s = r.json()
-        # At least 3 demo organizers (more may have been added by register tests)
-        assert s["organizers_total"] >= 3
-        assert s["organizers_pending"] >= 1
-        assert s["organizers_approved"] >= 1
-        assert s["organizers_rejected"] >= 1
-        # demo-org has profesional active sub = 5000 cents MRR base
-        assert s["active_subscriptions"] >= 1
-        assert s["monthly_revenue_estimate_cents"] >= 5000
-
-
 class TestAdminOrganizers:
     def test_list_all(self, admin_session):
         r = admin_session.get(f"{API}/admin/organizers", params={"limit": 100})
