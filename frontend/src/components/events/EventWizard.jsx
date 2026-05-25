@@ -182,6 +182,7 @@ export default function EventWizard({ initial, mode = "create" }) {
     const [poster, setPoster] = useState(initial?.poster_url || null);
     const [banner, setBanner] = useState(initial?.banner_url || null);
     const [gallery, setGallery] = useState(initial?.gallery_urls || []);
+    const [uploadingKind, setUploadingKind] = useState(null); // "poster"|"banner"|"gallery"
 
     useEffect(() => {
         if (initial) {
@@ -267,17 +268,18 @@ export default function EventWizard({ initial, mode = "create" }) {
     const uploadImage = async (file, kind) => {
         if (!file) return;
         if (file.type && !ALLOWED_MIME.includes(file.type)) {
-            toast.error(`Formato no soportado: ${file.type}`);
+            toast.error(`Formato no soportado: ${file.type}. Aceptamos JPG, PNG, WEBP o HEIC.`);
             return;
         }
         if (file.size > 5 * 1024 * 1024) {
-            toast.error("La imagen supera los 5MB");
+            toast.error("La imagen supera los 5MB. Reducí su peso e intentá de nuevo.");
             return;
         }
         const id = await ensureEventId();
         if (!id) return;
         const fd = new FormData();
         fd.append("file", file);
+        setUploadingKind(kind);
         try {
             const { data } = await api.post(`/events/me/${id}/${kind}`, fd);
             if (kind === "poster") setPoster(data.poster_url);
@@ -285,18 +287,20 @@ export default function EventWizard({ initial, mode = "create" }) {
             else if (kind === "gallery") setGallery(data.gallery_urls || []);
             return data;
         } catch (e) {
-            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
+            toast.error(formatApiError(e?.response?.data?.detail) || e.message || "No se pudo subir la imagen.");
             return null;
+        } finally {
+            setUploadingKind(null);
         }
     };
 
     const uploadImages = async (files, kind) => {
         const list = Array.from(files || []);
         if (list.length === 0) return;
-        // Single image fields — only first file.
+        // Single-image fields take only the first file selected.
         if (kind !== "gallery") {
             const r = await uploadImage(list[0], kind);
-            if (r) toast.success(`${kind} subido`);
+            if (r) toast.success(kind === "poster" ? "Póster actualizado" : "Banner actualizado");
             return;
         }
         // Gallery — iterate, respect 10-image cap.
@@ -387,6 +391,7 @@ export default function EventWizard({ initial, mode = "create" }) {
                         poster={poster}
                         banner={banner}
                         gallery={gallery}
+                        uploadingKind={uploadingKind}
                         onUpload={uploadImages}
                         onDeleteGallery={deleteGalleryAt}
                         onReorderGallery={reorderGallery}
@@ -643,7 +648,15 @@ function SectionDates({ form, update }) {
 }
 
 // ── Section: Media ──────────────────────────────────────────────────────────
-function SectionMedia({ poster, banner, gallery, onUpload, onDeleteGallery, onReorderGallery }) {
+function SectionMedia({
+    poster,
+    banner,
+    gallery,
+    uploadingKind,
+    onUpload,
+    onDeleteGallery,
+    onReorderGallery,
+}) {
     const move = (from, to) => {
         if (to < 0 || to >= gallery.length) return;
         const order = gallery.map((_, i) => i);
@@ -651,26 +664,81 @@ function SectionMedia({ poster, banner, gallery, onUpload, onDeleteGallery, onRe
         onReorderGallery(order);
     };
     return (
-        <div className="space-y-5 rounded-xl border p-5 bg-card" data-testid="section-media">
-            <div className="grid sm:grid-cols-2 gap-5">
-                <Dropzone
-                    label="Poster (vertical) *"
-                    currentUrl={assetUrl(poster)}
-                    onUpload={(f) => onUpload(f, "poster")}
-                    testid="wiz-poster"
-                    aspect="square"
-                />
-                <Dropzone
-                    label="Banner (hero opcional)"
-                    currentUrl={assetUrl(banner)}
-                    onUpload={(f) => onUpload(f, "banner")}
-                    testid="wiz-banner"
-                    aspect="video"
-                />
+        <div className="space-y-5" data-testid="section-media">
+            {/* — Poster — */}
+            <div className="rounded-xl border p-5 bg-card">
+                <header className="mb-3">
+                    <div className="flex items-center gap-2 text-base font-semibold">
+                        <ImageIcon className="h-5 w-5 text-indigo-600" />
+                        Póster del evento <span className="text-red-500">*</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1 leading-snug">
+                        Imagen <strong>cuadrada</strong>: aparece en la grilla del
+                        microsite y como portada del ticket PDF. Recomendado{" "}
+                        <strong>1080 × 1080 px</strong>. JPG/PNG/WEBP/HEIC · 5 MB
+                        máx.
+                    </p>
+                </header>
+                <div className="max-w-xs">
+                    <Dropzone
+                        label=""
+                        currentUrl={assetUrl(poster)}
+                        onUpload={(f) => onUpload(f, "poster")}
+                        uploading={uploadingKind === "poster"}
+                        testid="wiz-poster"
+                        aspect="square"
+                    />
+                </div>
             </div>
-            <div className="space-y-2">
-                <Label>Galería (hasta 10 imágenes)</Label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="wiz-gallery">
+
+            {/* — Banner — */}
+            <div className="rounded-xl border p-5 bg-card">
+                <header className="mb-3">
+                    <div className="flex items-center gap-2 text-base font-semibold">
+                        <ImageIcon className="h-5 w-5 text-amber-600" />
+                        Banner del evento <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1 leading-snug">
+                        Imagen <strong>wide 16:9</strong>: se muestra como header
+                        en la página pública del evento. Recomendado{" "}
+                        <strong>1920 × 1080 px</strong>. JPG/PNG/WEBP/HEIC · 5 MB
+                        máx.
+                    </p>
+                </header>
+                <div className="max-w-2xl">
+                    <Dropzone
+                        label=""
+                        currentUrl={assetUrl(banner)}
+                        onUpload={(f) => onUpload(f, "banner")}
+                        uploading={uploadingKind === "banner"}
+                        testid="wiz-banner"
+                        aspect="video"
+                    />
+                </div>
+            </div>
+
+            {/* — Gallery — */}
+            <div className="rounded-xl border p-5 bg-card">
+                <header className="mb-3">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-base font-semibold">
+                            <ImageIcon className="h-5 w-5 text-emerald-600" />
+                            Galería <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground" data-testid="wiz-gallery-counter">
+                            {gallery.length} / 10
+                        </span>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1 leading-snug">
+                        Hasta <strong>10 imágenes</strong> adicionales que se
+                        muestran en la página pública. Podés arrastrar varias a
+                        la vez y reordenarlas. JPG/PNG/WEBP/HEIC · 5 MB cada una.
+                    </p>
+                </header>
+                <div
+                    className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2"
+                    data-testid="wiz-gallery"
+                >
                     {gallery.map((url, i) => (
                         <div
                             key={`${url}-${i}`}
@@ -686,19 +754,21 @@ function SectionMedia({ poster, banner, gallery, onUpload, onDeleteGallery, onRe
                                 <div className="opacity-0 group-hover:opacity-100 flex gap-1">
                                     <button
                                         type="button"
-                                        className="bg-white/90 rounded p-1 text-xs"
+                                        className="bg-white/90 rounded p-1 text-xs disabled:opacity-50"
                                         onClick={() => move(i, i - 1)}
                                         disabled={i === 0}
                                         data-testid={`gallery-up-${i}`}
+                                        title="Mover antes"
                                     >
                                         ↑
                                     </button>
                                     <button
                                         type="button"
-                                        className="bg-white/90 rounded p-1 text-xs"
+                                        className="bg-white/90 rounded p-1 text-xs disabled:opacity-50"
                                         onClick={() => move(i, i + 1)}
                                         disabled={i === gallery.length - 1}
                                         data-testid={`gallery-down-${i}`}
+                                        title="Mover después"
                                     >
                                         ↓
                                     </button>
@@ -708,6 +778,7 @@ function SectionMedia({ poster, banner, gallery, onUpload, onDeleteGallery, onRe
                                     className="opacity-0 group-hover:opacity-100 bg-red-600 text-white rounded p-1"
                                     onClick={() => onDeleteGallery(i)}
                                     data-testid={`gallery-delete-${i}`}
+                                    title="Eliminar"
                                 >
                                     <Trash2 className="h-3 w-3" />
                                 </button>
@@ -719,6 +790,7 @@ function SectionMedia({ poster, banner, gallery, onUpload, onDeleteGallery, onRe
                             label=""
                             currentUrl={null}
                             onUpload={(f) => onUpload(f, "gallery")}
+                            uploading={uploadingKind === "gallery"}
                             testid="wiz-gallery-add"
                             aspect="square"
                             compact
@@ -726,9 +798,6 @@ function SectionMedia({ poster, banner, gallery, onUpload, onDeleteGallery, onRe
                         />
                     )}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                    {gallery.length} / 10 · JPG/PNG/WEBP/HEIC, 5MB cada una
-                </p>
             </div>
         </div>
     );
@@ -1246,7 +1315,16 @@ function DisabledToggle({ label, helper, tooltip }) {
     );
 }
 
-function Dropzone({ label, currentUrl, onUpload, testid, aspect = "square", compact = false, multiple = false }) {
+function Dropzone({
+    label,
+    currentUrl,
+    onUpload,
+    testid,
+    aspect = "square",
+    compact = false,
+    multiple = false,
+    uploading = false,
+}) {
     const id = `${testid}-input`;
     const ratio = aspect === "video" ? "aspect-video" : "aspect-square";
     return (
@@ -1254,10 +1332,15 @@ function Dropzone({ label, currentUrl, onUpload, testid, aspect = "square", comp
             {label && <Label>{label}</Label>}
             <label
                 htmlFor={id}
-                className={`flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed cursor-pointer transition hover:border-primary hover:bg-primary/5 ${ratio} ${
+                className={`relative flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed cursor-pointer transition ${ratio} ${
                     compact ? "min-h-0" : ""
+                } ${
+                    uploading
+                        ? "border-primary bg-primary/5 cursor-wait"
+                        : "hover:border-primary hover:bg-primary/5"
                 }`}
                 data-testid={testid}
+                aria-busy={uploading}
             >
                 {currentUrl ? (
                     <img
@@ -1268,10 +1351,18 @@ function Dropzone({ label, currentUrl, onUpload, testid, aspect = "square", comp
                 ) : (
                     <>
                         <ImageIcon className="h-7 w-7 text-muted-foreground" />
-                        <span className="text-xs text-muted-foreground text-center">
+                        <span className="text-xs text-muted-foreground text-center px-2">
                             {multiple ? "Click o arrastrá (varias)" : "Click o arrastrá"}
                         </span>
                     </>
+                )}
+                {uploading && (
+                    <div
+                        className="absolute inset-0 flex items-center justify-center bg-white/70 backdrop-blur-[1px] rounded-xl"
+                        data-testid={`${testid}-spinner`}
+                    >
+                        <Loader2 className="h-7 w-7 animate-spin text-primary" />
+                    </div>
                 )}
                 <input
                     id={id}
@@ -1279,6 +1370,7 @@ function Dropzone({ label, currentUrl, onUpload, testid, aspect = "square", comp
                     accept=".jpg,.jpeg,.png,.webp,.heic,.heif,image/*"
                     multiple={multiple}
                     className="sr-only"
+                    disabled={uploading}
                     onChange={(e) => {
                         const files = e.target.files;
                         e.target.value = "";

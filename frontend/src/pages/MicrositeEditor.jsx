@@ -26,6 +26,7 @@ import {
 
 import MicrositeRenderer from "@/components/microsite/MicrositeRenderer";
 import ShareModal from "@/components/microsite/ShareModal";
+import PublishPendingDialog from "@/components/PublishPendingDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
 import { TEMPLATE_OPTIONS, FONT_OPTIONS, assetUrl } from "@/lib/microsite";
@@ -57,6 +58,7 @@ export default function MicrositeEditor() {
     const [previewMode, setPreviewMode] = useState("desktop");
     const [shareOpen, setShareOpen] = useState(false);
     const [uploadingAsset, setUploadingAsset] = useState(null);
+    const [publishPendingOpen, setPublishPendingOpen] = useState(false);
     const saveTimer = useRef(null);
 
     // Initial load
@@ -122,6 +124,11 @@ export default function MicrositeEditor() {
 
     const togglePublish = async () => {
         if (!microsite) return;
+        // Pre-check: pending orgs can't publish; show explanatory dialog instead.
+        if (!microsite.published && organizer?.status === "pending") {
+            setPublishPendingOpen(true);
+            return;
+        }
         const endpoint = microsite.published ? "/microsite/me/unpublish" : "/microsite/me/publish";
         try {
             await api.post(endpoint);
@@ -129,6 +136,13 @@ export default function MicrositeEditor() {
             setMicrosite(fresh.data);
             toast.success(fresh.data.published ? "Microsite publicado" : "Microsite despublicado");
         } catch (e) {
+            // Fallback: backend may also reject on race (subscription just expired
+            // while org was on screen). Surface the same dialog UX.
+            const code = e?.response?.data?.detail?.error;
+            if (code === "organizer_pending_review") {
+                setPublishPendingOpen(true);
+                return;
+            }
             toast.error(formatApiError(e?.response?.data?.detail) || e.message);
         }
     };
@@ -467,6 +481,11 @@ export default function MicrositeEditor() {
                 url={publicUrl}
                 companyName={organizer?.company_name || organizer?.slug}
                 heroSubtitle={microsite?.content?.hero_subtitle || ""}
+            />
+            <PublishPendingDialog
+                open={publishPendingOpen}
+                onOpenChange={setPublishPendingOpen}
+                resource="microsite"
             />
         </div>
     );

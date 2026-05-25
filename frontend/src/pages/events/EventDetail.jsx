@@ -24,6 +24,8 @@ import api, { formatApiError } from "@/lib/api";
 import EventForm from "@/components/events/EventForm";
 import ShareModal from "@/components/microsite/ShareModal";
 import EventSalesTabs from "@/components/events/EventSalesTabs";
+import PublishPendingDialog from "@/components/PublishPendingDialog";
+import { useAuth } from "@/contexts/AuthContext";
 import {
     EVENT_STATUS_META,
     formatEventDate,
@@ -37,10 +39,12 @@ const FALLBACK_IMG = "https://images.unsplash.com/photo-1492684223066-81342ee5ff
 export default function EventDetail() {
     const { event_id } = useParams();
     const navigate = useNavigate();
+    const { organizer } = useAuth();
     const [event, setEvent] = useState(null);
     const [loading, setLoading] = useState(true);
     const [editMode, setEditMode] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
+    const [publishPendingOpen, setPublishPendingOpen] = useState(false);
 
     const load = async () => {
         try {
@@ -73,11 +77,21 @@ export default function EventDetail() {
     const status = EVENT_STATUS_META[event.status] || EVENT_STATUS_META.draft;
 
     const doAction = async (path, msg) => {
+        // Pending orgs can't publish — short-circuit with explanatory dialog.
+        if (path === "/publish" && organizer?.status === "pending") {
+            setPublishPendingOpen(true);
+            return;
+        }
         try {
             await api.post(`/events/me/${event.id}${path}`);
             toast.success(msg);
             await load();
         } catch (e) {
+            const code = e?.response?.data?.detail?.error;
+            if (code === "organizer_pending_review") {
+                setPublishPendingOpen(true);
+                return;
+            }
             toast.error(formatApiError(e?.response?.data?.detail) || e.message);
         }
     };
@@ -281,6 +295,11 @@ export default function EventDetail() {
                 url={publicUrl}
                 companyName={event.title}
                 heroSubtitle={event.short_description}
+            />
+            <PublishPendingDialog
+                open={publishPendingOpen}
+                onOpenChange={setPublishPendingOpen}
+                resource="evento"
             />
         </div>
     );

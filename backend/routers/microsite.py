@@ -86,7 +86,9 @@ class MicrositeUpdate(BaseModel):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-async def _require_approved_organizer(user) -> dict:
+async def _require_active_organizer(user) -> dict:
+    """Panel-level access. Pending orgs can draft their microsite while
+    waiting for admin approval; only rejected/suspended/unknown are blocked."""
     if not user.get("organizer_id"):
         raise HTTPException(status_code=403, detail="No organizer profile")
     organizer = await db.organizers.find_one(
@@ -94,12 +96,36 @@ async def _require_approved_organizer(user) -> dict:
     )
     if not organizer:
         raise HTTPException(status_code=404, detail="Organizer not found")
+    if organizer["status"] not in {"pending", "approved"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Tu cuenta no tiene acceso al editor de microsite",
+        )
+    return organizer
+
+
+async def _require_can_publish_microsite(user) -> dict:
+    """Strict gate for publish only — pending orgs cannot make their
+    microsite publicly accessible."""
+    organizer = await _require_active_organizer(user)
     if organizer["status"] != "approved":
         raise HTTPException(
             status_code=403,
-            detail="Tu cuenta debe estar aprobada para acceder al microsite",
+            detail={
+                "error": "organizer_pending_review",
+                "message": (
+                    "Tu cuenta está en revisión. Una vez aprobada vas a poder "
+                    "publicar tu microsite. Podés seguir editándolo libremente "
+                    "mientras tanto."
+                ),
+            },
         )
     return organizer
+
+
+# Backwards-compatible alias for existing call sites — they all describe
+# panel-level access, so we point this to the relaxed helper.
+_require_approved_organizer = _require_active_organizer
 
 
 async def _get_or_create_microsite(organizer: dict) -> dict:
@@ -172,7 +198,8 @@ async def update_my_microsite(payload: MicrositeUpdate, user=Depends(get_current
 
 @router.post("/me/publish")
 async def publish(user=Depends(get_current_user)):
-    organizer = await _require_approved_organizer(user)
+    # Strict: pending orgs can edit drafts but cannot expose their microsite.
+    organizer = await _require_can_publish_microsite(user)
     microsite = await _get_or_create_microsite(organizer)
     await db.microsites.update_one(
         {"id": microsite["id"]},

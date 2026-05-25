@@ -121,9 +121,17 @@ class TestMicrositeMe:
         assert d["template"] in ("estandar", "galeria", "evento_unico")
         assert "branding" in d and "content" in d
 
-    def test_get_me_pending_403(self, prueba_token):
+    def test_get_me_pending_200_publish_403(self, prueba_token):
+        # Phase 9.5: pending orgs gain read/edit access to the panel so they
+        # can prepare their microsite while the admin reviews their account;
+        # only the publish endpoint stays gated.
         r = requests.get(f"{API}/microsite/me", headers=_h(prueba_token))
-        assert r.status_code == 403
+        assert r.status_code == 200, r.text
+        r2 = requests.post(f"{API}/microsite/me/publish", headers=_h(prueba_token))
+        assert r2.status_code == 403, r2.text
+        body = r2.json()
+        # New structured error so the frontend can show the explanatory dialog.
+        assert body["detail"]["error"] == "organizer_pending_review"
 
     def test_get_me_no_auth_401(self):
         r = requests.get(f"{API}/microsite/me")

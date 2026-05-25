@@ -36,6 +36,7 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import ShareModal from "@/components/microsite/ShareModal";
+import PendingBanner from "@/components/PendingBanner";
 import api, { formatApiError } from "@/lib/api";
 import { previewMicrositePath, publicMicrositeHost } from "@/lib/config";
 import { formatEventDate, EVENT_STATUS_META } from "@/lib/events";
@@ -86,6 +87,7 @@ export default function DashboardHome() {
 
     return (
         <div className="space-y-6" data-testid="dashboard-home">
+            <PendingBanner />
             <header className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <div className="text-sm text-muted-foreground">Dashboard</div>

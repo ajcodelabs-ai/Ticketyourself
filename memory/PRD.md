@@ -32,6 +32,22 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 - **A3. Toggle ojo en passwords**: nuevo `components/ui/password-input.jsx` con `Eye`/`EyeOff` lucide. Aplicado en Login, Register (×2), Configuración → Seguridad (×3, disabled). Toggle accesible (`aria-label`, `aria-pressed`, `tabIndex=-1` para no capturar tabulación).
 - **A4. Centrar / fit en venue editor**: agregado botón "Centrar" (icono `Maximize2`) en toolbar bottom-right del canvas. Calcula bounding box agregado de todos los elementos vía `elementBBox` + margen 40px + cap a [0.25, 3]. Atajos de teclado `F` (fit) y `0` (reset). Skip cuando el usuario está typing en input/textarea/contentEditable.
 
+### Bloque B — Pending puede editar drafts, solo publicar bloqueado ✅ (Feb 25, 2026)
+- **Backend** (`events.py`, `venues.py`, `microsite.py`): split semántico `_require_active_organizer` (pending + approved) vs `_require_organizer_can_publish` (approved). Los 3 endpoints de publicación (`POST /events/me/{id}/publish`, `POST /venues/me/{id}/publish`, `POST /microsite/me/publish`) usan el guard estricto. CRUD/lectura permitido para pending. `rejected`/`suspended` siguen bloqueados.
+- **Error structure**: publish denied devuelve `{detail: {error: "organizer_pending_review", message: "..."}}` con 403 — el frontend lo detecta y muestra el mismo dialog que el pre-check.
+- **Frontend**: nuevo `components/PendingBanner.jsx` (banner ámbar con `Clock` icon + copy "Tu cuenta está en revisión. Mientras tanto, podés crear y configurar..."). Insertado al tope de `DashboardHome`.
+- **Frontend**: nuevo `components/PublishPendingDialog.jsx` (AlertDialog con texto explicativo + único botón "Entendido"). Resource-aware: "este evento" / "este venue" / "tu microsite".
+- **Pre-check + fallback**: cada handler de publish (EventDetail.doAction, MicrositeEditor.togglePublish, VenueEditor.publish) chequea `organizer.status === "pending"` antes del POST y abre el dialog. Si por race el POST vuela y el backend devuelve `organizer_pending_review`, se atrapa en el catch y se abre el mismo dialog.
+- **Tests**: actualizado `test_phase2.py::test_get_me_pending_200_publish_403` (verifica nueva semántica + estructura de error). 156 passed / 1 skipped — cero regresiones.
+- Verificado E2E: pending `prueba@ticketyourself.com` puede entrar al dashboard, ve banner ámbar, ve sidebar completa, abre microsite, intenta publicar → dialog con copy "Una vez aprobada vas a poder publicar tu microsite...", botón "Entendido" cierra. Rejected/suspended siguen 403 en todos los endpoints del panel.
+
+### Bloque C — Upload imágenes Media (fix UX + clarity) ✅ (Feb 25, 2026)
+- **Diagnóstico del bug reportado** ("no se cargan las imágenes"): backend OK (curl POST `/poster`/`/banner`/`/gallery` → 200), axios interceptor preserva FormData correctamente. El problema era **UX**: el wizard mostraba poster/banner side-by-side sin descripciones, las dropzones se estiraban a full-width (1390×1390 px), no había feedback visual durante la subida, ni explicación de dónde aparecía cada imagen.
+- **`SectionMedia`** reescrito: 3 cards verticales con header propio (icon + título + descripción con dimensiones recomendadas y formatos). Poster `max-w-xs`, Banner `max-w-2xl`, Gallery en grid 2/3/4 columnas con counter `X / 10` visible.
+- **`Dropzone`** extendido con prop `uploading`: overlay blanco semitransparente con `Loader2` animado mientras el upload está en curso, border-color cambia a primary, input deshabilitado para evitar dobles uploads.
+- **`uploadImage`** ahora setea `uploadingKind` a la sección activa (`poster|banner|gallery`) y la limpia en `finally`. Toasts mejorados: "Póster actualizado", "Banner actualizado", "N imágenes agregadas a la galería". Errores reales: `formatApiError(e.response.data.detail)`.
+- Verificado E2E: poster 19KB upload visible inmediato, banner 33KB idem, gallery 3 imágenes via UI muestran 3/10 counter + 3 cells + dropzone vacío para agregar más. Reorder ↑/↓ y delete funcionan. Backend logs muestran `POST /api/events/me/{id}/gallery → 200 OK` por cada upload.
+
 ## Fase 5.5 — Implementación (cerrada)
 
 ### Backend (paralelo)

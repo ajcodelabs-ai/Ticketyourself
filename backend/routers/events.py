@@ -148,18 +148,51 @@ class EventUpdate(BaseModel):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-async def _require_approved_organizer(user) -> dict:
+PANEL_ALLOWED_STATUSES = {"pending", "approved"}
+PUBLISH_ALLOWED_STATUSES = {"approved"}
+
+
+async def _require_active_organizer(user) -> dict:
+    """Panel-level access. Allows `pending` (so the org can build drafts while
+    awaiting admin approval). Rejects `rejected` / `suspended` / unknown."""
     if not user.get("organizer_id"):
         raise HTTPException(status_code=403, detail="No organizer profile")
     org = await db.organizers.find_one({"id": user["organizer_id"]}, {"_id": 0})
     if not org:
         raise HTTPException(status_code=404, detail="Organizer not found")
-    if org["status"] != "approved":
+    if org["status"] not in PANEL_ALLOWED_STATUSES:
         raise HTTPException(
             status_code=403,
-            detail="Tu cuenta debe estar aprobada para gestionar eventos",
+            detail="Tu cuenta no tiene acceso al panel de eventos.",
         )
     return org
+
+
+async def _require_organizer_can_publish(user) -> dict:
+    """Strict gate used by `publish` endpoints only. `pending` orgs cannot
+    publish, even if they have an active subscription — they must be approved
+    by an admin first."""
+    org = await _require_active_organizer(user)
+    if org["status"] not in PUBLISH_ALLOWED_STATUSES:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "organizer_pending_review",
+                "message": (
+                    "Tu cuenta está en revisión. Una vez aprobada vas a poder "
+                    "publicar este evento. Podés seguir editándolo libremente "
+                    "mientras tanto."
+                ),
+            },
+        )
+    return org
+
+
+# Backwards-compatible alias — code below was written before the relax/strict
+# split and uses `_require_approved_organizer` for the panel-level dep. We
+# keep the name pointing to the relaxed helper so pending orgs gain access
+# to CRUD endpoints; the 3 publish endpoints opt into the strict version.
+_require_approved_organizer = _require_active_organizer
 
 
 def _now_iso() -> str:
@@ -438,7 +471,8 @@ async def update_my_event(
 
 @router.post("/{event_id}/publish")
 async def publish_event(event_id: str, user=Depends(get_current_user)):
-    org = await _require_approved_organizer(user)
+    # Strict: pending orgs can edit drafts but cannot publish.
+    org = await _require_organizer_can_publish(user)
     doc = await db.events.find_one(
         {"id": event_id, "organizer_id": org["id"]}, {"_id": 0}
     )

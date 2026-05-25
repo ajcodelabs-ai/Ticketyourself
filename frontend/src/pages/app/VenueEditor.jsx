@@ -28,6 +28,8 @@ import RowConfigDialog from "@/components/venues/RowConfigDialog";
 import CurvedRowConfigDialog from "@/components/venues/CurvedRowConfigDialog";
 import TableConfigDialog from "@/components/venues/TableConfigDialog";
 import ContextMenu from "@/components/venues/ContextMenu";
+import PublishPendingDialog from "@/components/PublishPendingDialog";
+import { useAuth } from "@/contexts/AuthContext";
 import {
     venuesApi, makeStage, makeZone, makeRow, makeCurvedRow, makeSeat,
     makeTableRound, makeTableRect, computeCapacity, newId, bumpLabel,
@@ -52,6 +54,7 @@ function nextRowLabel(elements) {
 export default function VenueEditor() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const { organizer } = useAuth();
     const [venue, setVenue] = useState(null);
     const [loading, setLoading] = useState(true);
     const [tool, setTool] = useState("select");
@@ -65,6 +68,7 @@ export default function VenueEditor() {
     const [pendingCurved, setPendingCurved] = useState(null);
     const [pendingTable, setPendingTable] = useState(null); // {kind, x, y}
     const [contextMenu, setContextMenu] = useState(null);
+    const [publishPendingOpen, setPublishPendingOpen] = useState(false);
     const clipboardRef = useRef([]);
 
     const dirtyRef = useRef(false);
@@ -379,13 +383,23 @@ export default function VenueEditor() {
 
     const publish = async () => {
         if (dirty) await persist({ silent: true });
+        if (organizer?.status === "pending") {
+            setPublishPendingOpen(true);
+            return;
+        }
         try {
             await venuesApi.publish(venue.id);
             toast.success("Venue publicado");
             const v = await venuesApi.get(venue.id);
             setVenue(v);
         } catch (e) {
-            toast.error(e?.response?.data?.detail || "No se pudo publicar.");
+            const code = e?.response?.data?.detail?.error;
+            if (code === "organizer_pending_review") {
+                setPublishPendingOpen(true);
+                return;
+            }
+            const detail = e?.response?.data?.detail;
+            toast.error(typeof detail === "string" ? detail : "No se pudo publicar.");
         }
     };
 
@@ -637,6 +651,11 @@ export default function VenueEditor() {
                 onClose={() => setContextMenu(null)}
                 onAction={handleContextAction}
                 hasLocality={!!elements.find((e) => e.id === contextMenu?.elementId && e.kind !== "stage")}
+            />
+            <PublishPendingDialog
+                open={publishPendingOpen}
+                onOpenChange={setPublishPendingOpen}
+                resource="venue"
             />
         </div>
     );

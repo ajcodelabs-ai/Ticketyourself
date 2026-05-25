@@ -28,15 +28,16 @@ router = APIRouter(prefix="/api/venues/me", tags=["venues"])
 public_router = APIRouter(prefix="/api/public/venues", tags=["venues-public"])
 
 
-async def _require_approved_organizer(user) -> Dict[str, Any]:
+async def _require_active_organizer(user) -> Dict[str, Any]:
+    """Panel-level access. Allows `pending` (so the org can build drafts while
+    awaiting admin approval). Rejects `rejected` / `suspended` / unknown."""
     if not user.get("organizer_id"):
         raise HTTPException(status_code=403, detail="No organizer profile")
     org = await db.organizers.find_one({"id": user["organizer_id"]}, {"_id": 0})
     if not org:
         raise HTTPException(status_code=403, detail="Organizer profile missing")
-    if org.get("status") != "approved":
-        raise HTTPException(status_code=403, detail="Organizer not approved")
-    # Resolve plan_code (organizers store plan_id, plans have code).
+    if org.get("status") not in {"pending", "approved"}:
+        raise HTTPException(status_code=403, detail="Tu cuenta no tiene acceso al panel de venues.")
     if org.get("plan_id"):
         plan = await db.subscription_plans.find_one(
             {"id": org["plan_id"]}, {"_id": 0, "code": 1}
@@ -47,8 +48,31 @@ async def _require_approved_organizer(user) -> Dict[str, Any]:
     return org
 
 
+async def _require_approved_organizer(user) -> Dict[str, Any]:
+    """Strict gate used by publish endpoints — only approved orgs can publish."""
+    org = await _require_active_organizer(user)
+    if org.get("status") != "approved":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "organizer_pending_review",
+                "message": (
+                    "Tu cuenta está en revisión. Una vez aprobada vas a poder "
+                    "publicar este venue. Podés seguir editándolo libremente "
+                    "mientras tanto."
+                ),
+            },
+        )
+    return org
+
+
 async def require_organizer(user=Depends(get_current_user)) -> Dict[str, Any]:
-    """Dependency: returns the approved organizer dict for the calling user."""
+    """Panel-level dependency used by CRUD endpoints (pending allowed)."""
+    return await _require_active_organizer(user)
+
+
+async def require_organizer_can_publish(user=Depends(get_current_user)) -> Dict[str, Any]:
+    """Strict dependency: only approved orgs can hit publish endpoints."""
     return await _require_approved_organizer(user)
 
 
@@ -527,7 +551,10 @@ async def duplicate_venue(venue_id: str, org: Dict[str, Any] = Depends(require_o
 
 
 @router.post("/{venue_id}/publish")
-async def publish_venue(venue_id: str, org: Dict[str, Any] = Depends(require_organizer)):
+async def publish_venue(
+    venue_id: str,
+    org: Dict[str, Any] = Depends(require_organizer_can_publish),
+):
     v = await _ensure_organizer_owns(org["id"], venue_id)
     if not v.get("elements"):
         raise HTTPException(422, "Agregá al menos un elemento antes de publicar el venue.")
