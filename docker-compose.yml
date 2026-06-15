@@ -17,6 +17,37 @@ services:
       retries: 10
       start_period: 10s
 
+  pgbouncer:
+    # Bitnami removed free images from Docker Hub (2025). edoburu/pgbouncer is the
+    # maintained community alternative: https://github.com/edoburu/docker-pgbouncer
+    image: edoburu/pgbouncer:v1.25.2-p0
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-tys_dev}
+      DB_USER: ${POSTGRES_USER:-tys}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-tys_dev}
+      LISTEN_PORT: 6432
+      # transaction mode: each query/transaction uses any available server connection.
+      # Allows many app connections to share a small number of real Postgres connections.
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 500
+      DEFAULT_POOL_SIZE: 20
+      MIN_POOL_SIZE: 5
+      # Postgres 16 defaults to scram-sha-256
+      AUTH_TYPE: scram-sha-256
+      SERVER_TLS_SSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${POSTGRES_USER:-tys}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   backend:
     build:
       context: ./backend
@@ -25,7 +56,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tys}:${POSTGRES_PASSWORD:-tys_dev}@postgres:5432/${POSTGRES_DB:-tys_dev}
+      # Route through PgBouncer for connection multiplexing
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tys}:${POSTGRES_PASSWORD:-tys_dev}@pgbouncer:6432/${POSTGRES_DB:-tys_dev}
+      PGBOUNCER: "true"   # tells database.py to disable asyncpg statement cache
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       ENV: ${ENV:-development_local}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
@@ -44,6 +77,8 @@ services:
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn server:app --reload --host 0.0.0.0 --port 8000"]
     depends_on:
       postgres:
+        condition: service_healthy
+      pgbouncer:
         condition: service_healthy
 
   frontend:

@@ -101,10 +101,10 @@ export default function AdminDashboard() {
     const { kpis, distribution, activity, top_organizers_by_gmv, top_events_by_sales } = stats;
 
     const statusData = Object.entries(distribution.organizers_by_status)
-        .filter(([, v]) => v > 0)
+        .filter(([, v]) => Number(v) > 0)
         .map(([name, value]) => ({ name, value }));
     const planData = Object.entries(distribution.organizers_by_plan)
-        .filter(([, v]) => v > 0)
+        .filter(([, v]) => Number(v) > 0)
         .map(([name, value]) => ({ name, value }));
 
     return (
@@ -391,7 +391,7 @@ export default function AdminDashboard() {
     );
 }
 
-function Kpi({ icon, label, value, sub, delta, testid }) {
+function Kpi({ icon, label, value, sub, delta = undefined, testid }) {
     return (
         <Card data-testid={testid}>
             <CardContent className="pt-5 pb-4 space-y-1">

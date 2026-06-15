@@ -85,6 +85,12 @@ app.include_router(admin_exports_router.router)
 app.include_router(venues_router.router)
 app.include_router(venues_router.public_router)
 app.include_router(admin_venue_templates_router.router)
+from routers import staff as staff_router  # noqa: E402
+from routers import functions as functions_router  # noqa: E402
+app.include_router(staff_router.auth_router)
+app.include_router(staff_router.router)
+app.include_router(functions_router.router)
+app.include_router(functions_router.public_router)
 
 
 # CORS — must NOT use "*" with allow_credentials=True per browser spec.

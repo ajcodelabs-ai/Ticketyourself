@@ -7,7 +7,7 @@ import io
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -223,7 +223,9 @@ async def organizer_refund_order(
 
 @router.post("/events/me/{event_id}/orders/{order_id}/resend-email")
 async def organizer_resend_email(
-    event_id: str, order_id: str, user=Depends(get_current_user)
+    event_id: str, order_id: str,
+    background_tasks: BackgroundTasks,
+    user=Depends(get_current_user),
 ):
     _org, event = await _require_event_for_user(event_id, user)
     async with AsyncSessionLocal() as session:
@@ -241,8 +243,9 @@ async def organizer_resend_email(
         tickets = [row_to_dict(r) for r in result.scalars().all()]
     organizer = await get_organizer_by_id(order["organizer_id"])
     from services.email_service import send_purchase_confirmation
-    await send_purchase_confirmation(
-        order=order, event=event, organizer=organizer, tickets=tickets
+    background_tasks.add_task(
+        send_purchase_confirmation,
+        order=order, event=event, organizer=organizer, tickets=tickets,
     )
     return {"ok": True}
 
@@ -262,6 +265,7 @@ async def organizer_confirm_payment(
     event_id: str,
     order_id: str,
     payload: ConfirmManualBody,
+    background_tasks: BackgroundTasks,
     user=Depends(get_current_user),
 ):
     organizer, event = await _require_event_for_user(event_id, user)
@@ -280,13 +284,11 @@ async def organizer_confirm_payment(
         notes=payload.notes,
         reference=payload.reference,
     )
-    try:
-        from services.email_service import send_purchase_confirmation
-        await send_purchase_confirmation(
-            order=refreshed, event=event, organizer=organizer, tickets=tickets
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed sending manual confirmation email")
+    from services.email_service import send_purchase_confirmation
+    background_tasks.add_task(
+        send_purchase_confirmation,
+        order=refreshed, event=event, organizer=organizer, tickets=tickets,
+    )
     try:
         from audit import log_audit
         await log_audit(
@@ -303,6 +305,7 @@ async def organizer_reject_payment(
     event_id: str,
     order_id: str,
     payload: RejectManualBody,
+    background_tasks: BackgroundTasks,
     user=Depends(get_current_user),
 ):
     organizer, event = await _require_event_for_user(event_id, user)
@@ -318,13 +321,11 @@ async def organizer_reject_payment(
     rejected = await order_service.reject_manual_payment(
         order=order, reason=payload.reason, rejecter_user_id=user["id"]
     )
-    try:
-        from services.email_service import send_manual_payment_rejected
-        await send_manual_payment_rejected(
-            order=rejected, event=event, organizer=organizer, reason=payload.reason
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed sending manual rejection email")
+    from services.email_service import send_manual_payment_rejected
+    background_tasks.add_task(
+        send_manual_payment_rejected,
+        order=rejected, event=event, organizer=organizer, reason=payload.reason,
+    )
     try:
         from audit import log_audit
         await log_audit(

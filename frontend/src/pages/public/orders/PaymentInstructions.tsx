@@ -384,7 +384,7 @@ export default function PaymentInstructions() {
     );
 }
 
-function InstructionRow({ label, value, icon, copyable, onCopy }) {
+function InstructionRow({ label, value, icon = null, copyable = false, onCopy = undefined }) {
     return (
         <div className="flex items-center justify-between gap-2 rounded-lg border p-3">
             <div>

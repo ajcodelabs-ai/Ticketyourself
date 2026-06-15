@@ -8,13 +8,60 @@
  */
 import { forwardRef } from "react";
 import { Group, Rect, Text, Circle, Arc } from "react-konva";
+import type Konva from "konva";
+import type { KonvaEventObject } from "konva/lib/Node";
 
-function snapVal(v, GRID = 20) {
+interface VenueElement {
+    id: string;
+    kind: string;
+    x: number;
+    y: number;
+    rotation?: number;
+    label?: string;
+    width?: number;
+    height?: number;
+    color?: string;
+    capacity?: number;
+    seats_count?: number;
+    seat_spacing?: number;
+    seat_radius?: number;
+    row_label?: string;
+    numbering_direction?: string;
+    numbering_start?: number;
+    curve_radius?: number;
+    curve_arc_degrees?: number;
+    table_radius?: number;
+    chair_radius?: number;
+    chair_distance?: number;
+    chairs_count?: number;
+    chairs_per_side?: { top?: number; right?: number; bottom?: number; left?: number };
+    [key: string]: unknown;
+}
+
+interface VenueLocality {
+    color?: string;
+    [key: string]: unknown;
+}
+
+export interface ShapeProps {
+    element: VenueElement;
+    locality?: VenueLocality | null;
+    selected?: boolean;
+    draggable?: boolean;
+    zoom?: number;
+    onClick?: (e: KonvaEventObject<MouseEvent | TouchEvent>) => void;
+    onContextMenu?: (e: KonvaEventObject<PointerEvent>) => void;
+    onDragStart?: (e: KonvaEventObject<DragEvent>) => void;
+    onDragMove?: (e: KonvaEventObject<DragEvent>) => void;
+    onDragEnd?: (x: number, y: number) => void;
+}
+
+function snapVal(v: number, GRID = 20) {
     return Math.round(v / GRID) * GRID;
 }
 
 // ── stage ────────────────────────────────────────────────────────────────
-const StageShape = forwardRef(function StageShape(
+const StageShape = forwardRef<Konva.Group, ShapeProps>(function StageShape(
     { element, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable }, ref,
 ) {
     const w = element.width || 200;
@@ -32,7 +79,7 @@ const StageShape = forwardRef(function StageShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
         >
             <Rect
                 width={w}
@@ -49,7 +96,7 @@ const StageShape = forwardRef(function StageShape(
 });
 
 // ── unnumbered zone ──────────────────────────────────────────────────────
-const ZoneShape = forwardRef(function ZoneShape(
+const ZoneShape = forwardRef<Konva.Group, ShapeProps>(function ZoneShape(
     { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable }, ref,
 ) {
     const w = element.width || 200;
@@ -68,7 +115,7 @@ const ZoneShape = forwardRef(function ZoneShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
         >
             <Rect
                 width={w}
@@ -89,12 +136,12 @@ const ZoneShape = forwardRef(function ZoneShape(
 });
 
 // Helper to render seat labels conditional on zoom
-function showSeatLabel(zoom, spacing) {
+function showSeatLabel(zoom: number, spacing: number) {
     return zoom * spacing >= 22;
 }
 
 // ── seat row straight ────────────────────────────────────────────────────
-const RowShape = forwardRef(function RowShape(
+const RowShape = forwardRef<Konva.Group, ShapeProps>(function RowShape(
     { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1 }, ref,
 ) {
     const seats = element.seats_count || 0;
@@ -118,7 +165,7 @@ const RowShape = forwardRef(function RowShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
         >
             {selected && (
                 <Rect x={-6} y={-6} width={w + 12} height={h + 12}
@@ -148,7 +195,7 @@ const RowShape = forwardRef(function RowShape(
 });
 
 // ── seat row curved ──────────────────────────────────────────────────────
-const CurvedRowShape = forwardRef(function CurvedRowShape(
+const CurvedRowShape = forwardRef<Konva.Group, ShapeProps>(function CurvedRowShape(
     { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1 }, ref,
 ) {
     const seats = element.seats_count || 0;
@@ -182,7 +229,7 @@ const CurvedRowShape = forwardRef(function CurvedRowShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
         >
             {selected && (
                 <Arc
@@ -224,7 +271,7 @@ const CurvedRowShape = forwardRef(function CurvedRowShape(
 });
 
 // ── individual seat ──────────────────────────────────────────────────────
-const SeatShape = forwardRef(function SeatShape(
+const SeatShape = forwardRef<Konva.Group, ShapeProps>(function SeatShape(
     { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1 }, ref,
 ) {
     const r = element.seat_radius || 12;
@@ -242,7 +289,7 @@ const SeatShape = forwardRef(function SeatShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
         >
             {selected && (
                 <Circle radius={r + 6} stroke="#6366F1" strokeWidth={2} dash={[4, 4]} />
@@ -257,7 +304,7 @@ const SeatShape = forwardRef(function SeatShape(
 });
 
 // ── round table ──────────────────────────────────────────────────────────
-const TableRoundShape = forwardRef(function TableRoundShape(
+const TableRoundShape = forwardRef<Konva.Group, ShapeProps>(function TableRoundShape(
     { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1 }, ref,
 ) {
     const tr = element.table_radius || 40;
@@ -280,7 +327,7 @@ const TableRoundShape = forwardRef(function TableRoundShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
         >
             {selected && (
                 <Circle radius={ring + 4} stroke="#6366F1" strokeWidth={2} dash={[6, 4]} />
@@ -303,7 +350,7 @@ const TableRoundShape = forwardRef(function TableRoundShape(
 });
 
 // ── rect table ───────────────────────────────────────────────────────────
-const TableRectShape = forwardRef(function TableRectShape(
+const TableRectShape = forwardRef<Konva.Group, ShapeProps>(function TableRectShape(
     { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1 }, ref,
 ) {
     const w = element.width || 200;
@@ -313,7 +360,7 @@ const TableRectShape = forwardRef(function TableRectShape(
     const cps = element.chairs_per_side || { top: 0, right: 0, bottom: 0, left: 0 };
     const color = locality?.color || "#94A3B8";
 
-    const sideChairs = (count, axis, fixed) => {
+    const sideChairs = (count: number, axis: "x" | "y", fixed: number) => {
         // axis: "x" → top/bottom (varies in x, y fixed); "y" → left/right
         const out = [];
         for (let i = 0; i < count; i += 1) {
@@ -348,7 +395,7 @@ const TableRectShape = forwardRef(function TableRectShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
         >
             {selected && (
                 <Rect x={-cd - cr - 4} y={-cd - cr - 4}
@@ -370,7 +417,7 @@ const TableRectShape = forwardRef(function TableRectShape(
 });
 
 // ── dispatcher ───────────────────────────────────────────────────────────
-const ElementShape = forwardRef(function ElementShape(props, ref) {
+const ElementShape = forwardRef<Konva.Group, ShapeProps>(function ElementShape(props, ref) {
     const { element } = props;
     if (element.kind === "stage") return <StageShape {...props} ref={ref} />;
     if (element.kind === "unnumbered_zone") return <ZoneShape {...props} ref={ref} />;

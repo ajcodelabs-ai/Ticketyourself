@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { type AxiosRequestHeaders } from "axios";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 export const API_BASE = `${BACKEND_URL}/api`;
@@ -36,7 +36,9 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
     const token = tokenStore.access;
     if (token) {
-        config.headers = config.headers || {};
+        if (!config.headers) {
+            config.headers = {} as AxiosRequestHeaders;
+        }
         config.headers.Authorization = `Bearer ${token}`;
     }
     if (typeof FormData !== "undefined" && config.data instanceof FormData) {

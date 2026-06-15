@@ -10,7 +10,11 @@ import { Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-const PasswordInput = React.forwardRef(function PasswordInput(
+type PasswordInputProps = React.ComponentProps<typeof Input> & {
+  "data-testid"?: string
+}
+
+const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(function PasswordInput(
     { className, disabled, "data-testid": testId, ...props },
     ref,
 ) {

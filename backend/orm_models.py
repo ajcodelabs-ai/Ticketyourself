@@ -264,6 +264,15 @@ class Event(Base):
     # policies_html, agenda[], faq[] — rich event page content
     content = Column(JSONB, nullable=False, default=dict)
 
+    # Phase 8 — multi-function support
+    is_multi_function = Column(Boolean, nullable=False, default=False)
+
+    # Phase 8 — eTicket delivery mode
+    # Values: al_momento | horas_antes | fecha_especifica | manual
+    ticket_delivery_mode = Column(String(20), nullable=False, default="al_momento")
+    ticket_delivery_hours = Column(Integer, nullable=True)
+    ticket_delivery_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(
         DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
@@ -293,6 +302,13 @@ class TicketType(Base):
     sort_order = Column(Integer, nullable=False, default=0)
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+    # Phase 8 — sale window & buyer limits
+    sale_start = Column(DateTime(timezone=True), nullable=True)
+    sale_end = Column(DateTime(timezone=True), nullable=True)
+    max_per_buyer = Column(Integer, nullable=True)
+    is_early_bird = Column(Boolean, nullable=False, default=False)
+    early_bird_closes_at = Column(DateTime(timezone=True), nullable=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -349,6 +365,11 @@ class TicketOrder(Base):
     refunded_at = Column(DateTime(timezone=True), nullable=True)
     refund_reason = Column(Text, nullable=True)
 
+    # Phase 8 — guest mode & multi-function
+    order_token = Column(String(36), unique=True, nullable=True, index=True)
+    function_id = Column(String(36), ForeignKey("event_functions.id"), nullable=True)
+    tickets_sent_at = Column(DateTime(timezone=True), nullable=True)
+
     tickets = relationship("Ticket", back_populates="order", cascade="all, delete-orphan")
 
 
@@ -388,6 +409,10 @@ class Ticket(Base):
     used_by = Column(String(100), nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+    # Phase 8 — function link & captured price
+    function_id = Column(String(36), ForeignKey("event_functions.id"), nullable=True)
+    price_cents = Column(Integer, nullable=True)
 
     order = relationship("TicketOrder", back_populates="tickets")
 
@@ -559,3 +584,114 @@ class EventAsset(Base):
     mime_type = Column(String(100), nullable=True)
     size_bytes = Column(Integer, nullable=True)
     uploaded_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 8 — Event functions (multi-función)
+# ─────────────────────────────────────────────────────────────────────────────
+class EventFunction(Base):
+    __tablename__ = "event_functions"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    event_id = Column(
+        String(36), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    name = Column(String(300), nullable=False)
+    description = Column(Text, nullable=True)
+    starts_at = Column(DateTime(timezone=True), nullable=True)
+    ends_at = Column(DateTime(timezone=True), nullable=True)
+    timezone = Column(String(50), nullable=True)
+
+    # Per-function venue (overrides event-level venue if set)
+    venue_id = Column(String(36), ForeignKey("venues.id"), nullable=True)
+    venue_name = Column(String(200), nullable=True)
+    venue_address = Column(String(300), nullable=True)
+    venue_city = Column(String(100), nullable=True)
+    venue_country = Column(String(100), nullable=True)
+
+    # [{locality_id, price_cents, max_tickets_per_purchase}] — overrides event-level if non-empty
+    locality_pricing = Column(JSONB, nullable=False, default=list)
+
+    capacity = Column(Integer, nullable=True)
+    tickets_sold = Column(Integer, nullable=False, default=0)
+    status = Column(String(20), nullable=False, default="active")  # active | cancelled | soldout
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+    ticket_type_overrides = relationship(
+        "FunctionTicketType", back_populates="function", cascade="all, delete-orphan"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 8 — Per-function ticket type overrides
+# ─────────────────────────────────────────────────────────────────────────────
+class FunctionTicketType(Base):
+    __tablename__ = "function_ticket_types"
+    __table_args__ = (
+        UniqueConstraint("function_id", "ticket_type_id", name="uq_function_ticket_type"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    function_id = Column(
+        String(36), ForeignKey("event_functions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ticket_type_id = Column(
+        String(36), ForeignKey("ticket_types.id", ondelete="CASCADE"), nullable=False
+    )
+    # If null, inherits from ticket_type
+    price_cents_override = Column(Integer, nullable=True)
+    capacity_override = Column(Integer, nullable=True)
+    tickets_sold = Column(Integer, nullable=False, default=0)
+    active = Column(Boolean, nullable=False, default=True)
+
+    function = relationship("EventFunction", back_populates="ticket_type_overrides")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 8 — Staff members (org_staff role)
+# ─────────────────────────────────────────────────────────────────────────────
+class StaffMember(Base):
+    __tablename__ = "staff_members"
+    __table_args__ = (
+        UniqueConstraint("organizer_id", "email", name="uq_staff_org_email"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name = Column(String(140), nullable=False)
+    email = Column(String(254), nullable=False)
+    password_hash = Column(Text, nullable=False)
+    # List of roles: ["scanner", "cajero", "admin_evento"] — can be multiple
+    roles = Column(JSONB, nullable=False, default=list)
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    last_login = Column(DateTime(timezone=True), nullable=True)
+
+    event_assignments = relationship(
+        "StaffEventAssignment", back_populates="staff", cascade="all, delete-orphan"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 8 — Staff event assignments
+# ─────────────────────────────────────────────────────────────────────────────
+class StaffEventAssignment(Base):
+    __tablename__ = "staff_event_assignments"
+    __table_args__ = (
+        UniqueConstraint("staff_id", "event_id", name="uq_staff_event_assignment"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    staff_id = Column(
+        String(36), ForeignKey("staff_members.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
+    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False)
+    assigned_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+    staff = relationship("StaffMember", back_populates="event_assignments")

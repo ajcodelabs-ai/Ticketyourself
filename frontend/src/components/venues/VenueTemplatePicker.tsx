@@ -20,6 +20,22 @@ export default function VenueTemplatePicker({
     onUseTemplate,
     onStartBlank,
     showBlankOption = true,
+}: {
+    templates?: Array<{
+        id: string;
+        slug?: string;
+        name: string;
+        type?: string;
+        capacity_calculated?: number;
+        description?: string;
+    }>;
+    loading?: boolean;
+    usingId?: string | null;
+    disabled?: boolean;
+    compact?: boolean;
+    onUseTemplate: (tpl: Record<string, unknown>) => void;
+    onStartBlank?: () => void;
+    showBlankOption?: boolean;
 }) {
     if (loading) {
         return <p className="text-sm text-muted-foreground py-4">Cargando plantillas…</p>;

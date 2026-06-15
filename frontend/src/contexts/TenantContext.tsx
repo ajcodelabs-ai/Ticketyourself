@@ -16,7 +16,7 @@ const TenantContext = createContext({
     tenantSlug: null,
     tenant: null,
     loading: true,
-    setTenantSlug: () => {},
+    setTenantSlug: (_slug: string) => {},
     refresh: () => {},
 });
 

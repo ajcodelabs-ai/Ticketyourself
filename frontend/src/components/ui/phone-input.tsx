@@ -14,19 +14,27 @@ import PhoneInputBase from "react-phone-number-input";
 import "react-phone-number-input/style.css";
 import { cn } from "@/lib/utils";
 
-const PhoneInput = React.forwardRef(function PhoneInput(
-    { className, defaultCountry = "EC", "data-testid": testId, ...props },
-    ref,
-) {
+type PhoneInputProps = Omit<
+  React.ComponentPropsWithoutRef<typeof PhoneInputBase>,
+  "onChange"
+> & {
+  onChange?: React.ComponentPropsWithoutRef<typeof PhoneInputBase>["onChange"];
+};
+
+const PhoneInput = React.forwardRef<
+  React.ElementRef<typeof PhoneInputBase>,
+  PhoneInputProps
+>(function PhoneInput(props, ref) {
+    const { className, defaultCountry = "EC", onChange, ...rest } = props
     return (
         <PhoneInputBase
+            {...rest}
+            onChange={onChange}
             ref={ref}
             international
             defaultCountry={defaultCountry}
             countryCallingCodeEditable={false}
             className={cn("tys-phone-input", className)}
-            data-testid={testId}
-            {...props}
         />
     );
 });

@@ -190,7 +190,7 @@ export default function VenueEditor() {
     };
 
     // ── Selection ──────────────────────────────────────────────────────
-    const handleSelect = (ids, { additive, replace } = {}) => {
+    const handleSelect = (ids: string[], { additive, replace }: { additive?: boolean; replace?: boolean } = {}) => {
         setSelection((prev) => {
             if (replace) return ids;
             if (!additive) return ids;

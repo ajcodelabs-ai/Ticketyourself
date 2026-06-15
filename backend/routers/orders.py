@@ -9,7 +9,7 @@ import logging
 import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 import stripe
@@ -47,10 +47,15 @@ class BuyerIn(BaseModel):
     document_type: Optional[str] = Field(default=None, max_length=20)
 
 
+class TicketTypeSelection(BaseModel):
+    ticket_type_id: str
+    quantity: int = Field(ge=1, le=20)
+
+
 class CreateOrderBody(BaseModel):
     tenant_slug: str
     event_slug: str
-    quantity: int = Field(ge=1, le=20)
+    quantity: int = Field(default=1, ge=1, le=20)
     buyer: BuyerIn
     donation_amount_cents: Optional[int] = None
     origin_url: Optional[str] = None  # for success/cancel URL construction
@@ -60,6 +65,9 @@ class CreateOrderBody(BaseModel):
     seat_ids: Optional[list[str]] = None
     # Phase 9.5 — promo codes (Bloque E)
     promo_code: Optional[str] = Field(default=None, max_length=40)
+    # Phase 8 — multi-función + ticket types
+    function_id: Optional[str] = None
+    ticket_type_selections: Optional[list[TicketTypeSelection]] = None
 
 
 class PreviewOrderBody(BaseModel):
@@ -159,7 +167,7 @@ async def _load_event_or_404(tenant_slug: str, event_slug: str) -> tuple[dict, d
 
 
 @router.post("")
-async def create_order(payload: CreateOrderBody):
+async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTasks):
     organizer, event = await _load_event_or_404(payload.tenant_slug, payload.event_slug)
     if event["status"] != "published":
         raise HTTPException(409, "El evento no está disponible para compra")
@@ -169,6 +177,7 @@ async def create_order(payload: CreateOrderBody):
     # Phase 7 — numbered event: use seat-based totals
     seat_ids = payload.seat_ids or None
     venue = None
+    items_override = None
     if seat_ids and event.get("venue_id"):
         venue = await get_venue_by_id(event["venue_id"])
         if not venue:
@@ -179,6 +188,43 @@ async def create_order(payload: CreateOrderBody):
             event=event, venue=venue, seat_ids=seat_ids,
         )
         quantity = len(seat_ids)
+    elif payload.ticket_type_selections:
+        # Phase 8 — ticket types: compute totals from per-type pricing
+        from orm_models import TicketType as _TTModel
+        from sqlalchemy import select as _sel
+        async with AsyncSessionLocal() as pg:
+            tt_ids = [s.ticket_type_id for s in payload.ticket_type_selections]
+            result = await pg.execute(
+                _sel(_TTModel).where(_TTModel.id.in_(tt_ids), _TTModel.event_id == event["id"])
+            )
+            tt_map = {r.id: row_to_dict(r) for r in result.scalars().all()}
+        if len(tt_map) != len(tt_ids):
+            raise HTTPException(422, "Uno o más tipos de ticket no son válidos para este evento.")
+        subtotal = 0
+        items_override = []
+        for sel in payload.ticket_type_selections:
+            tt = tt_map[sel.ticket_type_id]
+            if not tt.get("active", True):
+                raise HTTPException(409, f"El tipo '{tt['name']}' ya no está disponible.")
+            unit = int(tt.get("price_cents") or 0)
+            sel_subtotal = unit * sel.quantity
+            subtotal += sel_subtotal
+            items_override.append({
+                "ticket_type_id": tt["id"],
+                "ticket_type": tt["name"],
+                "quantity": sel.quantity,
+                "unit_price_cents": unit,
+                "subtotal_cents": sel_subtotal,
+            })
+        quantity = sum(s.quantity for s in payload.ticket_type_selections)
+        fees = int(round(subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
+        totals = {
+            "unit_price_cents": subtotal // max(1, quantity),
+            "subtotal_cents": subtotal,
+            "fees_cents": fees,
+            "total_cents": subtotal + fees,
+            "donation_amount_cents": 0,
+        }
     else:
         totals = order_service.compute_totals(
             event=event,
@@ -218,18 +264,18 @@ async def create_order(payload: CreateOrderBody):
         payment_method=effective_method,
         seat_ids=seat_ids,
         seat_holds_session_token=payload.seat_holds_session_token,
+        function_id=payload.function_id,
+        items_override=items_override,
     )
 
     # FREE event — confirm instantly.
     if event.get("pricing_type") == "free":
         finalized, tickets = await order_service.finalize_paid_order(order=order)
-        try:
-            from services.email_service import send_purchase_confirmation
-            await send_purchase_confirmation(
-                order=finalized, event=event, organizer=organizer, tickets=tickets
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        from services.email_service import send_purchase_confirmation
+        background_tasks.add_task(
+            send_purchase_confirmation,
+            order=finalized, event=event, organizer=organizer, tickets=tickets,
+        )
         return {
             "order_number": finalized["order_number"],
             "status": "paid",
@@ -248,18 +294,11 @@ async def create_order(payload: CreateOrderBody):
         instructions = order_service.get_payment_instructions(
             event=event, payment_method=effective_method
         )
-        # Best-effort email with instructions
-        try:
-            from services.email_service import send_manual_payment_instructions
-
-            await send_manual_payment_instructions(
-                order=order,
-                event=event,
-                organizer=organizer,
-                instructions=instructions,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed sending manual payment instructions")
+        from services.email_service import send_manual_payment_instructions
+        background_tasks.add_task(
+            send_manual_payment_instructions,
+            order=order, event=event, organizer=organizer, instructions=instructions,
+        )
         return {
             "order_number": order["order_number"],
             "status": "pending_manual_payment",
@@ -300,7 +339,7 @@ async def create_order(payload: CreateOrderBody):
 
 
 @router.get("/{order_number}")
-async def get_order(order_number: str, session_id: Optional[str] = Query(default=None)):
+async def get_order(order_number: str, background_tasks: BackgroundTasks, session_id: Optional[str] = Query(default=None)):
     from orm_models import TicketOrder as _TOModel, Ticket as _TModel
 
     async with AsyncSessionLocal() as _pg:
@@ -324,13 +363,11 @@ async def get_order(order_number: str, session_id: Optional[str] = Query(default
                 )
                 event = await get_event_by_id(order["event_id"])
                 organizer = await get_organizer_by_id(order["organizer_id"])
-                try:
-                    from services.email_service import send_purchase_confirmation
-                    await send_purchase_confirmation(
-                        order=order, event=event, organizer=organizer, tickets=_tickets
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+                from services.email_service import send_purchase_confirmation
+                background_tasks.add_task(
+                    send_purchase_confirmation,
+                    order=order, event=event, organizer=organizer, tickets=_tickets,
+                )
         except stripe.error.StripeError as e:
             logger.warning("Could not refresh session %s: %s", session_id, e)
 
@@ -386,6 +423,48 @@ async def get_payment_instructions(order_number: str):
         "branding": (microsite or {}).get("branding") or {},
         "payment_method": method,
         "payment_instructions": instructions,
+    }
+
+
+@router.get("/by-token/{order_token}")
+async def get_order_by_token(order_token: str):
+    """Public guest order lookup by UUID token (no auth required).
+
+    Returns order summary, tickets (with QR tokens), and event info.
+    Used for the guest order history page (/orden/{token}).
+    """
+    from orm_models import TicketOrder as _TOModel, Ticket as _TModel
+
+    async with AsyncSessionLocal() as _pg:
+        _o_row = await _pg.scalar(
+            select(_TOModel).where(_TOModel.order_token == order_token)
+        )
+    if not _o_row:
+        raise HTTPException(404, "Orden no encontrada")
+
+    order = row_to_dict(_o_row)
+    event = await get_event_by_id(order["event_id"])
+    organizer = await get_organizer_by_id(order["organizer_id"])
+    microsite = await get_microsite_by_organizer(order["organizer_id"])
+
+    async with AsyncSessionLocal() as _pg:
+        _t_rows = await _pg.scalars(
+            select(_TModel).where(_TModel.order_id == order["id"])
+        )
+    tickets = [row_to_dict(t) for t in _t_rows.all()]
+
+    return {
+        "order": {
+            k: v for k, v in order.items()
+            if k not in ("order_token", "stripe_session_id", "stripe_payment_intent_id", "metadata")
+        },
+        "tickets": tickets,
+        "event": event,
+        "organizer": {
+            "slug": organizer["slug"] if organizer else None,
+            "company_name": organizer.get("company_name") if organizer else None,
+        },
+        "branding": (microsite or {}).get("branding") or {},
     }
 
 

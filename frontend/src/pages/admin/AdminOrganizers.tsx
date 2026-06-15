@@ -444,7 +444,7 @@ export default function AdminOrganizers() {
                                     table.getRowModel().rows.map((row) => (
                                         <TableRow
                                             key={row.id}
-                                            data-testid={`admin-org-${row.original.slug}`}
+                                            data-testid={`admin-org-${(row.original as { slug: string }).slug}`}
                                         >
                                             {row.getVisibleCells().map((cell) => (
                                                 <TableCell

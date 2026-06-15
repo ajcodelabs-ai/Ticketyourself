@@ -17,6 +17,9 @@ export const VenuePreview = lazy(() => import("@/pages/public/VenuePreview"));
 export const OrderSuccess = lazy(() => import("@/pages/public/orders/OrderSuccess"));
 export const OrderCancel = lazy(() => import("@/pages/public/orders/OrderCancel"));
 export const PaymentInstructions = lazy(() => import("@/pages/public/orders/PaymentInstructions"));
+export const OrderByToken = lazy(() => import("@/pages/public/orders/OrderByToken"));
+export const StaffLogin = lazy(() => import("@/pages/public/StaffLogin"));
+export const StaffScanner = lazy(() => import("@/pages/staff/StaffScanner"));
 
 // ── Panel organizador (/app/*) ─────────────────────────────────────────────
 export const DashboardHome = lazy(() => import("@/pages/organizer/DashboardHome"));
@@ -32,6 +35,7 @@ export const EventNew = lazy(() => import("@/pages/organizer/events/EventNew"));
 export const EventDetail = lazy(() => import("@/pages/organizer/events/EventDetail"));
 export const EventEdit = lazy(() => import("@/pages/organizer/events/EventEdit"));
 export const EventValidation = lazy(() => import("@/pages/organizer/EventValidation"));
+export const StaffPage = lazy(() => import("@/pages/organizer/Staff"));
 
 // ── Super admin (/admin/*) ─────────────────────────────────────────────────
 export const AdminDashboard = lazy(() => import("@/pages/admin/AdminDashboard"));

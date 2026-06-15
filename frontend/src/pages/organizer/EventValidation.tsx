@@ -9,13 +9,16 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
     ArrowLeft, Camera, CameraOff, Volume2, VolumeX, ClipboardPaste, Download,
-    CheckCircle2, AlertTriangle, XCircle, Loader2, Users,
+    CheckCircle2, AlertTriangle, XCircle, Loader2, Users, SwitchCamera,
 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import {
     Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -29,9 +32,10 @@ const QR_REGION_ID = "qr-reader-region";
 const SCAN_COOLDOWN_MS = 1500; // ignore the same JWT for 1.5s after a scan
 
 // ── Audio helpers (Web Audio API) ────────────────────────────────────────
-function playBeep(type) {
+function playBeep(type: string | null) {
+    if (!type) return;
     try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.connect(gain);
@@ -56,7 +60,7 @@ function playBeep(type) {
     }
 }
 
-function fmtTime(iso) {
+function fmtTime(iso: string | null | undefined) {
     if (!iso) return "—";
     try {
         return new Date(iso).toLocaleTimeString("es-EC", {
@@ -67,17 +71,31 @@ function fmtTime(iso) {
 
 export default function EventValidation() {
     const { id: eventId } = useParams();
-    const [event, setEvent] = useState(null);
-    const [stats, setStats] = useState(null);
-    const [history, setHistory] = useState([]); // session-local last 50
+    const [event, setEvent] = useState<any>(null);
+    const [stats, setStats] = useState<any>(null);
+    const [history, setHistory] = useState<any[]>([]); // session-local last 50
     const [scanning, setScanning] = useState(false);
     const [soundOn, setSoundOn] = useState(true);
-    const [lastResult, setLastResult] = useState(null); // {kind, ticket, reason, ...}
+    const [lastResult, setLastResult] = useState<any>(null); // {kind, ticket, reason, ...}
     const [manualToken, setManualToken] = useState("");
     const [pendingValidate, setPendingValidate] = useState(false);
+    const [cameras, setCameras] = useState<{ id: string; label: string }[]>([]);
+    const [selectedCameraId, setSelectedCameraId] = useState<string>("");
 
-    const html5QrRef = useRef(null);
-    const lastScanRef = useRef({ token: null, at: 0 });
+    const html5QrRef = useRef<Html5Qrcode | null>(null);
+    const lastScanRef = useRef<{ token: string | null; at: number }>({ token: null, at: 0 });
+
+    // Enumerate available cameras on mount
+    useEffect(() => {
+        Html5Qrcode.getCameras()
+            .then((devices) => {
+                if (devices.length < 2) return;
+                setCameras(devices);
+                const rear = devices.find((d) => /back|rear|trasera|environment/i.test(d.label));
+                setSelectedCameraId((rear ?? devices[0]).id);
+            })
+            .catch(() => {});
+    }, []);
 
     // Load event header info + stats
     const refreshStats = useCallback(async () => {
@@ -105,7 +123,7 @@ export default function EventValidation() {
     }, [eventId, refreshStats]);
 
     // Validate a JWT token against the backend
-    const validateToken = useCallback(async (qrToken) => {
+    const validateToken = useCallback(async (qrToken: string) => {
         if (pendingValidate) return;
         const now = Date.now();
         if (lastScanRef.current.token === qrToken
@@ -137,7 +155,7 @@ export default function EventValidation() {
             ].slice(0, 50));
             playBeep(soundOn ? kind : null);
             if (kind === "valid") refreshStats();
-        } catch (e) {
+        } catch (e: any) {
             // Network / unauthorized → soft warning
             const msg = e?.response?.data?.detail || e?.message;
             setLastResult({ kind: "invalid", reason: msg || "network_error", network: true });
@@ -152,8 +170,10 @@ export default function EventValidation() {
         try {
             const inst = new Html5Qrcode(QR_REGION_ID, { verbose: false });
             html5QrRef.current = inst;
+            const cameraConstraint: string | { facingMode: string } =
+                selectedCameraId || { facingMode: "environment" };
             await inst.start(
-                { facingMode: "environment" },
+                cameraConstraint,
                 {
                     fps: 12,
                     qrbox: { width: 260, height: 260 },
@@ -164,25 +184,26 @@ export default function EventValidation() {
             );
             setScanning(true);
         } catch (e) {
-            toast.error("No pudimos abrir la cámara: " + (e?.message || e));
+            // AbortError fires when the browser aborts video.play() mid-init — harmless.
+            if ((e as any)?.name === "AbortError" || (e as any)?.message?.includes("play()")) return;
+            toast.error("No pudimos abrir la cámara: " + ((e as any)?.message || e));
         }
     };
     const stopScanner = async () => {
         const inst = html5QrRef.current;
+        html5QrRef.current = null; // null first so in-flight callbacks don't fire after unmount
         if (inst) {
             try {
                 await inst.stop();
                 await inst.clear();
             } catch (e) {
-                // html5-qrcode throws "scanner not running" if stopped twice
-                // (e.g. unmount race). Log to dev console without alerting.
-                console.debug("[validation] stopScanner cleanup:", e?.message || e);
+                // html5-qrcode throws "scanner not running" / AbortError if stopped twice — safe to ignore.
+                console.debug("[validation] stopScanner cleanup:", (e as any)?.message || e);
             }
         }
-        html5QrRef.current = null;
         setScanning(false);
     };
-    useEffect(() => () => { stopScanner(); /* unmount cleanup */ }, []);
+    useEffect(() => () => { void stopScanner(); }, []);
 
     const downloadCsv = async () => {
         try {
@@ -287,19 +308,46 @@ export default function EventValidation() {
             {/* Camera */}
             <Card>
                 <CardContent className="p-4 flex flex-col items-center gap-3">
-                    <div
-                        id={QR_REGION_ID}
-                        className="w-full max-w-md aspect-square bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center"
-                        style={{ minHeight: 320 }}
-                        data-testid="qr-reader-region"
-                    >
+                    {/* html5-qrcode injects <video>/<canvas> directly into this div.
+                        React must NEVER render children inside it — the placeholder
+                        is a sibling overlay to avoid removeChild crashes on reconcile. */}
+                    <div className="relative w-full max-w-md" style={{ minHeight: 320 }}>
+                        <div
+                            id={QR_REGION_ID}
+                            className="w-full aspect-square bg-slate-900 rounded-xl overflow-hidden"
+                            style={{ minHeight: 320 }}
+                            data-testid="qr-reader-region"
+                        />
                         {!scanning && (
-                            <div className="text-white text-center p-6">
-                                <Camera className="h-10 w-10 mx-auto mb-2 opacity-70" />
-                                <p className="text-sm opacity-90">Pulsá "Iniciar cámara" para empezar</p>
+                            <div className="absolute inset-0 flex items-center justify-center text-white text-center p-6 pointer-events-none rounded-xl">
+                                <div>
+                                    <Camera className="h-10 w-10 mx-auto mb-2 opacity-70" />
+                                    <p className="text-sm opacity-90">Pulsá "Iniciar cámara" para empezar</p>
+                                </div>
                             </div>
                         )}
                     </div>
+                    {cameras.length > 1 && (
+                        <div className="w-full max-w-md">
+                            <Select
+                                value={selectedCameraId}
+                                onValueChange={setSelectedCameraId}
+                                disabled={scanning}
+                            >
+                                <SelectTrigger className="h-9">
+                                    <SwitchCamera className="h-3.5 w-3.5 mr-1.5 shrink-0 text-muted-foreground" />
+                                    <SelectValue placeholder="Seleccionar cámara" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {cameras.map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>
+                                            {c.label || `Cámara ${c.id.slice(-4)}`}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
                     <div className="flex gap-2 w-full max-w-md">
                         {!scanning ? (
                             <Button onClick={startScanner} className="flex-1" data-testid="start-camera">
@@ -364,7 +412,7 @@ export default function EventValidation() {
     );
 }
 
-function StatBox({ label, value, accent }) {
+function StatBox({ label, value, accent = "" }: { label: string; value: any; accent?: string }) {
     const color = accent === "red" ? "text-red-600" : "text-primary";
     return (
         <Card>
@@ -376,7 +424,7 @@ function StatBox({ label, value, accent }) {
     );
 }
 
-function ResultBody({ result, onClose }) {
+function ResultBody({ result, onClose }: { result: any; onClose: () => void }) {
     // Auto-dismiss after 3s
     useEffect(() => {
         const t = setTimeout(onClose, 3000);

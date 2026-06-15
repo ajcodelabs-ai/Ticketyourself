@@ -13,7 +13,7 @@ export default function RichTextEditor({
     onChange,
     placeholder = "Escribí aquí…",
     disabled = false,
-    className,
+    className = undefined,
     testid,
 }) {
     const editor = useEditor({
@@ -46,7 +46,7 @@ export default function RichTextEditor({
 
     if (!editor) return null;
 
-    const ToolBtn = ({ onClick, active, children, title }) => (
+    const ToolBtn = ({ onClick, active = false, children, title }) => (
         <Button
             type="button"
             variant="ghost"

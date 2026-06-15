@@ -124,16 +124,20 @@ async def _handle_event(
             order["id"],
             {"source": source, "order_number": order["order_number"]},
         )
-        try:
-            from db_helpers import get_event_by_id, get_organizer_by_id
-            event = await get_event_by_id(order["event_id"])
-            organizer = await get_organizer_by_id(order["organizer_id"]) or {}
-            from services.email_service import send_purchase_confirmation
-            await send_purchase_confirmation(
-                order=finalized, event=event, organizer=organizer, tickets=tickets
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed sending purchase confirmation")
+        # Fire-and-forget: email must not delay webhook response to Stripe
+        import asyncio
+        async def _send_confirmation():
+            try:
+                from db_helpers import get_event_by_id, get_organizer_by_id
+                _event = await get_event_by_id(order["event_id"])
+                _org = await get_organizer_by_id(order["organizer_id"]) or {}
+                from services.email_service import send_purchase_confirmation
+                await send_purchase_confirmation(
+                    order=finalized, event=_event, organizer=_org, tickets=tickets
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed sending purchase confirmation")
+        asyncio.create_task(_send_confirmation())
         return
 
     if event_type == "checkout.session.completed":

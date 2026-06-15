@@ -29,6 +29,8 @@ import { toast } from "sonner";
 import EventVenueSection from "@/components/events/EventVenueSection";
 import DiscountRulesPanel from "@/components/events/DiscountRulesPanel";
 import EventContentPanel from "@/components/events/EventContentPanel";
+import TicketTypesPanel from "@/components/events/TicketTypesPanel";
+import EventFunctionsPanel from "@/components/events/EventFunctionsPanel";
 import ImageDropzone from "@/components/ui/ImageDropzone";
 import SortableGallery from "@/components/ui/SortableGallery";
 import { defaultEventContent, normalizeEventContent } from "@/lib/eventContent";
@@ -118,6 +120,8 @@ const STEPS = [
     { id: "info", label: "Información general" },
     { id: "content", label: "Contenido" },
     { id: "venue_localidades", label: "Venue y localidades" },
+    { id: "tipos_ticket", label: "Tipos de ticket" },
+    { id: "funciones", label: "Funciones" },
     { id: "media", label: "Media" },
     { id: "payments", label: "Formas de pago" },
     { id: "discounts", label: "Descuentos" },
@@ -193,6 +197,9 @@ function makeInitial(d) {
             discounts: defaultDiscounts(),
             access_params: defaultAccessParams(),
             content: defaultEventContent(),
+            ticket_delivery_mode: "al_momento",
+            ticket_delivery_hours: "",
+            ticket_delivery_at: "",
         };
     }
     const startsIso = d.starts_at || null;
@@ -234,10 +241,13 @@ function makeInitial(d) {
         discounts: d.discounts || defaultDiscounts(),
         access_params: d.access_params || defaultAccessParams(),
         content: normalizeEventContent(d.content),
+        ticket_delivery_mode: d.ticket_delivery_mode || "al_momento",
+        ticket_delivery_hours: d.ticket_delivery_hours != null ? String(d.ticket_delivery_hours) : "",
+        ticket_delivery_at: d.ticket_delivery_at ? isoToLocalInput(d.ticket_delivery_at) : "",
     };
 }
 
-export default function EventWizard({ initial, mode = "create" }) {
+export default function EventWizard({ initial = null, mode = "create" }) {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const [form, setForm] = useState(() => makeInitial(initial));
@@ -535,6 +545,15 @@ export default function EventWizard({ initial, mode = "create" }) {
                         onJumpToInfo={() => handleTabChange("info")}
                     />
                 </TabsContent>
+                <TabsContent value="tipos_ticket" className="mt-4">
+                    <TicketTypesPanel
+                        eventId={eventId}
+                        localities={venueLocalities}
+                    />
+                </TabsContent>
+                <TabsContent value="funciones" className="mt-4">
+                    <EventFunctionsPanel eventId={eventId} />
+                </TabsContent>
                 <TabsContent value="media" className="mt-4">
                     <SectionMedia
                         poster={poster}
@@ -606,7 +625,7 @@ export default function EventWizard({ initial, mode = "create" }) {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function evalStepStatus(form, poster, currentEvent) {
-    const s = {};
+    const s: Record<string, string> = {};
     const titleOk = form.title?.length >= 2;
     const startsOk = !!form.starts_at;
     // Duration is "ok" if a preset other than custom is picked, or custom with positive minutes.
@@ -684,6 +703,15 @@ function buildPayload(form) {
         discounts: form.discounts,
         access_params: form.access_params,
         content: form.content,
+        ticket_delivery_mode: form.ticket_delivery_mode || "al_momento",
+        ticket_delivery_hours:
+            form.ticket_delivery_mode === "horas_antes" && form.ticket_delivery_hours
+                ? parseInt(form.ticket_delivery_hours, 10)
+                : null,
+        ticket_delivery_at:
+            form.ticket_delivery_mode === "fecha_especifica" && form.ticket_delivery_at
+                ? localInputToIso(form.ticket_delivery_at)
+                : null,
     };
 }
 
@@ -1400,6 +1428,7 @@ function SectionMedia({
     onUpload,
     onDeleteGallery,
     onReorderGallery,
+    eventId: _eventId,
 }) {
     return (
         <div className="space-y-5" data-testid="section-media">
@@ -1633,7 +1662,7 @@ function SectionPayments({ form, update }) {
     );
 }
 
-function PaymentRow({ title, description, checked, onChange, disabled, testid, children }) {
+function PaymentRow({ title, description, checked, onChange = undefined, disabled = false, testid, children = null }) {
     return (
         <div className="rounded-lg border p-4" data-testid={testid}>
             <div className="flex items-start justify-between gap-3">
@@ -1743,6 +1772,7 @@ function SectionDiscounts({ form, update, venueLocalities = [] }) {
 // ── Section: Access ─────────────────────────────────────────────────────────
 function SectionAccess({ form, update }) {
     const ap = form.access_params;
+    const deliveryMode = form.ticket_delivery_mode || "al_momento";
     return (
         <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="section-access">
             <Field label="Visibilidad">
@@ -1849,6 +1879,67 @@ function SectionAccess({ form, update }) {
                     data-testid="access-show-name"
                 />
             </div>
+
+            {/* eTicket delivery */}
+            <div className="rounded-lg border p-4 space-y-3">
+                <div>
+                    <div className="font-medium text-sm">Envío del eTicket (QR)</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                        Define cuándo se envían los QR por email al comprador.
+                    </div>
+                </div>
+                <Field label="Modo de envío">
+                    <Select
+                        value={deliveryMode}
+                        onValueChange={(v) => update("ticket_delivery_mode", v)}
+                    >
+                        <SelectTrigger data-testid="access-delivery-mode">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="al_momento">
+                                Al momento de la compra
+                            </SelectItem>
+                            <SelectItem value="horas_antes">
+                                X horas antes del evento
+                            </SelectItem>
+                            <SelectItem value="fecha_especifica">
+                                En una fecha específica
+                            </SelectItem>
+                            <SelectItem value="manual">
+                                Manual — el organizador los envía
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
+                </Field>
+                {deliveryMode === "horas_antes" && (
+                    <Field label="Horas antes del evento">
+                        <Input
+                            type="number"
+                            min="1"
+                            max="720"
+                            value={form.ticket_delivery_hours}
+                            onChange={(e) =>
+                                update("ticket_delivery_hours", e.target.value)
+                            }
+                            placeholder="24"
+                            data-testid="access-delivery-hours"
+                        />
+                    </Field>
+                )}
+                {deliveryMode === "fecha_especifica" && (
+                    <Field label="Fecha y hora de envío">
+                        <Input
+                            type="datetime-local"
+                            value={form.ticket_delivery_at}
+                            onChange={(e) =>
+                                update("ticket_delivery_at", e.target.value)
+                            }
+                            data-testid="access-delivery-at"
+                        />
+                    </Field>
+                )}
+            </div>
         </div>
     );
 }
@@ -1863,7 +1954,7 @@ function SubHeader({ icon, title }) {
     );
 }
 
-function Field({ label, children, testId }) {
+function Field({ label, children, testId = undefined }) {
     return (
         <div className="space-y-1.5" data-testid={testId}>
             <Label>{label}</Label>

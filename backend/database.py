@@ -13,12 +13,20 @@ from sqlalchemy.orm import DeclarativeBase
 
 DATABASE_URL = os.environ["DATABASE_URL"]  # postgresql+asyncpg://user:pass@host/db
 
+# PgBouncer in transaction mode requires prepared statements to be disabled.
+# asyncpg caches prepared statements by default; setting statement_cache_size=0
+# disables that cache so every connection from the pool is PgBouncer-safe.
+_connect_args = {}
+if os.environ.get("PGBOUNCER", "").lower() in ("1", "true", "yes"):
+    _connect_args = {"statement_cache_size": 0, "prepared_statement_cache_size": 0}
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=5,       # PgBouncer multiplexes; keep SQLAlchemy pool small
+    max_overflow=10,
+    connect_args=_connect_args,
 )
 
 AsyncSessionLocal = async_sessionmaker(

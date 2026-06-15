@@ -300,7 +300,7 @@ function DoorAccessSection({ event, scanStats }) {
     );
 }
 
-function DoorMetric({ label, value, sub, accent, icon, testid }) {
+function DoorMetric({ label, value, sub, testid, accent = undefined, icon = undefined }) {
     const accentClass =
         accent === "emerald"
             ? "text-emerald-600"
@@ -804,7 +804,7 @@ function ManualPaymentDialog({ order, event, onClose, onChanged }) {
     );
 }
 
-function Row({ label, value, bold, extra }) {
+function Row({ label, value, bold = false, extra = null }) {
     return (
         <div className="flex justify-between gap-2 text-sm">
             <span className="text-muted-foreground">{label}</span>

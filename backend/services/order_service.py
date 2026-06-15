@@ -209,6 +209,8 @@ async def create_order_skeleton(
     payment_method: str = "stripe",
     seat_ids: list[str] | None = None,
     seat_holds_session_token: str | None = None,
+    function_id: str | None = None,
+    items_override: list[dict] | None = None,
 ) -> dict:
     from database import AsyncSessionLocal
     from orm_models import TicketOrder
@@ -237,11 +239,20 @@ async def create_order_skeleton(
 
     order_id = str(uuid.uuid4())
     order_number = await _next_order_number()
+    order_token = str(uuid.uuid4())  # Guest access token — unguessable UUID v4
     now = _now()
+
+    order_items = items_override if items_override else [{
+        "ticket_type": "general",
+        "quantity": quantity,
+        "unit_price_cents": totals["unit_price_cents"],
+        "subtotal_cents": totals["subtotal_cents"],
+    }]
 
     row = TicketOrder(
         id=order_id,
         order_number=order_number,
+        order_token=order_token,
         event_id=event["id"],
         organizer_id=organizer["id"],
         tenant_slug=organizer.get("slug"),
@@ -257,12 +268,8 @@ async def create_order_skeleton(
         donation_amount_cents=totals.get("donation_amount_cents") or None,
         discount_total_cents=int(totals.get("discount_total_cents") or 0),
         discounts_applied=totals.get("discounts_applied") or [],
-        items=[{
-            "ticket_type": "general",
-            "quantity": quantity,
-            "unit_price_cents": totals["unit_price_cents"],
-            "subtotal_cents": totals["subtotal_cents"],
-        }],
+        items=order_items,
+        function_id=function_id,
         seat_ids=seat_ids or None,
         seat_holds_session_token=seat_holds_session_token,
         manual_payment_info=(

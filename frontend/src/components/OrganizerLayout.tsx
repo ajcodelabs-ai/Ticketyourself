@@ -16,6 +16,7 @@ import {
     Menu,
     ChevronDown,
     User as UserIcon,
+    Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,6 +53,13 @@ const NAV_ITEMS = [
         label: "Microsite",
         icon: Palette,
         testid: "nav-microsite",
+    },
+    {
+        to: "/app/staff",
+        label: "Staff",
+        icon: Users,
+        testid: "nav-staff",
+        match: (p: string) => p.startsWith("/app/staff"),
     },
     {
         to: "/app/configuracion",
@@ -134,7 +142,7 @@ export default function OrganizerLayout({ children }) {
     );
 }
 
-function SidebarBody({ organizer, onItemClick }) {
+function SidebarBody({ organizer, onItemClick = undefined }) {
     const location = useLocation();
     return (
         <div className="flex flex-col h-full">

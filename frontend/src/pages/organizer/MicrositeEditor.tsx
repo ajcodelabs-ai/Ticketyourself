@@ -361,7 +361,8 @@ export default function MicrositeEditor() {
                             </TabsContent>
 
                             <TabsContent value="content" className="space-y-4">
-                                {[
+                                {(
+                                    [
                                     ["hero_title", "Título del hero"],
                                     ["hero_subtitle", "Subtítulo del hero", true],
                                     ["hero_cta_text", "Texto del botón principal"],
@@ -370,7 +371,8 @@ export default function MicrositeEditor() {
                                     ["contact_email", "Email de contacto"],
                                     ["contact_phone", "Teléfono de contacto"],
                                     ["address", "Dirección"],
-                                ].map(([key, label, textarea]) => (
+                                ] as [string, string, boolean?][]
+                                ).map(([key, label, textarea]) => (
                                     <ContentField
                                         key={key}
                                         label={label}
@@ -384,11 +386,11 @@ export default function MicrositeEditor() {
                             </TabsContent>
 
                             <TabsContent value="social" className="space-y-3">
-                                {Object.entries(microsite.social_links).map(([k, v]) => (
+                                {Object.entries(microsite.social_links).map(([k, rawValue]) => (
                                     <div key={k} className="space-y-2">
                                         <Label className="capitalize">{k}</Label>
                                         <Input
-                                            value={v || ""}
+                                            value={typeof rawValue === "string" ? rawValue : ""}
                                             placeholder={k === "whatsapp" ? "+593..." : "https://..."}
                                             onChange={(e) =>
                                                 pushUpdate({ social_links: { [k]: e.target.value } })
@@ -400,14 +402,14 @@ export default function MicrositeEditor() {
                             </TabsContent>
 
                             <TabsContent value="sections" className="space-y-3">
-                                {Object.entries(microsite.sections_enabled).map(([k, v]) => (
+                                {Object.entries(microsite.sections_enabled).map(([k, enabled]) => (
                                     <div
                                         key={k}
                                         className="flex items-center justify-between rounded-lg border p-3"
                                     >
                                         <Label className="capitalize cursor-pointer">{k}</Label>
                                         <Switch
-                                            checked={v}
+                                            checked={Boolean(enabled)}
                                             onCheckedChange={(c) =>
                                                 pushUpdate({ sections_enabled: { [k]: c } })
                                             }

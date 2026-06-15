@@ -27,7 +27,7 @@ function periodLabel(plan) {
     return "";
 }
 
-export function PlanCard({ plan, ctaLabel, onSelect, selected = false, compact = false }) {
+export function PlanCard({ plan, ctaLabel = "Elegir plan", onSelect = undefined, selected = false, compact = false }) {
     const isPopular = plan.code === POPULAR_PLAN_CODE;
     return (
         <div

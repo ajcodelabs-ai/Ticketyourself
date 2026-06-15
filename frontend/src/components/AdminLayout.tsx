@@ -115,7 +115,7 @@ export default function AdminLayout({ children }) {
     );
 }
 
-function SidebarBody({ onItemClick }) {
+function SidebarBody({ onItemClick = undefined }) {
     const location = useLocation();
     return (
         <div className="flex flex-col h-full">

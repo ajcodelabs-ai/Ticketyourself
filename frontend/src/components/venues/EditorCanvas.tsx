@@ -12,11 +12,81 @@
  */
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Stage, Layer, Rect, Line, Group, Transformer } from "react-konva";
+import type Konva from "konva";
 import { Maximize2 } from "lucide-react";
 import ElementShape from "./ElementShape";
 import { GRID, elementBBox, bboxIntersects } from "@/lib/venues";
 
 const ALIGN_TOLERANCE = 5; // px in world space — must be reachable visually
+
+interface DragSnapInfo {
+    startX: number;
+    startY: number;
+}
+
+interface DragSnapshot {
+    anchorId: string;
+    anchorStartX: number;
+    anchorStartY: number;
+    snap: Record<string, DragSnapInfo>;
+}
+
+interface MarqueeState {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    additive: boolean;
+}
+
+interface GuideLine {
+    type: "v" | "h";
+    pos: number;
+}
+
+interface SelectOptions {
+    additive?: boolean;
+    replace?: boolean;
+}
+
+interface ContextMenuPayload {
+    elementId: string;
+    screenX: number;
+    screenY: number;
+}
+
+interface VenueCanvasElement {
+    id: string;
+    kind: string;
+    x: number;
+    y: number;
+    locality_id?: string | null;
+    width?: number;
+    height?: number;
+    table_radius?: number;
+    seats_count?: number;
+    seat_spacing?: number;
+    seat_radius?: number;
+    curve_radius?: number;
+    rotation?: number;
+    [key: string]: unknown;
+}
+
+interface EditorCanvasProps {
+    canvas: { width: number; height: number; background_color?: string };
+    elements: VenueCanvasElement[];
+    localitiesById: Record<string, Record<string, unknown>>;
+    selection: string[];
+    onSelect: (ids: string[], options?: SelectOptions) => void;
+    onUpdate: (id: string, patch: Record<string, unknown>) => void;
+    onBatchUpdate?: (patches: Record<string, Record<string, unknown>>) => void;
+    onTransform?: (id: string, patch: Record<string, unknown>) => void;
+    onContextMenu?: (payload: ContextMenuPayload) => void;
+    tool?: string;
+    onCanvasClick?: (tool: string, world: { x: number; y: number }) => void;
+    readOnly?: boolean;
+    height?: number;
+}
 
 function snapVal(v) {
     return Math.round(v / GRID) * GRID;
@@ -54,18 +124,18 @@ export default function EditorCanvas({
     onCanvasClick,
     readOnly = false,
     height = 600,
-}) {
-    const containerRef = useRef(null);
-    const stageRef = useRef(null);
-    const transformerRef = useRef(null);
-    const elementRefs = useRef({});
+}: EditorCanvasProps) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const stageRef = useRef<Konva.Stage>(null);
+    const transformerRef = useRef<Konva.Transformer>(null);
+    const elementRefs = useRef<Record<string, Konva.Group>>({});
 
     const [containerSize, setContainerSize] = useState({ width: 800, height });
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
-    const [marquee, setMarquee] = useState(null); // {x,y,w,h, additive}
-    const [guides, setGuides] = useState([]); // [{type: 'v'|'h', pos}]
-    const dragSnapshot = useRef(null); // {anchorId, dxFromAnchor[id]={dx, dy}}
+    const [marquee, setMarquee] = useState<MarqueeState | null>(null);
+    const [guides, setGuides] = useState<GuideLine[]>([]);
+    const dragSnapshot = useRef<DragSnapshot | null>(null);
 
     // Container size + ResizeObserver for responsive width
     useEffect(() => {
@@ -226,7 +296,7 @@ export default function EditorCanvas({
     };
 
     // ── Group drag handling ──────────────────────────────────────────────
-    const handleElementDragStart = (el, node) => {
+    const handleElementDragStart = (el: VenueCanvasElement, node: Konva.Node) => {
         // Multi-select + Transformer causes position desync; detach while dragging.
         const tr = transformerRef.current;
         if (tr && selection.length > 1) {
@@ -234,7 +304,7 @@ export default function EditorCanvas({
             tr.getLayer()?.batchDraw();
         }
         const selectedIds = selection.includes(el.id) ? selection : [el.id];
-        const snap = {};
+        const snap: Record<string, DragSnapInfo> = {};
         selectedIds.forEach((id) => {
             const other = elements.find((x) => x.id === id);
             if (other) snap[id] = { startX: other.x, startY: other.y };
@@ -248,7 +318,7 @@ export default function EditorCanvas({
         setGuides([]);
     };
 
-    const handleElementDragMove = (el, node) => {
+    const handleElementDragMove = (el: VenueCanvasElement, node: Konva.Node) => {
         if (!dragSnapshot.current) {
             handleElementDragStart(el, node);
         }
@@ -258,7 +328,7 @@ export default function EditorCanvas({
         // Alignment snap (anchor element to neighbors)
         let snappedDx = dx;
         let snappedDy = dy;
-        const activeGuides = [];
+        const activeGuides: GuideLine[] = [];
         const anchorEl = el;
         const anchorWorldX = anchorEl.x + dx;
         const anchorWorldY = anchorEl.y + dy;
@@ -316,7 +386,7 @@ export default function EditorCanvas({
         node.getLayer()?.batchDraw();
     };
 
-    const handleElementDragEnd = (el, x, y) => {
+    const handleElementDragEnd = (el: VenueCanvasElement, x: number, y: number) => {
         const snap = dragSnapshot.current?.snap;
         const multi = snap && Object.keys(snap).length > 1;
 
@@ -324,7 +394,7 @@ export default function EditorCanvas({
             const origin = snap[el.id] || { startX: el.x, startY: el.y };
             const dx = x - origin.startX;
             const dy = y - origin.startY;
-            const patches = {};
+            const patches: Record<string, Record<string, unknown>> = {};
             Object.entries(snap).forEach(([id, info]) => {
                 patches[id] = {
                     x: snapVal(info.startX + dx),
@@ -369,7 +439,7 @@ export default function EditorCanvas({
             // Reset visual scale (we encode it in width/seats_count instead).
             node.scaleX(1);
             node.scaleY(1);
-            const patch = { x: snapVal(x), y: snapVal(y), rotation: rot };
+            const patch: Record<string, unknown> = { x: snapVal(x), y: snapVal(y), rotation: rot };
             if (el.kind === "stage" || el.kind === "unnumbered_zone") {
                 patch.width = Math.max(20, Math.round((el.width || 100) * sx));
                 patch.height = Math.max(20, Math.round((el.height || 100) * sy));
@@ -418,7 +488,7 @@ export default function EditorCanvas({
         }
     }
 
-    const handleContextMenu = (e, el) => {
+    const handleContextMenu = (e: Konva.KonvaEventObject<PointerEvent>, el: VenueCanvasElement) => {
         e.evt.preventDefault();
         const stage = stageRef.current;
         const container = containerRef.current;
@@ -483,7 +553,7 @@ export default function EditorCanvas({
                                 else delete elementRefs.current[el.id];
                             }}
                             element={el}
-                            locality={localitiesById[el.locality_id]}
+                            locality={el.locality_id ? localitiesById[el.locality_id] : undefined}
                             selected={selection.includes(el.id)}
                             draggable={!readOnly && (!tool || tool === "select")}
                             onClick={(e) => {

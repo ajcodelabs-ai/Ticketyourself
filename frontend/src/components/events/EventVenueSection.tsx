@@ -27,9 +27,9 @@ import api from "@/lib/api";
 import { venuesApi } from "@/lib/venues";
 import EditorCanvas from "@/components/venues/EditorCanvas";
 
-function activeLocalityIds(venue) {
-    const out = new Set();
-    for (const el of venue?.elements || []) if (el.locality_id) out.add(el.locality_id);
+function activeLocalityIds(venue): Set<string> {
+    const out = new Set<string>();
+    for (const el of venue?.elements || []) if (el.locality_id) out.add(el.locality_id as string);
     return out;
 }
 
@@ -63,7 +63,7 @@ function VenueCard({ venue, selected, onSelect }) {
     );
 }
 
-export default function EventVenueSection({ event, disabled, onUpdated, onReturnFromVenueCreate }) {
+export default function EventVenueSection({ event, disabled, onUpdated, onReturnFromVenueCreate = undefined }) {
     const [venues, setVenues] = useState([]);
     const [linkedVenue, setLinkedVenue] = useState(null);
     const [loadingLink, setLoadingLink] = useState(false);
@@ -205,15 +205,18 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
         const activeIds = activeLocalityIds(linkedVenue);
         const body = {
             venue_id: linkedVenue.id,
-            locality_pricing: Array.from(activeIds).map((id) => ({
-                locality_id: id,
-                price_cents: Math.max(0, parseInt(pricing[id]?.price_cents ?? 0, 10) || 0),
+            locality_pricing: Array.from(activeIds).map((id) => {
+                const locId = String(id);
+                return {
+                locality_id: locId,
+                price_cents: Math.max(0, parseInt(pricing[locId]?.price_cents ?? 0, 10) || 0),
                 max_tickets_per_purchase:
-                    pricing[id]?.max_per_purchase != null
-                        ? Math.max(1, parseInt(pricing[id].max_per_purchase, 10) || 0) ||
+                    pricing[locId]?.max_per_purchase != null
+                        ? Math.max(1, parseInt(pricing[locId].max_per_purchase, 10) || 0) ||
                           null
                         : null,
-            })),
+            };
+            }),
             seat_holds_window_minutes: 10,
         };
         await persistLink(body);

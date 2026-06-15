@@ -29,7 +29,7 @@ const SOCIAL_ICON = {
     whatsapp: MessageCircle,
 };
 
-function HeroBlock({ microsite, variant }) {
+function HeroBlock({ microsite, variant = undefined }) {
     const { content, branding } = microsite;
     const banner = assetUrl(branding.banner_url);
     const logo = assetUrl(branding.logo_url);
@@ -295,7 +295,8 @@ function SocialFooter({ microsite }) {
                     © {new Date().getFullYear()} · Construido con Ticket Yourself
                 </div>
                 <div className="flex gap-3">
-                    {entries.map(([k, v]) => {
+                    {entries.map(([k, rawUrl]) => {
+                        const v = String(rawUrl ?? "");
                         const Icon = SOCIAL_ICON[k] || MessageCircle;
                         const href = k === "whatsapp" && !v.startsWith("http")
                             ? `https://wa.me/${v.replace(/[^0-9]/g, "")}`
@@ -379,7 +380,7 @@ const TEMPLATES = {
     evento_unico: EventoUnicoTemplate,
 };
 
-export default function MicrositeRenderer({ microsite, tenantSlug }) {
+export default function MicrositeRenderer({ microsite, tenantSlug = undefined }) {
     if (!microsite) return null;
     const Template = TEMPLATES[microsite.template] || EstandarTemplate;
     const slug = tenantSlug || microsite.tenant_slug || microsite.slug;
@@ -388,8 +389,10 @@ export default function MicrositeRenderer({ microsite, tenantSlug }) {
             data-testid="microsite-root"
             style={{
                 fontFamily: fontStackFor(microsite.branding.font_family),
-                "--ms-primary": microsite.branding.primary_color,
-                "--ms-secondary": microsite.branding.secondary_color,
+                ...({
+                    "--ms-primary": microsite.branding.primary_color,
+                    "--ms-secondary": microsite.branding.secondary_color,
+                } as Record<string, string>),
             }}
         >
             <Template microsite={microsite} tenantSlug={slug} />

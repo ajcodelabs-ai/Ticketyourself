@@ -2,8 +2,8 @@
  * Numbered-event seat selection section (Phase 7).
  * Used inside EventPublic when `event.venue_id` is set.
  */
-import { useEffect, useMemo, useState, useCallback } from "react";
-import { Loader2, Ticket, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { Loader2, Ticket, Trash2, Clock, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -15,6 +15,36 @@ import {
 
 const REFRESH_MS = 15_000;
 
+// ── Hold countdown ───────────────────────────────────────────────────────────
+function HoldCountdown({ expiresAt, onExpire }: { expiresAt: string; onExpire: () => void }) {
+    const [secondsLeft, setSecondsLeft] = useState(() =>
+        Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
+    );
+    const onExpireRef = useRef(onExpire);
+    onExpireRef.current = onExpire;
+
+    useEffect(() => {
+        if (secondsLeft <= 0) { onExpireRef.current(); return; }
+        const t = setInterval(() => {
+            setSecondsLeft((s) => {
+                if (s <= 1) { clearInterval(t); onExpireRef.current(); return 0; }
+                return s - 1;
+            });
+        }, 1000);
+        return () => clearInterval(t);
+    }, [expiresAt]); // re-run only if expiresAt changes (new hold)
+
+    const min = Math.floor(secondsLeft / 60);
+    const sec = secondsLeft % 60;
+    const warning = secondsLeft < 120;
+    return (
+        <span className={`inline-flex items-center gap-1 font-mono font-semibold ${warning ? "text-amber-600" : "text-emerald-600"}`}>
+            {warning ? <AlertTriangle className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
+            {min}:{sec.toString().padStart(2, "0")}
+        </span>
+    );
+}
+
 export default function NumberedSeatSection({
     tenantSlug, event, onLaunchPurchase,
 }) {
@@ -23,6 +53,7 @@ export default function NumberedSeatSection({
     const [holdsLoading, setHoldsLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [sessionToken] = useState(() => getOrCreateSessionToken());
+    const [activeHoldExpiresAt, setActiveHoldExpiresAt] = useState<string | null>(null);
 
     const localitiesById = useMemo(
         () => Object.fromEntries((event.venue?.localities || []).map((l) => [l.id, l])),
@@ -80,6 +111,7 @@ export default function NumberedSeatSection({
             // Refresh seat status with response payload
             if (res.data?.seats_status) setSeatsStatus(res.data.seats_status);
             const expiresAt = res.data?.expires_at;
+            setActiveHoldExpiresAt(expiresAt || null);
             onLaunchPurchase({
                 seat_ids: selected.map((s) => s.seat_id),
                 seats: selected,
@@ -263,7 +295,22 @@ export default function NumberedSeatSection({
                             Reservar y continuar
                         </Button>
                         <p className="text-[10px] text-center text-muted-foreground">
-                            Te reservamos los asientos por 10 minutos.
+                            {activeHoldExpiresAt ? (
+                                <>
+                                    Reserva activa — tiempo restante:{" "}
+                                    <HoldCountdown
+                                        expiresAt={activeHoldExpiresAt}
+                                        onExpire={() => {
+                                            setActiveHoldExpiresAt(null);
+                                            setSelected([]);
+                                            refreshSeats();
+                                            toast.warning("Tu reserva de asientos venció. Elegí nuevamente.");
+                                        }}
+                                    />
+                                </>
+                            ) : (
+                                "Te reservamos los asientos por 10 minutos."
+                            )}
                         </p>
                     </div>
                 </aside>

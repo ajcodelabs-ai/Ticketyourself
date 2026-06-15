@@ -192,6 +192,10 @@ class EventBase(BaseModel):
     discounts: Optional[EventDiscounts] = None
     access_params: Optional[EventAccessParams] = None
     content: Optional[EventContent] = None
+    # eTicket delivery
+    ticket_delivery_mode: Optional[str] = Field(default="al_momento", max_length=20)
+    ticket_delivery_hours: Optional[int] = Field(default=None, ge=1)
+    ticket_delivery_at: Optional[datetime] = None
 
     @field_validator("ends_at")
     @classmethod
@@ -232,6 +236,10 @@ class EventUpdate(BaseModel):
     discounts: Optional[EventDiscounts] = None
     access_params: Optional[EventAccessParams] = None
     content: Optional[EventContent] = None
+    # eTicket delivery
+    ticket_delivery_mode: Optional[str] = Field(default=None, max_length=20)
+    ticket_delivery_hours: Optional[int] = Field(default=None, ge=1)
+    ticket_delivery_at: Optional[datetime] = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

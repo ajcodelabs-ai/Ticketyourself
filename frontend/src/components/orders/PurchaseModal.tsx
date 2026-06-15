@@ -1,16 +1,28 @@
 /**
  * PurchaseModal — public ticket purchase flow.
  *
- * - free events: confirms instantly and redirects to /o/:slug/orden/:order_number.
- * - paid events: collects qty + buyer info, calls /public/orders → redirects to
- *   Stripe checkout_url.
- * - donation: lets buyer pick amount (min $1), single ticket.
+ * Phase 8 additions:
+ *  - Function selector when event.is_multi_function === true
+ *  - Ticket type quantity selectors (replaces the single qty picker when types exist)
+ *  - function_id + ticket_type_selections forwarded to /public/orders
  *
- * No auth — buyer just provides name + email.
+ * Existing behavior preserved:
+ *  - free / donation / seat-numbered events
+ *  - promo codes, payment method selector, buyer info
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, Ticket as TicketIcon, ShieldCheck, Tag } from "lucide-react";
+import {
+    Loader2,
+    Ticket as TicketIcon,
+    ShieldCheck,
+    Tag,
+    CalendarRange,
+    Plus,
+    Minus,
+    Clock,
+    AlertTriangle,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
     Dialog,
@@ -31,10 +43,76 @@ import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders
 const FEE_PERCENT = 5;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Returns list of payment_method codes that are enabled on the event. */
 function activeMethodsFor(event) {
     const pm = event?.payment_methods || {};
     return ["stripe", "transfer", "cash"].filter((k) => pm[k]?.enabled);
+}
+
+interface TicketTypeItem {
+    id: string;
+    name: string;
+    description?: string;
+    price_cents: number;
+    currency: string;
+    capacity?: number;
+    color?: string;
+    is_on_sale?: boolean;
+    is_sold_out?: boolean;
+    is_early_bird?: boolean;
+    max_per_buyer?: number;
+}
+
+interface EventFunction {
+    id: string;
+    name: string;
+    starts_at?: string;
+    venue_name?: string;
+    venue_city?: string;
+    status: string;
+}
+
+function fmtDate(iso?: string): string {
+    if (!iso) return "";
+    try {
+        return new Date(iso).toLocaleString("es", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+        });
+    } catch {
+        return iso;
+    }
+}
+
+function HoldCountdown({ expiresAt, onExpire }: { expiresAt: string; onExpire: () => void }) {
+    const [secondsLeft, setSecondsLeft] = useState(() =>
+        Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
+    );
+    const onExpireRef = useRef(onExpire);
+    onExpireRef.current = onExpire;
+
+    useEffect(() => {
+        if (secondsLeft <= 0) { onExpireRef.current(); return; }
+        const t = setInterval(() => {
+            setSecondsLeft((s) => {
+                if (s <= 1) { clearInterval(t); onExpireRef.current(); return 0; }
+                return s - 1;
+            });
+        }, 1000);
+        return () => clearInterval(t);
+    }, [expiresAt]);
+
+    const min = Math.floor(secondsLeft / 60);
+    const sec = secondsLeft % 60;
+    const warning = secondsLeft < 120;
+    return (
+        <span className={`inline-flex items-center gap-1 font-mono text-sm font-semibold ${warning ? "text-amber-600 animate-pulse" : "text-emerald-600"}`}>
+            {warning ? <AlertTriangle className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
+            {min}:{sec.toString().padStart(2, "0")}
+        </span>
+    );
 }
 
 export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, seatHoldsInfo }) {
@@ -45,9 +123,18 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
     const activeMethods = useMemo(() => {
         if (pricingType === "free") return [];
         const m = activeMethodsFor(event);
-        return m.length ? m : ["stripe"]; // safety fallback
+        return m.length ? m : ["stripe"];
     }, [event, pricingType]);
 
+    // ── Phase 8: ticket types + functions ────────────────────────────────────
+    const [ticketTypes, setTicketTypes] = useState<TicketTypeItem[]>([]);
+    const [functions, setFunctions] = useState<EventFunction[]>([]);
+    const [loadingMeta, setLoadingMeta] = useState(false);
+    const [selectedFunctionId, setSelectedFunctionId] = useState<string | null>(null);
+    // qty per ticket type id
+    const [typeQty, setTypeQty] = useState<Record<string, number>>({});
+
+    // ── Classic fields ────────────────────────────────────────────────────────
     const [quantity, setQuantity] = useState(1);
     const [donation, setDonation] = useState("");
     const [paymentMethod, setPaymentMethod] = useState("stripe");
@@ -58,11 +145,53 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
         document_id: "",
     });
     const [submitting, setSubmitting] = useState(false);
-    const [errors, setErrors] = useState({});
-    // Phase 9.5 — promo code (Bloque E)
+    const [errors, setErrors] = useState<Record<string, string>>({});
     const [promoCodeInput, setPromoCodeInput] = useState("");
-    const [appliedPromo, setAppliedPromo] = useState(null); // {code, name, amount_cents}
+    const [appliedPromo, setAppliedPromo] = useState<{
+        code: string;
+        name: string;
+        amount_cents: number;
+    } | null>(null);
     const [applyingPromo, setApplyingPromo] = useState(false);
+
+    // Load ticket types + functions when modal opens
+    useEffect(() => {
+        if (!open || !event?.id) return;
+        let alive = true;
+        setLoadingMeta(true);
+        setTicketTypes([]);
+        setFunctions([]);
+        setTypeQty({});
+        setSelectedFunctionId(null);
+
+        const loadTypes = api
+            .get(`/public/events/${event.id}/ticket-types`)
+            .then((r) => {
+                if (!alive) return;
+                const available = (r.data || []).filter(
+                    (t: TicketTypeItem) => !t.is_sold_out && t.is_on_sale !== false,
+                );
+                setTicketTypes(available);
+                // Initialize qty=0 for each type
+                const init: Record<string, number> = {};
+                available.forEach((t: TicketTypeItem) => { init[t.id] = 0; });
+                setTypeQty(init);
+            })
+            .catch(() => alive && setTicketTypes([]));
+
+        const loadFns = event.is_multi_function
+            ? api
+                  .get(`/public/events/${event.id}/functions`)
+                  .then((r) => alive && setFunctions(
+                      (r.data || []).filter((f: EventFunction) => f.status !== "cancelled"),
+                  ))
+                  .catch(() => alive && setFunctions([]))
+            : Promise.resolve();
+
+        Promise.all([loadTypes, loadFns]).finally(() => alive && setLoadingMeta(false));
+
+        return () => { alive = false; };
+    }, [open, event?.id, event?.is_multi_function]);
 
     useEffect(() => {
         if (open) {
@@ -74,18 +203,49 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
             setPromoCodeInput("");
             setAppliedPromo(null);
         }
-    }, [open, activeMethods]);
+    }, [open]);
 
+    // ── Ticket type selections ────────────────────────────────────────────────
+    const hasTypes = ticketTypes.length > 0;
+    const typeSelections = useMemo(
+        () =>
+            ticketTypes
+                .filter((t) => (typeQty[t.id] || 0) > 0)
+                .map((t) => ({ ticket_type_id: t.id, quantity: typeQty[t.id] })),
+        [ticketTypes, typeQty],
+    );
+    const totalQtyFromTypes = useMemo(
+        () => typeSelections.reduce((sum, s) => sum + s.quantity, 0),
+        [typeSelections],
+    );
+
+    const setTypeCount = (id: string, delta: number, max?: number) => {
+        setTypeQty((prev) => {
+            const cur = prev[id] || 0;
+            const next = Math.max(0, Math.min(max ?? 10, cur + delta));
+            return { ...prev, [id]: next };
+        });
+    };
+
+    // ── Totals ────────────────────────────────────────────────────────────────
     const totals = useMemo(() => {
         if (!event) return { subtotal: 0, fees: 0, total: 0, discount: 0 };
-        // Phase 7 — numbered events: totals come from seatHoldsInfo
-        let base;
+
+        let base: { subtotal: number; fees: number; total: number };
+
         if (isSeatNumbered) {
             base = {
                 subtotal: seatHoldsInfo.subtotal_cents,
                 fees: seatHoldsInfo.fees_cents,
                 total: seatHoldsInfo.total_cents,
             };
+        } else if (hasTypes && typeSelections.length > 0) {
+            const subtotal = typeSelections.reduce((sum, sel) => {
+                const tt = ticketTypes.find((t) => t.id === sel.ticket_type_id);
+                return sum + (tt?.price_cents ?? 0) * sel.quantity;
+            }, 0);
+            const fees = subtotal > 0 ? Math.round((subtotal * FEE_PERCENT) / 100) : 0;
+            base = { subtotal, fees, total: subtotal + fees };
         } else if (pricingType === "free") {
             base = { subtotal: 0, fees: 0, total: 0 };
         } else if (pricingType === "donation") {
@@ -97,25 +257,27 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
             const fees = Math.round((subtotal * FEE_PERCENT) / 100);
             base = { subtotal, fees, total: subtotal + fees };
         }
-        // Phase 9.5 — overlay discount when buyer applied a promo successfully.
+
         if (appliedPromo) {
             const discount = appliedPromo.amount_cents || 0;
             const subtotalAfterDiscount = Math.max(0, base.subtotal - discount);
             const fees = base.fees > 0
                 ? Math.round((subtotalAfterDiscount * FEE_PERCENT) / 100)
                 : 0;
-            return {
-                ...base,
-                discount,
-                fees,
-                total: subtotalAfterDiscount + fees,
-            };
+            return { ...base, discount, fees, total: subtotalAfterDiscount + fees };
         }
         return { ...base, discount: 0 };
-    }, [event, pricingType, quantity, donation, isSeatNumbered, seatHoldsInfo, appliedPromo]);
+    }, [
+        event, pricingType, quantity, donation, isSeatNumbered, seatHoldsInfo,
+        appliedPromo, hasTypes, typeSelections, ticketTypes,
+    ]);
 
-    // Phase 9.5 — apply a promo code via /public/orders/preview so the buyer
-    // sees the discount before committing.
+    const effectiveQty = isSeatNumbered
+        ? seatHoldsInfo.seats.length
+        : hasTypes
+          ? totalQtyFromTypes
+          : quantity;
+
     const applyPromo = async () => {
         const code = (promoCodeInput || "").trim().toUpperCase();
         if (!code) return;
@@ -124,26 +286,21 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
             const body = {
                 tenant_slug: tenantSlug,
                 event_slug: event.slug,
-                quantity: isSeatNumbered ? seatHoldsInfo.seat_ids.length : quantity,
+                quantity: effectiveQty || 1,
                 promo_code: code,
             };
-            if (isSeatNumbered) body.seat_ids = seatHoldsInfo.seat_ids;
+            if (isSeatNumbered) (body as any).seat_ids = seatHoldsInfo.seat_ids;
             const { data } = await api.post("/public/orders/preview", body);
             const applied = (data.discounts_applied || []).find(
-                (a) => a.type === "promo_code",
+                (a: any) => a.type === "promo_code",
             );
             if (!applied) {
-                const reason = data.warnings?.[0] || "Código no válido.";
-                toast.error(reason);
+                toast.error(data.warnings?.[0] || "Código no válido.");
                 return;
             }
-            setAppliedPromo({
-                code,
-                name: applied.name,
-                amount_cents: applied.amount_cents,
-            });
+            setAppliedPromo({ code, name: applied.name, amount_cents: applied.amount_cents });
             toast.success(`Descuento "${applied.name}" aplicado`);
-        } catch (e) {
+        } catch (e: any) {
             toast.error(formatApiError(e?.response?.data?.detail) || "No se pudo validar el código.");
         } finally {
             setApplyingPromo(false);
@@ -156,14 +313,19 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
     };
 
     const validate = () => {
-        const e = {};
+        const e: Record<string, string> = {};
         if (!buyer.name.trim() || buyer.name.trim().length < 2) e.name = "Requerido";
         if (!EMAIL_RE.test(buyer.email)) e.email = "Email inválido";
         if (pricingType === "donation") {
             const d = parseFloat(donation || "0");
             if (!d || d < 1) e.donation = "Mínimo $1";
         }
-        if (quantity < 1 || quantity > 10) e.quantity = "Entre 1 y 10";
+        if (!isSeatNumbered && !hasTypes && (quantity < 1 || quantity > 10))
+            e.quantity = "Entre 1 y 10";
+        if (hasTypes && !isSeatNumbered && totalQtyFromTypes < 1)
+            e.ticketTypes = "Seleccioná al menos 1 ticket";
+        if (event?.is_multi_function && functions.length > 0 && !selectedFunctionId)
+            e.function = "Seleccioná una función";
         setErrors(e);
         return Object.keys(e).length === 0;
     };
@@ -172,10 +334,16 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
         if (!validate()) return;
         setSubmitting(true);
         try {
-            const payload = {
+            const baseQty = isSeatNumbered
+                ? seatHoldsInfo.seat_ids.length
+                : hasTypes
+                  ? totalQtyFromTypes
+                  : quantity;
+
+            const payload: any = {
                 tenant_slug: tenantSlug,
                 event_slug: event.slug,
-                quantity: isSeatNumbered ? seatHoldsInfo.seat_ids.length : quantity,
+                quantity: baseQty,
                 buyer: {
                     name: buyer.name.trim(),
                     email: buyer.email.trim().toLowerCase(),
@@ -185,20 +353,24 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                 origin_url: window.location.origin,
                 payment_method: pricingType === "free" ? "stripe" : paymentMethod,
             };
+
             if (pricingType === "donation") {
                 payload.donation_amount_cents = Math.round(parseFloat(donation) * 100);
                 payload.quantity = 1;
             }
-            // Phase 7 — numbered event: attach seat info
             if (isSeatNumbered) {
                 payload.seat_ids = seatHoldsInfo.seat_ids;
                 payload.seat_holds_session_token = seatHoldsInfo.session_token;
             }
-            // Phase 9.5 — forward the buyer-applied promo code so the backend
-            // re-validates and persists the discount on the order.
             if (appliedPromo?.code) {
                 payload.promo_code = appliedPromo.code;
             }
+            // Phase 8
+            if (selectedFunctionId) payload.function_id = selectedFunctionId;
+            if (hasTypes && typeSelections.length > 0) {
+                payload.ticket_type_selections = typeSelections;
+            }
+
             const { data } = await api.post("/public/orders", payload);
             if (data.status === "paid") {
                 toast.success("¡Compra exitosa! Te enviamos tu ticket por email.");
@@ -207,20 +379,17 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                 return;
             }
             if (data.status === "pending_manual_payment" && data.redirect_to) {
-                toast.success(
-                    "Reserva creada. Te enviamos las instrucciones de pago por email.",
-                );
+                toast.success("Reserva creada. Te enviamos las instrucciones de pago por email.");
                 navigate(data.redirect_to);
                 onOpenChange(false);
                 return;
             }
             if (data.checkout_url) {
-                // Stripe checkout
                 window.location.href = data.checkout_url;
                 return;
             }
             toast.error("No se pudo generar la orden.");
-        } catch (err) {
+        } catch (err: any) {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
         } finally {
             setSubmitting(false);
@@ -229,6 +398,13 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
 
     if (!event) return null;
 
+    const isEffectivelyFree = hasTypes
+        ? typeSelections.every((s) => {
+              const tt = ticketTypes.find((t) => t.id === s.ticket_type_id);
+              return (tt?.price_cents ?? 0) === 0;
+          }) && typeSelections.length > 0
+        : pricingType === "free";
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent
@@ -236,352 +412,528 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                 data-testid="purchase-modal"
             >
                 <DialogHeader>
-                    <DialogTitle className="text-2xl">Comprar entradas</DialogTitle>
-                    <DialogDescription className="text-base">
-                        {event.title}
-                    </DialogDescription>
+                    <div className="flex items-start justify-between gap-2">
+                        <DialogTitle className="text-2xl">Comprar entradas</DialogTitle>
+                        {seatHoldsInfo?.expires_at && (
+                            <div className="flex flex-col items-end text-right shrink-0">
+                                <span className="text-[10px] text-muted-foreground leading-none mb-0.5">
+                                    Reserva expira en
+                                </span>
+                                <HoldCountdown
+                                    expiresAt={seatHoldsInfo.expires_at}
+                                    onExpire={() => {
+                                        onOpenChange(false);
+                                        toast.warning("Tu reserva de asientos venció. Elegí nuevamente.");
+                                    }}
+                                />
+                            </div>
+                        )}
+                    </div>
+                    <DialogDescription className="text-base">{event.title}</DialogDescription>
                 </DialogHeader>
 
-                <div className="rounded-lg bg-secondary/40 border p-3 flex items-center justify-between">
-                    <div>
-                        <div className="text-xs text-muted-foreground">Precio</div>
-                        <div className="font-semibold">{formatPriceLabel(event)}</div>
+                {loadingMeta ? (
+                    <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground mr-2" />
+                        <span className="text-sm text-muted-foreground">Cargando…</span>
                     </div>
-                    <Badge variant="outline" className="text-xs">
-                        {pricingType === "free" && "Sin costo"}
-                        {pricingType === "donation" && "Aporte voluntario"}
-                        {pricingType === "paid" && paymentMethod === "stripe" && "Pago con tarjeta"}
-                        {pricingType === "paid" && paymentMethod === "transfer" && "Pago por transferencia"}
-                        {pricingType === "paid" && paymentMethod === "cash" && "Pago en efectivo"}
-                    </Badge>
-                </div>
-
-                {/* Phase 7 — seats summary (numbered events) */}
-                {isSeatNumbered && (
-                    <div
-                        className="rounded-lg border bg-secondary/40 p-3 space-y-1.5"
-                        data-testid="purchase-seats-summary"
-                    >
-                        <p className="text-xs font-medium">
-                            Estás reservando {seatHoldsInfo.seats.length} asiento(s):
-                        </p>
-                        <div className="flex flex-wrap gap-1">
-                            {seatHoldsInfo.seats.map((s) => (
-                                <Badge
-                                    key={s.seat_id}
-                                    variant="outline"
-                                    className="text-xs"
-                                    data-testid={`purchase-seat-${s.seat_id}`}
-                                >
-                                    {s.label}
-                                </Badge>
-                            ))}
-                        </div>
-                        <p className="text-[10px] text-muted-foreground">
-                            Tu reserva vence en 10 minutos. Si no completás el pago, los asientos vuelven a estar disponibles.
-                        </p>
-                    </div>
-                )}
-
-                {/* Quantity (hidden for numbered events + donation) */}
-                {pricingType !== "donation" && !isSeatNumbered && (
-                    <div className="space-y-1.5">
-                        <Label htmlFor="qty">Cantidad de entradas</Label>
-                        <div className="flex items-center gap-2">
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                                disabled={quantity <= 1}
-                                data-testid="qty-minus"
-                            >
-                                −
-                            </Button>
-                            <Input
-                                id="qty"
-                                type="number"
-                                min="1"
-                                max="10"
-                                value={quantity}
-                                onChange={(e) =>
-                                    setQuantity(
-                                        Math.min(10, Math.max(1, parseInt(e.target.value || "1", 10))),
-                                    )
-                                }
-                                className="text-center w-20"
-                                data-testid="qty-input"
-                            />
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                onClick={() => setQuantity((q) => Math.min(10, q + 1))}
-                                disabled={quantity >= 10}
-                                data-testid="qty-plus"
-                            >
-                                +
-                            </Button>
-                            <span className="text-xs text-muted-foreground ml-2">
-                                Máx. 10 por compra
-                            </span>
-                        </div>
-                        {errors.quantity && (
-                            <p className="text-xs text-red-600">{errors.quantity}</p>
-                        )}
-                    </div>
-                )}
-
-                {/* Donation amount */}
-                {pricingType === "donation" && (
-                    <div className="space-y-1.5">
-                        <Label htmlFor="donation">Tu aporte (USD)</Label>
-                        <div className="flex gap-2">
-                            {[5, 10, 20, 50].map((v) => (
-                                <Button
-                                    key={v}
-                                    type="button"
-                                    variant={
-                                        parseFloat(donation) === v ? "default" : "outline"
-                                    }
-                                    onClick={() => setDonation(String(v))}
-                                    data-testid={`donation-preset-${v}`}
-                                >
-                                    ${v}
-                                </Button>
-                            ))}
-                        </div>
-                        <Input
-                            id="donation"
-                            type="number"
-                            min="1"
-                            step="0.50"
-                            placeholder="O escribí un monto"
-                            value={donation}
-                            onChange={(e) => setDonation(e.target.value)}
-                            data-testid="donation-input"
-                        />
-                        {errors.donation && (
-                            <p className="text-xs text-red-600">{errors.donation}</p>
-                        )}
-                    </div>
-                )}
-
-                {/* Payment method selector — only when ≥2 active */}
-                {activeMethods.length > 1 && (
-                    <div className="space-y-2" data-testid="payment-method-selector">
-                        <Label>¿Cómo quieres pagar?</Label>
-                        <div className="space-y-2">
-                            {activeMethods.map((m) => {
-                                const meta = PAYMENT_METHOD_META[m];
-                                const checked = paymentMethod === m;
-                                return (
-                                    <label
-                                        key={m}
-                                        className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition ${
-                                            checked
-                                                ? "border-primary bg-primary/5"
-                                                : "hover:bg-secondary/40"
-                                        }`}
-                                        data-testid={`payment-method-${m}`}
-                                    >
-                                        <input
-                                            type="radio"
-                                            name="payment_method"
-                                            value={m}
-                                            checked={checked}
-                                            onChange={() => setPaymentMethod(m)}
-                                            className="mt-1"
-                                        />
-                                        <div className="flex-1">
-                                            <div className="font-medium text-sm flex items-center gap-2">
-                                                <span className="text-lg">{meta.icon}</span>
-                                                {meta.label}
+                ) : (
+                    <>
+                        {/* ── Function selector ─────────────────────────────── */}
+                        {functions.length > 0 && (
+                            <div className="space-y-2" data-testid="function-selector">
+                                <Label className="font-medium">Seleccioná una función *</Label>
+                                {errors.function && (
+                                    <p className="text-xs text-red-600">{errors.function}</p>
+                                )}
+                                <div className="space-y-2">
+                                    {functions.map((fn) => (
+                                        <label
+                                            key={fn.id}
+                                            className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition ${
+                                                selectedFunctionId === fn.id
+                                                    ? "border-primary bg-primary/5"
+                                                    : "hover:bg-secondary/40"
+                                            }`}
+                                            data-testid={`fn-option-${fn.id}`}
+                                        >
+                                            <input
+                                                type="radio"
+                                                name="function_id"
+                                                value={fn.id}
+                                                checked={selectedFunctionId === fn.id}
+                                                onChange={() => setSelectedFunctionId(fn.id)}
+                                                className="mt-1"
+                                            />
+                                            <div className="flex-1">
+                                                <div className="font-medium text-sm flex items-center gap-2">
+                                                    <CalendarRange className="h-4 w-4 text-muted-foreground shrink-0" />
+                                                    {fn.name}
+                                                </div>
+                                                {fn.starts_at && (
+                                                    <div className="text-xs text-muted-foreground mt-0.5">
+                                                        {fmtDate(fn.starts_at)}
+                                                        {fn.venue_name &&
+                                                            ` · ${fn.venue_name}${fn.venue_city ? `, ${fn.venue_city}` : ""}`}
+                                                    </div>
+                                                )}
                                             </div>
-                                            <div className="text-xs text-muted-foreground">
-                                                {meta.description}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Ticket type selectors ─────────────────────────── */}
+                        {hasTypes && !isSeatNumbered && (
+                            <div className="space-y-2" data-testid="ticket-type-selector">
+                                <Label className="font-medium">Seleccioná tus tickets</Label>
+                                {errors.ticketTypes && (
+                                    <p className="text-xs text-red-600">{errors.ticketTypes}</p>
+                                )}
+                                <div className="space-y-2">
+                                    {ticketTypes.map((tt) => {
+                                        const qty = typeQty[tt.id] || 0;
+                                        const maxQty = tt.max_per_buyer ?? 10;
+                                        const priceLabel =
+                                            tt.price_cents === 0
+                                                ? "Gratis"
+                                                : formatCents(tt.price_cents, tt.currency);
+                                        return (
+                                            <div
+                                                key={tt.id}
+                                                className={`flex items-center gap-3 rounded-lg border p-3 transition ${
+                                                    qty > 0 ? "border-primary bg-primary/5" : ""
+                                                }`}
+                                                data-testid={`tt-row-${tt.id}`}
+                                            >
+                                                {tt.color && (
+                                                    <div
+                                                        className="h-8 w-1.5 rounded-full shrink-0"
+                                                        style={{ backgroundColor: tt.color }}
+                                                    />
+                                                )}
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className="font-medium text-sm">
+                                                            {tt.name}
+                                                        </span>
+                                                        {tt.is_early_bird && (
+                                                            <Badge
+                                                                variant="secondary"
+                                                                className="text-xs"
+                                                            >
+                                                                Early Bird
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-xs font-medium text-primary mt-0.5">
+                                                        {priceLabel}
+                                                    </div>
+                                                    {tt.description && (
+                                                        <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                                                            {tt.description}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="icon"
+                                                        className="h-7 w-7"
+                                                        onClick={() =>
+                                                            setTypeCount(tt.id, -1, maxQty)
+                                                        }
+                                                        disabled={qty <= 0}
+                                                        data-testid={`tt-minus-${tt.id}`}
+                                                    >
+                                                        <Minus className="h-3 w-3" />
+                                                    </Button>
+                                                    <span
+                                                        className="w-6 text-center text-sm font-medium"
+                                                        data-testid={`tt-qty-${tt.id}`}
+                                                    >
+                                                        {qty}
+                                                    </span>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="icon"
+                                                        className="h-7 w-7"
+                                                        onClick={() =>
+                                                            setTypeCount(tt.id, 1, maxQty)
+                                                        }
+                                                        disabled={qty >= maxQty}
+                                                        data-testid={`tt-plus-${tt.id}`}
+                                                    >
+                                                        <Plus className="h-3 w-3" />
+                                                    </Button>
+                                                </div>
                                             </div>
-                                        </div>
-                                    </label>
-                                );
-                            })}
-                        </div>
-                    </div>
-                )}
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
 
-                {/* Buyer info */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                    <Field
-                        label="Nombre completo *"
-                        id="buyer-name"
-                        value={buyer.name}
-                        onChange={(v) => setBuyer((b) => ({ ...b, name: v }))}
-                        error={errors.name}
-                        testId="buyer-name"
-                    />
-                    <Field
-                        label="Email *"
-                        id="buyer-email"
-                        type="email"
-                        value={buyer.email}
-                        onChange={(v) => setBuyer((b) => ({ ...b, email: v }))}
-                        error={errors.email}
-                        testId="buyer-email"
-                    />
-                    <div className="space-y-1.5">
-                        <Label htmlFor="buyer-phone">Teléfono</Label>
-                        <PhoneInput
-                            id="buyer-phone"
-                            value={buyer.phone}
-                            onChange={(v) =>
-                                setBuyer((b) => ({ ...b, phone: v || "" }))
-                            }
-                            data-testid="buyer-phone"
-                        />
-                    </div>
-                    <Field
-                        label="Documento / cédula"
-                        id="buyer-doc"
-                        value={buyer.document_id}
-                        onChange={(v) => setBuyer((b) => ({ ...b, document_id: v }))}
-                        testId="buyer-doc"
-                    />
-                </div>
-
-                {/* Phase 9.5 — promo code */}
-                {pricingType !== "free" && (
-                    <div className="border-t pt-3 space-y-2" data-testid="promo-code-block">
-                        {appliedPromo ? (
+                        {/* ── Seat summary (numbered events) ────────────────── */}
+                        {isSeatNumbered && (
                             <div
-                                className="flex items-center justify-between gap-2 rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm"
-                                data-testid="promo-applied"
+                                className="rounded-lg border bg-secondary/40 p-3 space-y-1.5"
+                                data-testid="purchase-seats-summary"
                             >
+                                <p className="text-xs font-medium">
+                                    Estás reservando {seatHoldsInfo.seats.length} asiento(s):
+                                </p>
+                                <div className="flex flex-wrap gap-1">
+                                    {seatHoldsInfo.seats.map((s: any) => (
+                                        <Badge
+                                            key={s.seat_id}
+                                            variant="outline"
+                                            className="text-xs"
+                                            data-testid={`purchase-seat-${s.seat_id}`}
+                                        >
+                                            {s.label}
+                                        </Badge>
+                                    ))}
+                                </div>
+                                <p className="text-[10px] text-muted-foreground">
+                                    Tu reserva vence en 10 minutos. Si no completás el pago, los
+                                    asientos vuelven a estar disponibles.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* ── Classic quantity (when no ticket types) ────────── */}
+                        {!hasTypes && pricingType !== "donation" && !isSeatNumbered && (
+                            <div className="space-y-1.5">
+                                <Label htmlFor="qty">Cantidad de entradas</Label>
                                 <div className="flex items-center gap-2">
-                                    <Tag className="h-4 w-4 text-emerald-700" />
-                                    <span className="text-emerald-900">
-                                        <strong>{appliedPromo.name}</strong>{" "}
-                                        <code className="text-xs bg-white/60 rounded px-1">
-                                            {appliedPromo.code}
-                                        </code>
+                                    <Button
+                                        variant="outline"
+                                        size="icon"
+                                        onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                                        disabled={quantity <= 1}
+                                        data-testid="qty-minus"
+                                    >
+                                        −
+                                    </Button>
+                                    <Input
+                                        id="qty"
+                                        type="number"
+                                        min="1"
+                                        max="10"
+                                        value={quantity}
+                                        onChange={(e) =>
+                                            setQuantity(
+                                                Math.min(
+                                                    10,
+                                                    Math.max(
+                                                        1,
+                                                        parseInt(e.target.value || "1", 10),
+                                                    ),
+                                                ),
+                                            )
+                                        }
+                                        className="text-center w-20"
+                                        data-testid="qty-input"
+                                    />
+                                    <Button
+                                        variant="outline"
+                                        size="icon"
+                                        onClick={() => setQuantity((q) => Math.min(10, q + 1))}
+                                        disabled={quantity >= 10}
+                                        data-testid="qty-plus"
+                                    >
+                                        +
+                                    </Button>
+                                    <span className="text-xs text-muted-foreground ml-2">
+                                        Máx. 10 por compra
                                     </span>
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={removePromo}
-                                    className="text-xs text-emerald-800 hover:underline"
-                                    data-testid="promo-remove"
-                                >
-                                    Quitar
-                                </button>
+                                {errors.quantity && (
+                                    <p className="text-xs text-red-600">{errors.quantity}</p>
+                                )}
                             </div>
-                        ) : (
-                            <div className="flex gap-2">
+                        )}
+
+                        {/* ── Donation ──────────────────────────────────────── */}
+                        {pricingType === "donation" && (
+                            <div className="space-y-1.5">
+                                <Label htmlFor="donation">Tu aporte (USD)</Label>
+                                <div className="flex gap-2">
+                                    {[5, 10, 20, 50].map((v) => (
+                                        <Button
+                                            key={v}
+                                            type="button"
+                                            variant={
+                                                parseFloat(donation) === v ? "default" : "outline"
+                                            }
+                                            onClick={() => setDonation(String(v))}
+                                            data-testid={`donation-preset-${v}`}
+                                        >
+                                            ${v}
+                                        </Button>
+                                    ))}
+                                </div>
                                 <Input
-                                    placeholder="¿Tenés un código promocional?"
-                                    value={promoCodeInput}
-                                    onChange={(e) =>
-                                        setPromoCodeInput(e.target.value.toUpperCase())
-                                    }
-                                    maxLength={40}
-                                    className="h-9"
-                                    data-testid="promo-input"
+                                    id="donation"
+                                    type="number"
+                                    min="1"
+                                    step="0.50"
+                                    placeholder="O escribí un monto"
+                                    value={donation}
+                                    onChange={(e) => setDonation(e.target.value)}
+                                    data-testid="donation-input"
                                 />
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={applyPromo}
-                                    disabled={applyingPromo || !promoCodeInput.trim()}
-                                    data-testid="promo-apply"
-                                >
-                                    {applyingPromo ? "..." : "Aplicar"}
-                                </Button>
+                                {errors.donation && (
+                                    <p className="text-xs text-red-600">{errors.donation}</p>
+                                )}
                             </div>
                         )}
-                    </div>
-                )}
 
-                {/* Totals */}
-                {pricingType !== "free" && (
-                    <div className="border-t pt-3 space-y-1 text-sm" data-testid="totals">
-                        <Row
-                            label={
-                                pricingType === "donation"
-                                    ? "Aporte"
-                                    : `Subtotal (${quantity}× ${formatCents(event.base_price_cents)})`
-                            }
-                            value={formatCents(totals.subtotal, event.currency)}
-                        />
-                        {totals.discount > 0 && (
-                            <Row
-                                label={`Descuento ${appliedPromo?.name || ""}`}
-                                value={`–${formatCents(totals.discount, event.currency)}`}
-                                accent="emerald"
-                                testid="row-discount"
+                        {/* ── Payment method ────────────────────────────────── */}
+                        {activeMethods.length > 1 && (
+                            <div className="space-y-2" data-testid="payment-method-selector">
+                                <Label>¿Cómo quieres pagar?</Label>
+                                <div className="space-y-2">
+                                    {activeMethods.map((m) => {
+                                        const meta = PAYMENT_METHOD_META[m];
+                                        const checked = paymentMethod === m;
+                                        return (
+                                            <label
+                                                key={m}
+                                                className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition ${
+                                                    checked
+                                                        ? "border-primary bg-primary/5"
+                                                        : "hover:bg-secondary/40"
+                                                }`}
+                                                data-testid={`payment-method-${m}`}
+                                            >
+                                                <input
+                                                    type="radio"
+                                                    name="payment_method"
+                                                    value={m}
+                                                    checked={checked}
+                                                    onChange={() => setPaymentMethod(m)}
+                                                    className="mt-1"
+                                                />
+                                                <div className="flex-1">
+                                                    <div className="font-medium text-sm flex items-center gap-2">
+                                                        <span className="text-lg">{meta.icon}</span>
+                                                        {meta.label}
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground">
+                                                        {meta.description}
+                                                    </div>
+                                                </div>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Buyer info ────────────────────────────────────── */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                            <Field
+                                label="Nombre completo *"
+                                id="buyer-name"
+                                value={buyer.name}
+                                onChange={(v) => setBuyer((b) => ({ ...b, name: v }))}
+                                error={errors.name}
+                                testId="buyer-name"
                             />
-                        )}
-                        {totals.fees > 0 && (
-                            <Row
-                                label={`Tarifa de servicio (${FEE_PERCENT}%)`}
-                                value={formatCents(totals.fees, event.currency)}
+                            <Field
+                                label="Email *"
+                                id="buyer-email"
+                                type="email"
+                                value={buyer.email}
+                                onChange={(v) => setBuyer((b) => ({ ...b, email: v }))}
+                                error={errors.email}
+                                testId="buyer-email"
                             />
+                            <div className="space-y-1.5">
+                                <Label htmlFor="buyer-phone">Teléfono</Label>
+                                <PhoneInput
+                                    id="buyer-phone"
+                                    value={buyer.phone}
+                                    onChange={(v) =>
+                                        setBuyer((b) => ({ ...b, phone: v || "" }))
+                                    }
+                                    data-testid="buyer-phone"
+                                />
+                            </div>
+                            <Field
+                                label="Documento / cédula"
+                                id="buyer-doc"
+                                value={buyer.document_id}
+                                onChange={(v) => setBuyer((b) => ({ ...b, document_id: v }))}
+                                testId="buyer-doc"
+                            />
+                        </div>
+
+                        {/* ── Promo code ────────────────────────────────────── */}
+                        {(pricingType !== "free" || (hasTypes && totals.subtotal > 0)) && (
+                            <div className="border-t pt-3 space-y-2" data-testid="promo-code-block">
+                                {appliedPromo ? (
+                                    <div
+                                        className="flex items-center justify-between gap-2 rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm"
+                                        data-testid="promo-applied"
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <Tag className="h-4 w-4 text-emerald-700" />
+                                            <span className="text-emerald-900">
+                                                <strong>{appliedPromo.name}</strong>{" "}
+                                                <code className="text-xs bg-white/60 rounded px-1">
+                                                    {appliedPromo.code}
+                                                </code>
+                                            </span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={removePromo}
+                                            className="text-xs text-emerald-800 hover:underline"
+                                            data-testid="promo-remove"
+                                        >
+                                            Quitar
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-2">
+                                        <Input
+                                            placeholder="¿Tenés un código promocional?"
+                                            value={promoCodeInput}
+                                            onChange={(e) =>
+                                                setPromoCodeInput(e.target.value.toUpperCase())
+                                            }
+                                            maxLength={40}
+                                            className="h-9"
+                                            data-testid="promo-input"
+                                        />
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            onClick={applyPromo}
+                                            disabled={applyingPromo || !promoCodeInput.trim()}
+                                            data-testid="promo-apply"
+                                        >
+                                            {applyingPromo ? "..." : "Aplicar"}
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
                         )}
-                        <Row
-                            label="Total"
-                            bold
-                            value={formatCents(totals.total, event.currency)}
-                        />
-                    </div>
+
+                        {/* ── Totals ────────────────────────────────────────── */}
+                        {totals.subtotal > 0 && (
+                            <div className="border-t pt-3 space-y-1 text-sm" data-testid="totals">
+                                {hasTypes && typeSelections.length > 0 ? (
+                                    typeSelections.map((sel) => {
+                                        const tt = ticketTypes.find(
+                                            (t) => t.id === sel.ticket_type_id,
+                                        );
+                                        const lineTotal = (tt?.price_cents ?? 0) * sel.quantity;
+                                        return (
+                                            <Row
+                                                key={sel.ticket_type_id}
+                                                label={`${tt?.name} × ${sel.quantity}`}
+                                                value={formatCents(lineTotal, tt?.currency)}
+                                            />
+                                        );
+                                    })
+                                ) : (
+                                    <Row
+                                        label={
+                                            pricingType === "donation"
+                                                ? "Aporte"
+                                                : `Subtotal (${quantity}× ${formatCents(event.base_price_cents)})`
+                                        }
+                                        value={formatCents(totals.subtotal, event.currency)}
+                                    />
+                                )}
+                                {totals.discount > 0 && (
+                                    <Row
+                                        label={`Descuento ${appliedPromo?.name || ""}`}
+                                        value={`–${formatCents(totals.discount, event.currency)}`}
+                                        accent="emerald"
+                                        testid="row-discount"
+                                    />
+                                )}
+                                {totals.fees > 0 && (
+                                    <Row
+                                        label={`Tarifa de servicio (${FEE_PERCENT}%)`}
+                                        value={formatCents(totals.fees, event.currency)}
+                                    />
+                                )}
+                                <Row
+                                    label="Total"
+                                    bold
+                                    value={formatCents(totals.total, event.currency)}
+                                />
+                            </div>
+                        )}
+
+                        <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                            <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                            {isEffectivelyFree || pricingType === "free"
+                                ? "Te enviaremos tu ticket por email al confirmar."
+                                : "Te redirigimos a Stripe (procesamiento seguro). Los datos del tarjetahabiente no quedan en TYS."}
+                        </p>
+
+                        <div className="flex justify-end gap-2 pt-2">
+                            <Button
+                                variant="outline"
+                                onClick={() => onOpenChange(false)}
+                                disabled={submitting}
+                                data-testid="purchase-cancel"
+                            >
+                                Cancelar
+                            </Button>
+                            <Button
+                                onClick={submit}
+                                disabled={submitting}
+                                className="min-w-[170px]"
+                                data-testid="purchase-submit"
+                            >
+                                {submitting ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                                        Procesando…
+                                    </>
+                                ) : isEffectivelyFree || pricingType === "free" ? (
+                                    <>
+                                        <TicketIcon className="h-4 w-4 mr-1.5" />
+                                        Confirmar reserva
+                                    </>
+                                ) : paymentMethod === "stripe" ? (
+                                    <>
+                                        <TicketIcon className="h-4 w-4 mr-1.5" />
+                                        Pagar{" "}
+                                        {totals.total > 0
+                                            ? formatCents(totals.total, event.currency)
+                                            : ""}
+                                    </>
+                                ) : (
+                                    <>
+                                        <TicketIcon className="h-4 w-4 mr-1.5" />
+                                        Reservar y ver instrucciones
+                                    </>
+                                )}
+                            </Button>
+                        </div>
+                    </>
                 )}
-
-                <p className="text-xs text-muted-foreground flex items-start gap-1.5">
-                    <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                    {pricingType === "free"
-                        ? "Te enviaremos tu ticket por email al confirmar."
-                        : "Te redirigimos a Stripe (procesamiento seguro). Los datos del tarjetahabiente no quedan en TYS."}
-                </p>
-
-                <div className="flex justify-end gap-2 pt-2">
-                    <Button
-                        variant="outline"
-                        onClick={() => onOpenChange(false)}
-                        disabled={submitting}
-                        data-testid="purchase-cancel"
-                    >
-                        Cancelar
-                    </Button>
-                    <Button
-                        onClick={submit}
-                        disabled={submitting}
-                        className="min-w-[170px]"
-                        data-testid="purchase-submit"
-                    >
-                        {submitting ? (
-                            <>
-                                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                                Procesando…
-                            </>
-                        ) : pricingType === "free" ? (
-                            <>
-                                <TicketIcon className="h-4 w-4 mr-1.5" />
-                                Confirmar reserva
-                            </>
-                        ) : paymentMethod === "stripe" ? (
-                            <>
-                                <TicketIcon className="h-4 w-4 mr-1.5" />
-                                Pagar {formatCents(totals.total, event.currency)}
-                            </>
-                        ) : (
-                            <>
-                                <TicketIcon className="h-4 w-4 mr-1.5" />
-                                Reservar y ver instrucciones
-                            </>
-                        )}
-                    </Button>
-                </div>
             </DialogContent>
         </Dialog>
     );
 }
 
-function Field({ label, id, value, onChange, error, type = "text", testId }) {
+function Field({ label, id, value, onChange, error, type = "text", testId }: {
+    label: string; id: string; value: string; onChange: (v: string) => void;
+    error?: string; type?: string; testId?: string;
+}) {
     return (
         <div className="space-y-1.5">
             <Label htmlFor={id}>{label}</Label>
@@ -597,13 +949,12 @@ function Field({ label, id, value, onChange, error, type = "text", testId }) {
         </div>
     );
 }
-function Row({ label, value, bold, accent, testid }) {
+
+function Row({ label, value, bold = false, accent, testid }: {
+    label: string; value: string; bold?: boolean; accent?: string; testid?: string;
+}) {
     const accentClass =
-        accent === "emerald"
-            ? "text-emerald-700"
-            : accent === "amber"
-            ? "text-amber-700"
-            : "";
+        accent === "emerald" ? "text-emerald-700" : accent === "amber" ? "text-amber-700" : "";
     return (
         <div
             className={`flex justify-between ${

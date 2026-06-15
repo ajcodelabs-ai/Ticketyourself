@@ -243,7 +243,25 @@ async def create_seat_holds(
             session.add(hold)
             hold_rows.append(hold)
 
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception as exc:
+            # The partial unique index uq_seat_holds_active (event_id, seat_id)
+            # WHERE status='held' fires when two concurrent sessions race past the
+            # application-level check above and both try to INSERT for the same seat.
+            # The second commit loses and raises IntegrityError / UniqueViolationError.
+            await session.rollback()
+            exc_str = str(exc).lower()
+            if "unique" in exc_str or "uq_seat_holds_active" in exc_str:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "seats_unavailable",
+                        "message": "Uno o más asientos fueron tomados en el último momento. Refresca el mapa y elegí de nuevo.",
+                    },
+                )
+            raise
+
         for h in hold_rows:
             await session.refresh(h)
         return [row_to_dict(h) for h in hold_rows]

@@ -18,9 +18,9 @@ import { toast } from "sonner";
 import api from "@/lib/api";
 import { venuesApi } from "@/lib/venues";
 
-function activeLocalityIds(venue) {
-    const out = new Set();
-    for (const el of venue.elements || []) if (el.locality_id) out.add(el.locality_id);
+function activeLocalityIds(venue): Set<string> {
+    const out = new Set<string>();
+    for (const el of venue.elements || []) if (el.locality_id) out.add(el.locality_id as string);
     return out;
 }
 
@@ -71,11 +71,14 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
         const active = activeLocalityIds(venue);
         const body = {
             venue_id: pickerVenueId,
-            locality_pricing: Array.from(active).map((loc_id) => ({
-                locality_id: loc_id,
-                price_cents: Math.max(0, parseInt(pricing[loc_id] ?? 0, 10) || 0),
+            locality_pricing: Array.from(active).map((loc_id) => {
+                const locId = String(loc_id);
+                return {
+                locality_id: locId,
+                price_cents: Math.max(0, parseInt(pricing[locId] ?? 0, 10) || 0),
                 max_tickets_per_purchase: null,
-            })),
+            };
+            }),
             seat_holds_window_minutes: 10,
         };
         if (body.locality_pricing.some((lp) => lp.price_cents === 0)) {

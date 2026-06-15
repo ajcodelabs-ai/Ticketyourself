@@ -29,6 +29,9 @@ export default function AppRoutes() {
                 element={<LazyPage page={Pages.VenuePreview} />}
             />
             <Route path="/o/:slug/orden/:order_number" element={<LazyPage page={Pages.OrderSuccess} />} />
+            <Route path="/orden/:token" element={<LazyPage page={Pages.OrderByToken} />} />
+            <Route path="/staff/login" element={<Public><LazyPage page={Pages.StaffLogin} /></Public>} />
+            <Route path="/staff/scanner" element={<LazyPage page={Pages.StaffScanner} />} />
             <Route
                 path="/o/:slug/orden/:order_number/cancelado"
                 element={<LazyPage page={Pages.OrderCancel} />}
@@ -49,6 +52,7 @@ export default function AppRoutes() {
             <Route path="/app/eventos/:event_id" element={<OrgArea><LazyPage page={Pages.EventDetail} /></OrgArea>} />
             <Route path="/app/eventos/:event_id/editar" element={<OrgArea><LazyPage page={Pages.EventEdit} /></OrgArea>} />
             <Route path="/app/eventos/:id/validacion" element={<OrgArea><LazyPage page={Pages.EventValidation} /></OrgArea>} />
+            <Route path="/app/staff" element={<OrgArea><LazyPage page={Pages.StaffPage} /></OrgArea>} />
             <Route path="/app/configuracion" element={<OrgArea><LazyPage page={Pages.Configuracion} /></OrgArea>} />
 
             <Route path="/onboarding" element={<OrgArea><LazyPage page={Pages.Onboarding} /></OrgArea>} />

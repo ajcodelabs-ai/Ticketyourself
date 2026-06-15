@@ -89,7 +89,7 @@ export function makeCurvedRow({
     };
 }
 
-export function makeSeat({ x, y, label = "VIP-1", locality_id }) {
+export function makeSeat({ x, y, label = "VIP-1", locality_id = null }) {
     return {
         id: newId(), kind: "seat_individual",
         x: snap(x), y: snap(y),
@@ -212,7 +212,7 @@ export function bumpLabel(label) {
 
 // ── API ────────────────────────────────────────────────────────────────────
 export const venuesApi = {
-    list: (params) => api.get("/venues/me", { params }).then((r) => r.data),
+    list: (params?: Record<string, unknown>) => api.get("/venues/me", { params }).then((r) => r.data),
     create: (body) => api.post("/venues/me", body).then((r) => r.data),
     get: (id) => api.get(`/venues/me/${id}`).then((r) => r.data),
     update: (id, body) => api.put(`/venues/me/${id}`, body).then((r) => r.data),
