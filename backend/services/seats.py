@@ -15,10 +15,9 @@ Seat-id format (string):
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-
-from db import db
 
 logger = logging.getLogger("tys.seats")
 
@@ -27,10 +26,6 @@ SEAT_HOLD_WINDOW_MIN_DEFAULT = 10
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _now_iso() -> str:
-    return _now().isoformat()
 
 
 # ── Expand a venue into the list of named seats ──────────────────────────
@@ -110,46 +105,8 @@ def seats_by_id(venue: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return {s["seat_id"]: s for s in expand_venue_seats(venue)}
 
 
-# ── Live status (available / held / sold) for an event ──────────────────
-async def compute_event_seats_status(
-    *, event: Dict[str, Any], venue: Dict[str, Any]
-) -> List[Dict[str, Any]]:
-    """Returns one entry per seat with its current public status."""
-    seats = expand_venue_seats(venue)
-    now_iso = _now_iso()
-    held_cursor = db.seat_holds.find(
-        {
-            "event_id": event["id"],
-            "status": "held",
-            "expires_at": {"$gt": now_iso},
-        },
-        {"_id": 0, "seat_id": 1, "expires_at": 1, "holder.session_token": 1},
-    )
-    held: Dict[str, Dict[str, Any]] = {}
-    async for h in held_cursor:
-        held[h["seat_id"]] = h
-
-    sold_cursor = db.event_seat_assignments.find(
-        {"event_id": event["id"]}, {"_id": 0, "seat_id": 1},
-    )
-    sold = set()
-    async for r in sold_cursor:
-        sold.add(r["seat_id"])
-
-    for s in seats:
-        if s["seat_id"] in sold:
-            s["status"] = "sold"
-        elif s["seat_id"] in held:
-            s["status"] = "held"
-            s["expires_at"] = held[s["seat_id"]].get("expires_at")
-        else:
-            s["status"] = "available"
-    return seats
-
-
 # ── Active locality-pricing validation ──────────────────────────────────
 def active_localities(venue: Dict[str, Any]) -> List[str]:
-    """List of locality_ids that are referenced by at least one addressable element."""
     used: set[str] = set()
     for el in venue.get("elements", []):
         if el.get("kind") in (
@@ -159,6 +116,50 @@ def active_localities(venue: Dict[str, Any]) -> List[str]:
             if el.get("locality_id"):
                 used.add(el["locality_id"])
     return list(used)
+
+
+# ── Live status (available / held / sold) for an event ──────────────────
+async def compute_event_seats_status(
+    *, event: Dict[str, Any], venue: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """Returns one entry per seat with its current public status."""
+    from database import AsyncSessionLocal
+    from orm_models import SeatHold, EventSeatAssignment
+    from sqlalchemy import select
+
+    seats = expand_venue_seats(venue)
+    now = _now()
+
+    async with AsyncSessionLocal() as session:
+        held_result = await session.execute(
+            select(SeatHold.seat_id, SeatHold.expires_at, SeatHold.session_token).where(
+                SeatHold.event_id == event["id"],
+                SeatHold.status == "held",
+                SeatHold.expires_at > now,
+            )
+        )
+        held: Dict[str, Dict[str, Any]] = {
+            row.seat_id: {"expires_at": row.expires_at, "session_token": row.session_token}
+            for row in held_result.all()
+        }
+
+        sold_result = await session.execute(
+            select(EventSeatAssignment.seat_id).where(
+                EventSeatAssignment.event_id == event["id"]
+            )
+        )
+        sold = {row.seat_id for row in sold_result.all()}
+
+    for s in seats:
+        if s["seat_id"] in sold:
+            s["status"] = "sold"
+        elif s["seat_id"] in held:
+            s["status"] = "held"
+            exp = held[s["seat_id"]]["expires_at"]
+            s["expires_at"] = exp.isoformat() if hasattr(exp, "isoformat") else exp
+        else:
+            s["status"] = "available"
+    return seats
 
 
 # ── Hold mutations ──────────────────────────────────────────────────────
@@ -175,71 +176,94 @@ async def create_seat_holds(
     Raises if anything is unavailable.
     """
     from fastapi import HTTPException
+    from database import AsyncSessionLocal
+    from orm_models import SeatHold, EventSeatAssignment
+    from sqlalchemy import select, delete
+    from db_helpers import row_to_dict
 
-    now_iso = _now_iso()
-    expires = (_now() + timedelta(minutes=window_minutes)).isoformat()
+    now = _now()
+    expires = now + timedelta(minutes=window_minutes)
 
-    # 1. Verify availability
-    sold = await db.event_seat_assignments.find(
-        {"event_id": event_id, "seat_id": {"$in": seat_ids}}, {"_id": 0, "seat_id": 1},
-    ).to_list(length=None)
-    sold_ids = {s["seat_id"] for s in sold}
-    held_others = await db.seat_holds.find(
-        {
-            "event_id": event_id, "seat_id": {"$in": seat_ids},
-            "status": "held", "expires_at": {"$gt": now_iso},
-            "holder.session_token": {"$ne": session_token},
-        },
-        {"_id": 0, "seat_id": 1},
-    ).to_list(length=None)
-    held_ids = {h["seat_id"] for h in held_others}
-    conflicts = sold_ids | held_ids
-    if conflicts:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "seats_unavailable",
-                "unavailable_seat_ids": list(conflicts),
-                "message": f"{len(conflicts)} asiento(s) ya no están disponibles.",
-            },
+    async with AsyncSessionLocal() as session:
+        # 1. Verify no sold seats
+        sold_result = await session.execute(
+            select(EventSeatAssignment.seat_id).where(
+                EventSeatAssignment.event_id == event_id,
+                EventSeatAssignment.seat_id.in_(seat_ids),
+            )
+        )
+        sold_ids = {row.seat_id for row in sold_result.all()}
+
+        # 2. Verify no held-by-others
+        held_result = await session.execute(
+            select(SeatHold.seat_id).where(
+                SeatHold.event_id == event_id,
+                SeatHold.seat_id.in_(seat_ids),
+                SeatHold.status == "held",
+                SeatHold.expires_at > now,
+                SeatHold.session_token != session_token,
+            )
+        )
+        held_ids = {row.seat_id for row in held_result.all()}
+
+        conflicts = sold_ids | held_ids
+        if conflicts:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "seats_unavailable",
+                    "unavailable_seat_ids": list(conflicts),
+                    "message": f"{len(conflicts)} asiento(s) ya no están disponibles.",
+                },
+            )
+
+        # 3. Release any previous holds of this session for these seats
+        await session.execute(
+            delete(SeatHold).where(
+                SeatHold.event_id == event_id,
+                SeatHold.seat_id.in_(seat_ids),
+                SeatHold.session_token == session_token,
+            )
         )
 
-    # 2. Release any previous holds of this session for these seats (extension).
-    await db.seat_holds.delete_many({
-        "event_id": event_id, "seat_id": {"$in": seat_ids},
-        "holder.session_token": session_token,
-    })
+        # 4. Insert new holds
+        hold_rows = []
+        for sid in seat_ids:
+            hold = SeatHold(
+                id=str(uuid.uuid4()),
+                event_id=event_id,
+                venue_id=venue_id,
+                seat_id=sid,
+                session_token=session_token,
+                buyer_email=buyer_email,
+                status="held",
+                held_at=now,
+                expires_at=expires,
+            )
+            session.add(hold)
+            hold_rows.append(hold)
 
-    # 3. Insert new holds
-    import uuid
-    rows = []
-    for sid in seat_ids:
-        rows.append({
-            "id": str(uuid.uuid4()),
-            "event_id": event_id,
-            "venue_id": venue_id,
-            "seat_id": sid,
-            "holder": {"session_token": session_token, "buyer_email": buyer_email},
-            "status": "held",
-            "held_at": now_iso,
-            "expires_at": expires,
-            "order_id": None,
-        })
-    if rows:
-        await db.seat_holds.insert_many(rows)
-    # Strip Mongo's auto-injected _id before returning
-    for r in rows:
-        r.pop("_id", None)
-    return rows
+        await session.commit()
+        for h in hold_rows:
+            await session.refresh(h)
+        return [row_to_dict(h) for h in hold_rows]
 
 
 async def release_holds_for_session(*, event_id: str, session_token: str) -> int:
-    res = await db.seat_holds.delete_many({
-        "event_id": event_id,
-        "holder.session_token": session_token,
-        "status": "held",
-    })
-    return res.deleted_count or 0
+    from database import AsyncSessionLocal
+    from orm_models import SeatHold
+    from sqlalchemy import delete
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            delete(SeatHold).where(
+                SeatHold.event_id == event_id,
+                SeatHold.session_token == session_token,
+                SeatHold.status == "held",
+            ).execution_options(synchronize_session=False)
+        )
+        await session.commit()
+    return result.rowcount or 0
 
 
 async def consume_holds_for_order(
@@ -247,18 +271,26 @@ async def consume_holds_for_order(
 ) -> None:
     """Transitions held → converted at order-creation time."""
     from fastapi import HTTPException
-    now_iso = _now_iso()
-    res = await db.seat_holds.update_many(
-        {
-            "event_id": event_id,
-            "seat_id": {"$in": seat_ids},
-            "holder.session_token": session_token,
-            "status": "held",
-            "expires_at": {"$gt": now_iso},
-        },
-        {"$set": {"status": "converted", "order_id": order_id, "updated_at": now_iso}},
-    )
-    if res.modified_count != len(seat_ids):
+    from database import AsyncSessionLocal
+    from orm_models import SeatHold
+    from sqlalchemy import update
+
+    now = _now()
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            update(SeatHold)
+            .where(
+                SeatHold.event_id == event_id,
+                SeatHold.seat_id.in_(seat_ids),
+                SeatHold.session_token == session_token,
+                SeatHold.status == "held",
+                SeatHold.expires_at > now,
+            )
+            .values(status="converted", order_id=order_id)
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+    if result.rowcount != len(seat_ids):
         raise HTTPException(
             status_code=409,
             detail="Algunas reservas vencieron. Volvé al mapa y elegí asientos.",
@@ -274,45 +306,62 @@ async def assign_seats_to_tickets(
     Each ticket is bound to one seat (in the same order as seat_ids).
     Records event_seat_assignments + sets the ticket's seat_label.
     """
+    from database import AsyncSessionLocal
+    from orm_models import Ticket as TicketModel, EventSeatAssignment
+    from sqlalchemy import update
+
     seat_ids = order.get("seat_ids") or []
     if not seat_ids:
         return
+
     by_id = seats_by_id(venue)
-    now_iso = _now_iso()
-    assignments = []
-    for ticket, sid in zip(tickets, seat_ids, strict=False):
-        seat = by_id.get(sid)
-        if not seat:
-            logger.warning("seat_id %s not found in venue at assignment time", sid)
-            continue
-        label = seat["label"]
-        loc_id = seat.get("locality_id")
-        # Resolve locality name from venue.localities[]
-        loc = next((it for it in venue.get("localities", []) if it["id"] == loc_id), None)
-        full_label = f"{label} · {loc['name']}" if loc else label
-        await db.tickets.update_one(
-            {"id": ticket["id"]},
-            {"$set": {"seat_label": full_label, "seat_id": sid, "locality_id": loc_id}},
-        )
-        ticket["seat_label"] = full_label
-        ticket["seat_id"] = sid
-        ticket["locality_id"] = loc_id
-        assignments.append({
-            "id": ticket["id"],  # 1:1 with ticket for simpler lookup
-            "event_id": event_id,
-            "venue_id": venue["id"],
-            "seat_id": sid,
-            "ticket_id": ticket["id"],
-            "order_id": order["id"],
-            "holder_email": (order.get("buyer") or {}).get("email"),
-            "locality_id": loc_id,
-            "assigned_at": now_iso,
-        })
-    if assignments:
-        await db.event_seat_assignments.insert_many(assignments)
+    now = _now()
+
+    async with AsyncSessionLocal() as session:
+        for ticket, sid in zip(tickets, seat_ids, strict=False):
+            seat = by_id.get(sid)
+            if not seat:
+                logger.warning("seat_id %s not found in venue at assignment time", sid)
+                continue
+            label = seat["label"]
+            loc_id = seat.get("locality_id")
+            loc = next((it for it in venue.get("localities", []) if it["id"] == loc_id), None)
+            full_label = f"{label} · {loc['name']}" if loc else label
+
+            await session.execute(
+                update(TicketModel)
+                .where(TicketModel.id == ticket["id"])
+                .values(seat_label=full_label, seat_id=sid, locality_id=loc_id)
+                .execution_options(synchronize_session=False)
+            )
+            ticket["seat_label"] = full_label
+            ticket["seat_id"] = sid
+            ticket["locality_id"] = loc_id
+
+            session.add(EventSeatAssignment(
+                id=ticket["id"],  # 1:1 with ticket
+                event_id=event_id,
+                venue_id=venue["id"],
+                seat_id=sid,
+                ticket_id=ticket["id"],
+                order_id=order["id"],
+                holder_email=(order.get("buyer") or {}).get("email"),
+                locality_id=loc_id,
+                assigned_at=now,
+            ))
+        await session.commit()
 
 
 async def release_seat_holds_for_order(order_id: str) -> int:
     """Called when an order is cancelled/rejected — frees its converted holds."""
-    res = await db.seat_holds.delete_many({"order_id": order_id})
-    return res.deleted_count or 0
+    from database import AsyncSessionLocal
+    from orm_models import SeatHold
+    from sqlalchemy import delete
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            delete(SeatHold).where(SeatHold.order_id == order_id)
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+    return result.rowcount or 0

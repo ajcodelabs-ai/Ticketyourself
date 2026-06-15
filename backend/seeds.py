@@ -4,8 +4,16 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from db import db
-from security import hash_password
+from sqlalchemy import delete, func, or_, select, update as sa_update
+
+from database import AsyncSessionLocal
+from db_helpers import get_event_by_id, get_organizer_by_slug, row_to_dict
+from orm_models import (
+    ActivationEvent, Event, EventCapacityReservation, EventSeatAssignment,
+    Microsite, MicrositeAsset, Organizer, OrganizerAdminComment, OrganizerDocument,
+    SeatHold, SubscriptionPlan, Tenant, Ticket, TicketOrder, User,
+)
+from security import hash_password, verify_password
 from slugs import normalize_slug
 
 logger = logging.getLogger("tys.seed")
@@ -155,66 +163,55 @@ DEMO_ORGANIZERS = [
     },
 ]
 
+# Placeholder order id for numbered-event seat preview (no real TicketOrder row).
+DEMO_SEAT_PREVIEW_ORDER_ID = "11111111-1111-4111-8111-111111111111"
+
 
 async def _create_indexes() -> None:
-    await db.users.create_index("email", unique=True)
-    await db.users.create_index("id", unique=True)
-    await db.organizers.create_index("slug", unique=True)
-    await db.organizers.create_index("user_id", unique=True)
-    await db.organizers.create_index("id", unique=True)
-    await db.tenants.create_index("slug", unique=True)
-    await db.subscription_plans.create_index("code", unique=True)
-    await db.organizer_documents.create_index("organizer_id")
-    await db.audit_log.create_index("created_at")
-    await db.poc_payments.create_index("stripe_session_id", unique=True)
-    await db.poc_payments.create_index("tenant_slug")
+    pass  # All indexes are managed by Alembic migrations
 
 
 async def _seed_admin() -> None:
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@ticketyourself.com").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin123!")
-    existing = await db.users.find_one({"email": admin_email})
-    now = _now_iso()
-    if existing is None:
-        await db.users.insert_one(
-            {
-                "id": str(uuid.uuid4()),
-                "email": admin_email,
-                "password_hash": hash_password(admin_password),
-                "role": "super_admin",
-                "organizer_id": None,
-                "created_at": now,
-                "last_login": None,
-            }
-        )
-        logger.info("Seeded super_admin %s", admin_email)
-    else:
-        # Re-hash if password env changed (helps local dev/testing)
-        from security import verify_password
-        if not verify_password(admin_password, existing["password_hash"]):
-            await db.users.update_one(
-                {"email": admin_email},
-                {"$set": {"password_hash": hash_password(admin_password)}},
-            )
-            logger.info("Updated super_admin password for %s", admin_email)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.email == admin_email))
+        existing = result.scalar_one_or_none()
+        if existing is None:
+            session.add(User(
+                id=str(uuid.uuid4()),
+                email=admin_email,
+                password_hash=hash_password(admin_password),
+                role="super_admin",
+                organizer_id=None,
+                created_at=datetime.now(timezone.utc),
+                last_login=None,
+            ))
+            await session.commit()
+            logger.info("Seeded super_admin %s", admin_email)
+        else:
+            if not verify_password(admin_password, existing.password_hash):
+                existing.password_hash = hash_password(admin_password)
+                await session.commit()
+                logger.info("Updated super_admin password for %s", admin_email)
 
 
 async def _seed_plans() -> None:
-    now = _now_iso()
-    for plan in PLANS:
-        await db.subscription_plans.update_one(
-            {"code": plan["code"]},
-            {
-                "$setOnInsert": {
-                    "id": str(uuid.uuid4()),
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as session:
+        for plan in PLANS:
+            result = await session.execute(
+                select(SubscriptionPlan).where(SubscriptionPlan.code == plan["code"])
+            )
+            if result.scalar_one_or_none() is None:
+                session.add(SubscriptionPlan(
+                    id=str(uuid.uuid4()),
+                    stripe_price_id=None,
+                    created_at=now,
+                    updated_at=now,
                     **plan,
-                    "stripe_price_id": None,
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            },
-            upsert=True,
-        )
+                ))
+        await session.commit()
     logger.info("Seeded %d plans", len(PLANS))
 
 
@@ -222,195 +219,176 @@ async def _seed_demo_organizers() -> None:
     """
     Inserts demo organizers + users + tenants idempotently.
     Skips if the user email already exists.
+    All in PostgreSQL.
     """
-    plans_by_code = {
-        p["code"]: p
-        async for p in db.subscription_plans.find({}, {"_id": 0})
-    }
-    now = _now_iso()
+    async with AsyncSessionLocal() as session:
+        plans_result = await session.execute(select(SubscriptionPlan))
+        plans_by_code = {row.code: row for row in plans_result.scalars().all()}
 
-    for od in DEMO_ORGANIZERS:
-        if await db.users.find_one({"email": od["user_email"]}):
-            continue
+        now = datetime.now(timezone.utc)
 
-        user_id = str(uuid.uuid4())
-        organizer_id = str(uuid.uuid4())
-        slug = normalize_slug(od["slug"])
-        plan = plans_by_code.get(od["plan_code"]) if od["plan_code"] else None
-        plan_id = plan["id"] if plan else None
-        tenant_status = "active" if od["status"] == "approved" else "inactive"
-
-        # User
-        await db.users.insert_one(
-            {
-                "id": user_id,
-                "email": od["user_email"].lower(),
-                "password_hash": hash_password(od["user_password"]),
-                "role": "organizer",
-                "organizer_id": organizer_id,
-                "created_at": now,
-                "last_login": None,
-            }
-        )
-
-        # Admin comments
-        admin_comments = []
-        if od.get("approval_comment"):
-            admin_comments.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "admin_id": "system",
-                    "admin_email": "system@ticketyourself.com",
-                    "comment": od["approval_comment"],
-                    "created_at": now,
-                }
+        for od in DEMO_ORGANIZERS:
+            user_check = await session.execute(
+                select(User).where(User.email == od["user_email"].lower())
             )
-        if od.get("rejection_reason"):
-            admin_comments.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "admin_id": "system",
-                    "admin_email": "system@ticketyourself.com",
-                    "comment": od["rejection_reason"],
-                    "created_at": now,
-                }
+            if user_check.scalar_one_or_none():
+                continue
+
+            user_id = str(uuid.uuid4())
+            organizer_id = str(uuid.uuid4())
+            slug = normalize_slug(od["slug"])
+            plan = plans_by_code.get(od["plan_code"]) if od["plan_code"] else None
+            plan_id = plan.id if plan else None
+            tenant_status = "active" if od["status"] == "approved" else "inactive"
+
+            # Tenant → PG (upsert)
+            tenant_result = await session.execute(select(Tenant).where(Tenant.slug == slug))
+            tenant_row = tenant_result.scalar_one_or_none()
+            if tenant_row:
+                tenant_row.name = od["company_name"]
+                tenant_row.status = tenant_status
+            else:
+                session.add(Tenant(slug=slug, name=od["company_name"],
+                                   status=tenant_status, created_at=now))
+
+            # User → PG (flush before organizer: organizers.user_id → users.id)
+            session.add(User(
+                id=user_id,
+                email=od["user_email"].lower(),
+                password_hash=hash_password(od["user_password"]),
+                role="organizer",
+                organizer_id=organizer_id,
+                created_at=now,
+                last_login=None,
+            ))
+            await session.flush()
+
+            # Organizer → PG
+            org_row = Organizer(
+                id=organizer_id,
+                user_id=user_id,
+                company_name=od["company_name"],
+                legal_id=od["legal_id"],
+                org_type=od["org_type"],
+                email=od["user_email"].lower(),
+                phone=od["phone"],
+                country=od["country"],
+                slug=slug,
+                status=od["status"],
+                rejection_reason=od.get("rejection_reason"),
+                plan_id=plan_id,
+                plan_code=od["plan_code"],
+                subscription_status=od["subscription_status"],
+                created_at=now,
+                approved_at=now if od["status"] == "approved" else None,
+                approved_by="system" if od["status"] == "approved" else None,
             )
+            session.add(org_row)
+            await session.flush()
 
-        # Organizer
-        await db.organizers.insert_one(
-            {
-                "id": organizer_id,
-                "user_id": user_id,
-                "company_name": od["company_name"],
-                "legal_id": od["legal_id"],
-                "org_type": od["org_type"],
-                "email": od["user_email"].lower(),
-                "phone": od["phone"],
-                "country": od["country"],
-                "slug": slug,
-                "status": od["status"],
-                "rejection_reason": od.get("rejection_reason"),
-                "admin_comments": admin_comments,
-                "plan_id": plan_id,
-                "subscription_status": od["subscription_status"],
-                "stripe_customer_id": None,
-                "stripe_subscription_id": None,
-                "current_period_end": None,
-                "created_at": now,
-                "approved_at": now if od["status"] == "approved" else None,
-                "approved_by": "system" if od["status"] == "approved" else None,
-            }
-        )
+            # Admin comments → PG
+            if od.get("approval_comment"):
+                session.add(OrganizerAdminComment(
+                    id=str(uuid.uuid4()), organizer_id=organizer_id,
+                    admin_id="system", admin_email="system@ticketyourself.com",
+                    comment=od["approval_comment"], created_at=now,
+                ))
+            if od.get("rejection_reason"):
+                session.add(OrganizerAdminComment(
+                    id=str(uuid.uuid4()), organizer_id=organizer_id,
+                    admin_id="system", admin_email="system@ticketyourself.com",
+                    comment=od["rejection_reason"], created_at=now,
+                ))
 
-        # Tenant (1:1)
-        await db.tenants.update_one(
-            {"slug": slug},
-            {
-                "$set": {
-                    "name": od["company_name"],
-                    "status": tenant_status,
-                },
-                "$setOnInsert": {
-                    "id": str(uuid.uuid4()),
-                    "slug": slug,
-                    "created_at": now,
-                },
-            },
-            upsert=True,
-        )
+            # Documents (stub) → PG
+            for doc in od.get("documents", []):
+                session.add(OrganizerDocument(
+                    id=str(uuid.uuid4()), organizer_id=organizer_id,
+                    doc_type=doc["doc_type"], file_path=None,
+                    original_filename=doc["original_filename"],
+                    mime_type="application/pdf", size_bytes=12345,
+                    uploaded_at=now, is_demo=True,
+                ))
 
-        # Documents (fake stub files)
-        for doc in od.get("documents", []):
-            await db.organizer_documents.insert_one(
-                {
-                    "id": str(uuid.uuid4()),
-                    "organizer_id": organizer_id,
-                    "doc_type": doc["doc_type"],
-                    "file_path": None,  # demo files don't exist on disk
-                    "original_filename": doc["original_filename"],
-                    "mime_type": "application/pdf",
-                    "size_bytes": 12345,
-                    "uploaded_at": now,
-                    "is_demo": True,
-                }
-            )
+            logger.info("Seeded demo organizer %s (%s)", od["company_name"], od["status"])
 
-        logger.info("Seeded demo organizer %s (%s)", od["company_name"], od["status"])
+        await session.commit()
 
 
 async def _reset_demo_organizers() -> None:
     """
     Re-asserts the canonical state of the 3 demo organizers on every startup.
-    Demo organizers are identified by their seeded email; real users are never touched.
-    This protects against side-effects from tests/manual actions (e.g. a tester accidentally
-    approving `prueba-eventos`).
+    All in PostgreSQL.
     """
-    plans_by_code = {
-        p["code"]: p
-        async for p in db.subscription_plans.find({}, {"_id": 0})
-    }
+    from sqlalchemy.orm import selectinload
 
-    for od in DEMO_ORGANIZERS:
-        user = await db.users.find_one({"email": od["user_email"].lower()}, {"_id": 0})
-        if not user:
-            continue
-        organizer_id = user.get("organizer_id")
-        if not organizer_id:
-            continue
+    async with AsyncSessionLocal() as session:
+        plans_result = await session.execute(select(SubscriptionPlan))
+        plans_by_code = {row.code: row for row in plans_result.scalars().all()}
 
-        plan = plans_by_code.get(od["plan_code"]) if od["plan_code"] else None
-        plan_id = plan["id"] if plan else None
-        approved = od["status"] == "approved"
+        now = datetime.now(timezone.utc)
 
-        # Rebuild admin_comments deterministically
-        admin_comments = []
-        if od.get("approval_comment"):
-            admin_comments.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "admin_id": "system",
-                    "admin_email": "system@ticketyourself.com",
-                    "comment": od["approval_comment"],
-                    "created_at": _now_iso(),
-                }
+        for od in DEMO_ORGANIZERS:
+            user_result = await session.execute(
+                select(User).where(User.email == od["user_email"].lower())
             )
-        if od.get("rejection_reason"):
-            admin_comments.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "admin_id": "system",
-                    "admin_email": "system@ticketyourself.com",
-                    "comment": od["rejection_reason"],
-                    "created_at": _now_iso(),
-                }
+            user_row = user_result.scalar_one_or_none()
+            if not user_row or not user_row.organizer_id:
+                continue
+            organizer_id = user_row.organizer_id
+
+            org_result = await session.execute(
+                select(Organizer)
+                .where(Organizer.id == organizer_id)
+                .options(selectinload(Organizer.admin_comments))
             )
+            org_row = org_result.scalar_one_or_none()
+            if not org_row:
+                continue
 
-        await db.organizers.update_one(
-            {"id": organizer_id},
-            {
-                "$set": {
-                    "company_name": od["company_name"],
-                    "legal_id": od["legal_id"],
-                    "org_type": od["org_type"],
-                    "phone": od["phone"],
-                    "country": od["country"],
-                    "status": od["status"],
-                    "rejection_reason": od.get("rejection_reason"),
-                    "admin_comments": admin_comments,
-                    "plan_id": plan_id,
-                    "subscription_status": od["subscription_status"],
-                    "approved_at": _now_iso() if approved else None,
-                    "approved_by": "system" if approved else None,
-                },
-            },
-        )
+            plan = plans_by_code.get(od["plan_code"]) if od["plan_code"] else None
+            plan_id = plan.id if plan else None
+            approved = od["status"] == "approved"
 
-        # Also keep tenant status aligned
-        await db.tenants.update_one(
-            {"slug": od["slug"]},
-            {"$set": {"status": "active" if approved else "inactive"}},
-        )
-        logger.info("Reset demo organizer %s → %s", od["slug"], od["status"])
+            org_row.company_name = od["company_name"]
+            org_row.legal_id = od["legal_id"]
+            org_row.org_type = od["org_type"]
+            org_row.phone = od["phone"]
+            org_row.country = od["country"]
+            org_row.status = od["status"]
+            org_row.rejection_reason = od.get("rejection_reason")
+            org_row.plan_id = plan_id
+            org_row.subscription_status = od["subscription_status"]
+            org_row.approved_at = now if approved else None
+            org_row.approved_by = "system" if approved else None
+
+            # Reset admin comments: delete existing, re-insert canonical ones
+            for c in list(org_row.admin_comments):
+                await session.delete(c)
+            await session.flush()
+            if od.get("approval_comment"):
+                session.add(OrganizerAdminComment(
+                    id=str(uuid.uuid4()), organizer_id=organizer_id,
+                    admin_id="system", admin_email="system@ticketyourself.com",
+                    comment=od["approval_comment"], created_at=now,
+                ))
+            if od.get("rejection_reason"):
+                session.add(OrganizerAdminComment(
+                    id=str(uuid.uuid4()), organizer_id=organizer_id,
+                    admin_id="system", admin_email="system@ticketyourself.com",
+                    comment=od["rejection_reason"], created_at=now,
+                ))
+
+            tenant_result = await session.execute(
+                select(Tenant).where(Tenant.slug == od["slug"])
+            )
+            tenant_row = tenant_result.scalar_one_or_none()
+            if tenant_row:
+                tenant_row.status = "active" if approved else "inactive"
+
+            logger.info("Reset demo organizer %s → %s", od["slug"], od["status"])
+
+        await session.commit()
 
 
 # Prefixes used by ephemeral test organizers (created by pytest fixtures / testing agent).
@@ -483,76 +461,71 @@ SEED_MANUAL_BUYER_EMAILS = {
 async def _cleanup_ephemeral_orders() -> None:
     """
     Phase 5.5 — aggressive cleanup of test/ephemeral orders accumulated in
-    preview. Matches any `buyer.email` against the patterns list, EXCLUDING
+    preview. Matches any `buyer_email` against the patterns list, EXCLUDING
     the well-known seed manual orders.
 
     Side effects per matched order:
-      - delete its tickets
+      - delete its tickets (also cascade-deleted by FK, but explicit is safer)
       - delete its capacity reservations
       - if order was `paid`, decrement event.tickets_sold by quantity_total
       - delete the order
     Idempotent: empty match → no-op + no log.
     """
-    pattern = "|".join(f"({p})" for p in _EPHEMERAL_ORDER_EMAIL_PATTERNS)
-    query = {
-        "buyer.email": {"$regex": pattern, "$options": "i"},
-        # Belt + suspenders: never touch the well-known seed manual orders.
-        "buyer.email": {"$nin": list(SEED_MANUAL_BUYER_EMAILS)},
-    }
-    # The 2nd $regex override in the dict above replaced the first; rebuild
-    # with $and to keep both predicates.
-    query = {
-        "$and": [
-            {"buyer.email": {"$regex": pattern, "$options": "i"}},
-            {"buyer.email": {"$nin": list(SEED_MANUAL_BUYER_EMAILS)}},
-        ]
-    }
+    # Build a single case-insensitive OR regex for PostgreSQL ~* operator
+    pg_pattern = "|".join(f"({p})" for p in _EPHEMERAL_ORDER_EMAIL_PATTERNS)
+    seed_emails = list(SEED_MANUAL_BUYER_EMAILS)
 
-    cursor = db.ticket_orders.find(
-        query,
-        {
-            "_id": 0,
-            "id": 1,
-            "event_id": 1,
-            "status": 1,
-            "quantity_total": 1,
-            "order_number": 1,
-            "buyer": 1,
-        },
-    )
-    orders = [o async for o in cursor]
-    if not orders:
-        return
-
-    order_ids = [o["id"] for o in orders]
-
-    # Decrement event.tickets_sold for paid orders, grouped per event.
-    paid_per_event: dict[str, int] = {}
-    for o in orders:
-        if o.get("status") == "paid":
-            paid_per_event[o["event_id"]] = (
-                paid_per_event.get(o["event_id"], 0) + o.get("quantity_total", 0)
+    async with AsyncSessionLocal() as _pg:
+        orders_result = await _pg.execute(
+            select(
+                TicketOrder.id,
+                TicketOrder.event_id,
+                TicketOrder.status,
+                TicketOrder.quantity_total,
+            ).where(
+                TicketOrder.buyer_email.op("~*")(pg_pattern),
+                TicketOrder.buyer_email.notin_(seed_emails),
             )
-    for event_id, decrement in paid_per_event.items():
-        await db.events.update_one(
-            {"id": event_id}, {"$inc": {"tickets_sold": -decrement}}
         )
+        orders = [
+            {"id": r.id, "event_id": r.event_id, "status": r.status, "quantity_total": r.quantity_total}
+            for r in orders_result.all()
+        ]
+        if not orders:
+            return
 
-    tickets_deleted = (
-        await db.tickets.delete_many({"order_id": {"$in": order_ids}})
-    ).deleted_count
-    reservations_deleted = (
-        await db.event_capacity_reservations.delete_many({"order_id": {"$in": order_ids}})
-    ).deleted_count
-    orders_deleted = (
-        await db.ticket_orders.delete_many({"id": {"$in": order_ids}})
-    ).deleted_count
+        order_ids = [o["id"] for o in orders]
+
+        paid_per_event: dict[str, int] = {}
+        for o in orders:
+            if o.get("status") == "paid":
+                paid_per_event[o["event_id"]] = (
+                    paid_per_event.get(o["event_id"], 0) + o.get("quantity_total", 0)
+                )
+        for event_id, decrement in paid_per_event.items():
+            await _pg.execute(
+                sa_update(Event)
+                .where(Event.id == event_id)
+                .values(tickets_sold=Event.tickets_sold - decrement)
+            )
+
+        res_result = await _pg.execute(
+            delete(EventCapacityReservation).where(EventCapacityReservation.order_id.in_(order_ids))
+        )
+        tix_result = await _pg.execute(
+            delete(Ticket).where(Ticket.order_id.in_(order_ids))
+        )
+        ord_result = await _pg.execute(
+            delete(TicketOrder).where(TicketOrder.id.in_(order_ids))
+        )
+        await _pg.commit()
+
     logger.info(
         "Cleanup ephemeral orders: %d orders, %d tickets, %d reservations · "
         "decremented tickets_sold on %d event(s)",
-        orders_deleted,
-        tickets_deleted,
-        reservations_deleted,
+        ord_result.rowcount,
+        tix_result.rowcount,
+        res_result.rowcount,
         len(paid_per_event),
     )
 
@@ -566,39 +539,39 @@ async def _cleanup_ephemeral_test_data() -> None:
     seed_emails = {od["user_email"].lower() for od in DEMO_ORGANIZERS}
     seed_slugs = {od["slug"] for od in DEMO_ORGANIZERS}
 
-    slug_or = "|".join(_EPHEMERAL_SLUG_PREFIXES)
-    email_or = "|".join(_EPHEMERAL_EMAIL_PREFIXES)
-    query = {
-        "$or": [
-            {"slug": {"$regex": f"^({slug_or})", "$options": "i"}},
-            {"email": {"$regex": f"^({email_or})", "$options": "i"}},
+    async with AsyncSessionLocal() as session:
+        slug_conditions = [Organizer.slug.ilike(f"{p}%") for p in _EPHEMERAL_SLUG_PREFIXES]
+        email_conditions = [Organizer.email.ilike(f"{p}%") for p in _EPHEMERAL_EMAIL_PREFIXES]
+        stmt = select(Organizer.id, Organizer.user_id, Organizer.slug, Organizer.email).where(
+            or_(*slug_conditions, *email_conditions)
+        )
+        result = await session.execute(stmt)
+        orgs = [
+            {"id": r.id, "user_id": r.user_id, "slug": r.slug, "email": r.email}
+            for r in result.all()
+            if r.slug not in seed_slugs and (r.email or "").lower() not in seed_emails
         ]
-    }
+        if not orgs:
+            return
 
-    org_cursor = db.organizers.find(
-        query, {"_id": 0, "id": 1, "user_id": 1, "slug": 1, "email": 1}
-    )
-    orgs = [o async for o in org_cursor]
-    orgs = [
-        o for o in orgs
-        if o.get("slug") not in seed_slugs and o.get("email", "").lower() not in seed_emails
-    ]
-    if not orgs:
-        return
+        org_ids = [o["id"] for o in orgs]
+        user_ids = [o["user_id"] for o in orgs if o.get("user_id")]
+        slugs = [o["slug"] for o in orgs]
 
-    org_ids = [o["id"] for o in orgs]
-    user_ids = [o["user_id"] for o in orgs if o.get("user_id")]
-    slugs = [o["slug"] for o in orgs]
+        # Phase-6 collections now in PG
+        await session.execute(delete(Microsite).where(Microsite.organizer_id.in_(org_ids)))
+        await session.execute(delete(MicrositeAsset).where(MicrositeAsset.organizer_id.in_(org_ids)))
+        await session.execute(delete(ActivationEvent).where(ActivationEvent.organizer_id.in_(org_ids)))
 
-    await db.organizer_documents.delete_many({"organizer_id": {"$in": org_ids}})
-    await db.microsites.delete_many({"organizer_id": {"$in": org_ids}})
-    await db.microsite_assets.delete_many({"organizer_id": {"$in": org_ids}})
-    await db.activation_events.delete_many({"organizer_id": {"$in": org_ids}})
-    await db.events.delete_many({"organizer_id": {"$in": org_ids}})
-    await db.event_assets.delete_many({"organizer_id": {"$in": org_ids}})
-    await db.organizers.delete_many({"id": {"$in": org_ids}})
-    await db.users.delete_many({"id": {"$in": user_ids}})
-    await db.tenants.delete_many({"slug": {"$in": slugs}})
+        # PG deletes — Venue/Event before Organizer (FK constraints)
+        from orm_models import Venue as _CleanupVenue
+        await session.execute(delete(_CleanupVenue).where(_CleanupVenue.organizer_id.in_(org_ids)))
+        await session.execute(delete(Event).where(Event.organizer_id.in_(org_ids)))
+        await session.execute(delete(Organizer).where(Organizer.id.in_(org_ids)))
+        await session.execute(delete(User).where(User.id.in_(user_ids)))
+        await session.execute(delete(Tenant).where(Tenant.slug.in_(slugs)))
+        await session.commit()
+
     logger.info("Cleaned up %d ephemeral test organizer(s): %s", len(orgs), slugs)
 
 
@@ -649,13 +622,12 @@ async def _seed_demo_microsites() -> None:
         "evento-rechazado": {"published": False},
     }
 
+    from sqlalchemy.orm.attributes import flag_modified as _flag_modified
+
     for slug, override in seeds.items():
-        organizer = await db.organizers.find_one({"slug": slug}, {"_id": 0})
+        organizer = await get_organizer_by_slug(slug)
         if not organizer:
             continue
-        existing = await db.microsites.find_one(
-            {"organizer_id": organizer["id"]}, {"_id": 0, "id": 1}
-        )
         doc = default_microsite(
             organizer_id=organizer["id"],
             tenant_slug=slug,
@@ -669,29 +641,42 @@ async def _seed_demo_microsites() -> None:
         if "social_links" in override:
             doc["social_links"] = {**doc["social_links"], **override["social_links"]}
 
-        if existing:
-            # For demo-org we re-assert the canonical microsite content (idempotent reset
-            # — same pattern as _reset_demo_organizers). Other demos keep what the user
-            # may have edited (no clobber).
-            if slug == "demo-org":
-                await db.microsites.update_one(
-                    {"id": existing["id"]},
-                    {
-                        "$set": {
-                            "template": doc["template"],
-                            "branding": doc["branding"],
-                            "content": doc["content"],
-                            "social_links": doc["social_links"],
-                            "sections_enabled": doc["sections_enabled"],
-                            "published": doc["published"],
-                            "updated_at": doc["updated_at"],
-                        }
-                    },
-                )
-                logger.info("Reset demo microsite for %s (published=%s)", slug, doc["published"])
-            continue
-        await db.microsites.insert_one(doc)
-        logger.info("Seeded microsite for %s (published=%s)", slug, doc["published"])
+        now_dt = datetime.now(timezone.utc)
+        async with AsyncSessionLocal() as _ms_pg:
+            existing_row = await _ms_pg.scalar(
+                select(Microsite).where(Microsite.organizer_id == organizer["id"])
+            )
+            if existing_row:
+                if slug == "demo-org":
+                    existing_row.template = doc["template"]
+                    existing_row.branding = doc["branding"]
+                    existing_row.content = doc["content"]
+                    existing_row.social_links = doc["social_links"]
+                    existing_row.sections_enabled = doc["sections_enabled"]
+                    existing_row.published = doc.get("published", False)
+                    existing_row.updated_at = now_dt
+                    _flag_modified(existing_row, "branding")
+                    _flag_modified(existing_row, "content")
+                    _flag_modified(existing_row, "social_links")
+                    _flag_modified(existing_row, "sections_enabled")
+                    await _ms_pg.commit()
+                    logger.info("Reset demo microsite for %s (published=%s)", slug, existing_row.published)
+                continue
+            _ms_pg.add(Microsite(
+                id=doc["id"],
+                organizer_id=organizer["id"],
+                slug=slug,
+                template=doc.get("template"),
+                branding=doc.get("branding", {}),
+                content=doc.get("content", {}),
+                social_links=doc.get("social_links", {}),
+                sections_enabled=doc.get("sections_enabled", {}),
+                published=doc.get("published", False),
+                created_at=now_dt,
+                updated_at=now_dt,
+            ))
+            await _ms_pg.commit()
+        logger.info("Seeded microsite for %s (published=%s)", slug, doc.get("published", False))
 
 
 async def _seed_demo_events() -> None:
@@ -699,7 +684,7 @@ async def _seed_demo_events() -> None:
     Three demo events for demo-org. Reset on every boot so the public microsite
     showcases a realistic mix (paid + paid + free, varying dates).
     """
-    organizer = await db.organizers.find_one({"slug": "demo-org"}, {"_id": 0, "id": 1})
+    organizer = await get_organizer_by_slug("demo-org")
     if not organizer:
         return
 
@@ -717,8 +702,8 @@ async def _seed_demo_events() -> None:
             "venue_name": "Teatro Bolívar",
             "venue_address": "Pasaje Royal 175 y Junín",
             "venue_city": "Quito",
-            "starts_at": (now + timedelta(days=30)).replace(hour=21, minute=0).isoformat(),
-            "ends_at": (now + timedelta(days=30)).replace(hour=23, minute=30).isoformat(),
+            "starts_at": (now + timedelta(days=30)).replace(hour=21, minute=0),
+            "ends_at": (now + timedelta(days=30)).replace(hour=23, minute=30),
             "pricing_type": "paid",
             "base_price_cents": 1500,
             "capacity": 100,
@@ -736,8 +721,8 @@ async def _seed_demo_events() -> None:
             "venue_name": "Hotel Quito",
             "venue_address": "González Suárez N27-142",
             "venue_city": "Quito",
-            "starts_at": (now + timedelta(days=45)).replace(hour=9, minute=0).isoformat(),
-            "ends_at": (now + timedelta(days=45)).replace(hour=18, minute=0).isoformat(),
+            "starts_at": (now + timedelta(days=45)).replace(hour=9, minute=0),
+            "ends_at": (now + timedelta(days=45)).replace(hour=18, minute=0),
             "pricing_type": "paid",
             "base_price_cents": 5000,
             "capacity": 50,
@@ -755,8 +740,8 @@ async def _seed_demo_events() -> None:
             "venue_name": "Centro Cultural Metropolitano",
             "venue_address": "García Moreno y Espejo",
             "venue_city": "Quito",
-            "starts_at": (now + timedelta(days=15)).replace(hour=18, minute=30).isoformat(),
-            "ends_at": (now + timedelta(days=15)).replace(hour=20, minute=30).isoformat(),
+            "starts_at": (now + timedelta(days=15)).replace(hour=18, minute=30),
+            "ends_at": (now + timedelta(days=15)).replace(hour=20, minute=30),
             "pricing_type": "free",
             "base_price_cents": 0,
             "capacity": None,
@@ -764,97 +749,114 @@ async def _seed_demo_events() -> None:
         },
     ]
 
+    from sqlalchemy.orm.attributes import flag_modified as _flag_modified
+
+    _demo_payment_methods_full = {
+        "stripe": {"enabled": True},
+        "transfer": {
+            "enabled": True,
+            "bank_name": "Banco Pichincha",
+            "account_number": "2100123456",
+            "account_holder": "Eventos Demo S.A.",
+            "instructions": "Envianos el comprobante al WhatsApp +593 98 765 4321 indicando el número de orden.",
+        },
+        "cash": {
+            "enabled": True,
+            "location": "Av. Amazonas N32-45, oficina 3, Quito",
+            "schedule": "Lun-Vie 9:00-18:00, Sáb 10:00-14:00",
+            "contact": "+593 98 765 4321",
+        },
+    }
+    _demo_payment_methods_stripe = {
+        "stripe": {"enabled": True},
+        "transfer": {"enabled": False, "bank_name": "", "account_number": "", "account_holder": "", "instructions": ""},
+        "cash": {"enabled": False, "location": "", "schedule": "", "contact": ""},
+    }
+    _demo_discounts = {
+        "disability_law": {"enabled": False, "percent": 50},
+        "presale": {"enabled": False, "percent": 0, "ends_at": None},
+    }
+    _demo_access_params = {
+        "visibility": "public", "access_type": "open",
+        "max_per_purchase": 10, "max_per_email": None,
+        "refund_window_hours": 24, "show_buyer_name_on_ticket": True,
+    }
+
     for s in spec:
-        existing = await db.events.find_one(
-            {"organizer_id": organizer["id"], "slug": s["slug"]},
-            {"_id": 0, "id": 1},
-        )
-        record = {
-            "organizer_id": organizer["id"],
-            "tenant_slug": "demo-org",
-            "slug": s["slug"],
-            "title": s["title"],
-            "description": s["description"],
-            "short_description": s["short_description"],
-            "category": s["category"],
-            "venue_name": s["venue_name"],
-            "venue_address": s["venue_address"],
-            "venue_city": s["venue_city"],
-            "venue_country": "Ecuador",
-            "starts_at": s["starts_at"],
-            "ends_at": s["ends_at"],
-            "timezone": "America/Guayaquil",
-            "sales_start": None,
-            "sales_end": None,
-            "pricing_type": s["pricing_type"],
-            "base_price_cents": s["base_price_cents"],
-            "currency": "USD",
-            "capacity": s["capacity"],
-            "visibility": "public",
-            "status": "published",
-            "tickets_sold": 0,
-            "poster_url": s["poster_url"],
-            "banner_url": None,
-            "gallery_urls": [],
-            "payment_methods": (
-                {
-                    "stripe": {"enabled": True},
-                    "transfer": {
-                        "enabled": True,
-                        "bank_name": "Banco Pichincha",
-                        "account_number": "2100123456",
-                        "account_holder": "Eventos Demo S.A.",
-                        "instructions": "Envianos el comprobante al WhatsApp +593 98 765 4321 indicando el número de orden.",
-                    },
-                    "cash": {
-                        "enabled": True,
-                        "location": "Av. Amazonas N32-45, oficina 3, Quito",
-                        "schedule": "Lun-Vie 9:00-18:00, Sáb 10:00-14:00",
-                        "contact": "+593 98 765 4321",
-                    },
-                }
-                if s["slug"] == "concierto-acustico-demo"
-                else {
-                    "stripe": {"enabled": True},
-                    "transfer": {
-                        "enabled": False,
-                        "bank_name": "",
-                        "account_number": "",
-                        "account_holder": "",
-                        "instructions": "",
-                    },
-                    "cash": {
-                        "enabled": False,
-                        "location": "",
-                        "schedule": "",
-                        "contact": "",
-                    },
-                }
-            ),
-            "discounts": {
-                "disability_law": {"enabled": False, "percent": 50},
-                "presale": {"enabled": False, "percent": 0, "ends_at": None},
-            },
-            "access_params": {
-                "visibility": "public",
-                "access_type": "open",
-                "max_per_purchase": 10,
-                "max_per_email": None,
-                "refund_window_hours": 24,
-                "show_buyer_name_on_ticket": True,
-            },
-            "updated_at": _now_iso(),
-            "published_at": _now_iso(),
-        }
-        if existing:
-            # Keep `id` and `created_at`; refresh everything else.
-            await db.events.update_one(
-                {"id": existing["id"]}, {"$set": record}
+        _pm = _demo_payment_methods_full if s["slug"] == "concierto-acustico-demo" else _demo_payment_methods_stripe
+        now_dt = datetime.now(timezone.utc)
+        async with AsyncSessionLocal() as session:
+            row = await session.scalar(
+                select(Event).where(
+                    Event.organizer_id == organizer["id"],
+                    Event.slug == s["slug"],
+                )
             )
-        else:
-            record["id"] = str(uuid.uuid4())
-            record["created_at"] = _now_iso()
-            await db.events.insert_one({**record})
+            if row:
+                row.title = s["title"]
+                row.description = s["description"]
+                row.short_description = s["short_description"]
+                row.category = s["category"]
+                row.venue_name = s["venue_name"]
+                row.venue_address = s["venue_address"]
+                row.venue_city = s["venue_city"]
+                row.venue_country = "Ecuador"
+                row.starts_at = s["starts_at"]
+                row.ends_at = s["ends_at"]
+                row.timezone = "America/Guayaquil"
+                row.pricing_type = s["pricing_type"]
+                row.base_price_cents = s["base_price_cents"]
+                row.currency = "USD"
+                row.capacity = s["capacity"]
+                row.visibility = "public"
+                row.status = "published"
+                row.poster_url = s["poster_url"]
+                row.payment_methods = _pm
+                row.discounts = _demo_discounts
+                row.access_params = _demo_access_params
+                row.updated_at = now_dt
+                row.published_at = now_dt
+                _flag_modified(row, "payment_methods")
+                _flag_modified(row, "discounts")
+                _flag_modified(row, "access_params")
+            else:
+                session.add(Event(
+                    id=str(uuid.uuid4()),
+                    organizer_id=organizer["id"],
+                    tenant_slug="demo-org",
+                    slug=s["slug"],
+                    title=s["title"],
+                    description=s["description"],
+                    short_description=s["short_description"],
+                    category=s["category"],
+                    venue_name=s["venue_name"],
+                    venue_address=s["venue_address"],
+                    venue_city=s["venue_city"],
+                    venue_country="Ecuador",
+                    starts_at=s["starts_at"],
+                    ends_at=s["ends_at"],
+                    timezone="America/Guayaquil",
+                    sales_start=None,
+                    sales_end=None,
+                    pricing_type=s["pricing_type"],
+                    base_price_cents=s["base_price_cents"],
+                    currency="USD",
+                    capacity=s["capacity"],
+                    visibility="public",
+                    status="published",
+                    tickets_sold=0,
+                    poster_url=s["poster_url"],
+                    banner_url=None,
+                    gallery_urls=[],
+                    locality_pricing=[],
+                    payment_methods=_pm,
+                    discounts=_demo_discounts,
+                    access_params=_demo_access_params,
+                    created_at=now_dt,
+                    updated_at=now_dt,
+                    published_at=now_dt,
+                ))
+            await session.commit()
         logger.info("Seeded demo event %s", s["slug"])
 
 
@@ -868,26 +870,40 @@ async def _seed_demo_manual_orders() -> None:
     The buyer emails are well-known so they can be safely cleaned up.
     """
     # Locate the event + organizer for this seed.
-    organizer = await db.organizers.find_one({"slug": "demo-org"}, {"_id": 0, "id": 1, "slug": 1})
+    organizer = await get_organizer_by_slug("demo-org")
     if not organizer:
         return
-    event = await db.events.find_one(
-        {"organizer_id": organizer["id"], "slug": "concierto-acustico-demo"},
-        {"_id": 0},
-    )
+    async with AsyncSessionLocal() as _pg:
+        _ev_row = await _pg.scalar(
+            select(Event).where(
+                Event.organizer_id == organizer["id"],
+                Event.slug == "concierto-acustico-demo",
+            )
+        )
+    event = row_to_dict(_ev_row) if _ev_row else None
     if not event:
         return
 
     seed_emails = ("transfer-demo@example.com", "cash-demo@example.com")
     # Cleanup previous demo manual orders + their reservations.
-    prior = db.ticket_orders.find(
-        {"organizer_id": organizer["id"], "buyer.email": {"$in": list(seed_emails)}},
-        {"_id": 0, "id": 1},
-    )
-    prior_ids = [d["id"] async for d in prior]
-    if prior_ids:
-        await db.event_capacity_reservations.delete_many({"order_id": {"$in": prior_ids}})
-        await db.ticket_orders.delete_many({"id": {"$in": prior_ids}})
+    async with AsyncSessionLocal() as _pg_cleanup:
+        _prior_result = await _pg_cleanup.execute(
+            select(TicketOrder.id).where(
+                TicketOrder.organizer_id == organizer["id"],
+                TicketOrder.buyer_email.in_(list(seed_emails)),
+            )
+        )
+        prior_ids = [r.id for r in _prior_result.all()]
+        if prior_ids:
+            await _pg_cleanup.execute(
+                delete(EventCapacityReservation).where(
+                    EventCapacityReservation.order_id.in_(prior_ids)
+                )
+            )
+            await _pg_cleanup.execute(
+                delete(TicketOrder).where(TicketOrder.id.in_(prior_ids))
+            )
+            await _pg_cleanup.commit()
 
     seeds = [
         {
@@ -945,27 +961,38 @@ async def _seed_demo_venues() -> None:
     Phase 6a — seed 2 demo venues for demo-org so the editor lands on real data.
     Idempotent: deletes existing demo venues by well-known slug, recreates.
     """
-    organizer = await db.organizers.find_one({"slug": "demo-org"}, {"_id": 0, "id": 1, "slug": 1})
+    from sqlalchemy import delete as sa_delete, func as sa_func
+    from orm_models import Venue
+
+    organizer = await get_organizer_by_slug("demo-org")
     if not organizer:
         return
     demo_slugs = ("teatro-demo", "auditorio-pequeno")
-    # Skip seed when an existing demo venue is referenced by events (avoid breaking those FKs).
-    bound = await db.events.count_documents(
-        {"venue_id": {"$exists": True, "$ne": None}}
-    )
-    if bound:
-        # If any events bind to venues, leave as-is — admin/operator must clean up.
-        existing = await db.venues.count_documents(
-            {"organizer_id": organizer["id"], "slug": {"$in": list(demo_slugs)}}
+
+    async with AsyncSessionLocal() as session:
+        # Skip seed when an existing demo venue is referenced by events (avoid breaking those FKs).
+        bound = await session.scalar(
+            select(func.count(Event.id)).where(Event.venue_id.isnot(None))
+        ) or 0
+        if bound:
+            existing_count = await session.scalar(
+                select(sa_func.count(Venue.id)).where(
+                    Venue.organizer_id == organizer["id"],
+                    Venue.slug.in_(list(demo_slugs)),
+                )
+            )
+            if (existing_count or 0) >= 2:
+                return
+
+        await session.execute(
+            sa_delete(Venue).where(
+                Venue.organizer_id == organizer["id"],
+                Venue.slug.in_(list(demo_slugs)),
+            )
         )
-        if existing >= 2:
-            return
+        await session.flush()
 
-    await db.venues.delete_many(
-        {"organizer_id": organizer["id"], "slug": {"$in": list(demo_slugs)}}
-    )
-
-    now = _now_iso()
+    now = datetime.now(timezone.utc)
     # ── 1. Teatro Demo ────────────────────────────────────────────────────
     loc_platea = {"id": str(uuid.uuid4()), "name": "Platea", "color": "#3B82F6",
                   "description": "Filas frontales", "default_price_cents": 2500}
@@ -1016,24 +1043,26 @@ async def _seed_demo_venues() -> None:
         (e.get("seats_count") or 0) if e["kind"] == "seat_row_straight" else (e.get("capacity") or 0)
         for e in teatro_elements
     )
-    await db.venues.insert_one({
-        "id": str(uuid.uuid4()),
-        "organizer_id": organizer["id"],
-        "tenant_slug": "demo-org",
-        "name": "Teatro Demo",
-        "slug": "teatro-demo",
-        "description": "Sala chica con escenario frontal, ideal para shows íntimos.",
-        "type": "theater",
-        "canvas": {"width": 1200, "height": 800, "background_color": "#FAFAFA", "grid_size": 20},
-        "elements": teatro_elements,
-        "localities": [loc_platea, loc_tribuna, loc_general],
-        "capacity_calculated": teatro_cap,
-        "status": "published",
-        "is_template": False,
-        "created_at": now,
-        "updated_at": now,
-        "published_at": now,
-    })
+    async with AsyncSessionLocal() as session:
+        session.add(Venue(
+            id=str(uuid.uuid4()),
+            organizer_id=organizer["id"],
+            tenant_slug="demo-org",
+            name="Teatro Demo",
+            slug="teatro-demo",
+            description="Sala chica con escenario frontal, ideal para shows íntimos.",
+            type="theater",
+            canvas={"width": 1200, "height": 800, "background_color": "#FAFAFA", "grid_size": 20},
+            elements=teatro_elements,
+            localities=[loc_platea, loc_tribuna, loc_general],
+            capacity_calculated=teatro_cap,
+            status="published",
+            is_template=False,
+            created_at=now,
+            updated_at=now,
+            published_at=now,
+        ))
+        await session.commit()
 
     # ── 2. Auditorio Pequeño (Phase 6b: showcases all new element kinds) ──
     loc_aud_gen = {"id": str(uuid.uuid4()), "name": "General", "color": "#6366F1",
@@ -1123,25 +1152,235 @@ async def _seed_demo_venues() -> None:
         elif e["kind"] == "table_rect":
             cps = e.get("chairs_per_side") or {}
             aud_cap += sum(int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left"))
-    await db.venues.insert_one({
-        "id": str(uuid.uuid4()),
-        "organizer_id": organizer["id"],
-        "tenant_slug": "demo-org",
-        "name": "Auditorio Pequeño",
-        "slug": "auditorio-pequeno",
-        "description": "Showcase de Fase 6b: filas rectas, fila curva, mesas redondas, mesa rectangular y asientos VIP individuales.",
-        "type": "auditorium",
-        "canvas": {"width": 800, "height": 600, "background_color": "#FAFAFA", "grid_size": 20},
-        "elements": aud_elements,
-        "localities": [loc_aud_gen, loc_aud_vip, loc_aud_mesa],
-        "capacity_calculated": aud_cap,
-        "status": "published",
-        "is_template": False,
-        "created_at": now,
-        "updated_at": now,
-        "published_at": now,
-    })
+    async with AsyncSessionLocal() as session:
+        session.add(Venue(
+            id=str(uuid.uuid4()),
+            organizer_id=organizer["id"],
+            tenant_slug="demo-org",
+            name="Auditorio Pequeño",
+            slug="auditorio-pequeno",
+            description="Showcase de Fase 6b: filas rectas, fila curva, mesas redondas, mesa rectangular y asientos VIP individuales.",
+            type="auditorium",
+            canvas={"width": 800, "height": 600, "background_color": "#FAFAFA", "grid_size": 20},
+            elements=aud_elements,
+            localities=[loc_aud_gen, loc_aud_vip, loc_aud_mesa],
+            capacity_calculated=aud_cap,
+            status="published",
+            is_template=False,
+            created_at=now,
+            updated_at=now,
+            published_at=now,
+        ))
+        await session.commit()
     logger.info("Seeded 2 demo venues for demo-org (Teatro Demo + Auditorio Pequeño)")
+
+
+async def _seed_venue_templates() -> None:
+    """
+    Platform venue templates (is_template=True) for organizers to clone.
+    Idempotent: skips slugs that already exist as templates.
+    """
+    from orm_models import Venue
+
+    organizer = await get_organizer_by_slug("demo-org")
+    if not organizer:
+        return
+
+    template_specs = [
+        {
+            "slug": "plantilla-teatro-clasico",
+            "name": "Teatro clásico",
+            "description": "Escenario frontal, platea numerada y gradería general. Ideal para obras y conciertos íntimos.",
+            "type": "theater",
+            "canvas": {"width": 1200, "height": 800, "background_color": "#FAFAFA", "grid_size": 20},
+            "build": "_build_template_teatro_clasico",
+        },
+        {
+            "slug": "plantilla-auditorio-conferencias",
+            "name": "Auditorio para conferencias",
+            "description": "Escenario, filas numeradas y zona VIP al frente. Pensado para charlas y presentaciones.",
+            "type": "auditorium",
+            "canvas": {"width": 1000, "height": 700, "background_color": "#FAFAFA", "grid_size": 20},
+            "build": "_build_template_auditorio",
+        },
+    ]
+
+    existing_slugs: set[str] = set()
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Venue.slug).where(
+                Venue.organizer_id == organizer["id"],
+                Venue.is_template.is_(True),
+                Venue.slug.in_([s["slug"] for s in template_specs]),
+            )
+        )
+        existing_slugs = {row[0] for row in result.all()}
+
+    to_create = [s for s in template_specs if s["slug"] not in existing_slugs]
+    if not to_create:
+        return
+
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as session:
+        for spec in to_create:
+            localities, elements, capacity = _build_venue_template_layout(spec["build"])
+            session.add(Venue(
+                id=str(uuid.uuid4()),
+                organizer_id=organizer["id"],
+                tenant_slug=organizer["slug"],
+                name=spec["name"],
+                slug=spec["slug"],
+                description=spec["description"],
+                type=spec["type"],
+                canvas=spec["canvas"],
+                elements=elements,
+                localities=localities,
+                capacity_calculated=capacity,
+                status="draft",
+                is_template=True,
+                created_at=now,
+                updated_at=now,
+                published_at=None,
+            ))
+        await session.commit()
+    logger.info("Seeded %d venue template(s): %s", len(to_create), ", ".join(s["name"] for s in to_create))
+
+
+def _build_venue_template_layout(build_key: str):
+    """Return (localities, elements, capacity) for a named template layout."""
+    if build_key == "_build_template_teatro_clasico":
+        return _build_template_teatro_clasico()
+    if build_key == "_build_template_auditorio":
+        return _build_template_auditorio()
+    raise ValueError(f"Unknown template layout: {build_key}")
+
+
+def _build_template_teatro_clasico():
+    loc_platea = {
+        "id": str(uuid.uuid4()), "name": "Platea", "color": "#3B82F6",
+        "description": "Filas centrales", "default_price_cents": 2500,
+    }
+    loc_tribuna = {
+        "id": str(uuid.uuid4()), "name": "Tribuna", "color": "#10B981",
+        "description": "Filas posteriores", "default_price_cents": 1500,
+    }
+    loc_general = {
+        "id": str(uuid.uuid4()), "name": "General", "color": "#6B7280",
+        "description": "Gradería", "default_price_cents": 1000,
+    }
+    elements = [
+        {
+            "id": str(uuid.uuid4()), "kind": "stage",
+            "x": 280, "y": 60, "rotation": 0, "label": "Escenario",
+            "locality_id": None, "z_index": 0,
+            "width": 640, "height": 80, "color": "#9CA3AF",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 320, "y": 200, "rotation": 0, "label": "Fila A",
+            "locality_id": loc_platea["id"], "z_index": 1,
+            "seats_count": 12, "seat_spacing": 28, "seat_radius": 11,
+            "row_label": "A", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 300, "y": 260, "rotation": 0, "label": "Fila B",
+            "locality_id": loc_platea["id"], "z_index": 1,
+            "seats_count": 14, "seat_spacing": 28, "seat_radius": 11,
+            "row_label": "B", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 280, "y": 320, "rotation": 0, "label": "Fila C",
+            "locality_id": loc_tribuna["id"], "z_index": 1,
+            "seats_count": 16, "seat_spacing": 28, "seat_radius": 11,
+            "row_label": "C", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "unnumbered_zone",
+            "x": 220, "y": 520, "rotation": 0, "label": "Gradería",
+            "locality_id": loc_general["id"], "z_index": 1,
+            "width": 760, "height": 140, "capacity": 80, "color": None,
+        },
+    ]
+    capacity = sum(
+        (e.get("seats_count") or 0) if e["kind"] == "seat_row_straight" else (e.get("capacity") or 0)
+        for e in elements
+    )
+    return [loc_platea, loc_tribuna, loc_general], elements, capacity
+
+
+def _build_template_auditorio():
+    loc_general = {
+        "id": str(uuid.uuid4()), "name": "General", "color": "#6366F1",
+        "description": "Asientos numerados", "default_price_cents": 1500,
+    }
+    loc_vip = {
+        "id": str(uuid.uuid4()), "name": "VIP", "color": "#F59E0B",
+        "description": "Primera fila premium", "default_price_cents": 4500,
+    }
+    elements = [
+        {
+            "id": str(uuid.uuid4()), "kind": "stage",
+            "x": 200, "y": 40, "rotation": 0, "label": "Escenario",
+            "locality_id": None, "z_index": 0,
+            "width": 600, "height": 70, "color": "#9CA3AF",
+        },
+        *[
+            {
+                "id": str(uuid.uuid4()), "kind": "seat_individual",
+                "x": 220 + i * 55, "y": 130, "rotation": 0,
+                "label": f"VIP-{i + 1}",
+                "locality_id": loc_vip["id"], "z_index": 2,
+                "seat_radius": 12,
+            }
+            for i in range(8)
+        ],
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 180, "y": 220, "rotation": 0, "label": "Fila A",
+            "locality_id": loc_general["id"], "z_index": 1,
+            "seats_count": 14, "seat_spacing": 26, "seat_radius": 10,
+            "row_label": "A", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 180, "y": 280, "rotation": 0, "label": "Fila B",
+            "locality_id": loc_general["id"], "z_index": 1,
+            "seats_count": 14, "seat_spacing": 26, "seat_radius": 10,
+            "row_label": "B", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
+            "x": 180, "y": 340, "rotation": 0, "label": "Fila C",
+            "locality_id": loc_general["id"], "z_index": 1,
+            "seats_count": 14, "seat_spacing": 26, "seat_radius": 10,
+            "row_label": "C", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+        {
+            "id": str(uuid.uuid4()), "kind": "seat_row_curved",
+            "x": 500, "y": 460, "rotation": 0, "label": "Fila D (curva)",
+            "locality_id": loc_general["id"], "z_index": 1,
+            "seats_count": 12, "seat_spacing": 24, "seat_radius": 10,
+            "curve_radius": 200, "curve_arc_degrees": 70,
+            "row_label": "D", "numbering_start": 1,
+            "numbering_direction": "ltr", "numbering_style": "numeric",
+        },
+    ]
+    capacity = 0
+    for e in elements:
+        k = e["kind"]
+        if k in ("seat_row_straight", "seat_row_curved"):
+            capacity += e.get("seats_count", 0)
+        elif k == "seat_individual":
+            capacity += 1
+    return [loc_general, loc_vip], elements, capacity
 
 
 async def _seed_demo_numbered_event() -> None:
@@ -1151,14 +1390,22 @@ async def _seed_demo_numbered_event() -> None:
     public seat-picker shows all 3 visual states out of the box.
     Idempotent: matches by slug.
     """
-    organizer = await db.organizers.find_one({"slug": "demo-org"}, {"_id": 0, "id": 1})
+    organizer = await get_organizer_by_slug("demo-org")
     if not organizer:
         return
-    venue = await db.venues.find_one(
-        {"organizer_id": organizer["id"], "slug": "teatro-demo"}, {"_id": 0},
-    )
-    if not venue:
+    async with AsyncSessionLocal() as pg:
+        from orm_models import Venue as _Venue
+        venue_result = await pg.execute(
+            select(_Venue).where(
+                _Venue.organizer_id == organizer["id"],
+                _Venue.slug == "teatro-demo",
+            )
+        )
+        _venue_row = venue_result.scalar_one_or_none()
+    if not _venue_row:
         return
+    from db_helpers import row_to_dict as _rtd
+    venue = _rtd(_venue_row)
 
     # Resolve locality ids by name
     loc_by_name = {loc["name"]: loc["id"] for loc in venue.get("localities", [])}
@@ -1173,77 +1420,118 @@ async def _seed_demo_numbered_event() -> None:
         pricing.append({"locality_id": loc_by_name["General"], "price_cents": 1000,
                         "max_tickets_per_purchase": None})
 
+    from sqlalchemy.orm.attributes import flag_modified as _flag_modified
+
     now = datetime.now(timezone.utc)
     slug = "funcion-especial-demo-numerado"
-    record = {
-        "organizer_id": organizer["id"],
-        "tenant_slug": "demo-org",
-        "slug": slug,
-        "title": "Función Especial — Demo Numerado",
-        "description": (
-            "Función con asientos numerados. Elegí tus butacas directamente sobre "
-            "el mapa del Teatro Demo. Tres localidades disponibles: Platea, Tribuna y Gradería General."
-        ),
-        "short_description": "Función con asientos numerados — mapa interactivo.",
-        "category": "entertainment",
-        "venue_name": "Teatro Demo",
-        "venue_address": "Pasaje Royal 175 y Junín",
-        "venue_city": "Quito",
-        "venue_country": "Ecuador",
-        "starts_at": (now + timedelta(days=20)).replace(hour=20, minute=0).isoformat(),
-        "ends_at": (now + timedelta(days=20)).replace(hour=22, minute=30).isoformat(),
-        "timezone": "America/Guayaquil",
-        "sales_start": None, "sales_end": None,
-        "pricing_type": "paid",
-        "base_price_cents": 1000,  # ignored when venue_id is set
-        "currency": "USD",
-        "capacity": venue.get("capacity_calculated") or 0,
-        "visibility": "public",
-        "status": "published",
-        "tickets_sold": 0,
-        "poster_url": "https://images.unsplash.com/photo-1503095396549-807759245b35?w=800",
-        "banner_url": None,
-        "gallery_urls": [],
-        "payment_methods": {
-            "stripe": {"enabled": True},
-            "transfer": {
-                "enabled": True, "bank_name": "Banco Pichincha",
-                "account_number": "2100123456",
-                "account_holder": "Eventos Demo S.A.",
-                "instructions": "Envianos el comprobante al WhatsApp +593 98 765 4321.",
-            },
-            "cash": {
-                "enabled": False, "location": "", "schedule": "", "contact": "",
-            },
+    _pm_num = {
+        "stripe": {"enabled": True},
+        "transfer": {
+            "enabled": True, "bank_name": "Banco Pichincha",
+            "account_number": "2100123456",
+            "account_holder": "Eventos Demo S.A.",
+            "instructions": "Envianos el comprobante al WhatsApp +593 98 765 4321.",
         },
-        "discounts": {
-            "disability_law": {"enabled": False, "percent": 50},
-            "presale": {"enabled": False, "percent": 0, "ends_at": None},
-        },
-        "access_params": {
-            "visibility": "public", "access_type": "open",
-            "max_per_purchase": 10, "max_per_email": None,
-            "refund_window_hours": 24, "show_buyer_name_on_ticket": True,
-        },
-        # Phase 7 fields
-        "venue_id": venue["id"],
-        "venue_slug": venue["slug"],
-        "locality_pricing": pricing,
-        "seat_holds_window_minutes": 10,
-        "updated_at": _now_iso(),
-        "published_at": _now_iso(),
+        "cash": {"enabled": False, "location": "", "schedule": "", "contact": ""},
     }
-    existing = await db.events.find_one(
-        {"organizer_id": organizer["id"], "slug": slug}, {"_id": 0, "id": 1},
-    )
-    if existing:
-        event_id = existing["id"]
-        await db.events.update_one({"id": event_id}, {"$set": record})
-    else:
-        event_id = str(uuid.uuid4())
-        record["id"] = event_id
-        record["created_at"] = _now_iso()
-        await db.events.insert_one({**record})
+    _disc_num = {
+        "disability_law": {"enabled": False, "percent": 50},
+        "presale": {"enabled": False, "percent": 0, "ends_at": None},
+    }
+    _ap_num = {
+        "visibility": "public", "access_type": "open",
+        "max_per_purchase": 10, "max_per_email": None,
+        "refund_window_hours": 24, "show_buyer_name_on_ticket": True,
+    }
+
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(
+                Event.organizer_id == organizer["id"],
+                Event.slug == slug,
+            )
+        )
+        if row:
+            event_id = row.id
+            row.title = "Función Especial — Demo Numerado"
+            row.description = (
+                "Función con asientos numerados. Elegí tus butacas directamente sobre "
+                "el mapa del Teatro Demo. Tres localidades disponibles: Platea, Tribuna y Gradería General."
+            )
+            row.short_description = "Función con asientos numerados — mapa interactivo."
+            row.category = "entertainment"
+            row.venue_name = "Teatro Demo"
+            row.venue_address = "Pasaje Royal 175 y Junín"
+            row.venue_city = "Quito"
+            row.venue_country = "Ecuador"
+            row.starts_at = (now + timedelta(days=20)).replace(hour=20, minute=0)
+            row.ends_at = (now + timedelta(days=20)).replace(hour=22, minute=30)
+            row.timezone = "America/Guayaquil"
+            row.pricing_type = "paid"
+            row.base_price_cents = 1000
+            row.currency = "USD"
+            row.capacity = venue.get("capacity_calculated") or 0
+            row.visibility = "public"
+            row.status = "published"
+            row.poster_url = "https://images.unsplash.com/photo-1503095396549-807759245b35?w=800"
+            row.venue_id = venue["id"]
+            row.venue_slug = venue["slug"]
+            row.locality_pricing = pricing
+            row.seat_holds_window_minutes = 10
+            row.payment_methods = _pm_num
+            row.discounts = _disc_num
+            row.access_params = _ap_num
+            row.updated_at = now
+            row.published_at = now
+            _flag_modified(row, "locality_pricing")
+            _flag_modified(row, "payment_methods")
+            _flag_modified(row, "discounts")
+            _flag_modified(row, "access_params")
+        else:
+            event_id = str(uuid.uuid4())
+            session.add(Event(
+                id=event_id,
+                organizer_id=organizer["id"],
+                tenant_slug="demo-org",
+                slug=slug,
+                title="Función Especial — Demo Numerado",
+                description=(
+                    "Función con asientos numerados. Elegí tus butacas directamente sobre "
+                    "el mapa del Teatro Demo. Tres localidades disponibles: Platea, Tribuna y Gradería General."
+                ),
+                short_description="Función con asientos numerados — mapa interactivo.",
+                category="entertainment",
+                venue_name="Teatro Demo",
+                venue_address="Pasaje Royal 175 y Junín",
+                venue_city="Quito",
+                venue_country="Ecuador",
+                starts_at=(now + timedelta(days=20)).replace(hour=20, minute=0),
+                ends_at=(now + timedelta(days=20)).replace(hour=22, minute=30),
+                timezone="America/Guayaquil",
+                sales_start=None,
+                sales_end=None,
+                pricing_type="paid",
+                base_price_cents=1000,
+                currency="USD",
+                capacity=venue.get("capacity_calculated") or 0,
+                visibility="public",
+                status="published",
+                tickets_sold=0,
+                poster_url="https://images.unsplash.com/photo-1503095396549-807759245b35?w=800",
+                banner_url=None,
+                gallery_urls=[],
+                venue_id=venue["id"],
+                venue_slug=venue["slug"],
+                locality_pricing=pricing,
+                seat_holds_window_minutes=10,
+                payment_methods=_pm_num,
+                discounts=_disc_num,
+                access_params=_ap_num,
+                created_at=now,
+                updated_at=now,
+                published_at=now,
+            ))
+        await session.commit()
     logger.info("Seeded numbered event %s linked to %s", slug, venue["slug"])
 
     # ── Pre-sold + pre-held seats for visual demo ─────────────────────────
@@ -1260,8 +1548,14 @@ async def _seed_demo_numbered_event() -> None:
         None,
     )
     # Clear any prior demo holds/assignments for this event so it's idempotent
-    await db.event_seat_assignments.delete_many({"event_id": event_id})
-    await db.seat_holds.delete_many({"event_id": event_id})
+    async with AsyncSessionLocal() as _pg_clear:
+        await _pg_clear.execute(
+            delete(EventSeatAssignment).where(EventSeatAssignment.event_id == event_id)
+        )
+        await _pg_clear.execute(
+            delete(SeatHold).where(SeatHold.event_id == event_id)
+        )
+        await _pg_clear.commit()
 
     pre_sold_seats = []
     if fila_a:
@@ -1270,66 +1564,75 @@ async def _seed_demo_numbered_event() -> None:
     if fila_c:
         pre_sold_seats.append((fila_c["id"], 4, "C-5", fila_c.get("locality_id")))
 
-    assignments = []
     sold_qty = 0
-    for el_id, idx, label, loc_id in pre_sold_seats:
-        sid = f"{el_id}::s::{idx}"
-        assignments.append({
-            "id": str(uuid.uuid4()),
-            "event_id": event_id, "venue_id": venue["id"],
-            "seat_id": sid, "ticket_id": f"seed-demo-{sid}",
-            "order_id": "seed-demo",
-            "holder_email": "demo-buyer@example.com",
-            "locality_id": loc_id,
-            "assigned_at": _now_iso(),
-        })
-        sold_qty += 1
-    if assignments:
-        await db.event_seat_assignments.insert_many(assignments)
-        await db.events.update_one(
-            {"id": event_id}, {"$set": {"tickets_sold": sold_qty}},
-        )
+    if pre_sold_seats:
+        async with AsyncSessionLocal() as _pg_assign:
+            for el_id, idx, label, loc_id in pre_sold_seats:
+                sid = f"{el_id}::s::{idx}"
+                _pg_assign.add(EventSeatAssignment(
+                    id=str(uuid.uuid4()),
+                    event_id=event_id,
+                    venue_id=venue["id"],
+                    seat_id=sid,
+                    ticket_id=str(uuid.uuid4()),
+                    order_id=DEMO_SEAT_PREVIEW_ORDER_ID,
+                    holder_email="demo-buyer@example.com",
+                    locality_id=loc_id,
+                    assigned_at=now,
+                ))
+                sold_qty += 1
+            await _pg_assign.execute(
+                sa_update(Event).where(Event.id == event_id).values(tickets_sold=sold_qty)
+            )
+            await _pg_assign.commit()
 
     # Pre-held: one seat held for 1 hour (visible to public as "held" by another)
     if fila_a:
-        expires = (now + timedelta(hours=1)).isoformat()
         sid_held = f"{fila_a['id']}::s::2"
-        await db.seat_holds.insert_one({
-            "id": str(uuid.uuid4()),
-            "event_id": event_id, "venue_id": venue["id"],
-            "seat_id": sid_held,
-            "holder": {"session_token": "seed-held-session-fixed", "buyer_email": None},
-            "status": "held",
-            "held_at": _now_iso(),
-            "expires_at": expires,
-            "order_id": None,
-        })
+        async with AsyncSessionLocal() as _pg_hold:
+            _pg_hold.add(SeatHold(
+                id=str(uuid.uuid4()),
+                event_id=event_id,
+                venue_id=venue["id"],
+                seat_id=sid_held,
+                session_token="seed-held-session-fixed",
+                status="held",
+                held_at=now,
+                expires_at=now + timedelta(hours=1),
+                order_id=None,
+            ))
+            await _pg_hold.commit()
 
 
 async def _backfill_discount_rule_ids() -> None:
-    """One-shot migration: any `event.discounts.rules[*]` persisted before the
-    Phase 9.5 model change may have `id == null`. Two such rules would compare
-    equal in `evaluate_discounts` and break stacking. Idempotent — only events
-    that actually need patching get a write."""
-    cursor = db.events.find(
-        {"discounts.rules.id": None},
-        {"_id": 0, "id": 1, "discounts": 1},
-    )
-    fixed = 0
-    async for ev in cursor:
-        rules = (ev.get("discounts") or {}).get("rules") or []
-        if not any(r.get("id") in (None, "") for r in rules):
-            continue
-        for r in rules:
-            if not r.get("id"):
-                r["id"] = str(uuid.uuid4())
-        await db.events.update_one(
-            {"id": ev["id"]},
-            {"$set": {"discounts.rules": rules}},
+    """One-shot migration: any event.discounts.rules[*] persisted without an `id`
+    gets a fresh UUID. Idempotent — only events that need patching get a write."""
+    from sqlalchemy.orm.attributes import flag_modified as _flag_modified
+    from sqlalchemy import text
+
+    async with AsyncSessionLocal() as session:
+        # Only load events that have at least one discount rule
+        result = await session.execute(
+            select(Event).where(
+                text("jsonb_array_length(COALESCE(events.discounts->'rules', '[]'::jsonb)) > 0")
+            )
         )
-        fixed += 1
-    if fixed:
-        logger.info("backfilled discount-rule UUIDs on %d event(s)", fixed)
+        rows = result.scalars().all()
+        fixed = 0
+        for row in rows:
+            discounts = row.discounts or {}
+            rules = discounts.get("rules") or []
+            if not any(r.get("id") in (None, "") for r in rules):
+                continue
+            for r in rules:
+                if not r.get("id"):
+                    r["id"] = str(uuid.uuid4())
+            row.discounts = discounts
+            _flag_modified(row, "discounts")
+            fixed += 1
+        if fixed:
+            await session.commit()
+            logger.info("backfilled discount-rule UUIDs on %d event(s)", fixed)
 
 
 async def run_seeds() -> None:
@@ -1344,5 +1647,6 @@ async def run_seeds() -> None:
     await _seed_demo_events()
     await _seed_demo_manual_orders()
     await _seed_demo_venues()
+    await _seed_venue_templates()
     await _seed_demo_numbered_event()
     await _backfill_discount_rule_ids()

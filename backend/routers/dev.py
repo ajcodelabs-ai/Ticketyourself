@@ -1,6 +1,7 @@
 """DEV-only endpoints. Enabled when ENV=development OR ENABLE_DEMO_SHORTCUTS=true."""
 import logging
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -8,11 +9,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
-from db import db
+from database import AsyncSessionLocal
+from db_helpers import organizer_row_to_dict, get_organizer_by_id, row_to_dict
+from orm_models import Organizer, OrganizerAdminComment, SubscriptionPlan, Tenant, Ticket, TicketOrder
 from security import get_current_user
 from services.activation import log_funnel_event
-from services.microsite_factory import default_microsite
 
 logger = logging.getLogger("tys.dev")
 router = APIRouter(prefix="/api/_dev", tags=["dev"])
@@ -83,68 +87,73 @@ async def demo_activate(payload: DemoActivateBody, user=Depends(get_current_user
     if not organizer_id:
         raise HTTPException(status_code=422, detail="organizer_id required")
 
-    organizer = await db.organizers.find_one({"id": organizer_id}, {"_id": 0})
-    if not organizer:
-        raise HTTPException(status_code=404, detail="Organizer not found")
-
-    # Authorization: a regular user can only activate their own organizer.
-    if user.get("role") != "super_admin" and user.get("organizer_id") != organizer_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    plan_code = payload.plan_code or "profesional"
-    plan = await db.subscription_plans.find_one({"code": plan_code}, {"_id": 0})
-    if not plan:
-        # fallback to any plan, then profesional should always exist as seed
-        plan = await db.subscription_plans.find_one({}, {"_id": 0})
-    plan_id = plan["id"] if plan else None
-
-    now = datetime.now(timezone.utc)
-    period_end = (now + timedelta(days=30)).isoformat()
-
-    existing_comments = organizer.get("admin_comments") or []
-    needs_demo_comment = not any(
-        c.get("comment", "").startswith("[Demo]") for c in existing_comments
-    )
-    new_comments = list(existing_comments)
-    if needs_demo_comment:
-        new_comments.append(
-            {
-                "id": f"demo-{now.timestamp()}",
-                "admin_id": "demo_shortcut",
-                "admin_email": "demo@ticketyourself.com",
-                "comment": "[Demo] Auto-aprobado por shortcut de preview",
-                "created_at": now.isoformat(),
-            }
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Organizer)
+            .where(Organizer.id == organizer_id)
+            .options(selectinload(Organizer.admin_comments))
         )
+        org_row = result.scalar_one_or_none()
+        if not org_row:
+            raise HTTPException(status_code=404, detail="Organizer not found")
 
-    set_doc = {
-        "status": "approved",
-        "subscription_status": "active",
-        "stripe_customer_id": organizer.get("stripe_customer_id") or "demo_customer",
-        "current_period_end": period_end,
-        "plan_id": plan_id,
-        "approved_at": organizer.get("approved_at") or now.isoformat(),
-        "approved_by": organizer.get("approved_by") or "demo_shortcut",
-        "admin_comments": new_comments,
-    }
+        # Authorization: a regular user can only activate their own organizer.
+        if user.get("role") != "super_admin" and user.get("organizer_id") != organizer_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
 
-    await db.organizers.update_one({"id": organizer_id}, {"$set": set_doc})
-    await db.tenants.update_one(
-        {"slug": organizer["slug"]}, {"$set": {"status": "active"}}
-    )
+        plan_code = payload.plan_code or "profesional"
+        plan_result = await session.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
+        )
+        plan = plan_result.scalar_one_or_none()
+        if not plan:
+            any_plan_result = await session.execute(select(SubscriptionPlan).limit(1))
+            plan = any_plan_result.scalar_one_or_none()
+        plan_id = plan.id if plan else None
+
+        now = datetime.now(timezone.utc)
+        period_end = now + timedelta(days=30)
+
+        existing_comments = org_row.admin_comments or []
+        needs_demo_comment = not any(
+            c.comment.startswith("[Demo]") for c in existing_comments
+        )
+        if needs_demo_comment:
+            comment = OrganizerAdminComment(
+                id=str(uuid.uuid4()),
+                organizer_id=organizer_id,
+                admin_id="demo_shortcut",
+                admin_email="demo@ticketyourself.com",
+                comment="[Demo] Auto-aprobado por shortcut de preview",
+                created_at=now,
+            )
+            session.add(comment)
+
+        org_row.status = "approved"
+        org_row.subscription_status = "active"
+        if not org_row.stripe_customer_id:
+            org_row.stripe_customer_id = "demo_customer"
+        org_row.current_period_end = period_end
+        org_row.plan_id = plan_id
+        if not org_row.approved_at:
+            org_row.approved_at = now
+        if not org_row.approved_by:
+            org_row.approved_by = "demo_shortcut"
+
+        tenant_result = await session.execute(
+            select(Tenant).where(Tenant.slug == org_row.slug)
+        )
+        tenant_row = tenant_result.scalar_one_or_none()
+        if tenant_row:
+            tenant_row.status = "active"
+
+        await session.flush()
+        await session.refresh(org_row, ["admin_comments"])
+        organizer = organizer_row_to_dict(org_row)
 
     # Microsite — create default if missing.
-    existing_ms = await db.microsites.find_one(
-        {"organizer_id": organizer_id}, {"_id": 0, "id": 1}
-    )
-    if not existing_ms:
-        await db.microsites.insert_one(
-            default_microsite(
-                organizer_id=organizer_id,
-                tenant_slug=organizer["slug"],
-                company_name=organizer.get("company_name") or organizer["slug"],
-            )
-        )
+    from routers.microsite import _get_or_create_microsite_row
+    await _get_or_create_microsite_row(organizer)
 
     # Funnel — best-effort.
     try:
@@ -154,9 +163,8 @@ async def demo_activate(payload: DemoActivateBody, user=Depends(get_current_user
     except Exception:  # noqa: BLE001
         pass
 
-    refreshed = await db.organizers.find_one({"id": organizer_id}, {"_id": 0})
     logger.info("Demo shortcut activated organizer=%s plan=%s", organizer_id, plan_code)
-    return refreshed
+    return organizer
 
 
 # ── Demo shortcut — simulate ticket purchase paid ────────────────────────────
@@ -173,28 +181,31 @@ async def simulate_purchase_paid(payload: SimulatePurchasePaidBody):
     sequential numbers. In production with real webhooks this endpoint is off.
     """
     _dev_only()
-    order = await db.ticket_orders.find_one(
-        {"order_number": payload.order_number}, {"_id": 0}
-    )
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    if order["status"] == "paid":
-        cursor = db.tickets.find({"order_id": order["id"]}, {"_id": 0})
-        return {
-            "ok": True,
-            "already_paid": True,
-            "tickets": [t async for t in cursor],
-        }
+    async with AsyncSessionLocal() as _pg:
+        _order_row = await _pg.scalar(
+            select(TicketOrder).where(TicketOrder.order_number == payload.order_number)
+        )
+        if not _order_row:
+            raise HTTPException(status_code=404, detail="Order not found")
+        order = row_to_dict(_order_row)
+        if order["status"] == "paid":
+            _tickets_result = await _pg.execute(
+                select(Ticket).where(Ticket.order_id == order["id"])
+            )
+            return {
+                "ok": True,
+                "already_paid": True,
+                "tickets": [row_to_dict(t) for t in _tickets_result.scalars().all()],
+            }
 
     from services import order_service
     from services.email_service import send_purchase_confirmation
 
     finalized, tickets = await order_service.finalize_paid_order(order=order)
     try:
-        event = await db.events.find_one({"id": order["event_id"]}, {"_id": 0})
-        organizer = await db.organizers.find_one(
-            {"id": order["organizer_id"]}, {"_id": 0}
-        )
+        from db_helpers import get_event_by_id
+        event = await get_event_by_id(order["event_id"])
+        organizer = await get_organizer_by_id(order["organizer_id"])
         await send_purchase_confirmation(
             order=finalized, event=event, organizer=organizer, tickets=tickets
         )

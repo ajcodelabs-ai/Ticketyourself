@@ -1,6 +1,6 @@
 """
-Events Phase 3a — basic events: free / paid / donation, single occurrence,
-no numbered seating, no tiered pricing. Phase 3b will add complexity.
+Events — PostgreSQL implementation.
+Free / paid / donation events, single occurrence, numbered seating, tiered pricing.
 """
 import logging
 import mimetypes
@@ -13,8 +13,12 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm.attributes import flag_modified
 
-from db import db
+from database import AsyncSessionLocal
+from db_helpers import get_venue_by_id, row_to_dict
+from orm_models import AuditLog, Event, EventAsset, Organizer, Tenant, TicketOrder
 from security import get_current_user, require_role
 from slugs import normalize_slug
 
@@ -82,21 +86,14 @@ class DiscountBenefit(BaseModel):
 
 
 class DiscountRule(BaseModel):
-    # UUID is generated server-side at model construction time so two rules
-    # without explicit IDs never collide. Earlier we accepted `None` here,
-    # which broke `evaluate_discounts` stacking (`auto_rule.id != promo_rule.id`
-    # was False when both were None — one rule got silently dropped).
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = Field(min_length=2, max_length=80)
     type: Literal["promo_code", "auto", "quantity"]
     enabled: bool = True
-    # promo_code-only
     code: Optional[str] = Field(default=None, max_length=40)
     max_uses: Optional[int] = Field(default=None, ge=1)
     uses_count: int = Field(default=0, ge=0)
-    # quantity-only
     min_quantity: Optional[int] = Field(default=None, ge=1)
-    # common
     conditions: DiscountConditions = Field(default_factory=DiscountConditions)
     discount: DiscountBenefit
 
@@ -105,7 +102,6 @@ class DiscountRule(BaseModel):
         if self.type == "promo_code":
             if not self.code:
                 raise ValueError("promo_code rules require a `code`")
-            # Canonicalise to uppercase + strip — codes are compared case-insensitive.
             self.code = self.code.strip().upper()
             if not self.code:
                 raise ValueError("Code cannot be empty after trimming.")
@@ -151,6 +147,25 @@ class EventAccessParams(BaseModel):
     show_buyer_name_on_ticket: bool = True
 
 
+class AgendaItem(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    time: str = Field(default="", max_length=20)
+    title: str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=2000)
+
+
+class FaqItem(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    question: str = Field(default="", max_length=300)
+    answer_html: str = Field(default="", max_length=8000)
+
+
+class EventContent(BaseModel):
+    policies_html: str = Field(default="", max_length=16000)
+    agenda: List[AgendaItem] = Field(default_factory=list)
+    faq: List[FaqItem] = Field(default_factory=list)
+
+
 class EventBase(BaseModel):
     title: str = Field(min_length=2, max_length=140)
     description: str = Field(default="", max_length=8000)
@@ -165,9 +180,6 @@ class EventBase(BaseModel):
     timezone: str = Field(default="America/Guayaquil", max_length=64)
     sales_start: Optional[datetime] = None
     sales_end: Optional[datetime] = None
-    # Phase 9.6 — UI presets so the wizard can re-open the form on the same
-    # dropdown option the user chose. Values are opaque strings; the canonical
-    # truth is still `ends_at` / `sales_start` / `sales_end`.
     duration_preset: Optional[str] = Field(default=None, max_length=40)
     sales_window_preset_start: Optional[str] = Field(default=None, max_length=40)
     sales_window_preset_end: Optional[str] = Field(default=None, max_length=40)
@@ -179,6 +191,7 @@ class EventBase(BaseModel):
     payment_methods: Optional[PaymentMethodConfig] = None
     discounts: Optional[EventDiscounts] = None
     access_params: Optional[EventAccessParams] = None
+    content: Optional[EventContent] = None
 
     @field_validator("ends_at")
     @classmethod
@@ -218,6 +231,7 @@ class EventUpdate(BaseModel):
     payment_methods: Optional[PaymentMethodConfig] = None
     discounts: Optional[EventDiscounts] = None
     access_params: Optional[EventAccessParams] = None
+    content: Optional[EventContent] = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -226,25 +240,24 @@ PUBLISH_ALLOWED_STATUSES = {"approved"}
 
 
 async def _require_active_organizer(user) -> dict:
-    """Panel-level access. Allows `pending` (so the org can build drafts while
-    awaiting admin approval). Rejects `rejected` / `suspended` / unknown."""
     if not user.get("organizer_id"):
         raise HTTPException(status_code=403, detail="No organizer profile")
-    org = await db.organizers.find_one({"id": user["organizer_id"]}, {"_id": 0})
-    if not org:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Organizer).where(Organizer.id == user["organizer_id"])
+        )
+        org_row = result.scalar_one_or_none()
+    if not org_row:
         raise HTTPException(status_code=404, detail="Organizer not found")
-    if org["status"] not in PANEL_ALLOWED_STATUSES:
+    if org_row.status not in PANEL_ALLOWED_STATUSES:
         raise HTTPException(
             status_code=403,
             detail="Tu cuenta no tiene acceso al panel de eventos.",
         )
-    return org
+    return row_to_dict(org_row)
 
 
 async def _require_organizer_can_publish(user) -> dict:
-    """Strict gate used by `publish` endpoints only. `pending` orgs cannot
-    publish, even if they have an active subscription — they must be approved
-    by an admin first."""
     org = await _require_active_organizer(user)
     if org["status"] not in PUBLISH_ALLOWED_STATUSES:
         raise HTTPException(
@@ -261,46 +274,30 @@ async def _require_organizer_can_publish(user) -> dict:
     return org
 
 
-# Backwards-compatible alias — code below was written before the relax/strict
-# split and uses `_require_approved_organizer` for the panel-level dep. We
-# keep the name pointing to the relaxed helper so pending orgs gain access
-# to CRUD endpoints; the 3 publish endpoints opt into the strict version.
 _require_approved_organizer = _require_active_organizer
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-async def _next_event_slug(organizer_id: str, base: str) -> str:
-    """Find a unique event slug for the organizer."""
+async def _next_event_slug(organizer_id: str, base: str, session) -> str:
     candidate = base or "evento"
     suffix = 1
     while True:
         c = candidate if suffix == 1 else f"{candidate}-{suffix}"
-        existing = await db.events.find_one(
-            {"organizer_id": organizer_id, "slug": c}, {"_id": 0, "id": 1}
+        existing = await session.scalar(
+            select(Event.id).where(
+                Event.organizer_id == organizer_id,
+                Event.slug == c,
+            )
         )
         if not existing:
             return c
         suffix += 1
 
 
-def _project(doc: Optional[dict]) -> Optional[dict]:
-    if not doc:
-        return None
-    doc.pop("_id", None)
-    return doc
-
-
-def _to_iso(dt) -> str:
-    if isinstance(dt, datetime):
-        return dt.isoformat()
-    return str(dt)
-
-
 def _publish_validation(doc: dict) -> None:
-    """Required fields to allow publishing."""
     missing = []
     if not doc.get("title"):
         missing.append("título")
@@ -310,7 +307,6 @@ def _publish_validation(doc: dict) -> None:
         missing.append("nombre del venue")
     if not doc.get("poster_url"):
         missing.append("poster")
-    # Phase 7 — numbered events must have a price per active locality
     if doc.get("venue_id"):
         pricing = doc.get("locality_pricing") or []
         if not pricing:
@@ -351,62 +347,66 @@ async def link_venue_to_event(
     from services.seats import active_localities
 
     org = await _require_approved_organizer(user)
-    event = await db.events.find_one({"id": event_id, "organizer_id": org["id"]}, {"_id": 0})
-    if not event:
-        raise HTTPException(404, "Evento no encontrado")
-
-    venue = await db.venues.find_one(
-        {"id": body.venue_id, "organizer_id": org["id"], "status": "published"},
-        {"_id": 0},
-    )
-    if not venue:
-        raise HTTPException(404, "Venue no encontrado o no publicado")
-
-    needed_loc_ids = set(active_localities(venue))
-    provided_loc_ids = {lp.locality_id for lp in body.locality_pricing}
-    if not needed_loc_ids.issubset(provided_loc_ids):
-        missing = needed_loc_ids - provided_loc_ids
-        raise HTTPException(
-            422,
-            f"Faltan precios para las localidades: {', '.join(sorted(missing))}",
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
         )
+        if not row:
+            raise HTTPException(404, "Evento no encontrado")
 
-    # If event already has tickets sold AND venue is changing → reject.
-    sold = event.get("tickets_sold") or 0
-    if sold > 0 and event.get("venue_id") and event["venue_id"] != body.venue_id:
-        raise HTTPException(
-            409, f"El evento ya tiene {sold} ticket(s) vendido(s); no se puede cambiar el venue."
-        )
+        venue = await get_venue_by_id(body.venue_id)
+        if (
+            not venue
+            or venue.get("organizer_id") != org["id"]
+            or venue.get("status") != "published"
+        ):
+            raise HTTPException(404, "Venue no encontrado o no publicado")
 
-    venue_capacity = venue.get("capacity_calculated") or 0
-    await db.events.update_one(
-        {"id": event_id},
-        {"$set": {
-            "venue_id": body.venue_id,
-            "venue_slug": venue["slug"],
-            "venue_name": venue.get("name") or event.get("venue_name"),
-            "locality_pricing": [lp.model_dump() for lp in body.locality_pricing],
-            "seat_holds_window_minutes": body.seat_holds_window_minutes,
-            "capacity": venue_capacity,
-            "updated_at": _now_iso(),
-        }},
-    )
-    return await db.events.find_one({"id": event_id}, {"_id": 0})
+        needed_loc_ids = set(active_localities(venue))
+        provided_loc_ids = {lp.locality_id for lp in body.locality_pricing}
+        if not needed_loc_ids.issubset(provided_loc_ids):
+            missing = needed_loc_ids - provided_loc_ids
+            raise HTTPException(
+                422,
+                f"Faltan precios para las localidades: {', '.join(sorted(missing))}",
+            )
+
+        sold = row.tickets_sold or 0
+        if sold > 0 and row.venue_id and row.venue_id != body.venue_id:
+            raise HTTPException(
+                409, f"El evento ya tiene {sold} ticket(s) vendido(s); no se puede cambiar el venue."
+            )
+
+        venue_capacity = venue.get("capacity_calculated") or 0
+        row.venue_id = body.venue_id
+        row.venue_slug = venue.get("slug")
+        row.venue_name = venue.get("name") or row.venue_name
+        row.locality_pricing = [lp.model_dump() for lp in body.locality_pricing]
+        row.seat_holds_window_minutes = body.seat_holds_window_minutes
+        row.capacity = venue_capacity
+        row.updated_at = _now()
+        flag_modified(row, "locality_pricing")
+        await session.commit()
+        return row_to_dict(row)
 
 
 @router.delete("/{event_id}/venue")
 async def unlink_venue_from_event(event_id: str, user=Depends(get_current_user)):
     org = await _require_approved_organizer(user)
-    event = await db.events.find_one({"id": event_id, "organizer_id": org["id"]}, {"_id": 0})
-    if not event:
-        raise HTTPException(404, "Evento no encontrado")
-    if (event.get("tickets_sold") or 0) > 0:
-        raise HTTPException(409, "El evento ya tiene tickets vendidos; no se puede desvincular.")
-    await db.events.update_one(
-        {"id": event_id},
-        {"$unset": {"venue_id": "", "venue_slug": "", "locality_pricing": ""},
-         "$set": {"updated_at": _now_iso()}},
-    )
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(404, "Evento no encontrado")
+        if (row.tickets_sold or 0) > 0:
+            raise HTTPException(409, "El evento ya tiene tickets vendidos; no se puede desvincular.")
+        row.venue_id = None
+        row.venue_slug = None
+        row.locality_pricing = []
+        row.updated_at = _now()
+        flag_modified(row, "locality_pricing")
+        await session.commit()
     return {"ok": True}
 
 
@@ -420,81 +420,112 @@ async def list_my_events(
     limit: int = Query(20, ge=1, le=100),
 ):
     org = await _require_approved_organizer(user)
-    query: dict = {"organizer_id": org["id"]}
-    if status:
-        query["status"] = status
-    if search:
-        query["title"] = {"$regex": re.escape(search), "$options": "i"}
-    total = await db.events.count_documents(query)
-    cursor = (
-        db.events.find(query, {"_id": 0})
-        .sort("starts_at", 1)
-        .skip((page - 1) * limit)
-        .limit(limit)
-    )
-    items = [d async for d in cursor]
+    async with AsyncSessionLocal() as session:
+        stmt = select(Event).where(Event.organizer_id == org["id"])
+        if status:
+            stmt = stmt.where(Event.status == status)
+        if search:
+            stmt = stmt.where(Event.title.ilike(f"%{re.escape(search)}%"))
+        total = await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        result = await session.execute(
+            stmt.order_by(Event.starts_at.asc()).offset((page - 1) * limit).limit(limit)
+        )
+        items = [row_to_dict(r) for r in result.scalars().all()]
     return {"items": items, "total": total, "page": page, "limit": limit}
 
 
 @router.get("/{event_id}")
 async def get_my_event(event_id: str, user=Depends(get_current_user)):
     org = await _require_approved_organizer(user)
-    doc = await db.events.find_one(
-        {"id": event_id, "organizer_id": org["id"]}, {"_id": 0}
-    )
-    if not doc:
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+    if not row:
         raise HTTPException(status_code=404, detail="Event not found")
-    return doc
+    return row_to_dict(row)
 
 
 @router.post("", status_code=201)
 async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
     org = await _require_approved_organizer(user)
-    slug = await _next_event_slug(org["id"], normalize_slug(payload.title))
+    async with AsyncSessionLocal() as session:
+        slug = await _next_event_slug(org["id"], normalize_slug(payload.title), session)
 
-    # Same (starts_at, venue_name) in same organizer is rejected.
-    duplicate = await db.events.find_one(
-        {
-            "organizer_id": org["id"],
-            "starts_at": payload.starts_at.isoformat(),
-            "venue_name": payload.venue_name,
-            "venue_name_set": {"$ne": ""},
-        },
-        {"_id": 0, "id": 1},
-    )
-    # Note: simple check — avoid duplicates only when venue_name is non-empty.
-    if duplicate and payload.venue_name:
-        raise HTTPException(
-            status_code=409,
-            detail="Ya tenés un evento en ese venue y fecha",
+        # Duplicate check: same (starts_at, venue_name) in same organizer.
+        if payload.venue_name:
+            existing = await session.scalar(
+                select(Event.id).where(
+                    Event.organizer_id == org["id"],
+                    Event.starts_at == payload.starts_at,
+                    Event.venue_name == payload.venue_name,
+                    Event.venue_name != "",
+                )
+            )
+            if existing:
+                raise HTTPException(409, "Ya tenés un evento en ese venue y fecha")
+
+        now = _now()
+        row = Event(
+            id=str(uuid.uuid4()),
+            organizer_id=org["id"],
+            tenant_slug=org["slug"],
+            slug=slug,
+            title=payload.title,
+            description=payload.description or "",
+            short_description=payload.short_description or "",
+            category=payload.category,
+            venue_name=payload.venue_name or "",
+            venue_address=payload.venue_address or "",
+            venue_city=payload.venue_city or "",
+            venue_country=payload.venue_country or "Ecuador",
+            starts_at=payload.starts_at,
+            ends_at=payload.ends_at,
+            timezone=payload.timezone,
+            sales_start=payload.sales_start,
+            sales_end=payload.sales_end,
+            duration_preset=payload.duration_preset,
+            sales_window_preset_start=payload.sales_window_preset_start,
+            sales_window_preset_end=payload.sales_window_preset_end,
+            pricing_type=payload.pricing_type,
+            base_price_cents=payload.base_price_cents,
+            currency=payload.currency,
+            capacity=payload.capacity,
+            visibility=payload.visibility,
+            payment_methods=(
+                payload.payment_methods.model_dump() if payload.payment_methods
+                else PaymentMethodConfig().model_dump()
+            ),
+            discounts=(
+                payload.discounts.model_dump(exclude_none=False) if payload.discounts
+                else EventDiscounts().model_dump()
+            ),
+            access_params=(
+                payload.access_params.model_dump() if payload.access_params
+                else EventAccessParams().model_dump()
+            ),
+            content=(
+                payload.content.model_dump() if payload.content
+                else EventContent().model_dump()
+            ),
+            poster_url=None,
+            banner_url=None,
+            gallery_urls=[],
+            locality_pricing=[],
+            status="draft",
+            tickets_sold=0,
+            created_at=now,
+            updated_at=now,
+            published_at=None,
         )
+        session.add(row)
+        await session.flush()
+        result = row_to_dict(row)
+        await session.commit()
+    return result
 
-    now = _now_iso()
-    base = payload.model_dump()
-    record = {
-        "id": str(uuid.uuid4()),
-        "organizer_id": org["id"],
-        "tenant_slug": org["slug"],
-        "slug": slug,
-        **base,
-        "starts_at": payload.starts_at.isoformat(),
-        "ends_at": payload.ends_at.isoformat(),
-        "sales_start": payload.sales_start.isoformat() if payload.sales_start else None,
-        "sales_end": payload.sales_end.isoformat() if payload.sales_end else None,
-        "poster_url": None,
-        "banner_url": None,
-        "gallery_urls": [],
-        "payment_methods": (base.get("payment_methods") or PaymentMethodConfig().model_dump()),
-        "discounts": (base.get("discounts") or EventDiscounts().model_dump()),
-        "access_params": (base.get("access_params") or EventAccessParams().model_dump()),
-        "status": "draft",
-        "tickets_sold": 0,
-        "created_at": now,
-        "updated_at": now,
-        "published_at": None,
-    }
-    await db.events.insert_one({**record})
-    return record
+
+_JSONB_FIELDS = {"payment_methods", "discounts", "access_params", "content"}
 
 
 @router.put("/{event_id}")
@@ -502,113 +533,127 @@ async def update_my_event(
     event_id: str, payload: EventUpdate, user=Depends(get_current_user)
 ):
     org = await _require_approved_organizer(user)
-    current = await db.events.find_one(
-        {"id": event_id, "organizer_id": org["id"]}, {"_id": 0}
-    )
-    if not current:
-        raise HTTPException(status_code=404, detail="Event not found")
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
 
-    diff = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+        diff = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
 
-    # `exclude_unset=True` drops nested fields filled by `default_factory` —
-    # which would silently strip generated `DiscountRule.id` UUIDs on every
-    # PUT. We re-dump the discounts block in full to preserve them.
-    if "discounts" in diff and payload.discounts is not None:
-        diff["discounts"] = payload.discounts.model_dump(exclude_none=False)
+        # Re-dump nested JSONB fields to preserve all values (e.g. None inside rules).
+        if "discounts" in diff and payload.discounts is not None:
+            diff["discounts"] = payload.discounts.model_dump(exclude_none=False)
+        if "payment_methods" in diff and payload.payment_methods is not None:
+            diff["payment_methods"] = payload.payment_methods.model_dump()
+        if "access_params" in diff and payload.access_params is not None:
+            diff["access_params"] = payload.access_params.model_dump()
+        if "content" in diff and payload.content is not None:
+            diff["content"] = payload.content.model_dump()
 
-    # Lock critical fields once tickets are sold.
-    if (current.get("tickets_sold") or 0) > 0:
-        for locked in ("base_price_cents", "pricing_type", "currency"):
-            if locked in diff:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"No se puede modificar `{locked}` con ventas registradas",
-                )
-        if "capacity" in diff and diff["capacity"] is not None:
-            if diff["capacity"] < (current.get("tickets_sold") or 0):
-                raise HTTPException(
-                    status_code=422,
-                    detail="La capacidad no puede ser menor a tickets ya vendidos",
-                )
+        # Lock critical fields once tickets are sold.
+        if (row.tickets_sold or 0) > 0:
+            for locked in ("base_price_cents", "pricing_type", "currency"):
+                if locked in diff:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"No se puede modificar `{locked}` con ventas registradas",
+                    )
+            if "capacity" in diff and diff["capacity"] is not None:
+                if diff["capacity"] < (row.tickets_sold or 0):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="La capacidad no puede ser menor a tickets ya vendidos",
+                    )
 
-    if "starts_at" in diff:
-        diff["starts_at"] = _to_iso(diff["starts_at"])
-    if "ends_at" in diff:
-        diff["ends_at"] = _to_iso(diff["ends_at"])
+        new_starts = diff.get("starts_at", row.starts_at)
+        new_ends = diff.get("ends_at", row.ends_at)
+        if new_starts and new_ends and new_ends <= new_starts:
+            raise HTTPException(status_code=422, detail="ends_at must be after starts_at")
 
-    # Ends must remain after starts.
-    new_starts = diff.get("starts_at", current.get("starts_at"))
-    new_ends = diff.get("ends_at", current.get("ends_at"))
-    if new_starts and new_ends and new_ends <= new_starts:
-        raise HTTPException(status_code=422, detail="ends_at must be after starts_at")
+        for k, v in diff.items():
+            setattr(row, k, v)
+            if k in _JSONB_FIELDS:
+                flag_modified(row, k)
 
-    diff["updated_at"] = _now_iso()
-    await db.events.update_one({"id": event_id}, {"$set": diff})
-    refreshed = await db.events.find_one({"id": event_id}, {"_id": 0})
-    return refreshed
+        row.updated_at = _now()
+        await session.flush()
+        result = row_to_dict(row)
+        await session.commit()
+    return result
 
 
 @router.post("/{event_id}/publish")
 async def publish_event(event_id: str, user=Depends(get_current_user)):
-    # Strict: pending orgs can edit drafts but cannot publish.
     org = await _require_organizer_can_publish(user)
-    doc = await db.events.find_one(
-        {"id": event_id, "organizer_id": org["id"]}, {"_id": 0}
-    )
-    if not doc:
-        raise HTTPException(status_code=404, detail="Event not found")
-    _publish_validation(doc)
-    await db.events.update_one(
-        {"id": event_id},
-        {"$set": {"status": "published", "published_at": _now_iso(), "updated_at": _now_iso()}},
-    )
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        _publish_validation(row_to_dict(row))
+        now = _now()
+        row.status = "published"
+        row.published_at = now
+        row.updated_at = now
+        await session.commit()
     return {"ok": True, "status": "published"}
 
 
 @router.post("/{event_id}/unpublish")
 async def unpublish_event(event_id: str, user=Depends(get_current_user)):
     org = await _require_approved_organizer(user)
-    res = await db.events.update_one(
-        {"id": event_id, "organizer_id": org["id"]},
-        {"$set": {"status": "draft", "updated_at": _now_iso()}},
-    )
-    if not res.matched_count:
-        raise HTTPException(status_code=404, detail="Event not found")
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        row.status = "draft"
+        row.updated_at = _now()
+        await session.commit()
     return {"ok": True, "status": "draft"}
 
 
 @router.post("/{event_id}/cancel")
 async def cancel_event(event_id: str, user=Depends(get_current_user)):
     org = await _require_approved_organizer(user)
-    res = await db.events.update_one(
-        {"id": event_id, "organizer_id": org["id"]},
-        {"$set": {"status": "cancelled", "updated_at": _now_iso()}},
-    )
-    if not res.matched_count:
-        raise HTTPException(status_code=404, detail="Event not found")
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        row.status = "cancelled"
+        row.updated_at = _now()
+        await session.commit()
     return {"ok": True, "status": "cancelled"}
 
 
 @router.delete("/{event_id}", status_code=204)
 async def delete_event(event_id: str, user=Depends(get_current_user)):
     org = await _require_approved_organizer(user)
-    doc = await db.events.find_one(
-        {"id": event_id, "organizer_id": org["id"]}, {"_id": 0, "status": 1}
-    )
-    if not doc:
-        raise HTTPException(status_code=404, detail="Event not found")
-    if doc["status"] != "draft":
-        raise HTTPException(
-            status_code=422, detail="Sólo eventos en borrador pueden eliminarse"
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
         )
-    await db.events.delete_one({"id": event_id})
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        if row.status != "draft":
+            raise HTTPException(
+                status_code=422, detail="Sólo eventos en borrador pueden eliminarse"
+            )
+        await session.delete(row)
+        await session.commit()
     return None
 
 
 async def _store_event_image(
     event_id: str, organizer_id: str, file: UploadFile, kind: str
 ) -> str:
-    """Persist file → return /api/events/assets/{id} URL."""
+    """Persist file → return /api/events/assets/{id} URL. Asset metadata kept in MongoDB."""
     if file.content_type not in ALLOWED_IMG_MIME:
         raise HTTPException(
             status_code=415,
@@ -628,18 +673,18 @@ async def _store_event_image(
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     abs_path.write_bytes(content)
 
-    await db.event_assets.insert_one(
-        {
-            "id": asset_id,
-            "event_id": event_id,
-            "organizer_id": organizer_id,
-            "kind": kind,
-            "file_path": rel_path,
-            "mime_type": file.content_type,
-            "size_bytes": len(content),
-            "uploaded_at": _now_iso(),
-        }
-    )
+    async with AsyncSessionLocal() as _pg_asset:
+        _pg_asset.add(EventAsset(
+            id=asset_id,
+            event_id=event_id,
+            organizer_id=organizer_id,
+            kind=kind,
+            file_path=rel_path,
+            mime_type=file.content_type,
+            size_bytes=len(content),
+            uploaded_at=datetime.now(timezone.utc),
+        ))
+        await _pg_asset.commit()
     return f"/api/events/assets/{asset_id}"
 
 
@@ -650,15 +695,16 @@ async def upload_poster(
     user=Depends(get_current_user),
 ):
     org = await _require_approved_organizer(user)
-    doc = await db.events.find_one(
-        {"id": event_id, "organizer_id": org["id"]}, {"_id": 0, "id": 1}
-    )
-    if not doc:
-        raise HTTPException(status_code=404, detail="Event not found")
-    url = await _store_event_image(event_id, org["id"], file, "poster")
-    await db.events.update_one(
-        {"id": event_id}, {"$set": {"poster_url": url, "updated_at": _now_iso()}}
-    )
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        url = await _store_event_image(event_id, org["id"], file, "poster")
+        row.poster_url = url
+        row.updated_at = _now()
+        await session.commit()
     return {"poster_url": url}
 
 
@@ -669,19 +715,20 @@ async def upload_banner(
     user=Depends(get_current_user),
 ):
     org = await _require_approved_organizer(user)
-    doc = await db.events.find_one(
-        {"id": event_id, "organizer_id": org["id"]}, {"_id": 0, "id": 1}
-    )
-    if not doc:
-        raise HTTPException(status_code=404, detail="Event not found")
-    url = await _store_event_image(event_id, org["id"], file, "banner")
-    await db.events.update_one(
-        {"id": event_id}, {"$set": {"banner_url": url, "updated_at": _now_iso()}}
-    )
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        url = await _store_event_image(event_id, org["id"], file, "banner")
+        row.banner_url = url
+        row.updated_at = _now()
+        await session.commit()
     return {"banner_url": url}
 
 
-# ── Gallery (Fase 5) ────────────────────────────────────────────────────────
+# ── Gallery ─────────────────────────────────────────────────────────────────
 MAX_GALLERY_IMAGES = 10
 
 
@@ -691,26 +738,25 @@ async def upload_gallery_image(
     file: UploadFile = File(...),
     user=Depends(get_current_user),
 ):
-    """Append one image to the gallery. Returns the full gallery_urls list."""
     org = await _require_approved_organizer(user)
-    doc = await db.events.find_one(
-        {"id": event_id, "organizer_id": org["id"]},
-        {"_id": 0, "id": 1, "gallery_urls": 1},
-    )
-    if not doc:
-        raise HTTPException(status_code=404, detail="Event not found")
-    current = doc.get("gallery_urls") or []
-    if len(current) >= MAX_GALLERY_IMAGES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Máximo {MAX_GALLERY_IMAGES} imágenes en la galería.",
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
         )
-    url = await _store_event_image(event_id, org["id"], file, "gallery")
-    new_list = current + [url]
-    await db.events.update_one(
-        {"id": event_id},
-        {"$set": {"gallery_urls": new_list, "updated_at": _now_iso()}},
-    )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        current = list(row.gallery_urls or [])
+        if len(current) >= MAX_GALLERY_IMAGES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Máximo {MAX_GALLERY_IMAGES} imágenes en la galería.",
+            )
+        url = await _store_event_image(event_id, org["id"], file, "gallery")
+        new_list = current + [url]
+        row.gallery_urls = new_list
+        row.updated_at = _now()
+        flag_modified(row, "gallery_urls")
+        await session.commit()
     return {"gallery_urls": new_list}
 
 
@@ -719,20 +765,20 @@ async def delete_gallery_image(
     event_id: str, index: int, user=Depends(get_current_user)
 ):
     org = await _require_approved_organizer(user)
-    doc = await db.events.find_one(
-        {"id": event_id, "organizer_id": org["id"]},
-        {"_id": 0, "id": 1, "gallery_urls": 1},
-    )
-    if not doc:
-        raise HTTPException(status_code=404, detail="Event not found")
-    current: List[str] = doc.get("gallery_urls") or []
-    if index < 0 or index >= len(current):
-        raise HTTPException(status_code=404, detail="Image not found")
-    current.pop(index)
-    await db.events.update_one(
-        {"id": event_id},
-        {"$set": {"gallery_urls": current, "updated_at": _now_iso()}},
-    )
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        current: List[str] = list(row.gallery_urls or [])
+        if index < 0 or index >= len(current):
+            raise HTTPException(status_code=404, detail="Image not found")
+        current.pop(index)
+        row.gallery_urls = current
+        row.updated_at = _now()
+        flag_modified(row, "gallery_urls")
+        await session.commit()
     return {"gallery_urls": current}
 
 
@@ -747,38 +793,41 @@ async def reorder_gallery(
     user=Depends(get_current_user),
 ):
     org = await _require_approved_organizer(user)
-    doc = await db.events.find_one(
-        {"id": event_id, "organizer_id": org["id"]},
-        {"_id": 0, "id": 1, "gallery_urls": 1},
-    )
-    if not doc:
-        raise HTTPException(status_code=404, detail="Event not found")
-    current: List[str] = doc.get("gallery_urls") or []
-    if sorted(payload.order) != list(range(len(current))):
-        raise HTTPException(
-            status_code=422,
-            detail="`order` debe contener exactamente los índices actuales una vez cada uno",
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
         )
-    new_list = [current[i] for i in payload.order]
-    await db.events.update_one(
-        {"id": event_id},
-        {"$set": {"gallery_urls": new_list, "updated_at": _now_iso()}},
-    )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        current: List[str] = list(row.gallery_urls or [])
+        if sorted(payload.order) != list(range(len(current))):
+            raise HTTPException(
+                status_code=422,
+                detail="`order` debe contener exactamente los índices actuales una vez cada uno",
+            )
+        new_list = [current[i] for i in payload.order]
+        row.gallery_urls = new_list
+        row.updated_at = _now()
+        flag_modified(row, "gallery_urls")
+        await session.commit()
     return {"gallery_urls": new_list}
 
 
 # ── Asset serving ───────────────────────────────────────────────────────────
 @asset_router.get("/{asset_id}")
 async def serve_event_asset(asset_id: str):
-    asset = await db.event_assets.find_one({"id": asset_id}, {"_id": 0})
-    if not asset:
+    async with AsyncSessionLocal() as _pg_sa:
+        _asset_row = await _pg_sa.scalar(
+            select(EventAsset).where(EventAsset.id == asset_id)
+        )
+    if not _asset_row:
         raise HTTPException(status_code=404, detail="Asset not found")
-    abs_path = ASSETS_DIR / asset["file_path"]
+    abs_path = ASSETS_DIR / _asset_row.file_path
     if not abs_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
     return FileResponse(
         abs_path,
-        media_type=asset.get("mime_type", "application/octet-stream"),
+        media_type=_asset_row.mime_type or "application/octet-stream",
         headers={"Cache-Control": "public, max-age=86400"},
     )
 
@@ -790,55 +839,64 @@ async def list_public_events(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
 ):
-    organizer = await db.organizers.find_one({"slug": tenant_slug}, {"_id": 0, "id": 1})
-    if not organizer:
+    async with AsyncSessionLocal() as pg:
+        org_id_row = (await pg.execute(
+            select(Organizer.id).where(Organizer.slug == tenant_slug)
+        )).first()
+        tenant_row = (await pg.execute(
+            select(Tenant.status).where(Tenant.slug == tenant_slug)
+        )).first()
+    if not org_id_row:
         return {"items": [], "total": 0}
-    tenant = await db.tenants.find_one({"slug": tenant_slug}, {"_id": 0, "status": 1})
-    if not tenant or tenant.get("status") != "active":
+    if not tenant_row or tenant_row[0] != "active":
         return {"items": [], "total": 0}
-    query = {
-        "organizer_id": organizer["id"],
-        "status": "published",
-        "visibility": "public",
-    }
-    total = await db.events.count_documents(query)
-    cursor = (
-        db.events.find(query, {"_id": 0})
-        .sort("starts_at", 1)
-        .skip((page - 1) * limit)
-        .limit(limit)
-    )
-    items = [d async for d in cursor]
+    org_id = org_id_row[0]
+    async with AsyncSessionLocal() as pg:
+        stmt = select(Event).where(
+            Event.organizer_id == org_id,
+            Event.status == "published",
+            Event.visibility == "public",
+        )
+        total = await pg.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        result = await pg.execute(
+            stmt.order_by(Event.starts_at.asc()).offset((page - 1) * limit).limit(limit)
+        )
+        items = [row_to_dict(r) for r in result.scalars().all()]
     return {"items": items, "total": total}
 
 
 @public_router.get("/{tenant_slug}/{event_slug}")
 async def get_public_event(tenant_slug: str, event_slug: str):
-    organizer = await db.organizers.find_one({"slug": tenant_slug}, {"_id": 0})
-    if not organizer:
+    async with AsyncSessionLocal() as pg:
+        org_row = (await pg.execute(
+            select(Organizer).where(Organizer.slug == tenant_slug)
+        )).scalar_one_or_none()
+        tenant_row = (await pg.execute(
+            select(Tenant.status).where(Tenant.slug == tenant_slug)
+        )).first()
+    if not org_row:
         raise HTTPException(status_code=404, detail="Not found")
-    tenant = await db.tenants.find_one({"slug": tenant_slug}, {"_id": 0, "status": 1})
-    if not tenant or tenant.get("status") != "active":
+    if not tenant_row or tenant_row[0] != "active":
         raise HTTPException(status_code=404, detail="Not available")
-    event = await db.events.find_one(
-        {
-            "organizer_id": organizer["id"],
-            "slug": event_slug,
-            "status": "published",
-        },
-        {"_id": 0},
-    )
-    if not event:
+    organizer = row_to_dict(org_row)
+    async with AsyncSessionLocal() as pg:
+        event_row = await pg.scalar(
+            select(Event).where(
+                Event.organizer_id == organizer["id"],
+                Event.slug == event_slug,
+                Event.status == "published",
+            )
+        )
+    if not event_row:
         raise HTTPException(status_code=404, detail="Event not found")
-    # Trim org info to public-safe fields.
+    event = row_to_dict(event_row)
     event["organizer"] = {
         "slug": organizer["slug"],
         "company_name": organizer.get("company_name"),
     }
-    # Phase 7 — if event has a linked venue, attach the venue + live seat status.
     if event.get("venue_id"):
         from services.seats import compute_event_seats_status
-        venue = await db.venues.find_one({"id": event["venue_id"]}, {"_id": 0})
+        venue = await get_venue_by_id(event["venue_id"])
         if venue:
             event["venue"] = venue
             event["seats_status"] = await compute_event_seats_status(event=event, venue=venue)
@@ -857,20 +915,29 @@ class SeatHoldsRelease(BaseModel):
 
 
 async def _resolve_public_event(tenant_slug: str, event_slug: str) -> tuple:
-    organizer = await db.organizers.find_one(
-        {"slug": tenant_slug, "status": "approved"}, {"_id": 0},
-    )
-    if not organizer:
+    async with AsyncSessionLocal() as pg:
+        org_row = (await pg.execute(
+            select(Organizer).where(
+                Organizer.slug == tenant_slug, Organizer.status == "approved"
+            )
+        )).scalar_one_or_none()
+    if not org_row:
         raise HTTPException(404, "Organizador no encontrado")
-    event = await db.events.find_one(
-        {"organizer_id": organizer["id"], "slug": event_slug, "status": "published"},
-        {"_id": 0},
-    )
-    if not event:
+    organizer = row_to_dict(org_row)
+    async with AsyncSessionLocal() as pg:
+        event_row = await pg.scalar(
+            select(Event).where(
+                Event.organizer_id == organizer["id"],
+                Event.slug == event_slug,
+                Event.status == "published",
+            )
+        )
+    if not event_row:
         raise HTTPException(404, "Evento no encontrado")
+    event = row_to_dict(event_row)
     if not event.get("venue_id"):
         raise HTTPException(409, "Este evento no usa asientos numerados.")
-    venue = await db.venues.find_one({"id": event["venue_id"]}, {"_id": 0})
+    venue = await get_venue_by_id(event["venue_id"])
     if not venue:
         raise HTTPException(409, "El venue del evento ya no está disponible.")
     return organizer, event, venue
@@ -923,58 +990,65 @@ async def admin_list_events(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
 ):
-    query: Dict[str, Any] = {}
-    if status:
-        query["status"] = status
-    if organizer:
-        query["organizer_id"] = organizer
-    if category:
-        query["category"] = category
-    if pricing_type:
-        query["pricing_type"] = pricing_type
-    if search:
-        query["title"] = {"$regex": search.strip(), "$options": "i"}
-    if starts_from or starts_to:
-        sq: Dict[str, Any] = {}
+    async with AsyncSessionLocal() as pg:
+        stmt = select(Event)
+        if status:
+            stmt = stmt.where(Event.status == status)
+        if organizer:
+            stmt = stmt.where(Event.organizer_id == organizer)
+        if category:
+            stmt = stmt.where(Event.category == category)
+        if pricing_type:
+            stmt = stmt.where(Event.pricing_type == pricing_type)
+        if search:
+            stmt = stmt.where(Event.title.ilike(f"%{search.strip()}%"))
         if starts_from:
-            sq["$gte"] = starts_from
+            stmt = stmt.where(Event.starts_at >= datetime.fromisoformat(starts_from))
         if starts_to:
-            sq["$lte"] = starts_to
-        query["starts_at"] = sq
+            stmt = stmt.where(Event.starts_at <= datetime.fromisoformat(starts_to))
 
-    sort_dir = -1 if direction == "desc" else 1
-    sort_field = sort if sort in ("created_at", "starts_at", "title", "tickets_sold") else "created_at"
+        _sort_cols: Dict[str, Any] = {
+            "created_at": Event.created_at,
+            "starts_at": Event.starts_at,
+            "title": Event.title,
+            "tickets_sold": Event.tickets_sold,
+        }
+        sort_col = _sort_cols.get(sort, Event.created_at)
+        order_expr = sort_col.desc() if direction == "desc" else sort_col.asc()
 
-    total = await db.events.count_documents(query)
-    cursor = (
-        db.events.find(query, {"_id": 0})
-        .sort(sort_field, sort_dir)
-        .skip((page - 1) * limit)
-        .limit(limit)
-    )
-    events = [d async for d in cursor]
+        total = await pg.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        result = await pg.execute(
+            stmt.order_by(order_expr).offset((page - 1) * limit).limit(limit)
+        )
+        events = [row_to_dict(r) for r in result.scalars().all()]
 
-    # Enrich with organizer company_name + per-event GMV/fees
+    # Enrich with organizer company_name + per-event GMV/fees (GMV still from MongoDB orders).
     org_ids = list({e["organizer_id"] for e in events})
     evt_ids = [e["id"] for e in events]
     org_map: Dict[str, dict] = {}
     if org_ids:
-        async for o in db.organizers.find(
-            {"id": {"$in": org_ids}},
-            {"_id": 0, "id": 1, "company_name": 1, "slug": 1},
-        ):
-            org_map[o["id"]] = o
+        async with AsyncSessionLocal() as pg:
+            org_result = await pg.execute(
+                select(Organizer.id, Organizer.company_name, Organizer.slug).where(
+                    Organizer.id.in_(org_ids)
+                )
+            )
+            for row in org_result.all():
+                org_map[row.id] = {"id": row.id, "company_name": row.company_name, "slug": row.slug}
     sales_map: Dict[str, dict] = {}
     if evt_ids:
-        async for r in db.ticket_orders.aggregate([
-            {"$match": {"event_id": {"$in": evt_ids}, "status": "paid"}},
-            {"$group": {
-                "_id": "$event_id",
-                "gmv": {"$sum": "$total_cents"},
-                "fees": {"$sum": "$fees_cents"},
-            }},
-        ]):
-            sales_map[r["_id"]] = r
+        async with AsyncSessionLocal() as _pg_sales:
+            _sales_result = await _pg_sales.execute(
+                select(
+                    TicketOrder.event_id,
+                    func.coalesce(func.sum(TicketOrder.total_cents), 0).label("gmv"),
+                    func.coalesce(func.sum(TicketOrder.fees_cents), 0).label("fees"),
+                )
+                .where(TicketOrder.event_id.in_(evt_ids), TicketOrder.status == "paid")
+                .group_by(TicketOrder.event_id)
+            )
+            for r in _sales_result.all():
+                sales_map[r.event_id] = {"gmv": r.gmv, "fees": r.fees}
     for e in events:
         org = org_map.get(e["organizer_id"], {})
         s = sales_map.get(e["id"], {})
@@ -995,21 +1069,21 @@ async def admin_force_cancel(
     payload: ForceCancelBody,
     admin=Depends(require_role("super_admin")),
 ):
-    res = await db.events.update_one(
-        {"id": event_id},
-        {"$set": {"status": "cancelled", "updated_at": _now_iso()}},
-    )
-    if not res.matched_count:
-        raise HTTPException(status_code=404, detail="Event not found")
-    await db.audit_logs.insert_one(
-        {
-            "id": str(uuid.uuid4()),
-            "actor_id": admin["id"],
-            "action": "event.force_cancelled",
-            "subject_type": "event",
-            "subject_id": event_id,
-            "metadata": {"comment": payload.comment},
-            "created_at": _now_iso(),
-        }
-    )
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(select(Event).where(Event.id == event_id))
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        now = _now()
+        row.status = "cancelled"
+        row.updated_at = now
+        session.add(AuditLog(
+            id=str(uuid.uuid4()),
+            actor_user_id=admin["id"],
+            action="event.force_cancelled",
+            target_type="event",
+            target_id=event_id,
+            metadata_={"comment": payload.comment},
+            created_at=now,
+        ))
+        await session.commit()
     return {"ok": True, "status": "cancelled"}

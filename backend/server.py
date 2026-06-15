@@ -14,7 +14,7 @@ import os  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 
-from db import close_db_client  # noqa: E402
+from database import close_db  # noqa: E402
 from seeds import run_seeds  # noqa: E402
 from routers import activation as activation_router  # noqa: E402
 from routers import admin as admin_router  # noqa: E402
@@ -24,7 +24,6 @@ from routers import dev as dev_router  # noqa: E402
 from routers import microsite as microsite_router  # noqa: E402
 from routers import organizers as organizers_router  # noqa: E402
 from routers import plans as plans_router  # noqa: E402
-from routers import poc as poc_router  # noqa: E402
 from routers import stripe_webhook as stripe_webhook_router  # noqa: E402
 from routers import tenants as tenants_router  # noqa: E402
 
@@ -59,7 +58,6 @@ app.include_router(organizers_router.admin_router)
 app.include_router(billing_router.router)
 app.include_router(stripe_webhook_router.router)
 app.include_router(admin_router.router)
-app.include_router(poc_router.router)
 app.include_router(microsite_router.router)
 app.include_router(microsite_router.public_router)
 app.include_router(microsite_router.asset_router)
@@ -73,6 +71,7 @@ from routers import dashboard as dashboard_router  # noqa: E402
 from routers import admin_dashboard as admin_dashboard_router  # noqa: E402
 from routers import admin_exports as admin_exports_router  # noqa: E402
 from routers import venues as venues_router  # noqa: E402
+from routers import admin_venue_templates as admin_venue_templates_router  # noqa: E402
 
 app.include_router(events_router.router)
 app.include_router(events_router.public_router)
@@ -85,6 +84,7 @@ app.include_router(admin_dashboard_router.router)
 app.include_router(admin_exports_router.router)
 app.include_router(venues_router.router)
 app.include_router(venues_router.public_router)
+app.include_router(admin_venue_templates_router.router)
 
 
 # CORS — must NOT use "*" with allow_credentials=True per browser spec.
@@ -110,4 +110,4 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    await close_db_client()
+    await close_db()

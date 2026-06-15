@@ -10,8 +10,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
-from db import db
+from database import AsyncSessionLocal
+from db_helpers import get_organizer_by_id, get_organizer_by_slug, row_to_dict
+from orm_models import Microsite, MicrositeAsset, Organizer, Tenant
 from security import get_current_user
 from services.microsite_factory import default_microsite, FONTS, TEMPLATES
 
@@ -29,15 +33,8 @@ public_router = APIRouter(prefix="/api/public/microsite", tags=["microsite-publi
 asset_router = APIRouter(prefix="/api/microsite", tags=["microsite-assets"])
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _project(doc: dict) -> dict:
-    if not doc:
-        return doc
-    doc.pop("_id", None)
-    return doc
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 # ── Models ───────────────────────────────────────────────────────────────────
@@ -87,13 +84,9 @@ class MicrositeUpdate(BaseModel):
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 async def _require_active_organizer(user) -> dict:
-    """Panel-level access. Pending orgs can draft their microsite while
-    waiting for admin approval; only rejected/suspended/unknown are blocked."""
     if not user.get("organizer_id"):
         raise HTTPException(status_code=403, detail="No organizer profile")
-    organizer = await db.organizers.find_one(
-        {"id": user["organizer_id"]}, {"_id": 0}
-    )
+    organizer = await get_organizer_by_id(user["organizer_id"])
     if not organizer:
         raise HTTPException(status_code=404, detail="Organizer not found")
     if organizer["status"] not in {"pending", "approved"}:
@@ -105,8 +98,6 @@ async def _require_active_organizer(user) -> dict:
 
 
 async def _require_can_publish_microsite(user) -> dict:
-    """Strict gate for publish only — pending orgs cannot make their
-    microsite publicly accessible."""
     organizer = await _require_active_organizer(user)
     if organizer["status"] != "approved":
         raise HTTPException(
@@ -123,25 +114,46 @@ async def _require_can_publish_microsite(user) -> dict:
     return organizer
 
 
-# Backwards-compatible alias for existing call sites — they all describe
-# panel-level access, so we point this to the relaxed helper.
 _require_approved_organizer = _require_active_organizer
 
 
+async def _get_or_create_microsite_row(organizer: dict) -> Microsite:
+    """Returns the ORM row, creating a default one if missing."""
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Microsite).where(Microsite.organizer_id == organizer["id"])
+        )
+        if row:
+            return row
+        doc = default_microsite(
+            organizer_id=organizer["id"],
+            tenant_slug=organizer["slug"],
+            company_name=organizer.get("company_name") or organizer["slug"],
+        )
+        now = _now()
+        row = Microsite(
+            id=doc["id"],
+            organizer_id=organizer["id"],
+            slug=organizer["slug"],
+            template=doc.get("template"),
+            branding=doc.get("branding", {}),
+            content=doc.get("content", {}),
+            social_links=doc.get("social_links", {}),
+            sections_enabled=doc.get("sections_enabled", {}),
+            published=doc.get("published", False),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+        logger.info("Created default microsite for %s", organizer["slug"])
+        return row
+
+
 async def _get_or_create_microsite(organizer: dict) -> dict:
-    found = await db.microsites.find_one(
-        {"organizer_id": organizer["id"]}, {"_id": 0}
-    )
-    if found:
-        return found
-    doc = default_microsite(
-        organizer_id=organizer["id"],
-        tenant_slug=organizer["slug"],
-        company_name=organizer.get("company_name") or organizer["slug"],
-    )
-    await db.microsites.insert_one({**doc})
-    logger.info("Created default microsite for %s", organizer["slug"])
-    return _project(doc)
+    row = await _get_or_create_microsite_row(organizer)
+    return row_to_dict(row)
 
 
 def _validate_partial(update: MicrositeUpdate) -> None:
@@ -161,61 +173,99 @@ def _validate_partial(update: MicrositeUpdate) -> None:
 @router.get("/me")
 async def get_my_microsite(user=Depends(get_current_user)):
     organizer = await _require_approved_organizer(user)
-    microsite = await _get_or_create_microsite(organizer)
-    return microsite
+    return await _get_or_create_microsite(organizer)
 
 
 @router.put("/me")
 async def update_my_microsite(payload: MicrositeUpdate, user=Depends(get_current_user)):
     organizer = await _require_approved_organizer(user)
-    microsite = await _get_or_create_microsite(organizer)
     _validate_partial(payload)
 
-    update: dict = {"updated_at": _now_iso()}
-    if payload.template:
-        update["template"] = payload.template
-    if payload.branding:
-        for k, v in payload.branding.model_dump(exclude_unset=True).items():
-            if v is not None:
-                update[f"branding.{k}"] = v
-    if payload.content:
-        for k, v in payload.content.model_dump(exclude_unset=True).items():
-            if v is not None:
-                update[f"content.{k}"] = v
-    if payload.social_links:
-        for k, v in payload.social_links.model_dump(exclude_unset=True).items():
-            if v is not None:
-                update[f"social_links.{k}"] = v
-    if payload.sections_enabled:
-        for k, v in payload.sections_enabled.model_dump(exclude_unset=True).items():
-            if v is not None:
-                update[f"sections_enabled.{k}"] = v
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Microsite).where(Microsite.organizer_id == organizer["id"])
+        )
+        if not row:
+            # Auto-create then reload in same session
+            doc = default_microsite(
+                organizer_id=organizer["id"],
+                tenant_slug=organizer["slug"],
+                company_name=organizer.get("company_name") or organizer["slug"],
+            )
+            now = _now()
+            row = Microsite(
+                id=doc["id"], organizer_id=organizer["id"], slug=organizer["slug"],
+                template=doc.get("template"), branding=doc.get("branding", {}),
+                content=doc.get("content", {}), social_links=doc.get("social_links", {}),
+                sections_enabled=doc.get("sections_enabled", {}),
+                published=False, created_at=now, updated_at=now,
+            )
+            session.add(row)
 
-    await db.microsites.update_one({"id": microsite["id"]}, {"$set": update})
-    refreshed = await db.microsites.find_one({"id": microsite["id"]}, {"_id": 0})
-    return refreshed
+        if payload.template:
+            row.template = payload.template
+        if payload.branding:
+            new_branding = dict(row.branding or {})
+            for k, v in payload.branding.model_dump(exclude_unset=True).items():
+                if v is not None:
+                    new_branding[k] = v
+            row.branding = new_branding
+            flag_modified(row, "branding")
+        if payload.content:
+            new_content = dict(row.content or {})
+            for k, v in payload.content.model_dump(exclude_unset=True).items():
+                if v is not None:
+                    new_content[k] = v
+            row.content = new_content
+            flag_modified(row, "content")
+        if payload.social_links:
+            new_social = dict(row.social_links or {})
+            for k, v in payload.social_links.model_dump(exclude_unset=True).items():
+                if v is not None:
+                    new_social[k] = v
+            row.social_links = new_social
+            flag_modified(row, "social_links")
+        if payload.sections_enabled:
+            new_sections = dict(row.sections_enabled or {})
+            for k, v in payload.sections_enabled.model_dump(exclude_unset=True).items():
+                if v is not None:
+                    new_sections[k] = v
+            row.sections_enabled = new_sections
+            flag_modified(row, "sections_enabled")
+
+        row.updated_at = _now()
+        await session.commit()
+        await session.refresh(row)
+        return row_to_dict(row)
 
 
 @router.post("/me/publish")
 async def publish(user=Depends(get_current_user)):
-    # Strict: pending orgs can edit drafts but cannot expose their microsite.
     organizer = await _require_can_publish_microsite(user)
-    microsite = await _get_or_create_microsite(organizer)
-    await db.microsites.update_one(
-        {"id": microsite["id"]},
-        {"$set": {"published": True, "updated_at": _now_iso()}},
-    )
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Microsite).where(Microsite.organizer_id == organizer["id"])
+        )
+        if not row:
+            raise HTTPException(404, "Microsite not found")
+        row.published = True
+        row.updated_at = _now()
+        await session.commit()
     return {"ok": True, "published": True}
 
 
 @router.post("/me/unpublish")
 async def unpublish(user=Depends(get_current_user)):
     organizer = await _require_approved_organizer(user)
-    microsite = await _get_or_create_microsite(organizer)
-    await db.microsites.update_one(
-        {"id": microsite["id"]},
-        {"$set": {"published": False, "updated_at": _now_iso()}},
-    )
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Microsite).where(Microsite.organizer_id == organizer["id"])
+        )
+        if not row:
+            raise HTTPException(404, "Microsite not found")
+        row.published = False
+        row.updated_at = _now()
+        await session.commit()
     return {"ok": True, "published": False}
 
 
@@ -243,6 +293,34 @@ async def upload_asset(
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     abs_path.write_bytes(content)
 
+    asset_url = f"/api/microsite/assets/{asset_id}"
+    now = _now()
+
+    async with AsyncSessionLocal() as session:
+        session.add(MicrositeAsset(
+            id=asset_id,
+            organizer_id=organizer["id"],
+            asset_type=asset_type,
+            file_path=str(rel_path),
+            original_filename=safe_name,
+            mime_type=file.content_type,
+            size_bytes=len(content),
+            uploaded_at=now,
+        ))
+
+        # Update branding shortcut for logo / banner
+        ms_row = await session.scalar(
+            select(Microsite).where(Microsite.organizer_id == organizer["id"])
+        )
+        if ms_row and asset_type in ("logo", "banner"):
+            new_branding = dict(ms_row.branding or {})
+            new_branding[f"{asset_type}_url"] = asset_url
+            ms_row.branding = new_branding
+            flag_modified(ms_row, "branding")
+            ms_row.updated_at = now
+
+        await session.commit()
+
     record = {
         "id": asset_id,
         "organizer_id": organizer["id"],
@@ -251,75 +329,69 @@ async def upload_asset(
         "original_filename": safe_name,
         "mime_type": file.content_type,
         "size_bytes": len(content),
-        "uploaded_at": _now_iso(),
+        "uploaded_at": now.isoformat(),
+        "url": asset_url,
     }
-    await db.microsite_assets.insert_one({**record})
-
-    # Update microsite branding shortcut for logo / banner.
-    microsite = await _get_or_create_microsite(organizer)
-    asset_url = f"/api/microsite/assets/{asset_id}"
-    if asset_type == "logo":
-        await db.microsites.update_one(
-            {"id": microsite["id"]},
-            {"$set": {"branding.logo_url": asset_url, "updated_at": _now_iso()}},
-        )
-    elif asset_type == "banner":
-        await db.microsites.update_one(
-            {"id": microsite["id"]},
-            {"$set": {"branding.banner_url": asset_url, "updated_at": _now_iso()}},
-        )
-    return {**record, "url": asset_url}
+    return record
 
 
 @router.delete("/me/assets/{asset_id}", status_code=204)
 async def delete_asset(asset_id: str, user=Depends(get_current_user)):
     organizer = await _require_approved_organizer(user)
-    asset = await db.microsite_assets.find_one(
-        {"id": asset_id, "organizer_id": organizer["id"]}, {"_id": 0}
-    )
-    if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
-    abs_path = ASSETS_DIR / asset["file_path"]
-    try:
-        if abs_path.exists():
-            abs_path.unlink()
-    except OSError as e:
-        logger.warning("Cannot delete asset file %s: %s", abs_path, e)
-    await db.microsite_assets.delete_one({"id": asset_id})
+    async with AsyncSessionLocal() as session:
+        asset_row = await session.scalar(
+            select(MicrositeAsset).where(
+                MicrositeAsset.id == asset_id,
+                MicrositeAsset.organizer_id == organizer["id"],
+            )
+        )
+        if not asset_row:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        abs_path = ASSETS_DIR / asset_row.file_path
+        try:
+            if abs_path.exists():
+                abs_path.unlink()
+        except OSError as e:
+            logger.warning("Cannot delete asset file %s: %s", abs_path, e)
 
-    # Clear any branding ref to this asset.
-    asset_url = f"/api/microsite/assets/{asset_id}"
-    await db.microsites.update_many(
-        {"organizer_id": organizer["id"]},
-        {
-            "$set": {"updated_at": _now_iso()},
-            "$unset": {},  # placeholder, handled below
-        },
-    )
-    # MongoDB doesn't support conditional unset in single op; do explicit clears.
-    await db.microsites.update_many(
-        {"organizer_id": organizer["id"], "branding.logo_url": asset_url},
-        {"$set": {"branding.logo_url": None}},
-    )
-    await db.microsites.update_many(
-        {"organizer_id": organizer["id"], "branding.banner_url": asset_url},
-        {"$set": {"branding.banner_url": None}},
-    )
+        asset_url = f"/api/microsite/assets/{asset_id}"
+        ms_row = await session.scalar(
+            select(Microsite).where(Microsite.organizer_id == organizer["id"])
+        )
+        if ms_row:
+            branding = dict(ms_row.branding or {})
+            changed = False
+            if branding.get("logo_url") == asset_url:
+                branding["logo_url"] = None
+                changed = True
+            if branding.get("banner_url") == asset_url:
+                branding["banner_url"] = None
+                changed = True
+            if changed:
+                ms_row.branding = branding
+                flag_modified(ms_row, "branding")
+                ms_row.updated_at = _now()
+
+        await session.delete(asset_row)
+        await session.commit()
     return None
 
 
 # ── Public asset serving ─────────────────────────────────────────────────────
 @asset_router.get("/assets/{asset_id}")
 async def serve_asset(asset_id: str):
-    asset = await db.microsite_assets.find_one({"id": asset_id}, {"_id": 0})
-    if not asset:
+    async with AsyncSessionLocal() as session:
+        asset_row = await session.scalar(
+            select(MicrositeAsset).where(MicrositeAsset.id == asset_id)
+        )
+    if not asset_row:
         raise HTTPException(status_code=404, detail="Asset not found")
-    abs_path = ASSETS_DIR / asset["file_path"]
+    abs_path = ASSETS_DIR / asset_row.file_path
     if not abs_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
     return FileResponse(
         abs_path,
-        media_type=asset.get("mime_type", "application/octet-stream"),
+        media_type=asset_row.mime_type or "application/octet-stream",
         headers={"Cache-Control": "public, max-age=86400"},
     )
 
@@ -327,33 +399,36 @@ async def serve_asset(asset_id: str):
 # ── Public microsite ────────────────────────────────────────────────────────
 @public_router.get("/{slug}")
 async def public_microsite(slug: str):
-    organizer = await db.organizers.find_one({"slug": slug}, {"_id": 0})
+    organizer = await get_organizer_by_slug(slug)
     if not organizer:
         raise HTTPException(status_code=404, detail="Not found")
-    tenant = await db.tenants.find_one({"slug": slug}, {"_id": 0})
-    if not tenant or tenant.get("status") != "active":
-        raise HTTPException(status_code=404, detail="Not available")
-    microsite = await db.microsites.find_one(
-        {"organizer_id": organizer["id"], "published": True}, {"_id": 0}
-    )
-    if not microsite:
+    async with AsyncSessionLocal() as pg:
+        tenant_result = await pg.execute(select(Tenant.status).where(Tenant.slug == slug))
+        tenant_row = tenant_result.first()
+        if not tenant_row or tenant_row[0] != "active":
+            raise HTTPException(status_code=404, detail="Not available")
+        ms_row = await pg.scalar(
+            select(Microsite).where(
+                Microsite.organizer_id == organizer["id"],
+                Microsite.published == True,  # noqa: E712
+            )
+        )
+    if not ms_row:
         raise HTTPException(status_code=404, detail="Microsite not published")
-    # Trim sensitive fields.
     return {
         "slug": slug,
         "company_name": organizer["company_name"],
-        "template": microsite["template"],
-        "branding": microsite["branding"],
-        "content": microsite["content"],
-        "social_links": microsite["social_links"],
-        "sections_enabled": microsite["sections_enabled"],
+        "template": ms_row.template,
+        "branding": ms_row.branding,
+        "content": ms_row.content,
+        "social_links": ms_row.social_links,
+        "sections_enabled": ms_row.sections_enabled,
     }
 
 
 @public_router.get("/{slug}/events")
 async def public_microsite_events(slug: str):
-    """Placeholder until Fase 3 wires real events."""
-    organizer = await db.organizers.find_one({"slug": slug}, {"_id": 0, "id": 1})
+    organizer = await get_organizer_by_slug(slug)
     if not organizer:
         raise HTTPException(status_code=404, detail="Not found")
     return []

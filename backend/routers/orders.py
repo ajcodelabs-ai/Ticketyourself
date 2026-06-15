@@ -14,10 +14,13 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 import stripe
 
-from db import db
+from database import AsyncSessionLocal
+from db_helpers import get_event_by_id, get_microsite_by_organizer, get_organizer_by_id, get_organizer_by_slug, get_venue_by_id, row_to_dict
+from orm_models import Organizer
 from services import order_service
 from services import discount_service
 from services.pdf_service import render_ticket_pdf
+from sqlalchemy import select
 
 logger = logging.getLogger("tys.public_orders")
 router = APIRouter(prefix="/api/public/orders", tags=["public-orders"])
@@ -71,7 +74,7 @@ async def _resolve_event_for_pricing(tenant_slug: str, event_slug: str):
     organizer, event = await _load_event_or_404(tenant_slug, event_slug)
     venue = None
     if event.get("venue_id"):
-        venue = await db.venues.find_one({"id": event["venue_id"]}, {"_id": 0})
+        venue = await get_venue_by_id(event["venue_id"])
     return organizer, event, venue
 
 
@@ -134,14 +137,24 @@ async def preview_order(payload: PreviewOrderBody):
 
 
 async def _load_event_or_404(tenant_slug: str, event_slug: str) -> tuple[dict, dict]:
-    organizer = await db.organizers.find_one({"slug": tenant_slug}, {"_id": 0})
-    if not organizer:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Organizer).where(Organizer.slug == tenant_slug))
+        org_row = result.scalar_one_or_none()
+    if not org_row:
         raise HTTPException(404, "Organizador no encontrado")
-    event = await db.events.find_one(
-        {"organizer_id": organizer["id"], "slug": event_slug}, {"_id": 0}
-    )
-    if not event:
+    organizer = row_to_dict(org_row)
+    async with AsyncSessionLocal() as pg:
+        from orm_models import Event
+        from sqlalchemy import select as _select
+        event_row = await pg.scalar(
+            _select(Event).where(
+                Event.organizer_id == organizer["id"],
+                Event.slug == event_slug,
+            )
+        )
+    if not event_row:
         raise HTTPException(404, "Evento no encontrado")
+    event = row_to_dict(event_row)
     return organizer, event
 
 
@@ -157,7 +170,7 @@ async def create_order(payload: CreateOrderBody):
     seat_ids = payload.seat_ids or None
     venue = None
     if seat_ids and event.get("venue_id"):
-        venue = await db.venues.find_one({"id": event["venue_id"]}, {"_id": 0})
+        venue = await get_venue_by_id(event["venue_id"])
         if not venue:
             raise HTTPException(409, "El venue del evento ya no está disponible.")
         if not payload.seat_holds_session_token:
@@ -270,10 +283,11 @@ async def create_order(payload: CreateOrderBody):
         logger.error("Stripe checkout failed for order %s: %s", order["order_number"], e)
         raise HTTPException(502, f"Stripe checkout error: {e.user_message or str(e)}") from e
 
-    await db.ticket_orders.update_one(
-        {"id": order["id"]},
-        {"$set": {"stripe_session_id": session["id"]}},
-    )
+    async with AsyncSessionLocal() as _pg:
+        from orm_models import TicketOrder as _TOModel
+        _row = await _pg.scalar(select(_TOModel).where(_TOModel.id == order["id"]))
+        _row.stripe_session_id = session["id"]
+        await _pg.commit()
     await order_service.reserve_capacity(
         event_id=event["id"], order_id=order["id"], quantity=payload.quantity
     )
@@ -287,27 +301,29 @@ async def create_order(payload: CreateOrderBody):
 
 @router.get("/{order_number}")
 async def get_order(order_number: str, session_id: Optional[str] = Query(default=None)):
-    order = await db.ticket_orders.find_one({"order_number": order_number}, {"_id": 0})
-    if not order:
-        raise HTTPException(404, "Orden no encontrada")
+    from orm_models import TicketOrder as _TOModel, Ticket as _TModel
 
-    # If pending + session_id matches, try to refresh from Stripe.
+    async with AsyncSessionLocal() as _pg:
+        order_row = await _pg.scalar(
+            select(_TOModel).where(_TOModel.order_number == order_number)
+        )
+    if not order_row:
+        raise HTTPException(404, "Orden no encontrada")
+    order = row_to_dict(order_row)
+
     if (
         order["status"] == "pending"
         and session_id
         and order.get("stripe_session_id") == session_id
     ):
         try:
-            session = stripe.checkout.Session.retrieve(session_id)
-            if session.get("payment_status") == "paid":
+            stripe_session = stripe.checkout.Session.retrieve(session_id)
+            if stripe_session.get("payment_status") == "paid":
                 order, _tickets = await order_service.finalize_paid_order(
                     order=order, stripe_session_id=session_id
                 )
-                # Email
-                event = await db.events.find_one({"id": order["event_id"]}, {"_id": 0})
-                organizer = await db.organizers.find_one(
-                    {"id": order["organizer_id"]}, {"_id": 0}
-                )
+                event = await get_event_by_id(order["event_id"])
+                organizer = await get_organizer_by_id(order["organizer_id"])
                 try:
                     from services.email_service import send_purchase_confirmation
                     await send_purchase_confirmation(
@@ -318,14 +334,14 @@ async def get_order(order_number: str, session_id: Optional[str] = Query(default
         except stripe.error.StripeError as e:
             logger.warning("Could not refresh session %s: %s", session_id, e)
 
-    # Attach tickets + minimal event + organizer info for the success page.
-    tickets_cursor = db.tickets.find({"order_id": order["id"]}, {"_id": 0})
-    tickets = [t async for t in tickets_cursor]
-    event = await db.events.find_one({"id": order["event_id"]}, {"_id": 0})
-    organizer = await db.organizers.find_one({"id": order["organizer_id"]}, {"_id": 0})
-    microsite = await db.microsites.find_one(
-        {"organizer_id": order["organizer_id"]}, {"_id": 0}
-    )
+    async with AsyncSessionLocal() as _pg:
+        _t_result = await _pg.execute(
+            select(_TModel).where(_TModel.order_id == order["id"])
+        )
+        tickets = [row_to_dict(r) for r in _t_result.scalars().all()]
+    event = await get_event_by_id(order["event_id"])
+    organizer = await get_organizer_by_id(order["organizer_id"])
+    microsite = await get_microsite_by_organizer(order["organizer_id"])
     return {
         "order": order,
         "tickets": tickets,
@@ -345,14 +361,16 @@ async def get_payment_instructions(order_number: str):
     Only meaningful when status=pending_manual_payment. Buyer reaches this via
     the `redirect_to` from create_order or the email link.
     """
-    order = await db.ticket_orders.find_one({"order_number": order_number}, {"_id": 0})
+    from orm_models import TicketOrder as _TOModel
+
+    async with AsyncSessionLocal() as _pg:
+        _row = await _pg.scalar(select(_TOModel).where(_TOModel.order_number == order_number))
+    order = row_to_dict(_row) if _row else None
     if not order:
         raise HTTPException(404, "Orden no encontrada")
-    event = await db.events.find_one({"id": order["event_id"]}, {"_id": 0})
-    organizer = await db.organizers.find_one({"id": order["organizer_id"]}, {"_id": 0})
-    microsite = await db.microsites.find_one(
-        {"organizer_id": order["organizer_id"]}, {"_id": 0}
-    )
+    event = await get_event_by_id(order["event_id"])
+    organizer = await get_organizer_by_id(order["organizer_id"])
+    microsite = await get_microsite_by_organizer(order["organizer_id"])
     method = order.get("payment_method") or "stripe"
     instructions = order_service.get_payment_instructions(
         event=event or {}, payment_method=method
@@ -373,19 +391,24 @@ async def get_payment_instructions(order_number: str):
 
 @router.get("/{order_number}/tickets/{ticket_id}/pdf")
 async def ticket_pdf(order_number: str, ticket_id: str):
-    order = await db.ticket_orders.find_one({"order_number": order_number}, {"_id": 0})
+    from orm_models import TicketOrder as _TOModel, Ticket as _TModel
+
+    async with AsyncSessionLocal() as _pg:
+        _o_row = await _pg.scalar(select(_TOModel).where(_TOModel.order_number == order_number))
+    order = row_to_dict(_o_row) if _o_row else None
     if not order or order["status"] != "paid":
         raise HTTPException(404, "Orden no encontrada o no pagada")
-    ticket = await db.tickets.find_one(
-        {"id": ticket_id, "order_id": order["id"]}, {"_id": 0}
-    )
+
+    async with AsyncSessionLocal() as _pg:
+        _t_row = await _pg.scalar(
+            select(_TModel).where(_TModel.id == ticket_id, _TModel.order_id == order["id"])
+        )
+    ticket = row_to_dict(_t_row) if _t_row else None
     if not ticket:
         raise HTTPException(404, "Ticket no encontrado")
-    event = await db.events.find_one({"id": ticket["event_id"]}, {"_id": 0})
-    organizer = await db.organizers.find_one({"id": ticket["organizer_id"]}, {"_id": 0})
-    microsite = await db.microsites.find_one(
-        {"organizer_id": ticket["organizer_id"]}, {"_id": 0}
-    )
+    event = await get_event_by_id(ticket["event_id"])
+    organizer = await get_organizer_by_id(ticket["organizer_id"])
+    microsite = await get_microsite_by_organizer(ticket["organizer_id"])
     pdf_bytes = render_ticket_pdf(
         event=event, order=order, ticket=ticket, organizer=organizer, microsite=microsite
     )

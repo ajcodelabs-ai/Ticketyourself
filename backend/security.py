@@ -7,7 +7,6 @@ import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, Request
 
-from db import db
 from models import UserRole
 
 JWT_ALGORITHM = "HS256"
@@ -124,10 +123,18 @@ async def get_current_user(request: Request) -> dict:
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     payload = decode_token(token, "access")
-    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
-    if not user:
+    from sqlalchemy import select
+    from database import AsyncSessionLocal
+    from orm_models import User
+    from db_helpers import row_to_dict
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.id == payload["sub"]))
+        row = result.scalar_one_or_none()
+    if not row:
         raise HTTPException(status_code=401, detail="User not found")
-    return user
+    d = row_to_dict(row)
+    d.pop("password_hash", None)
+    return d
 
 
 def require_role(*roles: UserRole):

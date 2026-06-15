@@ -1,0 +1,69 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tys}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tys_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-tys_dev}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tys} -d ${POSTGRES_DB:-tys_dev}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tys}:${POSTGRES_PASSWORD:-tys_dev}@postgres:5432/${POSTGRES_DB:-tys_dev}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      ENV: ${ENV:-development_local}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      TYS_FEE_PERCENT: ${TYS_FEE_PERCENT:-5}
+      STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+      STRIPE_API_BASE: ${STRIPE_API_BASE:-https://api.stripe.com}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@ticketyourself.com}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ticketyourself.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin123!}
+    volumes:
+      - ./backend:/app
+      - backend_event_assets:/app/event_assets
+      - backend_microsite_assets:/app/microsite_assets
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn server:app --reload --host 0.0.0.0 --port 8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_BACKEND_URL: ${VITE_BACKEND_URL:-http://localhost:8000}
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  backend_event_assets:
+  backend_microsite_assets:
+  frontend_node_modules:

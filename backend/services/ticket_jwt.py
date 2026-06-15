@@ -35,6 +35,8 @@ def issue_ticket_token(
 ) -> str:
     now = datetime.now(timezone.utc)
     # Token expires 1 year after event ends (default 1 year from now if unknown).
+    if isinstance(event_ends_at_iso, datetime):
+        event_ends_at_iso = event_ends_at_iso.isoformat()
     if event_ends_at_iso:
         try:
             ends = datetime.fromisoformat(event_ends_at_iso.replace("Z", "+00:00"))

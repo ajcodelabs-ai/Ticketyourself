@@ -19,7 +19,6 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from db import db
 
 
 # ── Item builder ─────────────────────────────────────────────────────────────
@@ -228,30 +227,39 @@ def evaluate_discounts(
 
 
 async def consume_promo_code(event_id: str, rule_id: str) -> bool:
-    """Atomically increment `uses_count` for the matching rule. Returns True
-    when the increment succeeded (i.e. we haven't exceeded `max_uses`)."""
-    # We try a two-step approach to avoid race conditions:
-    #   • If `max_uses` is set, increment only when `uses_count < max_uses`
-    #   • Otherwise, plain `$inc`
-    res = await db.events.update_one(
-        {
-            "id": event_id,
-            "discounts.rules.id": rule_id,
-            "$or": [
-                {"discounts.rules.$.max_uses": None},
-                {
-                    "$expr": {
-                        "$lt": [
-                            "$discounts.rules.uses_count",
-                            "$discounts.rules.max_uses",
-                        ]
-                    }
-                },
-            ],
-        },
-        {"$inc": {"discounts.rules.$.uses_count": 1}},
-    )
-    return res.modified_count > 0
+    """Increment `uses_count` for the matching rule under a row-level lock.
+    Returns True when the increment succeeded (i.e. we haven't exceeded `max_uses`)."""
+    from database import AsyncSessionLocal
+    from orm_models import Event
+    from sqlalchemy import select
+    from sqlalchemy.orm.attributes import flag_modified
+
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id).with_for_update()
+        )
+        if not row:
+            return False
+
+        discounts = row.discounts or {}
+        rules = discounts.get("rules") or []
+        found = False
+        for rule in rules:
+            if rule.get("id") == rule_id:
+                max_uses = rule.get("max_uses")
+                uses = rule.get("uses_count") or 0
+                if max_uses is not None and uses >= max_uses:
+                    return False
+                rule["uses_count"] = uses + 1
+                found = True
+                break
+        if not found:
+            return False
+
+        row.discounts = discounts
+        flag_modified(row, "discounts")
+        await session.commit()
+        return True
 
 
 def assert_buyer_allowed(rule: dict, buyer: dict, applied_count: int) -> None:
