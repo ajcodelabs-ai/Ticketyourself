@@ -1,184 +1,154 @@
 # Ticket Yourself — Arquitectura AWS
 
-> Auto-scaling: 1–20 tasks · Multi-AZ · Alta concurrencia en flash sales
+> Target: 1–20 tasks ECS · Multi-AZ · Alta concurrencia en flash sales
 
-## Diagrama de flujo
+## Estado actual (hoy)
+
+Hoy la app corre en Docker Compose. El código ya soporta varios patrones de escalabilidad aunque la infraestructura cloud aún no existe.
+
+```mermaid
+flowchart LR
+    subgraph "Docker Compose (hoy)"
+        U["Usuarios"] --> FE["nginx · Frontend SPA<br/>Docker container"]
+        U --> BE["uvicorn 1 worker · Backend API<br/>Docker container"]
+        BE --> PGB["PgBouncer · Pool"]
+        PGB --> PG[("PostgreSQL 16")]
+    end
+```
+
+### Lo que ya está listo en código
+
+| Componente | Código | Estado |
+|------------|--------|--------|
+| **API async** | FastAPI + asyncpg + SQLAlchemy async | ✅ Listo. Pool nativo maneja centenares de conexiones |
+| **PgBouncer compat** | `database.py` detecta `PGBOUNCER=true`, desactiva statement cache | ✅ Listo. Ya corre en dev compose |
+| **Seat holds** | `orm_models.SeatHold` + `services/seats.py` (create/release/consume/assign) | ✅ Listo. Cleanup periódico pendiente |
+| **JWT stateless** | `security.py` — HS256, Bearer token | ✅ Listo. Escala horizontal sin cambios |
+| **Health check** | `GET /api/health` | ✅ Listo. Para ALB target group |
+| **Stripe webhooks** | Flujo completo de confirmación de pago síncrono | ✅ Listo. |
+| **Email async** | `BackgroundTasks` + `asyncio.create_task` vía Resend | ⚠️ Fire-and-forget. Sin cola persistente. Suficiente hoy |
+| **8 workers** | `Dockerfile` CMD sin `--workers` | ❌ Pendiente. Hoy corre 1 worker |
+| **Cleanup seat holds** | No existe | ❌ Pendiente. `DELETE WHERE expires_at < NOW()` |
+
+### Target AWS
 
 ```mermaid
 flowchart TB
-    U[Usuarios] --> R53[Route 53]
-    R53 --> WAF[WAF]
-    WAF --> CF[CloudFront]
-    CF -- "/*" --> S3[S3 — Frontend SPA]
-    CF -- "/api/*" --> ALB[ALB]
-    ALB --> ECS["ECS Fargate · 1–20 tasks"]
-    ECS --> PGB[PgBouncer]
-    PGB --> RDS["RDS PostgreSQL 16 · Multi-AZ"]
-    ECS --> REDIS["ElastiCache Redis"]
-    ECS --> S3A[S3 — Assets]
-    ECS --> STRIPE[Stripe — Pagos]
-    ECS --> RESEND[Resend — Emails]
+    classDef edge fill:#e8f4f8,stroke:#2980b9,stroke-width:2px
+    classDef frontend fill:#fef9e7,stroke:#f39c12,stroke-width:2px
+    classDef compute fill:#d5f5e3,stroke:#27ae60,stroke-width:2px
+    classDef external fill:#f4ecf7,stroke:#8e44ad,stroke-width:2px
+    classDef db fill:#fadbd8,stroke:#c0392b,stroke-width:2px
+
+    subgraph "🌐 Internet"
+        U(("Usuarios"))
+    end
+
+    subgraph "AWS Edge"
+        R53[("Route53 · DNS")] --> WAF["WAF · Firewall"] --> CF["CloudFront · CDN"]
+    end
+
+    subgraph "AWS Global"
+        S3_FE["S3 · Frontend Estático<br/>Vite + React SPA"]
+    end
+
+    subgraph "VPC"
+        subgraph "Pública"
+            ALB["ALB · Load Balancer<br/>Target: /api/*"]
+        end
+        subgraph "Privada · Cómputo"
+            ECS["ECS Fargate · Backend API<br/>1–20 tasks · 8 workers c/u"]
+        end
+        subgraph "Privada · Datos"
+            PGB["PgBouncer · Pool Conexiones"]
+            RDS[("RDS PostgreSQL 16<br/>Multi-AZ")]
+            S3_A["S3 · Assets Eventos"]
+        end
+    end
+
+    subgraph "Externos"
+        STRIPE[("Stripe · Pagos")]
+        RESEND[("Resend · Email")]
+    end
+
+    U --> R53
+    CF -- "/*" --> S3_FE
+    CF -- "/api/*" --> ALB
+    ALB --> ECS
+    ECS --> PGB --> RDS
+    ECS --> S3_A
+    ECS --> STRIPE
+    ECS --> RESEND
+
+    class U,R53,WAF,CF edge
+    class S3_FE frontend
+    class ALB compute
+    class ECS,PGB compute
+    class S3_A,RDS db
+    class STRIPE,RESEND external
 ```
 
-## Capas
+## Especificaciones target
 
-### 1. Edge
+| Capa | Servicio | Detalle |
+|------|----------|---------|
+| Edge | Route53 → WAF → CloudFront | 250K RPS / 150 Gbps base. `/*` → S3, `/api/*` → ALB |
+| Frontend | S3 | Build estático Vite + React. CloudFront al frente, S3 nunca recibe tráfico directo |
+| Cómputo | ECS Fargate | 1–20 tasks. 8 workers uvicorn + PgBouncer sidecar por task |
+| Base de datos | RDS PostgreSQL 16 | ~500 conexiones vía PgBouncer. Seat holds con tabla + cleanup periódico |
+| Assets | S3 | Posters, banners, galerías |
+| Pagos | Stripe | API + webhooks |
+| Email | Resend | Confirmaciones, recuperación. `BackgroundTasks` hoy |
 
-| Servicio | Función |
+## Flujo de pago
+
+```mermaid
+sequenceDiagram
+    actor U as Usuario
+    participant API as Backend API
+    participant PG as PostgreSQL
+    participant STRIPE as Stripe
+
+    U->>API: POST /checkout {seat_ids}
+    API->>PG: INSERT seat_hold (session_token, seat_id, expires_at)
+    API->>STRIPE: PaymentIntent.create
+    STRIPE-->>API: requires_confirmation
+    U->>API: POST /confirm {payment_intent_id}
+    API->>STRIPE: PaymentIntent.confirm
+    STRIPE-->>API: succeeded
+    API->>PG: BEGIN TRANSACTION
+    API->>PG: INSERT order + tickets
+    API->>PG: DELETE seat_hold
+    API->>PG: COMMIT
+    Note over API: QR generado síncrono (ticket_jwt.py)
+    Note over API: Email vía BackgroundTasks
+    API-->>U: 200 OK {order, tickets}
+```
+
+## Decisiones
+
+| Excluido | Por qué |
 |----------|---------|
-| Route 53 | Resolución DNS hacia CloudFront |
-| WAF | Rate limiting anti-bot, reglas OWASP |
-| CloudFront | CDN, terminación SSL, ruteo `/*` → S3 y `/api/*` → ALB |
+| **Kubernetes** | 20 tasks no lo justifican. Se evalúa > 50 tasks |
+| **Multi-región** | CloudFront en el edge alcanza. Una región basta |
+| **Microservicios** | Monolito FastAPI alcanza. Se divide > 5 devs |
+| **RDS Proxy** | PgBouncer sidecar cumple la misma función y ya está en docker-compose.yml |
+| **Kafka** | Overkill. SQS si se necesita cola durable, pero hoy el flujo síncrono + BackgroundTasks funciona |
+| **SQS** | No implementado. Emisión síncrona (INSERT + QR + email en el mismo request). SQS agrega complejidad sin beneficio demostrado. Se agrega si hay pérdida de emails o backpressure |
+| **Lambda** | FastAPI mantiene pool stateful (PgBouncer, asyncpg). Refactor innecesario |
+| **Redis / Valkey / Dragonfly** | PG cubre seat holds y rate limiting. `functools.lru_cache` para data cuasi-estática. Cero infraestructura extra |
+| **Auto-scaling** | 1 task fijo hoy. Escalar manual a 2-3 antes de alarmas |
+| **Multi-AZ RDS** | Single-AZ hoy. Multi-AZ cuando haya datos que justifiquen el doble de costo |
+| **CloudFront** | Hoy sirve nginx Docker. Migrar a S3 + CF cuando haya tráfico global |
+| **CDK / IaC** | Se escribe cuando se despliegue. Hoy no hay infra que versionar |
 
-### 2. Frontend
+## Código reutilizable en AWS
 
-```mermaid
-flowchart LR
-    CF[CloudFront] --> S3["S3 — Frontend SPA"]
-    CF --> ALB["ALB"]
-    ALB --> TG["Target Group /api/*"]
-    TG --> ECS["ECS Fargate"]
-```
-
-| Componente | Rol |
-|------------|-----|
-| **S3** | Bucket público con build estático (Vite + React) |
-| **ALB** | Application Load Balancer, target group `/api/*` con health checks |
-
-### 3. Aplicación
-
-| Parámetro | Valor |
-|-----------|-------|
-| **ECS Fargate** | 1–20 tasks, auto-scaling por RequestCountPerTarget (target: 1000) |
-| **Por task** | 8 workers uvicorn, FastAPI async, PgBouncer sidecar (pool 100) |
-| **Imagen** | `backend/Dockerfile` existente — sin modificaciones |
-| **Auto-scaling** | RequestCountPerTarget — métrica recomendada para tráfico tipo flash sale por AWS (responde más rápido que CPU). Desde junio 2026, ECS soporta resolución de 20s, reduciendo el tiempo de scale-out de 363s a 86s (76% más rápido). Contracción automática al descender la carga |
-| **Fargate Spot** | Opcional: usar FARGATE_SPOT como capacity provider para tasks no críticos (hasta 70% de ahorro). Sin fallback automático — evaluar si aplica |
-
-### 3a. Costo de Fargate
-
-| Capacidad | vCPU | Memoria | Precio por hora | 24/7 por task/mes |
-|-----------|------|---------|-----------------|-------------------|
-| 1 task mínimo | 1 vCPU | 2 GB | $0.049 | ~$36 |
-| 20 tasks pico | 20 vCPU | 40 GB | $0.98 | ~$720 (solo durante horas pico) |
-
-Costo real depende del tiempo en baja vs alta carga. En la práctica, con 2 tasks promedio + escalados esporádicos a 8–10 tasks, el estimado es ~$250–400/mes.
-
-### 4. Datos
-
-```mermaid
-flowchart LR
-    ECS[ECS Fargate] --> PGB[PgBouncer · pool 100]
-    PGB --> RDS["RDS PostgreSQL 16 · Multi-AZ"]
-    ECS --> REDIS["ElastiCache Redis"]
-    ECS --> S3A["S3 — Event Assets"]
-```
-
-| Servicio | Propósito |
-|----------|-----------|
-| **RDS PostgreSQL 16** | Base de datos principal. Multi-AZ para tolerancia a fallos de zona. ~500 conexiones concurrentes |
-| **PgBouncer** | Pool de conexiones transaccional. Multiplexa conexiones de todos los tasks hacia RDS |
-| **ElastiCache Redis** | Seat holds distribuidos (reserva temporal de asientos durante compra), rate limiting, session cache |
-| **S3** | Almacenamiento de assets de eventos: posters, banners, galería de imágenes |
-
-### 5. Servicios externos
-
-| Servicio | Uso |
-|----------|-----|
-| **Stripe** | Procesamiento de pagos vía API + webhooks |
-| **Resend** | Envío de emails transaccionales (confirmación de compra, recuperación de contraseña) |
-
-## Decisiones de arquitectura
-
-| Excluido | Justificación |
-|----------|---------------|
-| **Kubernetes** | ECS Fargate es suficiente para un máximo de 20 tasks. Kubernetes se considera cuando la escala supera los 50 tasks o se requiere multi-región |
-| **Multi-región** | CloudFront proporciona caché en el edge. Una sola región (us-east-1) es adecuada para ~1000 usuarios concurrentes |
-| **Microservicios** | El monolito FastAPI async maneja hasta ~1600 conexiones simultáneas por task. Se divide cuando el equipo supere 5 desarrolladores |
-| **RDS Proxy** | PgBouncer como sidecar cumple la misma función y ya está configurado en el código existente (`docker-compose.yml`). RDS Proxy agrega costo sin beneficio adicional |
-| **SQS / Celery** | La emisión de tickets post-pago es sincrónica. Se migrará a async si la contención en escritura lo requiere |
-| **Lambda** | FastAPI mantiene pool de conexiones stateful (PgBouncer, database pool). Migrar a Lambda requeriría refactor significativo sin beneficio para este perfil de tráfico |
-| **Tabla de costos** | Se calculará al momento de solicitar presupuesto. Estimar costos sin métricas de uso real es especulativo |
-
-## Código existente reutilizado
-
-```mermaid
-flowchart LR
-    subgraph "Código actual"
-        BE_DOCKER[backend/Dockerfile]
-        FE_DOCKER[frontend/Dockerfile]
-        DB[backend/database.py]
-        AUTH[backend/security.py]
-        PGB_CFG[docker-compose.yml · PgBouncer]
-    end
-    subgraph "AWS"
-        ECS_IMG[ECS — Imagen de container]
-        S3_BKT[S3 — Frontend build]
-        RDS_PG[RDS — PostgreSQL]
-    end
-    BE_DOCKER --> ECS_IMG
-    FE_DOCKER --> S3_BKT
-    DB --> RDS_PG
-    PGB_CFG --> RDS_PG
-```
-
-| Artefacto | Uso en AWS |
-|-----------|------------|
-| `backend/Dockerfile` | Construcción de la imagen Docker para ECS |
-| `frontend/Dockerfile` | Build multi-stage (Node → nginx) → deploy a S3 |
-| `docker-compose.yml` | Configuración de PgBouncer reutilizada como sidecar en cada task |
-| `backend/database.py` | SQLAlchemy async + asyncpg — conexión a RDS |
-| `backend/security.py` | JWT HS256 — autenticación stateless, escala horizontalmente sin cambios |
-
-## Infraestructura como Código (CDK Python)
-
-Se utiliza **AWS CDK en Python** por consistencia con el stack del backend.
-
-| CDK | Alternativa (Terraform) |
-|-----|------------------------|
-| Python nativo — mismo lenguaje que el backend | HCL + opcionalmente CDKTF (dos lenguajes) |
-| Constructos oficiales para ECS, RDS, ALB, CloudFront | Módulos de comunidad con versionado variable |
-| `cdk deploy` — CloudFormation nativo con rollback automático | State en S3 + DynamoDB, ciclo `init/plan/apply` |
-| Sin boilerplate de providers o workspaces | Configuración de providers, backends, workspaces |
-
-### Estructura del stack
-
-```
-cdk/
-├── app.py                  # Entry point
-├── stack/
-│   ├── vpc_stack.py        # VPC, NAT Gateway, subnets
-│   ├── edge_stack.py       # Route53, WAF, CloudFront, S3 FE
-│   ├── compute_stack.py    # ALB, ECS Fargate, auto-scaling
-│   └── data_stack.py       # RDS, ElastiCache, S3 Assets
-├── docker/
-│   ├── backend.Dockerfile  # Referencia a backend/Dockerfile
-│   └── frontend.Dockerfile # Referencia a frontend/Dockerfile
-└── requirements.txt
-```
-
-```mermaid
-flowchart LR
-    CLI["cdk deploy --all"] --> APP[app.py]
-    APP --> VPC[vpc_stack.py]
-    APP --> EDGE[edge_stack.py]
-    APP --> COMPUTE[compute_stack.py]
-    APP --> DATA[data_stack.py]
-    VPC --> VPC_OUT["VPC + subnets + NAT Gateway"]
-    EDGE --> EDGE_OUT["Route53 + WAF + CloudFront + S3"]
-    COMPUTE --> COMPUTE_OUT["ALB + ECS Fargate 1–20 tasks"]
-    DATA --> DATA_OUT["RDS + ElastiCache + S3 Assets"]
-```
-
-El comando `cdk deploy --all` despliega la infraestructura completa. `cdk destroy` elimina todos los recursos. Sin estado externo, sin configuración manual.
-
-## Referencias externas consultadas
-
-| Fuente | Hallazgo | Impacto en la arquitectura |
-|--------|----------|---------------------------|
-| [AWS: ECS fast auto-scaling (jun 2026)](https://aws.amazon.com/about-aws/whats-new/2026/06/amazon-ecs-faster-autoscaling/) | Nueva resolución de 20s en métricas de auto-scaling. Scale-out bajó de 363s a 86s (76% más rápido) | La arquitectura ya usaba RequestCountPerTarget como métrica. El nuevo anuncio confirma que es la métrica correcta para burst traffic. Se actualizó la sección 3 con los tiempos concretos |
-| [AWS re:Post — ECS burst scaling](https://repost.aws/questions/QUUhKobJ9_TBunO8cCCoI99g/ecs-fargate-auto-scaling-for-a-burst-traffic-case) | RequestCountPerTarget responde más rápido que CPU para picos de tráfico. Validado por AWS | Sin cambios — la métrica ya estaba correcta |
-| [AWS Fargate Spot pricing](https://www.kubeblogs.com/ec2-or-fargate) | FARGATE_SPOT ofrece hasta 70% de descuento. Sin fallback automático | Se agregó nota en sección 3 como opcional. No se incluye por defecto por el riesgo de interrupción en flash sales |
-| [Stack Overflow — PgBouncer sidecar](https://stackoverflow.com/questions/79072425/pgbouncer-sidecar-addressing-connection-pooling-and-load-balancing-issues) | Sidecar no centraliza pooling entre tasks, pero evita single point of failure. AWS recomienda sidecar sobre RDS Proxy | Sin cambios — el sidecar pattern ya estaba definido. Se confirma que es la práctica recomendada |
-| [FastAPI Production Deployment Guide](https://craftyourstartup.com/cys-docs/cookbooks/fastapi-production-deployment) | Gunicorn + Uvicorn workers como entrypoint production-ready para FastAPI | Sin cambios — ya estábamos usando 8 workers uvicorn por task |
-| [AWS: PgBouncer on RDS Multi-AZ](https://aws.amazon.com/blogs/database/fast-switchovers-with-pgbouncer-on-amazon-rds-multi-az-deployments-with-two-readable-standbys-for-postgresql/) | AWS provee parches para PgBouncer que reducen el downtime de switchover a ≤1s en RDS Multi-AZ | Sin cambios inmediatos. A considerar cuando se implementen las actualizaciones de base de datos |
+| Artefacto | Uso en AWS | Cambios necesarios |
+|-----------|------------|-------------------|
+| `backend/Dockerfile` | Imagen ECS | `--workers 8` sin `--reload` |
+| `frontend/Dockerfile` | Build multi-stage → deploy a S3 | Script de deploy a S3 |
+| `docker-compose.yml` | Config PgBouncer como sidecar | Ninguno |
+| `backend/database.py` | SQLAlchemy async + asyncpg → RDS | Ninguno, ya soporta PgBouncer |
+| `backend/security.py` | JWT HS256 — auth stateless | Ninguno, escala horizontal |
+| `backend/services/seats.py` | Seat holds en RDS | Agregar cleanup periódico (`DELETE WHERE expires_at < NOW()`) |
