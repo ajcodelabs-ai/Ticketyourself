@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { LazyPage } from "@/routes/LazyPage";
-import { AdminArea, OrgArea, Public } from "@/routes/layouts";
+import { AdminArea, Dashboard, OrgArea, Public } from "@/routes/layouts";
 import * as Pages from "@/routes/lazyPages";
 
 function RedirectEvent() {
@@ -43,17 +43,17 @@ export default function AppRoutes() {
 
             {/* ── Panel organizador (/app/*) ────────────────────────────── */}
             <Route path="/app" element={<Navigate to="/app/dashboard" replace />} />
-            <Route path="/app/dashboard" element={<OrgArea><LazyPage page={Pages.DashboardHome} /></OrgArea>} />
-            <Route path="/app/venues" element={<OrgArea><LazyPage page={Pages.Venues} /></OrgArea>} />
-            <Route path="/app/venues/:id/editor" element={<OrgArea><LazyPage page={Pages.VenueEditor} /></OrgArea>} />
-            <Route path="/app/microsite" element={<OrgArea><LazyPage page={Pages.MicrositeEditor} /></OrgArea>} />
-            <Route path="/app/eventos" element={<OrgArea><LazyPage page={Pages.EventsList} /></OrgArea>} />
-            <Route path="/app/eventos/nuevo" element={<OrgArea><LazyPage page={Pages.EventNew} /></OrgArea>} />
-            <Route path="/app/eventos/:event_id" element={<OrgArea><LazyPage page={Pages.EventDetail} /></OrgArea>} />
-            <Route path="/app/eventos/:event_id/editar" element={<OrgArea><LazyPage page={Pages.EventEdit} /></OrgArea>} />
-            <Route path="/app/eventos/:id/validacion" element={<OrgArea><LazyPage page={Pages.EventValidation} /></OrgArea>} />
-            <Route path="/app/staff" element={<OrgArea><LazyPage page={Pages.StaffPage} /></OrgArea>} />
-            <Route path="/app/configuracion" element={<OrgArea><LazyPage page={Pages.Configuracion} /></OrgArea>} />
+            <Route path="/app/dashboard" element={<Dashboard><LazyPage page={Pages.DashboardHome} /></Dashboard>} />
+            <Route path="/app/venues" element={<Dashboard><LazyPage page={Pages.Venues} /></Dashboard>} />
+            <Route path="/app/venues/:id/editor" element={<Dashboard><LazyPage page={Pages.VenueEditor} /></Dashboard>} />
+            <Route path="/app/microsite" element={<Dashboard><LazyPage page={Pages.MicrositeEditor} /></Dashboard>} />
+            <Route path="/app/eventos" element={<Dashboard><LazyPage page={Pages.EventsList} /></Dashboard>} />
+            <Route path="/app/eventos/nuevo" element={<Dashboard><LazyPage page={Pages.EventNew} /></Dashboard>} />
+            <Route path="/app/eventos/:event_id" element={<Dashboard><LazyPage page={Pages.EventDetail} /></Dashboard>} />
+            <Route path="/app/eventos/:event_id/editar" element={<Dashboard><LazyPage page={Pages.EventEdit} /></Dashboard>} />
+            <Route path="/app/eventos/:id/validacion" element={<Dashboard><LazyPage page={Pages.EventValidation} /></Dashboard>} />
+            <Route path="/app/staff" element={<Dashboard><LazyPage page={Pages.StaffPage} /></Dashboard>} />
+            <Route path="/app/configuracion" element={<Dashboard><LazyPage page={Pages.Configuracion} /></Dashboard>} />
 
             <Route path="/onboarding" element={<OrgArea><LazyPage page={Pages.Onboarding} /></OrgArea>} />
             <Route path="/billing/success" element={<OrgArea><LazyPage page={Pages.BillingSuccess} /></OrgArea>} />
@@ -73,6 +73,7 @@ export default function AppRoutes() {
             <Route path="/admin/organizadores" element={<AdminArea><LazyPage page={Pages.AdminOrganizers} /></AdminArea>} />
             <Route path="/admin/organizadores/:id" element={<AdminArea><LazyPage page={Pages.AdminOrganizerDetail} /></AdminArea>} />
             <Route path="/admin/planes" element={<AdminArea><LazyPage page={Pages.AdminPlans} /></AdminArea>} />
+            <Route path="/admin/configuracion" element={<AdminArea><LazyPage page={Pages.AdminConfiguracion} /></AdminArea>} />
             <Route path="/admin/funnel" element={<AdminArea><LazyPage page={Pages.AdminFunnel} /></AdminArea>} />
             <Route path="/admin/eventos" element={<AdminArea><LazyPage page={Pages.AdminEvents} /></AdminArea>} />
             <Route path="/admin/auditoria" element={<AdminArea><LazyPage page={Pages.AdminAuditLog} /></AdminArea>} />

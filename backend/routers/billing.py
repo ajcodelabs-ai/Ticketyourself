@@ -36,8 +36,8 @@ async def create_checkout_session(
     session: AsyncSession = Depends(get_db),
 ):
     org = await _get_organizer_or_403(user, session)
-    if org.status == "suspended":
-        raise HTTPException(403, "Account suspended — billing locked")
+    if org.status != "approved":
+        raise HTTPException(403, "La cuenta debe estar aprobada antes de pagar el plan")
 
     plan_result = await session.execute(
         select(SubscriptionPlan).where(

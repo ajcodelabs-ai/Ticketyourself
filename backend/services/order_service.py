@@ -43,25 +43,41 @@ async def _next_order_number() -> str:
 
 
 # ── Capacity ─────────────────────────────────────────────────────────────────
-async def _active_reservation_qty(event_id: str) -> int:
-    """Sum of un-expired capacity reservations for an event."""
+async def _active_reservation_qty(event_id: str, function_id: str | None = None) -> int:
+    """Sum of un-expired capacity reservations for an event, optionally scoped
+    to a single función's own pool (when `function_id` is given)."""
     from database import AsyncSessionLocal
     from orm_models import EventCapacityReservation
     from sqlalchemy import select, func
 
     now = _now()
+    conditions = [
+        EventCapacityReservation.event_id == event_id,
+        EventCapacityReservation.expires_at > now,
+    ]
+    if function_id is not None:
+        conditions.append(EventCapacityReservation.function_id == function_id)
     async with AsyncSessionLocal() as session:
         total = await session.scalar(
-            select(func.coalesce(func.sum(EventCapacityReservation.quantity), 0)).where(
-                EventCapacityReservation.event_id == event_id,
-                EventCapacityReservation.expires_at > now,
-            )
+            select(func.coalesce(func.sum(EventCapacityReservation.quantity), 0)).where(*conditions)
         ) or 0
     return total
 
 
-async def compute_availability(event: dict) -> dict:
-    """Returns {capacity, sold, reserved, available}. None capacity = unlimited."""
+async def compute_availability(event: dict, function: dict | None = None) -> dict:
+    """Returns {capacity, sold, reserved, available}. None capacity = unlimited.
+
+    When `function` has its own `capacity` set, availability is computed
+    against that función's own pool (capacity/tickets_sold/reservations
+    scoped to function_id) instead of the event-level pool. Functions
+    without an explicit capacity fall back to sharing the event's pool."""
+    if function and function.get("capacity") is not None:
+        capacity = function["capacity"]
+        sold = function.get("tickets_sold") or 0
+        reserved = await _active_reservation_qty(event["id"], function_id=function["id"])
+        available = max(0, capacity - sold - reserved)
+        return {"capacity": capacity, "sold": sold, "reserved": reserved, "available": available}
+
     capacity = event.get("capacity")
     sold = event.get("tickets_sold") or 0
     if capacity is None:
@@ -72,7 +88,12 @@ async def compute_availability(event: dict) -> dict:
 
 
 async def reserve_capacity(
-    *, event_id: str, order_id: str, quantity: int, ttl_minutes: int | None = None
+    *,
+    event_id: str,
+    order_id: str,
+    quantity: int,
+    ttl_minutes: int | None = None,
+    function_id: str | None = None,
 ) -> None:
     from database import AsyncSessionLocal
     from orm_models import EventCapacityReservation
@@ -84,6 +105,7 @@ async def reserve_capacity(
             event_id=event_id,
             order_id=order_id,
             quantity=quantity,
+            function_id=function_id,
             expires_at=now + timedelta(minutes=minutes),
             created_at=now,
         ))
@@ -209,18 +231,21 @@ async def create_order_skeleton(
     payment_method: str = "stripe",
     seat_ids: list[str] | None = None,
     seat_holds_session_token: str | None = None,
-    function_id: str | None = None,
+    function: dict | None = None,
     items_override: list[dict] | None = None,
+    access_code_id: str | None = None,
 ) -> dict:
     from database import AsyncSessionLocal
     from orm_models import TicketOrder
+
+    function_id = function["id"] if function else None
 
     if quantity < 1 or quantity > MAX_QUANTITY:
         raise HTTPException(422, f"Cantidad debe estar entre 1 y {MAX_QUANTITY}")
     if payment_method not in VALID_PAYMENT_METHODS:
         raise HTTPException(422, f"Método de pago inválido: {payment_method}")
 
-    avail = await compute_availability(event)
+    avail = await compute_availability(event, function=function)
     if avail["available"] is not None and quantity > avail["available"]:
         raise HTTPException(409, "No hay capacidad disponible para esa cantidad")
 
@@ -283,7 +308,10 @@ async def create_order_skeleton(
             }
             if is_manual else None
         ),
-        metadata_={"source": "web"},
+        metadata_=(
+            {"source": "web", "access_code_id": access_code_id}
+            if access_code_id else {"source": "web"}
+        ),
         expires_at=now + ttl,
         created_at=now,
         updated_at=now,
@@ -299,7 +327,7 @@ async def create_order_skeleton(
         from services.seats import consume_holds_for_order
         await consume_holds_for_order(
             event_id=event["id"], session_token=seat_holds_session_token,
-            seat_ids=seat_ids, order_id=order_id,
+            seat_ids=seat_ids, order_id=order_id, function_id=function_id or "",
         )
     return order
 
@@ -383,6 +411,77 @@ async def _assign_seats_if_needed(order: dict, tickets: list[dict]) -> None:
     )
 
 
+# ── Phase 8 — per-función / per-ticket-type counters ────────────────────────
+async def _adjust_function_counters(order: dict, delta: int) -> None:
+    """Bump (or, on refund, un-bump) `EventFunction.tickets_sold` and
+    `FunctionTicketType.tickets_sold` for orders placed against a función.
+    `delta` is +1 on paid/confirmed, -1 on refund. No-op for orders without
+    `function_id` (general, non-multi-función events)."""
+    function_id = order.get("function_id")
+    if not function_id:
+        return
+    from orm_models import EventFunction, FunctionTicketType
+    from sqlalchemy import update as _sa_update
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            _sa_update(EventFunction)
+            .where(EventFunction.id == function_id)
+            .values(tickets_sold=EventFunction.tickets_sold + delta * order["quantity_total"])
+        )
+        for item in order.get("items") or []:
+            ticket_type_id = item.get("ticket_type_id")
+            if not ticket_type_id:
+                continue
+            await session.execute(
+                _sa_update(FunctionTicketType)
+                .where(
+                    FunctionTicketType.function_id == function_id,
+                    FunctionTicketType.ticket_type_id == ticket_type_id,
+                )
+                .values(tickets_sold=FunctionTicketType.tickets_sold + delta * item.get("quantity", 0))
+            )
+        await session.commit()
+
+
+# ── Consume codes on payment confirmation ───────────────────────────────────
+async def _consume_purchase_side_effects(order: dict) -> None:
+    """Bump promo-code / access-code use counters and stamp guest-list entries
+    as used. Shared by `finalize_paid_order` (Stripe/free) and
+    `confirm_manual_payment` (transfer/cash) — both transition an order into
+    `status=paid` and must consume codes exactly once, here."""
+    for applied in order.get("discounts_applied") or []:
+        if applied.get("type") != "promo_code" or not applied.get("rule_id"):
+            continue
+        try:
+            from services.discount_service import consume_promo_code
+            await consume_promo_code(order["event_id"], applied["rule_id"])
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to bump uses_count for promo code rule %s", applied.get("rule_id")
+            )
+
+    access_code_id = (order.get("metadata") or {}).get("access_code_id")
+    if access_code_id:
+        try:
+            from services.access_control import consume_access_code
+            await consume_access_code(access_code_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to bump uses_count for access code %s", access_code_id)
+    else:
+        try:
+            from db_helpers import get_event_by_id
+            ev = await get_event_by_id(order["event_id"])
+            if ev and (ev.get("access_params") or {}).get("access_type") == "verified_list":
+                from services.access_control import mark_guest_list_used
+                buyer = order.get("buyer") or {}
+                await mark_guest_list_used(
+                    order["event_id"], buyer.get("email"), buyer.get("document_id"),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to mark guest-list entry used for order %s", order["id"])
+
+
 # ── Mark paid + emit ────────────────────────────────────────────────────────
 async def finalize_paid_order(
     *, order: dict, stripe_session_id: str | None = None
@@ -422,16 +521,9 @@ async def finalize_paid_order(
             .values(tickets_sold=_Event.tickets_sold + order["quantity_total"], updated_at=now)
         )
         await _pg.commit()
+    await _adjust_function_counters(order, +1)
     await release_reservation(order["id"])
-
-    for applied in order.get("discounts_applied") or []:
-        if applied.get("type") != "promo_code" or not applied.get("rule_id"):
-            continue
-        try:
-            from services.discount_service import consume_promo_code
-            await consume_promo_code(order["event_id"], applied["rule_id"])
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed to bump uses_count for promo code rule %s", applied.get("rule_id"))
+    await _consume_purchase_side_effects(order)
 
     async with AsyncSessionLocal() as session:
         row = await session.scalar(select(TOModel).where(TOModel.id == order["id"]))
@@ -525,6 +617,7 @@ async def refund_order(*, order: dict, reason: str | None = None) -> dict:
             .values(tickets_sold=_Event.tickets_sold - order["quantity_total"])
         )
         await _pg.commit()
+    await _adjust_function_counters(order, -1)
 
     return refreshed
 
@@ -585,7 +678,9 @@ async def confirm_manual_payment(
             .values(tickets_sold=_Event.tickets_sold + order["quantity_total"], updated_at=now)
         )
         await _pg.commit()
+    await _adjust_function_counters(order, +1)
     await release_reservation(order["id"])
+    await _consume_purchase_side_effects(order)
 
     async with AsyncSessionLocal() as session:
         row = await session.scalar(select(TOModel).where(TOModel.id == order["id"]))

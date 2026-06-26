@@ -16,6 +16,7 @@ import {
     ChevronLeft,
     ChevronRight,
     X,
+    CalendarRange,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,8 @@ export default function EventPublic() {
     const [buyOpen, setBuyOpen] = useState(false);
     const [seatHoldsInfo, setSeatHoldsInfo] = useState(null);
     const [lightbox, setLightbox] = useState(-1); // index in gallery, -1 = closed
+    const [functions, setFunctions] = useState([]);
+    const [selectedFunctionId, setSelectedFunctionId] = useState(null);
 
     useEffect(() => {
         let alive = true;
@@ -67,6 +70,18 @@ export default function EventPublic() {
             alive = false;
         };
     }, [slug, event_slug]);
+
+    // Numbered multi-función events: each función has its own independent
+    // seat pool, so the buyer must pick a función before the seat map (which
+    // función-scopes its availability) can render.
+    useEffect(() => {
+        if (!event?.is_multi_function || !event?.venue_id) return;
+        let alive = true;
+        api.get(`/public/events/${event.id}/functions`)
+            .then((r) => alive && setFunctions((r.data || []).filter((f) => f.status !== "cancelled")))
+            .catch(() => alive && setFunctions([]));
+        return () => { alive = false; };
+    }, [event?.id, event?.is_multi_function, event?.venue_id]);
 
     const url = useMemo(() => eventPublicUrl(slug, event_slug), [slug, event_slug]);
 
@@ -293,10 +308,54 @@ export default function EventPublic() {
                 )}
             </section>
 
-            {event.venue_id && (
+            {event.venue_id && event.is_multi_function && functions.length > 0 && !selectedFunctionId && (
+                <section className="max-w-3xl mx-auto px-6 pb-10" data-testid="event-public-function-picker">
+                    <h2 className="text-2xl font-semibold mb-4">Elegí una función</h2>
+                    <div className="space-y-2">
+                        {functions.map((fn) => (
+                            <button
+                                key={fn.id}
+                                type="button"
+                                onClick={() => setSelectedFunctionId(fn.id)}
+                                className="w-full flex items-start gap-3 rounded-lg border p-4 text-left hover:bg-secondary/40 transition"
+                                data-testid={`public-fn-option-${fn.id}`}
+                            >
+                                <CalendarRange className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                                <div>
+                                    <div className="font-medium">{fn.name}</div>
+                                    {fn.starts_at && (
+                                        <div className="text-sm text-muted-foreground">
+                                            {formatEventDate(fn.starts_at, event.timezone)}
+                                            {fn.venue_name ? ` · ${fn.venue_name}` : ""}
+                                        </div>
+                                    )}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </section>
+            )}
+
+            {event.venue_id && event.is_multi_function && functions.length > 0 && selectedFunctionId && (
+                <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 flex justify-end">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setSelectedFunctionId(null)}
+                        data-testid="public-fn-change"
+                    >
+                        Cambiar función
+                    </Button>
+                </div>
+            )}
+
+            {event.venue_id && (!event.is_multi_function || !functions.length || selectedFunctionId) && (
                 <NumberedSeatSection
                     tenantSlug={slug}
                     event={event}
+                    functionId={selectedFunctionId || ""}
+                    functionName={functions.find((f) => f.id === selectedFunctionId)?.name || ""}
+                    localityPricing={functions.find((f) => f.id === selectedFunctionId)?.locality_pricing}
                     onLaunchPurchase={(info) => {
                         setSeatHoldsInfo(info);
                         setBuyOpen(true);

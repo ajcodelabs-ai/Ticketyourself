@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import api from "@/lib/api";
-import { venuesApi } from "@/lib/venues";
+import { venuesApi, computeCapacity } from "@/lib/venues";
 import EditorCanvas from "@/components/venues/EditorCanvas";
 
 function activeLocalityIds(venue): Set<string> {
@@ -145,18 +145,8 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
         const prices = localitiesActive.map(
             (l) => pricing[l.id]?.price_cents ?? 0,
         );
-        const totalCap = elements.reduce((acc, el) => {
-            if (el.kind === "seat") return acc + 1;
-            if (el.kind === "row" || el.kind === "curved_row")
-                return acc + (el.seats_count || 0);
-            if (el.kind === "table")
-                return acc + (el.chairs_count || 0);
-            if (el.kind === "zone")
-                return acc + (el.zone_capacity || 0);
-            return acc;
-        }, 0);
         return {
-            capacity: totalCap,
+            capacity: computeCapacity(elements),
             localityCount: localitiesActive.length,
             minPrice: Math.min(...prices) / 100,
             maxPrice: Math.max(...prices) / 100,

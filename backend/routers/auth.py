@@ -126,6 +126,12 @@ async def register(payload: RegisterRequest, session: AsyncSession = Depends(get
     else:
         session.add(Tenant(slug=slug, name=payload.company_name.strip(), status="inactive", created_at=now))
 
+    # Flush so the tenant row exists before the organizer FK insert below.
+    # SQLAlchemy's unit-of-work only orders inserts via relationship(), and
+    # Organizer/Tenant aren't linked by one — without this, it can emit the
+    # organizers INSERT before the tenants INSERT in the same flush.
+    await session.flush()
+
     # Organizer → PostgreSQL
     org_row = Organizer(
         id=organizer_id,

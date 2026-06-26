@@ -7,6 +7,7 @@ Plataforma SaaS de ticketing multi-tenant: eventos, venta de entradas (Stripe, t
 1. [Inicio en 2 minutos](#inicio-en-2-minutos)
 2. [Servicios, URLs y demos](#servicios-urls-y-demos)
 3. [Desarrollo](#desarrollo)
+   - [Base de datos local](#base-de-datos-local)
 4. [Arquitectura](#arquitectura)
 5. [Documentación adicional](#documentación-adicional)
 
@@ -203,9 +204,59 @@ stripe listen --forward-to http://localhost:8000/api/stripe/webhook
 | `make env-local` / `make env-prod` / `make env-backend-local`  | Crear `.env` desde plantillas           |
 
 
+### Base de datos local
+
+Con `make up`, PostgreSQL queda expuesto en el host. El backend **dentro de Docker** habla con la base vía PgBouncer; herramientas externas (psql, DBeaver, TablePlus, etc.) se conectan **directo a Postgres** en el puerto publicado.
+
+**Credenciales por defecto** (sobreescribibles en `.env` con `POSTGRES_*`):
+
+
+| Campo    | Valor     |
+| -------- | --------- |
+| Host     | `localhost` |
+| Puerto   | `5432`    |
+| Usuario  | `tys`     |
+| Password | `tys_dev` |
+| Base     | `tys_dev` |
+
+
+**Cadenas de conexión**
+
+```text
+# Clientes SQL (psql, GUI, migraciones desde el host)
+postgresql://tys:tys_dev@localhost:5432/tys_dev
+
+# Backend Python (SQLAlchemy async) — backend/.env o .env en la raíz
+postgresql+asyncpg://tys:tys_dev@localhost:5432/tys_dev
+```
+
+**psql rápido** (contenedor ya levantado):
+
+```bash
+make shell-db
+```
+
+**psql desde tu máquina** (requiere cliente `psql` instalado):
+
+```bash
+psql postgresql://tys:tys_dev@localhost:5432/tys_dev
+```
+
+**Cliente gráfico** (DBeaver, pgAdmin, DataGrip, TablePlus…): crea una conexión PostgreSQL con los valores de la tabla anterior. SSL desactivado en local.
+
+**Solo PostgreSQL** (útil si corres el backend sin Docker pero no quieres instalar Postgres nativo):
+
+```bash
+make env-local
+docker compose --env-file .env -f docker-compose.yml up -d postgres
+make migrate-local   # aplica Alembic desde backend/.env
+```
+
+Los datos persisten en el volumen Docker `postgres_data`. `make clean` borra ese volumen y resetea la base.
+
 ### Sin Docker
 
-**Backend**
+**Backend** (PostgreSQL en `localhost:5432` — ver [Base de datos local](#base-de-datos-local))
 
 ```bash
 cd backend

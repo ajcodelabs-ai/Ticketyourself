@@ -22,6 +22,8 @@ import {
     Minus,
     Clock,
     AlertTriangle,
+    KeyRound,
+    Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -154,7 +156,58 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
     } | null>(null);
     const [applyingPromo, setApplyingPromo] = useState(false);
 
-    // Load ticket types + functions when modal opens
+    // ── Fase 9: access gate (lista verificada / código de acceso) ──────────────
+    const accessType = event?.access_params?.access_type || "open";
+    const needsAccessGate = accessType === "verified_list" || accessType === "access_code";
+    const [accessVerified, setAccessVerified] = useState(false);
+    const [accessCode, setAccessCode] = useState("");
+    const [checkEmail, setCheckEmail] = useState("");
+    const [checkCedula, setCheckCedula] = useState("");
+    const [checkingAccess, setCheckingAccess] = useState(false);
+    const [accessError, setAccessError] = useState("");
+
+    const checkAccess = async () => {
+        setAccessError("");
+        if (accessType === "access_code" && !accessCode.trim()) {
+            setAccessError("Ingresá el código de acceso.");
+            return;
+        }
+        if (accessType === "verified_list" && !checkEmail.trim() && !checkCedula.trim()) {
+            setAccessError("Ingresá tu correo o cédula.");
+            return;
+        }
+        setCheckingAccess(true);
+        try {
+            const { data } = await api.post(
+                `/public/events/${tenantSlug}/${event.slug}/check-access`,
+                {
+                    access_code: accessCode.trim() || undefined,
+                    email: checkEmail.trim() || undefined,
+                    cedula: checkCedula.trim() || undefined,
+                },
+            );
+            if (!data.ok) {
+                setAccessError(data.reason || "No tenés acceso a este evento.");
+                return;
+            }
+            setAccessVerified(true);
+            if (checkEmail.trim()) {
+                setBuyer((b) => ({ ...b, email: checkEmail.trim() }));
+            }
+            if (checkCedula.trim()) {
+                setBuyer((b) => ({ ...b, document_id: checkCedula.trim() }));
+            }
+        } catch (e: any) {
+            setAccessError(formatApiError(e?.response?.data?.detail) || "No se pudo verificar el acceso.");
+        } finally {
+            setCheckingAccess(false);
+        }
+    };
+
+    // Load functions on open. Non-multi-función events also load their
+    // (event-level) ticket types right away; multi-función events wait for
+    // the buyer to pick a función first (see effect below) since price/aforo
+    // can differ per función via overrides.
     useEffect(() => {
         if (!open || !event?.id) return;
         let alive = true;
@@ -164,22 +217,11 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
         setTypeQty({});
         setSelectedFunctionId(null);
 
-        const loadTypes = api
-            .get(`/public/events/${event.id}/ticket-types`)
-            .then((r) => {
-                if (!alive) return;
-                const available = (r.data || []).filter(
-                    (t: TicketTypeItem) => !t.is_sold_out && t.is_on_sale !== false,
-                );
-                setTicketTypes(available);
-                // Initialize qty=0 for each type
-                const init: Record<string, number> = {};
-                available.forEach((t: TicketTypeItem) => { init[t.id] = 0; });
-                setTypeQty(init);
-            })
-            .catch(() => alive && setTicketTypes([]));
-
-        const loadFns = event.is_multi_function
+        // Seat-numbered events resolve their función earlier, on the seat map
+        // (each función has its own seat pool) — seatHoldsInfo.function_id
+        // already carries it, so this modal must not offer a second, possibly
+        // conflicting función selector.
+        const loadFns = event.is_multi_function && !isSeatNumbered
             ? api
                   .get(`/public/events/${event.id}/functions`)
                   .then((r) => alive && setFunctions(
@@ -188,10 +230,50 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                   .catch(() => alive && setFunctions([]))
             : Promise.resolve();
 
+        const loadTypes = event.is_multi_function
+            ? Promise.resolve()
+            : api
+                  .get(`/public/events/${event.id}/ticket-types`)
+                  .then((r) => {
+                      if (!alive) return;
+                      const available = (r.data || []).filter(
+                          (t: TicketTypeItem) => !t.is_sold_out && t.is_on_sale !== false,
+                      );
+                      setTicketTypes(available);
+                      const init: Record<string, number> = {};
+                      available.forEach((t: TicketTypeItem) => { init[t.id] = 0; });
+                      setTypeQty(init);
+                  })
+                  .catch(() => alive && setTicketTypes([]));
+
         Promise.all([loadTypes, loadFns]).finally(() => alive && setLoadingMeta(false));
 
         return () => { alive = false; };
-    }, [open, event?.id, event?.is_multi_function]);
+    }, [open, event?.id, event?.is_multi_function, isSeatNumbered]);
+
+    // Multi-función: (re)load ticket types scoped to the chosen función so
+    // price/capacity/availability reflect that función's overrides.
+    useEffect(() => {
+        if (!open || !event?.id || !event.is_multi_function || !selectedFunctionId || isSeatNumbered) return;
+        let alive = true;
+        setLoadingMeta(true);
+        setTypeQty({});
+        api
+            .get(`/public/events/${event.id}/ticket-types`, { params: { function_id: selectedFunctionId } })
+            .then((r) => {
+                if (!alive) return;
+                const available = (r.data || []).filter(
+                    (t: TicketTypeItem) => !t.is_sold_out && t.is_on_sale !== false,
+                );
+                setTicketTypes(available);
+                const init: Record<string, number> = {};
+                available.forEach((t: TicketTypeItem) => { init[t.id] = 0; });
+                setTypeQty(init);
+            })
+            .catch(() => alive && setTicketTypes([]))
+            .finally(() => alive && setLoadingMeta(false));
+        return () => { alive = false; };
+    }, [selectedFunctionId, open, event?.id, event?.is_multi_function]);
 
     useEffect(() => {
         if (open) {
@@ -202,8 +284,18 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
             setPaymentMethod(activeMethods[0] || "stripe");
             setPromoCodeInput("");
             setAppliedPromo(null);
+            setAccessVerified(false);
+            setAccessCode("");
+            setCheckEmail("");
+            setCheckCedula("");
+            setAccessError("");
         }
     }, [open]);
+
+    // True while a multi-función event is waiting for the buyer to pick a
+    // función — ticket types load scoped to that función, so nothing else
+    // (classic quantity, donation amount) should render in the meantime.
+    const functionPending = !!(event?.is_multi_function && functions.length > 0 && !selectedFunctionId);
 
     // ── Ticket type selections ────────────────────────────────────────────────
     const hasTypes = ticketTypes.length > 0;
@@ -365,8 +457,14 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
             if (appliedPromo?.code) {
                 payload.promo_code = appliedPromo.code;
             }
-            // Phase 8
-            if (selectedFunctionId) payload.function_id = selectedFunctionId;
+            if (accessType === "access_code" && accessCode.trim()) {
+                payload.access_code = accessCode.trim();
+            }
+            // Phase 8 — seat-numbered events already resolved their función on
+            // the seat map (seatHoldsInfo.function_id); general events resolve
+            // it via the selector above.
+            const effectiveFunctionId = isSeatNumbered ? seatHoldsInfo.function_id : selectedFunctionId;
+            if (effectiveFunctionId) payload.function_id = effectiveFunctionId;
             if (hasTypes && typeSelections.length > 0) {
                 payload.ticket_type_selections = typeSelections;
             }
@@ -432,7 +530,63 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                     <DialogDescription className="text-base">{event.title}</DialogDescription>
                 </DialogHeader>
 
-                {loadingMeta ? (
+                {needsAccessGate && !accessVerified ? (
+                    <div className="space-y-4 py-2" data-testid="access-gate">
+                        {accessType === "access_code" ? (
+                            <>
+                                <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                                    <KeyRound className="h-4 w-4 mt-0.5 shrink-0" />
+                                    <span>Este evento requiere un código de acceso para comprar.</span>
+                                </div>
+                                <Input
+                                    placeholder="Código de acceso"
+                                    value={accessCode}
+                                    onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
+                                    onKeyDown={(e) => e.key === "Enter" && checkAccess()}
+                                    data-testid="access-gate-code-input"
+                                />
+                            </>
+                        ) : (
+                            <>
+                                <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                                    <Users className="h-4 w-4 mt-0.5 shrink-0" />
+                                    <span>
+                                        Este evento es solo para invitados. Ingresá tu correo o
+                                        cédula para verificar que estás en la lista.
+                                    </span>
+                                </div>
+                                <Input
+                                    placeholder="Email"
+                                    value={checkEmail}
+                                    onChange={(e) => setCheckEmail(e.target.value)}
+                                    onKeyDown={(e) => e.key === "Enter" && checkAccess()}
+                                    data-testid="access-gate-email-input"
+                                />
+                                <Input
+                                    placeholder="Cédula (opcional si ya pusiste tu email)"
+                                    value={checkCedula}
+                                    onChange={(e) => setCheckCedula(e.target.value)}
+                                    onKeyDown={(e) => e.key === "Enter" && checkAccess()}
+                                    data-testid="access-gate-cedula-input"
+                                />
+                            </>
+                        )}
+                        {accessError && (
+                            <p className="text-sm text-red-600" data-testid="access-gate-error">
+                                {accessError}
+                            </p>
+                        )}
+                        <Button
+                            className="w-full"
+                            onClick={checkAccess}
+                            disabled={checkingAccess}
+                            data-testid="access-gate-submit"
+                        >
+                            {checkingAccess && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Verificar acceso
+                        </Button>
+                    </div>
+                ) : loadingMeta ? (
                     <div className="flex items-center justify-center py-8">
                         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground mr-2" />
                         <span className="text-sm text-muted-foreground">Cargando…</span>
@@ -584,7 +738,8 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                                 data-testid="purchase-seats-summary"
                             >
                                 <p className="text-xs font-medium">
-                                    Estás reservando {seatHoldsInfo.seats.length} asiento(s):
+                                    Estás reservando {seatHoldsInfo.seats.length} asiento(s)
+                                    {seatHoldsInfo.function_name ? ` para "${seatHoldsInfo.function_name}"` : ""}:
                                 </p>
                                 <div className="flex flex-wrap gap-1">
                                     {seatHoldsInfo.seats.map((s: any) => (
@@ -606,7 +761,7 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                         )}
 
                         {/* ── Classic quantity (when no ticket types) ────────── */}
-                        {!hasTypes && pricingType !== "donation" && !isSeatNumbered && (
+                        {!hasTypes && pricingType !== "donation" && !isSeatNumbered && !functionPending && (
                             <div className="space-y-1.5">
                                 <Label htmlFor="qty">Cantidad de entradas</Label>
                                 <div className="flex items-center gap-2">
@@ -659,7 +814,7 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                         )}
 
                         {/* ── Donation ──────────────────────────────────────── */}
-                        {pricingType === "donation" && (
+                        {pricingType === "donation" && !functionPending && (
                             <div className="space-y-1.5">
                                 <Label htmlFor="donation">Tu aporte (USD)</Label>
                                 <div className="flex gap-2">

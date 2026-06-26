@@ -15,9 +15,17 @@ from sqlalchemy.orm import selectinload
 from audit import log_audit
 from database import get_db
 from db_helpers import organizer_row_to_dict, row_to_dict
-from models import OrganizerDocumentOut, OrganizerOut, OrganizerProfileUpdate
+from models import (
+    DocumentTypeOut,
+    OrganizerDocumentOut,
+    OrganizerOut,
+    OrganizerProfileUpdate,
+    RequiredDocumentsOut,
+)
 from orm_models import Organizer, OrganizerDocument, Tenant
 from security import require_role
+from services.document_types import is_valid_doc_type, list_document_types
+from services.required_documents import get_required_documents, is_satisfied
 
 logger = logging.getLogger("tys.organizers")
 
@@ -35,7 +43,6 @@ ALLOWED_MIME = {
     "image/heic",
     "image/heif",
 }
-ALLOWED_DOC_TYPES = {"ruc", "id_card", "operating_permit", "other"}
 
 
 def _doc_row_to_out(row: OrganizerDocument) -> OrganizerDocumentOut:
@@ -98,6 +105,47 @@ async def update_me(
     return _org_row_to_out(row)
 
 
+@router.post("/me/resubmit", response_model=OrganizerOut)
+async def resubmit_me(
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _get_my_organizer(user, session)
+    if row.status != "rejected":
+        raise HTTPException(400, "Only rejected organizers can resubmit for review")
+
+    docs_result = await session.execute(
+        select(OrganizerDocument).where(OrganizerDocument.organizer_id == row.id)
+    )
+    present = {d.doc_type for d in docs_result.scalars().all()}
+    if not await is_satisfied(session, row.org_type, present):
+        raise HTTPException(400, "Missing required documents for resubmission")
+
+    row.status = "pending"
+    row.rejection_reason = None
+    await session.flush()
+    await log_audit(user["id"], "organizer.resubmitted", "organizer", row.id, {})
+
+    await session.refresh(row, ["admin_comments"])
+    return _org_row_to_out(row)
+
+
+@router.get("/required-documents", response_model=RequiredDocumentsOut)
+async def get_required_docs(
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    return await get_required_documents(session)
+
+
+@router.get("/document-types", response_model=List[DocumentTypeOut])
+async def get_document_types(
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    return await list_document_types(session)
+
+
 @router.get("/me/documents", response_model=List[OrganizerDocumentOut])
 async def list_my_docs(
     user=Depends(require_role("organizer")),
@@ -119,8 +167,8 @@ async def upload_my_doc(
     user=Depends(require_role("organizer")),
     session: AsyncSession = Depends(get_db),
 ):
-    if doc_type not in ALLOWED_DOC_TYPES:
-        raise HTTPException(400, f"Invalid doc_type. Allowed: {sorted(ALLOWED_DOC_TYPES)}")
+    if not await is_valid_doc_type(session, doc_type):
+        raise HTTPException(400, f"Invalid doc_type: {doc_type}")
     row = await _get_my_organizer(user, session)
     if file.content_type not in ALLOWED_MIME:
         logger.warning(

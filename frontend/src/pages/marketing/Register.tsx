@@ -166,8 +166,8 @@ export default function Register() {
                 slug: form.slug,
             });
             localStorage.setItem(SIGNUP_PLAN_KEY, selectedPlan.code);
-            toast.success("Cuenta creada — ahora iniciá sesión para completar el pago");
-            navigate("/login", { replace: true, state: { from: "/onboarding" } });
+            toast.success("Cuenta creada — ahora iniciá sesión para subir tus documentos");
+            navigate("/login", { replace: true, state: { from: { pathname: "/onboarding" } } });
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
         } finally {
@@ -232,8 +232,8 @@ export default function Register() {
                     <CardTitle className="text-2xl">Datos de tu organización</CardTitle>
                     <CardDescription>
                         Plan elegido: <strong className="text-foreground">{selectedPlan.name}</strong>{" "}
-                        ({formatPlanPrice(selectedPlan)}). Después del registro subís documentos y
-                        completás el pago en Stripe.
+                        ({formatPlanPrice(selectedPlan)}). Después del registro subís tus documentos
+                        para revisión; el pago se habilita una vez que el equipo TYS apruebe tu cuenta.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="pb-6">
@@ -429,7 +429,7 @@ export default function Register() {
                                     Creando cuenta…
                                 </>
                             ) : (
-                                "Crear cuenta y continuar al pago"
+                                "Crear cuenta y continuar"
                             )}
                         </Button>
 

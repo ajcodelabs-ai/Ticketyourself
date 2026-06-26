@@ -8,11 +8,13 @@ import {
     Loader2,
     AlertCircle,
     MapPin,
+    Ticket,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
     Dialog,
     DialogContent,
@@ -23,6 +25,19 @@ import {
 import { Badge } from "@/components/ui/badge";
 import api from "@/lib/api";
 import { isoToLocalInput, localInputToIso } from "@/lib/events";
+
+interface FunctionTicketTypeOverride {
+    ticket_type_id: string;
+    price_cents_override?: number | null;
+    capacity_override?: number | null;
+    active: boolean;
+    tickets_sold?: number;
+}
+
+interface LocalityPricing {
+    locality_id: string;
+    price_cents?: number | null;
+}
 
 interface EventFunction {
     id: string;
@@ -37,11 +52,29 @@ interface EventFunction {
     sort_order: number;
     status: string;
     tickets_sold?: number;
+    ticket_type_overrides?: FunctionTicketTypeOverride[];
+    locality_pricing?: LocalityPricing[];
+}
+
+interface TicketType {
+    id: string;
+    name: string;
+    price_cents: number;
+    color?: string;
+}
+
+interface Locality {
+    id: string;
+    name: string;
+    price_cents?: number;
 }
 
 interface Props {
     eventId: string | null;
+    localities?: Locality[];
 }
+
+type OverrideRow = { price: string; capacity: string; active: boolean };
 
 const BLANK = {
     name: "",
@@ -71,12 +104,35 @@ function fmtDate(iso?: string): string {
     }
 }
 
-export default function EventFunctionsPanel({ eventId }: Props) {
+function priceDollars(cents?: number | null): string {
+    if (cents == null) return "";
+    return (cents / 100).toFixed(2);
+}
+
+// A função without an explicit end is assumed to run ~1h for overlap checks.
+const DEFAULT_DURATION_MS = 60 * 60 * 1000;
+
+function rangeOf(starts_at?: string | null, ends_at?: string | null) {
+    if (!starts_at) return null;
+    const start = new Date(starts_at).getTime();
+    if (Number.isNaN(start)) return null;
+    const end = ends_at ? new Date(ends_at).getTime() : start + DEFAULT_DURATION_MS;
+    return { start, end: Number.isNaN(end) ? start + DEFAULT_DURATION_MS : end };
+}
+
+function sameVenue(aVenueName: string, bVenueName: string): boolean {
+    return (aVenueName || "").trim().toLowerCase() === (bVenueName || "").trim().toLowerCase();
+}
+
+export default function EventFunctionsPanel({ eventId, localities = [] }: Props) {
     const [functions, setFunctions] = useState<EventFunction[]>([]);
+    const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
     const [loading, setLoading] = useState(false);
     const [open, setOpen] = useState(false);
     const [editing, setEditing] = useState<EventFunction | null>(null);
     const [form, setForm] = useState<typeof BLANK>({ ...BLANK });
+    const [ttOverrides, setTtOverrides] = useState<Record<string, OverrideRow>>({});
+    const [locOverrides, setLocOverrides] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState<string | null>(null);
 
@@ -97,9 +153,24 @@ export default function EventFunctionsPanel({ eventId }: Props) {
         load();
     }, [eventId]);
 
+    useEffect(() => {
+        if (!eventId) return;
+        api.get(`/events/me/${eventId}/ticket-types`)
+            .then((r) => setTicketTypes(r.data || []))
+            .catch(() => setTicketTypes([]));
+    }, [eventId]);
+
+    const blankOverrideRows = (): Record<string, OverrideRow> => {
+        const out: Record<string, OverrideRow> = {};
+        for (const tt of ticketTypes) out[tt.id] = { price: "", capacity: "", active: true };
+        return out;
+    };
+
     const openCreate = () => {
         setEditing(null);
         setForm({ ...BLANK });
+        setTtOverrides(blankOverrideRows());
+        setLocOverrides({});
         setOpen(true);
     };
 
@@ -117,11 +188,44 @@ export default function EventFunctionsPanel({ eventId }: Props) {
             capacity: fn.capacity ?? "",
             sort_order: fn.sort_order,
         });
+        const rows = blankOverrideRows();
+        for (const ov of fn.ticket_type_overrides || []) {
+            rows[ov.ticket_type_id] = {
+                price: ov.price_cents_override != null ? priceDollars(ov.price_cents_override) : "",
+                capacity: ov.capacity_override != null ? String(ov.capacity_override) : "",
+                active: ov.active,
+            };
+        }
+        setTtOverrides(rows);
+        const locRows: Record<string, string> = {};
+        for (const lp of fn.locality_pricing || []) {
+            if (lp.price_cents != null) locRows[lp.locality_id] = priceDollars(lp.price_cents);
+        }
+        setLocOverrides(locRows);
         setOpen(true);
     };
 
     const upd = (key: string, val: unknown) =>
         setForm((prev) => ({ ...prev, [key]: val }));
+
+    const updOverride = (ticketTypeId: string, patch: Partial<OverrideRow>) =>
+        setTtOverrides((prev) => ({
+            ...prev,
+            [ticketTypeId]: { ...(prev[ticketTypeId] || { price: "", capacity: "", active: true }), ...patch },
+        }));
+
+    const findScheduleConflict = (starts_at: string | null, ends_at: string | null) => {
+        const candidateRange = rangeOf(starts_at, ends_at);
+        if (!candidateRange) return null;
+        return functions.find((f) => {
+            if (editing && f.id === editing.id) return false;
+            if (f.status === "cancelled") return false;
+            if (!sameVenue(form.venue_name, f.venue_name || "")) return false;
+            const otherRange = rangeOf(f.starts_at, f.ends_at);
+            if (!otherRange) return false;
+            return candidateRange.start < otherRange.end && otherRange.start < candidateRange.end;
+        });
+    };
 
     const handleSave = async () => {
         if (!eventId) return;
@@ -129,16 +233,51 @@ export default function EventFunctionsPanel({ eventId }: Props) {
             toast.error("El nombre de la función es requerido");
             return;
         }
+        const starts_at = form.starts_at ? localInputToIso(form.starts_at as string) : null;
+        const ends_at = form.ends_at ? localInputToIso(form.ends_at as string) : null;
+        const conflict = findScheduleConflict(starts_at, ends_at);
+        if (conflict) {
+            toast.error(
+                `El horario se superpone con la función "${conflict.name}" en el mismo lugar. Ajustá el horario o cambiá el lugar.`,
+            );
+            return;
+        }
+
+        const ticket_type_overrides = ticketTypes
+            .map((tt) => {
+                const row = ttOverrides[tt.id] || { price: "", capacity: "", active: true };
+                const hasPrice = row.price !== "";
+                const hasCapacity = row.capacity !== "";
+                if (!hasPrice && !hasCapacity && row.active) return null; // fully inherited
+                return {
+                    ticket_type_id: tt.id,
+                    price_cents_override: hasPrice ? Math.round(parseFloat(row.price) * 100) : null,
+                    capacity_override: hasCapacity ? parseInt(row.capacity, 10) : null,
+                    active: row.active,
+                };
+            })
+            .filter(Boolean);
+
+        const locality_pricing = localities
+            .map((loc) => {
+                const v = locOverrides[loc.id];
+                if (v === "" || v == null) return null; // inherits event price
+                return { locality_id: loc.id, price_cents: Math.round(parseFloat(v) * 100) };
+            })
+            .filter(Boolean);
+
         setSaving(true);
         const payload = {
             ...form,
-            starts_at: form.starts_at ? localInputToIso(form.starts_at as string) : null,
-            ends_at: form.ends_at ? localInputToIso(form.ends_at as string) : null,
+            starts_at,
+            ends_at,
             capacity: form.capacity !== "" ? Number(form.capacity) : null,
             venue_name: form.venue_name || null,
             venue_address: form.venue_address || null,
             venue_city: form.venue_city || null,
             venue_country: form.venue_country || null,
+            ticket_type_overrides,
+            locality_pricing,
         };
         try {
             if (editing) {
@@ -193,8 +332,8 @@ export default function EventFunctionsPanel({ eventId }: Props) {
                 <div>
                     <h3 className="font-semibold">Funciones del evento</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        Agrega múltiples fechas o funciones. Cada una puede tener su propio venue,
-                        horario y aforo.
+                        Agrega múltiples fechas o franjas horarias. Cada una puede tener su propio
+                        venue, aforo y precios por tipo de ticket / localidad.
                     </p>
                 </div>
                 <Button size="sm" onClick={openCreate} data-testid="add-function">
@@ -281,6 +420,10 @@ export default function EventFunctionsPanel({ eventId }: Props) {
                                 />
                             </div>
                         </div>
+                        <p className="text-xs text-muted-foreground -mt-2">
+                            Si dos funciones en el mismo lugar se superponen en horario, no vas a
+                            poder guardar — ajustá el horario o el lugar de alguna de ellas.
+                        </p>
 
                         {/* Venue */}
                         <div className="space-y-3 rounded-lg border p-4">
@@ -325,8 +468,115 @@ export default function EventFunctionsPanel({ eventId }: Props) {
                                 value={form.capacity}
                                 onChange={(e) => upd("capacity", e.target.value)}
                                 placeholder="Usa el aforo del evento"
+                                data-testid="fn-capacity"
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Si lo dejás vacío, esta función comparte el aforo general del
+                                evento. Si pones un número, esta función tiene su propio cupo
+                                independiente de las demás.
+                            </p>
                         </div>
+
+                        {/* Ticket type overrides */}
+                        {ticketTypes.length > 0 && (
+                            <div className="space-y-2 rounded-lg border p-4" data-testid="fn-ticket-overrides">
+                                <p className="text-sm font-medium flex items-center gap-1.5">
+                                    <Ticket className="h-4 w-4" />
+                                    Precio y aforo por tipo de ticket
+                                </p>
+                                <p className="text-xs text-muted-foreground -mt-1">
+                                    Dejá vacío para heredar el precio/aforo general del tipo de
+                                    ticket. Desactivá un tipo si no se vende en esta función.
+                                </p>
+                                <div className="divide-y">
+                                    {ticketTypes.map((tt) => {
+                                        const row = ttOverrides[tt.id] || { price: "", capacity: "", active: true };
+                                        return (
+                                            <div
+                                                key={tt.id}
+                                                className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 py-2"
+                                                data-testid={`fn-tt-row-${tt.id}`}
+                                            >
+                                                <div className="flex items-center gap-1.5 min-w-0">
+                                                    {tt.color && (
+                                                        <span
+                                                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                                                            style={{ background: tt.color }}
+                                                        />
+                                                    )}
+                                                    <span className="text-sm truncate">{tt.name}</span>
+                                                </div>
+                                                <Input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    className="h-8 w-24"
+                                                    placeholder={priceDollars(tt.price_cents) || "0.00"}
+                                                    value={row.price}
+                                                    onChange={(e) => updOverride(tt.id, { price: e.target.value })}
+                                                    disabled={!row.active}
+                                                    data-testid={`fn-tt-price-${tt.id}`}
+                                                />
+                                                <Input
+                                                    type="number"
+                                                    min="1"
+                                                    className="h-8 w-20"
+                                                    placeholder="Aforo"
+                                                    value={row.capacity}
+                                                    onChange={(e) => updOverride(tt.id, { capacity: e.target.value })}
+                                                    disabled={!row.active}
+                                                    data-testid={`fn-tt-capacity-${tt.id}`}
+                                                />
+                                                <div className="flex items-center gap-1.5 justify-end">
+                                                    <Switch
+                                                        checked={row.active}
+                                                        onCheckedChange={(v) => updOverride(tt.id, { active: v })}
+                                                        data-testid={`fn-tt-active-${tt.id}`}
+                                                    />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Locality price overrides */}
+                        {localities.length > 0 && (
+                            <div className="space-y-2 rounded-lg border p-4" data-testid="fn-locality-overrides">
+                                <p className="text-sm font-medium flex items-center gap-1.5">
+                                    <MapPin className="h-4 w-4" />
+                                    Precio por localidad
+                                </p>
+                                <p className="text-xs text-muted-foreground -mt-1">
+                                    Dejá vacío para usar el precio que configuraste a nivel evento
+                                    para esa localidad.
+                                </p>
+                                <div className="divide-y">
+                                    {localities.map((loc) => (
+                                        <div
+                                            key={loc.id}
+                                            className="grid grid-cols-[1fr_auto] items-center gap-2 py-2"
+                                            data-testid={`fn-loc-row-${loc.id}`}
+                                        >
+                                            <span className="text-sm truncate">{loc.name}</span>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                className="h-8 w-24"
+                                                placeholder={priceDollars(loc.price_cents) || "0.00"}
+                                                value={locOverrides[loc.id] || ""}
+                                                onChange={(e) =>
+                                                    setLocOverrides((prev) => ({ ...prev, [loc.id]: e.target.value }))
+                                                }
+                                                data-testid={`fn-loc-price-${loc.id}`}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Sort */}
                         <div className="space-y-1.5">
@@ -375,6 +625,8 @@ function FunctionRow({
               ? "destructive"
               : "secondary";
 
+    const activeOverrides = (fn.ticket_type_overrides || []).filter((o) => o.active === false || o.price_cents_override != null || o.capacity_override != null);
+
     return (
         <div className="flex items-center gap-3 rounded-lg border p-3 bg-card">
             <CalendarRange className="h-5 w-5 text-muted-foreground shrink-0" />
@@ -397,10 +649,17 @@ function FunctionRow({
                             {fn.venue_city ? `, ${fn.venue_city}` : ""}
                         </span>
                     )}
-                    {fn.capacity && (
-                        <span className="text-xs text-muted-foreground">
-                            Cap. {fn.capacity}
-                        </span>
+                    <span className="text-xs text-muted-foreground" data-testid={`fn-sold-${fn.id}`}>
+                        {fn.capacity
+                            ? `${fn.tickets_sold ?? 0}/${fn.capacity} vendidos`
+                            : (fn.tickets_sold ?? 0) > 0
+                              ? `${fn.tickets_sold} vendidos`
+                              : "Aforo del evento"}
+                    </span>
+                    {activeOverrides.length > 0 && (
+                        <Badge variant="outline" className="text-xs">
+                            {activeOverrides.length} override{activeOverrides.length > 1 ? "s" : ""} de ticket
+                        </Badge>
                     )}
                 </div>
             </div>

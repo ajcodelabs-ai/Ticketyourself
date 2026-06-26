@@ -5,12 +5,26 @@
 import { previewMicrositePath } from "@/lib/config";
 
 export const EVENT_CATEGORIES = [
-    { code: "educational", label: "Educativo" },
-    { code: "entertainment", label: "Entretenimiento" },
-    { code: "corporate", label: "Corporativo" },
-    { code: "sports", label: "Deportes" },
-    { code: "fairs", label: "Ferias" },
-    { code: "family", label: "Familiar" },
+    { code: "music", label: "Música y Conciertos" },
+    { code: "theater", label: "Teatro y Artes Escénicas" },
+    { code: "comedy", label: "Comedia y Stand Up" },
+    { code: "festivals", label: "Festivales" },
+    { code: "family", label: "Familiar e Infantil" },
+    { code: "sports", label: "Deportivo" },
+    { code: "educational", label: "Educativo y Capacitación" },
+    { code: "corporate", label: "Corporativo y Networking" },
+    { code: "fairs", label: "Ferias y Exposiciones" },
+    { code: "conferences", label: "Congresos y Convenciones" },
+    { code: "gastronomy", label: "Gastronomía y Degustaciones" },
+    { code: "art_culture", label: "Arte y Cultura" },
+    { code: "health_wellness", label: "Salud y Bienestar" },
+    { code: "religious", label: "Religioso y Espiritual" },
+    { code: "tourism", label: "Turismo y Experiencias" },
+    { code: "technology", label: "Tecnología e Innovación" },
+    { code: "fashion_beauty", label: "Moda y Belleza" },
+    { code: "community", label: "Comunidad" },
+    { code: "nightlife", label: "Vida Nocturna" },
+    { code: "other", label: "Otros" },
 ];
 
 export const EVENT_STATUS_META = {
@@ -34,6 +48,15 @@ export function formatPriceLabel(event) {
         return event.base_price_cents > 0
             ? `Aporta desde $${(event.base_price_cents / 100).toFixed(0)}`
             : "Aporta lo que quieras";
+    }
+    // Numbered/seated events price per locality, not via base_price_cents.
+    if (event.venue_id && event.locality_pricing?.length) {
+        const cents = event.locality_pricing.map((lp) => lp.price_cents || 0);
+        const min = Math.min(...cents);
+        const max = Math.max(...cents);
+        const currency = event.currency || "USD";
+        if (min === max) return `$${(min / 100).toFixed(2)} ${currency}`;
+        return `$${(min / 100).toFixed(2)} – $${(max / 100).toFixed(2)} ${currency}`;
     }
     return `$${(event.base_price_cents / 100).toFixed(2)} ${event.currency || "USD"}`;
 }

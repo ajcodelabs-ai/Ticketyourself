@@ -83,7 +83,7 @@ class TestEventFase5Fields:
         payload = {
             "title": "TEST_Fase5 Event",
             "description": "phase 5 event",
-            "category": "entertainment",
+            "category": "music",
             "venue_name": "TEST Venue F5",
             "venue_city": "Quito",
             "starts_at": starts,

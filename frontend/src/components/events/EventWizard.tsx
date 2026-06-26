@@ -31,6 +31,9 @@ import DiscountRulesPanel from "@/components/events/DiscountRulesPanel";
 import EventContentPanel from "@/components/events/EventContentPanel";
 import TicketTypesPanel from "@/components/events/TicketTypesPanel";
 import EventFunctionsPanel from "@/components/events/EventFunctionsPanel";
+import GuestListPanel from "@/components/events/GuestListPanel";
+import AccessCodesPanel from "@/components/events/AccessCodesPanel";
+import { capacityByLocality } from "@/lib/venues";
 import ImageDropzone from "@/components/ui/ImageDropzone";
 import SortableGallery from "@/components/ui/SortableGallery";
 import { defaultEventContent, normalizeEventContent } from "@/lib/eventContent";
@@ -54,7 +57,6 @@ import {
     AlertTriangle,
     CheckCircle2,
     Circle,
-    Lock,
     ImageIcon,
     Trash2,
     Info,
@@ -72,6 +74,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import {
     Tabs,
     TabsContent,
@@ -85,17 +88,12 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipProvider,
-    TooltipTrigger,
-} from "@/components/ui/tooltip";
 import api, { formatApiError } from "@/lib/api";
 import { venuesApi } from "@/lib/venues";
 import { assetUrl } from "@/lib/microsite";
 import {
     EVENT_CATEGORIES,
+    PRICING_LABELS,
     isoToLocalInput,
     localInputToIso,
 } from "@/lib/events";
@@ -167,7 +165,7 @@ function makeInitial(d) {
             title: "",
             description: "",
             short_description: "",
-            category: "entertainment",
+            category: "other",
             venue_name: "",
             venue_address: "",
             venue_city: "Quito",
@@ -209,7 +207,7 @@ function makeInitial(d) {
         title: d.title || "",
         description: d.description || "",
         short_description: d.short_description || "",
-        category: d.category || "entertainment",
+        category: d.category || "other",
         venue_name: d.venue_name || "",
         venue_address: d.venue_address || "",
         venue_city: d.venue_city || "Quito",
@@ -272,8 +270,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         };
     }, []);
 
-    // Phase 9.5 — fetch venue localities so the discounts panel can offer a
-    // locality multi-select for promo-code conditions.
+    // Phase 9.5 — fetch venue localities so the discounts panel (and ticket
+    // types) can offer a locality select with the event's actual configured
+    // price (not just the venue template's default).
     useEffect(() => {
         if (!currentEvent?.venue_id) {
             setVenueLocalities([]);
@@ -281,16 +280,42 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         }
         api.get(`/venues/me/${currentEvent.venue_id}`)
             .then((r) => {
+                const elements = r.data.elements || [];
                 const elementsLocs = new Set();
-                for (const el of r.data.elements || []) {
+                for (const el of elements) {
                     if (el.locality_id) elementsLocs.add(el.locality_id);
                 }
+                const pricingByLocality = {};
+                for (const lp of currentEvent.locality_pricing || []) {
+                    pricingByLocality[lp.locality_id] = lp;
+                }
                 setVenueLocalities(
-                    (r.data.localities || []).filter((l) => elementsLocs.has(l.id)),
+                    (r.data.localities || [])
+                        .filter((l) => elementsLocs.has(l.id))
+                        .map((l) => {
+                            const lp = pricingByLocality[l.id];
+                            return {
+                                ...l,
+                                price_cents: lp?.price_cents ?? l.default_price_cents ?? 0,
+                                max_tickets_per_purchase: lp?.max_tickets_per_purchase ?? null,
+                                capacity: capacityByLocality(elements, l.id),
+                            };
+                        }),
                 );
             })
             .catch(() => setVenueLocalities([]));
-    }, [currentEvent?.venue_id]);
+    }, [currentEvent?.venue_id, currentEvent?.locality_pricing]);
+
+    // For numbered events, `venue_name` is set server-side from the linked venue
+    // rather than typed by the organizer. Whenever `currentEvent` refreshes
+    // (picking a venue, etc.) keep the form's copy in sync so a later "Guardar
+    // borrador" never overwrites the backend value with stale form state —
+    // this is what caused venue_name to silently reset to empty after linking.
+    useEffect(() => {
+        if (!currentEvent?.venue_id) return;
+        update("venue_name", currentEvent.venue_name || "");
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentEvent?.venue_name, currentEvent?.venue_id]);
 
     // Deep-linking: ?tab=info|venue_localidades|... wins over default.
     const initialStep =
@@ -526,6 +551,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         currentEvent={currentEvent}
                         onEventUpdated={setCurrentEvent}
                         ensureEventId={ensureEventId}
+                        onJumpToFunctions={() => handleTabChange("funciones")}
                     />
                 </TabsContent>
                 <TabsContent value="content" className="mt-4">
@@ -549,10 +575,14 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     <TicketTypesPanel
                         eventId={eventId}
                         localities={venueLocalities}
+                        eventSaleWindow={{
+                            sale_start: currentEvent?.sales_start || null,
+                            sale_end: currentEvent?.sales_end || null,
+                        }}
                     />
                 </TabsContent>
                 <TabsContent value="funciones" className="mt-4">
-                    <EventFunctionsPanel eventId={eventId} />
+                    <EventFunctionsPanel eventId={eventId} localities={venueLocalities} />
                 </TabsContent>
                 <TabsContent value="media" className="mt-4">
                     <SectionMedia
@@ -573,7 +603,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     <SectionDiscounts form={form} update={update} venueLocalities={venueLocalities} />
                 </TabsContent>
                 <TabsContent value="access" className="mt-4">
-                    <SectionAccess form={form} update={update} />
+                    <SectionAccess form={form} update={update} eventId={eventId} />
                 </TabsContent>
             </Tabs>
 
@@ -734,11 +764,17 @@ function SectionInfo({
     currentEvent,
     onEventUpdated,
     ensureEventId,
+    onJumpToFunctions,
 }) {
     return (
         <div className="space-y-5">
             <DatosBlock form={form} update={update} disabled={disabled} />
-            <CuandoBlock form={form} update={update} disabled={disabled} />
+            <CuandoBlock
+                form={form}
+                update={update}
+                disabled={disabled}
+                onJumpToFunctions={onJumpToFunctions}
+            />
             <DondeBlock
                 form={form}
                 update={update}
@@ -801,11 +837,32 @@ function DatosBlock({ form, update, disabled }) {
                     </SelectContent>
                 </Select>
             </Field>
+            <Field label="Tipo de recaudación">
+                <Select
+                    value={form.pricing_type}
+                    onValueChange={(v) => update("pricing_type", v)}
+                    disabled={disabled}
+                >
+                    <SelectTrigger data-testid="wiz-pricing-type">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="free">Gratis</SelectItem>
+                        <SelectItem value="paid">Pago</SelectItem>
+                        <SelectItem value="donation">Donación</SelectItem>
+                    </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                    Define el resto del wizard: si es "Pago" vas a poder cobrar por
+                    localidad o precio único; "Donación" no admite venue con asientos
+                    numerados (el comprador elige el monto).
+                </p>
+            </Field>
         </div>
     );
 }
 
-function CuandoBlock({ form, update, disabled }) {
+function CuandoBlock({ form, update, disabled, onJumpToFunctions }) {
     const startsValid = !!form.starts_at;
     return (
         <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="info-cuando-block">
@@ -952,11 +1009,27 @@ function CuandoBlock({ form, update, disabled }) {
                 )}
             </div>
 
-            <DisabledToggle
-                label="Evento multi-función"
-                helper="Múltiples fechas para el mismo evento"
-                tooltip="Próximamente — Fase 8"
-            />
+            <div className="rounded-lg border p-3 bg-muted/30 flex items-center justify-between gap-3">
+                <div className="text-sm">
+                    <div className="font-medium">Evento multi-función</div>
+                    <div className="text-xs text-muted-foreground">
+                        ¿Tu evento se repite en varias fechas u horarios? Agregalas en la
+                        pestaña "Funciones" — cada una puede tener su propio venue, horario y
+                        aforo.
+                    </div>
+                </div>
+                {onJumpToFunctions && (
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={onJumpToFunctions}
+                        data-testid="jump-to-functions"
+                    >
+                        Ir a Funciones
+                    </Button>
+                )}
+            </div>
         </div>
     );
 }
@@ -977,6 +1050,17 @@ function DondeBlock({
         [venues, linkedVenueId],
     );
     const [linking, setLinking] = useState(false);
+    const isDonation = form.pricing_type === "donation";
+
+    // Numbered seating is ON by default for every new event. If the organizer
+    // picks "Donación" before linking a venue, switch to general mode right
+    // away instead of leaving a disabled toggle stuck in the wrong state.
+    useEffect(() => {
+        if (isDonation && seatedMode && !linkedVenueId) {
+            update("no_seating_mode", true);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isDonation, linkedVenueId]);
 
     const handlePickVenue = async (vid) => {
         if (!vid) return;
@@ -1052,6 +1136,12 @@ function DondeBlock({
     };
 
     const handleModeChange = (numbered) => {
+        if (numbered && isDonation) {
+            toast.error(
+                "Los eventos de donación no admiten venue con asientos numerados.",
+            );
+            return;
+        }
         if (!numbered && linkedVenueId) {
             toast.error(
                 "Para cambiar a evento general primero desvinculá el venue actual.",
@@ -1069,7 +1159,7 @@ function DondeBlock({
                 <Switch
                     checked={seatedMode}
                     onCheckedChange={handleModeChange}
-                    disabled={disabled || linking}
+                    disabled={disabled || linking || (isDonation && !seatedMode)}
                     data-testid="wiz-seated-toggle"
                 />
                 <div className="text-sm">
@@ -1077,8 +1167,9 @@ function DondeBlock({
                         ¿Tu evento tiene venue con asientos asignados?
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        Activado: usás un mapa de asientos numerados. Apagado: ingresás
-                        nombre, dirección y precio único (eventos generales).
+                        {isDonation
+                            ? "No disponible para eventos de donación — el comprador elige el monto, no hay precio fijo por asiento."
+                            : "Activado: usás un mapa de asientos numerados. Apagado: ingresás nombre, dirección y precio único (eventos generales)."}
                     </p>
                 </div>
             </div>
@@ -1290,101 +1381,102 @@ function SectionVenueLocalidades({
     const hasVenue = !!event?.venue_id;
     const isGeneralMode = form.no_seating_mode && !hasVenue;
 
-    if (isGeneralMode) {
-        return (
-            <div className="space-y-4" data-testid="section-venue-localidades-general">
-                <div className="rounded-xl border-l-4 border-l-primary bg-secondary/30 p-4">
-                    <p className="text-sm font-medium flex items-center gap-2">
-                        <Info className="h-4 w-4 text-primary" />
-                        Evento general (sin asientos numerados)
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                        Definí el precio base y la capacidad total. Si querés usar un
-                        mapa con localidades, volvé a <strong>Información general → Dónde</strong>
-                        {" "}y activá el toggle.
+    return (
+        <div className="space-y-4" data-testid="section-venue-localidades">
+            <div className="flex items-center justify-between gap-3 rounded-xl border p-4 bg-card">
+                <div>
+                    <h4 className="font-semibold text-sm">Tipo de recaudación</h4>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        {form.pricing_type === "free" && "Gratis — la compra se confirma sin cobrar, sin importar el precio que pongas por localidad."}
+                        {form.pricing_type === "paid" && "Pago — el precio real de cada localidad se define en la tabla de abajo."}
+                        {form.pricing_type === "donation" && "Donación — el comprador elige el monto a aportar."}
                     </p>
                 </div>
+                <div className="flex items-center gap-2 shrink-0">
+                    <Badge variant="secondary" data-testid="venue-localidades-pricing-type-badge">
+                        {PRICING_LABELS[form.pricing_type] || form.pricing_type}
+                    </Badge>
+                    {onJumpToInfo && (
+                        <Button type="button" variant="outline" size="sm" onClick={onJumpToInfo}>
+                            Cambiar
+                        </Button>
+                    )}
+                </div>
+            </div>
 
-                <div className="space-y-3 rounded-xl border p-5 bg-card">
-                    <h4 className="font-semibold text-sm">Precio y capacidad</h4>
-                    <div className="rounded-lg border overflow-hidden">
-                        <div className="grid grid-cols-3 bg-secondary/40 px-3 py-2 text-xs font-medium uppercase">
-                            <div>Tipo</div>
-                            <div>Precio</div>
-                            <div>Capacidad</div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2 px-3 py-3 items-center">
-                            <Select
-                                value={form.pricing_type}
-                                onValueChange={(v) => update("pricing_type", v)}
-                                disabled={disabled}
-                            >
-                                <SelectTrigger
-                                    data-testid="wiz-pricing-type"
-                                    className="h-8"
-                                >
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="free">Gratis</SelectItem>
-                                    <SelectItem value="paid">Pago</SelectItem>
-                                    <SelectItem value="donation">Donación</SelectItem>
-                                </SelectContent>
-                            </Select>
-                            <div>
-                                {form.pricing_type === "free" ? (
-                                    <span className="text-sm text-muted-foreground">
-                                        Sin costo
-                                    </span>
-                                ) : (
-                                    <div className="relative">
-                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                                            $
-                                        </span>
-                                        <Input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            className="pl-6 h-8"
-                                            value={form.base_price_dollars}
-                                            onChange={(e) =>
-                                                update("base_price_dollars", e.target.value)
-                                            }
-                                            disabled={disabled}
-                                            data-testid="wiz-price"
-                                        />
-                                    </div>
-                                )}
+            {isGeneralMode && (
+                <>
+                    <div className="rounded-xl border-l-4 border-l-primary bg-secondary/30 p-4">
+                        <p className="text-sm font-medium flex items-center gap-2">
+                            <Info className="h-4 w-4 text-primary" />
+                            Evento general (sin asientos numerados)
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                            Definí el precio base y la capacidad total. Si querés usar un
+                            mapa con localidades, volvé a <strong>Información general → Dónde</strong>
+                            {" "}y activá el toggle.
+                        </p>
+                    </div>
+
+                    <div className="space-y-3 rounded-xl border p-5 bg-card">
+                        <h4 className="font-semibold text-sm">Precio y capacidad</h4>
+                        <div className="rounded-lg border overflow-hidden">
+                            <div className="grid grid-cols-2 bg-secondary/40 px-3 py-2 text-xs font-medium uppercase">
+                                <div>Precio</div>
+                                <div>Capacidad</div>
                             </div>
-                            <div className="flex items-center gap-2">
-                                <Input
-                                    type="number"
-                                    min="0"
-                                    className="h-8"
-                                    value={form.unlimited_capacity ? "" : form.capacity}
-                                    onChange={(e) => update("capacity", e.target.value)}
-                                    disabled={form.unlimited_capacity}
-                                    placeholder={
-                                        form.unlimited_capacity ? "Sin límite" : "ej: 100"
-                                    }
-                                    data-testid="wiz-capacity"
-                                />
-                                <Switch
-                                    checked={form.unlimited_capacity}
-                                    onCheckedChange={(v) => update("unlimited_capacity", v)}
-                                    data-testid="wiz-unlimited"
-                                />
+                            <div className="grid grid-cols-2 gap-2 px-3 py-3 items-center">
+                                <div>
+                                    {form.pricing_type === "free" ? (
+                                        <span className="text-sm text-muted-foreground">
+                                            Sin costo
+                                        </span>
+                                    ) : (
+                                        <div className="relative">
+                                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                                $
+                                            </span>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                className="pl-6 h-8"
+                                                value={form.base_price_dollars}
+                                                onChange={(e) =>
+                                                    update("base_price_dollars", e.target.value)
+                                                }
+                                                disabled={disabled}
+                                                data-testid="wiz-price"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        type="number"
+                                        min="0"
+                                        className="h-8"
+                                        value={form.unlimited_capacity ? "" : form.capacity}
+                                        onChange={(e) => update("capacity", e.target.value)}
+                                        disabled={form.unlimited_capacity}
+                                        placeholder={
+                                            form.unlimited_capacity ? "Sin límite" : "ej: 100"
+                                        }
+                                        data-testid="wiz-capacity"
+                                    />
+                                    <Switch
+                                        checked={form.unlimited_capacity}
+                                        onCheckedChange={(v) => update("unlimited_capacity", v)}
+                                        data-testid="wiz-unlimited"
+                                    />
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-        );
-    }
+                </>
+            )}
 
-    if (!hasVenue) {
-        return (
-            <div className="space-y-3" data-testid="section-venue-localidades-empty">
+            {!isGeneralMode && !hasVenue && (
                 <div className="rounded-xl border-l-4 border-l-amber-500 bg-amber-50 border-amber-200 p-5 text-sm text-amber-900">
                     <div className="flex items-start gap-2">
                         <Info className="h-5 w-5 flex-shrink-0" />
@@ -1406,16 +1498,16 @@ function SectionVenueLocalidades({
                         </div>
                     </div>
                 </div>
-            </div>
-        );
-    }
+            )}
 
-    return (
-        <EventVenueSection
-            event={event}
-            disabled={disabled}
-            onUpdated={onEventUpdated}
-        />
+            {!isGeneralMode && hasVenue && (
+                <EventVenueSection
+                    event={event}
+                    disabled={disabled}
+                    onUpdated={onEventUpdated}
+                />
+            )}
+        </div>
     );
 }
 
@@ -1770,7 +1862,7 @@ function SectionDiscounts({ form, update, venueLocalities = [] }) {
 }
 
 // ── Section: Access ─────────────────────────────────────────────────────────
-function SectionAccess({ form, update }) {
+function SectionAccess({ form, update, eventId }) {
     const ap = form.access_params;
     const deliveryMode = form.ticket_delivery_mode || "al_momento";
     return (
@@ -1788,6 +1880,10 @@ function SectionAccess({ form, update }) {
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem value="public">Público — aparece en tu microsite</SelectItem>
+                        <SelectItem value="public_blocked">
+                            Público bloqueado — aparece en tu microsite, pero solo se puede
+                            comprar con código o estando en lista
+                        </SelectItem>
                         <SelectItem value="private">Privado — solo con link directo</SelectItem>
                     </SelectContent>
                 </Select>
@@ -1806,15 +1902,14 @@ function SectionAccess({ form, update }) {
                         <SelectItem value="link_only">
                             Solo con link · no aparece en listados
                         </SelectItem>
-                        <SelectItem value="verified_list" disabled>
-                            Lista verificada (próximamente)
-                        </SelectItem>
-                        <SelectItem value="access_code" disabled>
-                            Código de acceso (próximamente)
-                        </SelectItem>
+                        <SelectItem value="verified_list">Lista verificada</SelectItem>
+                        <SelectItem value="access_code">Código de acceso</SelectItem>
                     </SelectContent>
                 </Select>
             </Field>
+
+            {ap.access_type === "verified_list" && <GuestListPanel eventId={eventId} />}
+            {ap.access_type === "access_code" && <AccessCodesPanel eventId={eventId} />}
 
             <div className="grid sm:grid-cols-2 gap-3">
                 <Field label="Máx. tickets por compra">
@@ -1960,28 +2055,6 @@ function Field({ label, children, testId = undefined }) {
             <Label>{label}</Label>
             {children}
         </div>
-    );
-}
-
-function DisabledToggle({ label, helper, tooltip }) {
-    return (
-        <TooltipProvider>
-            <Tooltip>
-                <TooltipTrigger asChild>
-                    <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/30 opacity-70">
-                        <div className="text-sm">
-                            <div className="font-medium flex items-center gap-2">
-                                {label}
-                                <Lock className="h-3 w-3" />
-                            </div>
-                            <div className="text-xs text-muted-foreground">{helper}</div>
-                        </div>
-                        <Switch checked={false} disabled />
-                    </div>
-                </TooltipTrigger>
-                <TooltipContent>{tooltip}</TooltipContent>
-            </Tooltip>
-        </TooltipProvider>
     );
 }
 

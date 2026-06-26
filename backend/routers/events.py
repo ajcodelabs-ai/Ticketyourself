@@ -20,6 +20,7 @@ from database import AsyncSessionLocal
 from db_helpers import get_venue_by_id, row_to_dict
 from orm_models import AuditLog, Event, EventAsset, Organizer, Tenant, TicketOrder
 from security import get_current_user, require_role
+from services.plan_features import assert_feature
 from slugs import normalize_slug
 
 logger = logging.getLogger("tys.events")
@@ -37,11 +38,30 @@ ALLOWED_IMG_MIME = {
 MAX_IMG_BYTES = 5 * 1024 * 1024
 
 EventCategory = Literal[
-    "educational", "entertainment", "corporate", "sports", "fairs", "family"
+    "music",
+    "theater",
+    "comedy",
+    "festivals",
+    "family",
+    "sports",
+    "educational",
+    "corporate",
+    "fairs",
+    "conferences",
+    "gastronomy",
+    "art_culture",
+    "health_wellness",
+    "religious",
+    "tourism",
+    "technology",
+    "fashion_beauty",
+    "community",
+    "nightlife",
+    "other",
 ]
 EventStatus = Literal["draft", "published", "sold_out", "ended", "cancelled"]
 PricingType = Literal["free", "paid", "donation"]
-Visibility = Literal["public", "private"]
+Visibility = Literal["public", "public_blocked", "private"]
 
 
 router = APIRouter(prefix="/api/events/me", tags=["events"])
@@ -139,7 +159,7 @@ class EventDiscounts(BaseModel):
 
 
 class EventAccessParams(BaseModel):
-    visibility: Literal["public", "private"] = "public"
+    visibility: Visibility = "public"
     access_type: Literal["open", "link_only", "verified_list", "access_code"] = "open"
     max_per_purchase: int = Field(default=10, ge=1, le=100)
     max_per_email: Optional[int] = Field(default=None, ge=1)
@@ -170,7 +190,7 @@ class EventBase(BaseModel):
     title: str = Field(min_length=2, max_length=140)
     description: str = Field(default="", max_length=8000)
     short_description: str = Field(default="", max_length=160)
-    category: EventCategory = "entertainment"
+    category: EventCategory = "other"
     venue_name: str = Field(default="", max_length=120)
     venue_address: str = Field(default="", max_length=200)
     venue_city: str = Field(default="", max_length=80)
@@ -326,6 +346,12 @@ def _publish_validation(doc: dict) -> None:
             ]
             if missing_loc:
                 missing.append("precio válido en cada localidad")
+            has_paid_locality = any(int(lp.get("price_cents") or 0) > 0 for lp in pricing)
+            if has_paid_locality and doc.get("pricing_type") == "free":
+                missing.append(
+                    "marcar el evento como 'Pago' en Tipo de recaudación "
+                    "(tenés localidades con precio pero el evento está como Gratis)"
+                )
     if missing:
         raise HTTPException(
             status_code=422,
@@ -454,9 +480,18 @@ async def get_my_event(event_id: str, user=Depends(get_current_user)):
     return row_to_dict(row)
 
 
+def _assert_access_type_allowed(plan_code: Optional[str], access_type: Optional[str]) -> None:
+    if access_type == "verified_list":
+        assert_feature(plan_code, "verified_lists")
+    elif access_type == "access_code":
+        assert_feature(plan_code, "access_codes")
+
+
 @router.post("", status_code=201)
 async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
     org = await _require_approved_organizer(user)
+    if payload.access_params:
+        _assert_access_type_allowed(org.get("plan_code"), payload.access_params.access_type)
     async with AsyncSessionLocal() as session:
         slug = await _next_event_slug(org["id"], normalize_slug(payload.title), session)
 
@@ -557,6 +592,9 @@ async def update_my_event(
             diff["payment_methods"] = payload.payment_methods.model_dump()
         if "access_params" in diff and payload.access_params is not None:
             diff["access_params"] = payload.access_params.model_dump()
+            _assert_access_type_allowed(
+                org.get("plan_code"), payload.access_params.access_type
+            )
         if "content" in diff and payload.content is not None:
             diff["content"] = payload.content.model_dump()
 
@@ -863,7 +901,7 @@ async def list_public_events(
         stmt = select(Event).where(
             Event.organizer_id == org_id,
             Event.status == "published",
-            Event.visibility == "public",
+            Event.visibility.in_(["public", "public_blocked"]),
         )
         total = await pg.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         result = await pg.execute(
@@ -874,7 +912,9 @@ async def list_public_events(
 
 
 @public_router.get("/{tenant_slug}/{event_slug}")
-async def get_public_event(tenant_slug: str, event_slug: str):
+async def get_public_event(
+    tenant_slug: str, event_slug: str, function_id: Optional[str] = Query(default=None),
+):
     async with AsyncSessionLocal() as pg:
         org_row = (await pg.execute(
             select(Organizer).where(Organizer.slug == tenant_slug)
@@ -907,7 +947,9 @@ async def get_public_event(tenant_slug: str, event_slug: str):
         venue = await get_venue_by_id(event["venue_id"])
         if venue:
             event["venue"] = venue
-            event["seats_status"] = await compute_event_seats_status(event=event, venue=venue)
+            event["seats_status"] = await compute_event_seats_status(
+                event=event, venue=venue, function_id=function_id or "",
+            )
     return event
 
 
@@ -916,10 +958,30 @@ class SeatHoldsBody(BaseModel):
     seat_ids: List[str]
     session_token: str = Field(min_length=8, max_length=80)
     buyer_email: Optional[str] = Field(default=None, max_length=140)
+    function_id: Optional[str] = None
 
 
 class SeatHoldsRelease(BaseModel):
     session_token: str = Field(min_length=8, max_length=80)
+    function_id: Optional[str] = None
+
+
+async def _validate_active_function(event_id: str, function_id: Optional[str]) -> None:
+    """Raise 422 if function_id is set but doesn't belong to this event or
+    isn't active — same función the buyer is holding seats for must exist."""
+    if not function_id:
+        return
+    from orm_models import EventFunction
+    async with AsyncSessionLocal() as pg:
+        func_row = await pg.scalar(
+            select(EventFunction).where(
+                EventFunction.id == function_id,
+                EventFunction.event_id == event_id,
+                EventFunction.status == "active",
+            )
+        )
+    if not func_row:
+        raise HTTPException(422, "La función seleccionada no existe o ya no está disponible.")
 
 
 async def _resolve_public_event(tenant_slug: str, event_slug: str) -> tuple:
@@ -959,16 +1021,20 @@ async def public_create_holds(tenant_slug: str, event_slug: str, body: SeatHolds
         raise HTTPException(422, "Tenés que elegir al menos un asiento.")
     if len(body.seat_ids) > 20:
         raise HTTPException(422, "Máximo 20 asientos por compra.")
+    await _validate_active_function(event["id"], body.function_id)
+    function_id = body.function_id or ""
     window = event.get("seat_holds_window_minutes") or 10
     holds = await create_seat_holds(
         event_id=event["id"], venue_id=venue["id"], seat_ids=body.seat_ids,
         session_token=body.session_token, buyer_email=body.buyer_email,
-        window_minutes=window,
+        window_minutes=window, function_id=function_id,
     )
     return {
         "holds": holds,
         "expires_at": holds[0]["expires_at"] if holds else None,
-        "seats_status": await compute_event_seats_status(event=event, venue=venue),
+        "seats_status": await compute_event_seats_status(
+            event=event, venue=venue, function_id=function_id,
+        ),
     }
 
 
@@ -978,6 +1044,7 @@ async def public_release_holds(tenant_slug: str, event_slug: str, body: SeatHold
     _, event, _venue = await _resolve_public_event(tenant_slug, event_slug)
     deleted = await release_holds_for_session(
         event_id=event["id"], session_token=body.session_token,
+        function_id=body.function_id,
     )
     return {"released": deleted}
 

@@ -46,7 +46,8 @@ function HoldCountdown({ expiresAt, onExpire }: { expiresAt: string; onExpire: (
 }
 
 export default function NumberedSeatSection({
-    tenantSlug, event, onLaunchPurchase,
+    tenantSlug, event, onLaunchPurchase, functionId = "", functionName = "",
+    localityPricing,
 }) {
     const [seatsStatus, setSeatsStatus] = useState(event.seats_status || []);
     const [selected, setSelected] = useState([]); // array of seat objects we picked
@@ -54,6 +55,12 @@ export default function NumberedSeatSection({
     const [refreshing, setRefreshing] = useState(false);
     const [sessionToken] = useState(() => getOrCreateSessionToken());
     const [activeHoldExpiresAt, setActiveHoldExpiresAt] = useState<string | null>(null);
+
+    // A función may override per-locality pricing; fall back to the event's
+    // own locality_pricing when no override (or no función) applies.
+    const effectiveLocalityPricing = localityPricing?.length
+        ? localityPricing
+        : event.locality_pricing;
 
     const localitiesById = useMemo(
         () => Object.fromEntries((event.venue?.localities || []).map((l) => [l.id, l])),
@@ -63,7 +70,9 @@ export default function NumberedSeatSection({
     const refreshSeats = useCallback(async () => {
         try {
             setRefreshing(true);
-            const r = await api.get(`/public/events/${tenantSlug}/${event.slug}`);
+            const r = await api.get(`/public/events/${tenantSlug}/${event.slug}`, {
+                params: { function_id: functionId || undefined },
+            });
             setSeatsStatus(r.data.seats_status || []);
         } catch (e) {
             // Refresh runs every 15s in background; users have a manual retry
@@ -72,7 +81,16 @@ export default function NumberedSeatSection({
         } finally {
             setRefreshing(false);
         }
-    }, [tenantSlug, event.slug]);
+    }, [tenantSlug, event.slug, functionId]);
+
+    // Re-fetch seat status from scratch whenever the chosen función changes
+    // (each función has its own independent seat pool).
+    useEffect(() => {
+        refreshSeats();
+        setSelected([]);
+        setActiveHoldExpiresAt(null);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [functionId]);
 
     // Refresh seats status every 15s so users see other people's holds/sales live
     useEffect(() => {
@@ -93,7 +111,7 @@ export default function NumberedSeatSection({
         });
     };
 
-    const subtotal = selectedSubtotalCents(selected, event.locality_pricing);
+    const subtotal = selectedSubtotalCents(selected, effectiveLocalityPricing);
     const fees = feesForSubtotal(subtotal);
     const total = subtotal + fees;
 
@@ -106,6 +124,7 @@ export default function NumberedSeatSection({
                 {
                     seat_ids: selected.map((s) => s.seat_id),
                     session_token: sessionToken,
+                    function_id: functionId || undefined,
                 },
             );
             // Refresh seat status with response payload
@@ -120,6 +139,8 @@ export default function NumberedSeatSection({
                 subtotal_cents: subtotal,
                 fees_cents: fees,
                 total_cents: total,
+                function_id: functionId || undefined,
+                function_name: functionName || undefined,
             });
         } catch (e) {
             const detail = e?.response?.data?.detail;
@@ -154,7 +175,7 @@ export default function NumberedSeatSection({
         if (el.locality_id) activeLocalityIds.add(el.locality_id);
     }
     const pricingByLocality = Object.fromEntries(
-        (event.locality_pricing || []).map((lp) => [lp.locality_id, lp.price_cents]),
+        (effectiveLocalityPricing || []).map((lp) => [lp.locality_id, lp.price_cents]),
     );
 
     return (
@@ -162,7 +183,12 @@ export default function NumberedSeatSection({
             className="max-w-6xl mx-auto px-4 sm:px-6 py-10"
             data-testid="event-public-seat-section"
         >
-            <h2 className="text-2xl font-semibold mb-4">Elegí tus asientos</h2>
+            <h2 className="text-2xl font-semibold mb-4">
+                Elegí tus asientos
+                {functionName && (
+                    <span className="text-base font-normal text-muted-foreground"> — {functionName}</span>
+                )}
+            </h2>
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
                 <div>
                     <SeatPickerCanvas

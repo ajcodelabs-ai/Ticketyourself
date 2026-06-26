@@ -30,7 +30,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import api, { formatApiError } from "@/lib/api";
-import { EVENT_STATUS_META, formatEventDate } from "@/lib/events";
+import { EVENT_CATEGORIES, EVENT_STATUS_META, formatEventDate } from "@/lib/events";
 import { formatCents } from "@/lib/orders";
 
 const STATUS_OPTIONS = [
@@ -43,12 +43,7 @@ const STATUS_OPTIONS = [
 
 const CATEGORY_OPTIONS = [
     { value: "all", label: "Todas" },
-    { value: "education", label: "Educativo" },
-    { value: "entertainment", label: "Entretenimiento" },
-    { value: "corporate", label: "Corporativo" },
-    { value: "sports", label: "Deportes" },
-    { value: "fairs", label: "Ferias" },
-    { value: "family", label: "Familiar" },
+    ...EVENT_CATEGORIES.map((c) => ({ value: c.code, label: c.label })),
 ];
 
 export default function AdminEvents() {

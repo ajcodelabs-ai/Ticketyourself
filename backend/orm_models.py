@@ -163,6 +163,26 @@ class OrganizerDocument(Base):
     organizer = relationship("Organizer", back_populates="documents")
 
 
+class RequiredDocumentSet(Base):
+    """Admin-configurable: which doc_types are mandatory per org_type."""
+    __tablename__ = "required_document_sets"
+
+    org_type = Column(String(20), primary_key=True)  # "individual" | "company"
+    doc_types = Column(JSONB, nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    updated_by = Column(String(36), nullable=True)
+
+
+class DocumentType(Base):
+    """Admin-extensible catalog of document types organizers can upload."""
+    __tablename__ = "document_types"
+
+    code = Column(String(40), primary_key=True)  # slug of label, e.g. "pasaporte"
+    label = Column(String(80), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    created_by = Column(String(36), nullable=True)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Venues  (Phase 3)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -450,6 +470,10 @@ class SeatHold(Base):
     status = Column(String(20), nullable=False, default="held")
     held_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     expires_at = Column(DateTime(timezone=True), nullable=False)
+    # "" (not NULL) = no función / general event. Same physical seat_id can be
+    # held/sold independently per función — see uq_seat_holds_active index,
+    # which needs equal (not NULL) values to actually enforce uniqueness.
+    function_id = Column(String(36), nullable=False, default="", index=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -462,6 +486,10 @@ class EventCapacityReservation(Base):
     event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
     order_id = Column(String(36), nullable=True, index=True)
     quantity = Column(Integer, nullable=False, default=1)
+    # Scopes this reservation to a single función's own capacity pool. NULL
+    # means it counts against the event-level shared pool (general/non-multi-
+    # función events, or functions without their own capacity override).
+    function_id = Column(String(36), ForeignKey("event_functions.id"), nullable=True, index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
@@ -481,6 +509,8 @@ class EventSeatAssignment(Base):
     holder_email = Column(String(254), nullable=True)
     locality_id = Column(String(36), nullable=True)
     assigned_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    # "" (not NULL) = no función / general event — same sentinel as SeatHold.
+    function_id = Column(String(36), nullable=False, default="", index=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -648,6 +678,48 @@ class FunctionTicketType(Base):
     active = Column(Boolean, nullable=False, default=True)
 
     function = relationship("EventFunction", back_populates="ticket_type_overrides")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fase 9 — Guest list (lista verificada) entries
+# ─────────────────────────────────────────────────────────────────────────────
+class EventGuestListEntry(Base):
+    __tablename__ = "event_guest_list_entries"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    event_id = Column(
+        String(36), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    email = Column(String(254), nullable=True)
+    cedula = Column(String(40), nullable=True)
+    name = Column(String(140), nullable=True)
+    notes = Column(String(300), nullable=True)
+    used_at = Column(DateTime(timezone=True), nullable=True)  # set when they complete a purchase
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fase 9 — Access codes (código de acceso único / multiuso)
+# ─────────────────────────────────────────────────────────────────────────────
+class EventAccessCode(Base):
+    __tablename__ = "event_access_codes"
+    __table_args__ = (
+        UniqueConstraint("event_id", "code", name="uq_accesscode_event_code"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    event_id = Column(
+        String(36), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    code = Column(String(40), nullable=False)
+    max_uses = Column(Integer, nullable=True)  # null = unlimited
+    uses_count = Column(Integer, nullable=False, default=0)
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -430,6 +430,10 @@ export default function EventForm({ initial, onSaved, mode = "create" }) {
                     >
                         {[
                             { v: "public", label: "Público — aparece en tu microsite" },
+                            {
+                                v: "public_blocked",
+                                label: "Público bloqueado — aparece, pero compra requiere código o lista",
+                            },
                             { v: "private", label: "Privado — solo con link directo" },
                         ].map((opt) => (
                             <label
@@ -487,7 +491,7 @@ function makeInitial(d) {
             title: "",
             description: "",
             short_description: "",
-            category: "entertainment",
+            category: "other",
             venue_name: "",
             venue_address: "",
             venue_city: "Quito",
@@ -507,7 +511,7 @@ function makeInitial(d) {
         title: d.title || "",
         description: d.description || "",
         short_description: d.short_description || "",
-        category: d.category || "entertainment",
+        category: d.category || "other",
         venue_name: d.venue_name || "",
         venue_address: d.venue_address || "",
         venue_city: d.venue_city || "Quito",

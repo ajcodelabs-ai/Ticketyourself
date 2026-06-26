@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -23,26 +23,25 @@ import {
     FileText,
     Trash2,
     Loader2,
-    ArrowRight,
+    Clock,
+    XCircle,
+    ShieldAlert,
 } from "lucide-react";
-
-const DOC_TYPES = [
-    { value: "ruc", label: "RUC" },
-    { value: "id_card", label: "Cédula" },
-    { value: "operating_permit", label: "Permiso de funcionamiento" },
-    { value: "other", label: "Otro" },
-];
 
 export default function Onboarding() {
     const { organizer, refreshOrganizer } = useAuth();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
-    const [step, setStep] = useState(1);
     const [docs, setDocs] = useState([]);
     const [plans, setPlans] = useState([]);
+    // Admin-extensible catalog (/admin/configuracion) — [{ code, label }]
+    const [docTypes, setDocTypes] = useState([]);
+    // Admin-configurable via /admin/configuracion — { individual: [...], company: [...] }
+    const [requiredDocs, setRequiredDocs] = useState({ individual: [], company: [] });
     const [loading, setLoading] = useState(true);
-    const [docType, setDocType] = useState("ruc");
+    const [docType, setDocType] = useState("");
     const [uploading, setUploading] = useState(false);
+    const [resubmitting, setResubmitting] = useState(false);
     const [signupPlanCode, setSignupPlanCode] = useState(null);
 
     useEffect(() => {
@@ -64,12 +63,21 @@ export default function Onboarding() {
     const fetchAll = useCallback(async () => {
         setLoading(true);
         try {
-            const [docsResp, plansResp] = await Promise.all([
+            const [docsResp, plansResp, requiredResp, typesResp] = await Promise.all([
                 api.get("/organizers/me/documents"),
                 api.get("/plans"),
+                api.get("/organizers/required-documents"),
+                api.get("/organizers/document-types"),
             ]);
             setDocs(docsResp.data || []);
             setPlans(plansResp.data || []);
+            setRequiredDocs({
+                individual: requiredResp.data?.individual || [],
+                company: requiredResp.data?.company || [],
+            });
+            const types = typesResp.data || [];
+            setDocTypes(types);
+            setDocType((current) => current || types[0]?.code || "");
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail));
         } finally {
@@ -81,24 +89,23 @@ export default function Onboarding() {
         fetchAll();
     }, [fetchAll]);
 
-    // Redirect away when no longer pending or once they have a plan.
+    const requiredDocTypes = organizer ? requiredDocs[organizer.org_type] || [] : [];
+    const requiredDocsSatisfied = useMemo(() => {
+        if (!organizer) return false;
+        return requiredDocTypes.every((rt) => docs.some((d) => d.doc_type === rt));
+    }, [docs, organizer, requiredDocTypes]);
+
+    // Onboarding is fully done only once approved AND paid — everything else
+    // (pending/rejected/suspended/approved-without-payment) is handled below.
     useEffect(() => {
         if (!organizer) return;
-        if (organizer.status !== "pending" || organizer.subscription_status !== "none") {
+        if (organizer.status === "approved" && organizer.subscription_status !== "none") {
             navigate("/app/dashboard", { replace: true });
         }
     }, [organizer, navigate]);
 
     const uploadDoc = async (file) => {
         if (!file) return;
-        // eslint-disable-next-line no-console
-        console.log("[onboarding] upload start", {
-            name: file.name,
-            type: file.type,
-            size: file.size,
-            doc_type: docType,
-        });
-        // Client-side guards (mirror backend) so we fail fast with a clear toast.
         const okTypes = [
             "application/pdf",
             "image/jpeg",
@@ -124,20 +131,10 @@ export default function Onboarding() {
             fd.append("file", file);
             // Do NOT set Content-Type manually — axios auto-generates it with the
             // multipart boundary. The interceptor strips any stale Content-Type.
-            const resp = await api.post("/organizers/me/documents", fd, {
-                timeout: 60000,
-            });
-            // eslint-disable-next-line no-console
-            console.log("[onboarding] upload OK", resp.status, resp.data?.id);
+            await api.post("/organizers/me/documents", fd, { timeout: 60000 });
             toast.success("Documento subido correctamente");
             await fetchAll();
         } catch (err) {
-            // eslint-disable-next-line no-console
-            console.error("[onboarding] upload FAILED", {
-                status: err?.response?.status,
-                data: err?.response?.data,
-                message: err?.message,
-            });
             const status = err?.response?.status;
             const detail =
                 formatApiError(err?.response?.data?.detail) ||
@@ -151,8 +148,6 @@ export default function Onboarding() {
 
     const onFileChange = (e) => {
         const file = e.target.files?.[0];
-        // eslint-disable-next-line no-console
-        console.log("[onboarding] file selected via input", file?.name, file?.type);
         // Reset input so selecting the same file twice still triggers onChange.
         e.target.value = "";
         uploadDoc(file);
@@ -165,6 +160,19 @@ export default function Onboarding() {
             await fetchAll();
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail));
+        }
+    };
+
+    const resubmit = async () => {
+        setResubmitting(true);
+        try {
+            await api.post("/organizers/me/resubmit");
+            toast.success("Reenviado a revisión");
+            await refreshOrganizer();
+        } catch (err) {
+            toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+        } finally {
+            setResubmitting(false);
         }
     };
 
@@ -185,9 +193,17 @@ export default function Onboarding() {
         }
     };
 
-    const hasRuc = docs.some((d) => d.doc_type === "ruc");
-    const hasId = docs.some((d) => d.doc_type === "id_card");
-    const docsReady = hasRuc || hasId;
+    const status = organizer?.status;
+    const phase =
+        status === "rejected"
+            ? "rejected"
+            : status === "suspended"
+              ? "suspended"
+              : status === "approved"
+                ? "plan"
+                : requiredDocsSatisfied
+                  ? "review"
+                  : "docs";
 
     return (
         <div data-testid="onboarding-page" className="space-y-8 max-w-4xl">
@@ -199,143 +215,129 @@ export default function Onboarding() {
                     ¡Bienvenido!
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                    Completá estos 2 pasos para activar tu cuenta.
+                    Seguí estos pasos para activar tu cuenta.
                 </p>
             </header>
 
-            <Stepper step={step} onChange={setStep} docsReady={docsReady} />
+            <ProgressStrip phase={phase} />
 
             {loading && <p className="text-muted-foreground text-sm">Cargando…</p>}
 
-            {step === 1 && !loading && (
-                <Card className="border-border/70 tys-soft-shadow">
+            {!loading && phase === "docs" && (
+                <Card className="border-border/70 tys-soft-shadow" data-testid="onboarding-docs-panel">
                     <CardHeader>
-                        <CardTitle className="text-lg">Paso 1 — Documentos</CardTitle>
+                        <CardTitle className="text-lg">Documentos</CardTitle>
                         <CardDescription>
-                            Subí RUC, cédula y cualquier permiso adicional. PDF/JPG/PNG, hasta 10MB.
+                            {requiredDocTypes.length > 0 ? (
+                                <>
+                                    Subí{" "}
+                                    {requiredDocTypes
+                                        .map((rt) => docTypes.find((t) => t.code === rt)?.label || rt)
+                                        .join(" y ")}{" "}
+                                    (obligatorio). Podés agregar otros documentos de respaldo.
+                                </>
+                            ) : (
+                                "Subí los documentos que respalden tu cuenta."
+                            )}{" "}
+                            PDF/JPG/PNG, hasta 10MB.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <DocumentsUploader
+                            docTypes={docTypes}
+                            docType={docType}
+                            setDocType={setDocType}
+                            uploading={uploading}
+                            onFileChange={onFileChange}
+                            docs={docs}
+                            onDelete={deleteDoc}
+                        />
+                    </CardContent>
+                </Card>
+            )}
+
+            {!loading && phase === "review" && (
+                <Card className="border-amber-300 bg-amber-50/40 tys-soft-shadow" data-testid="onboarding-review-panel">
+                    <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2 text-amber-900">
+                            <Clock className="h-5 w-5" /> En revisión por el equipo TYS
+                        </CardTitle>
+                        <CardDescription>
+                            Recibimos tus documentos. Te avisamos por correo en cuanto aprobemos tu
+                            cuenta para que puedas pagar el plan elegido.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <DocumentsUploader
+                            docTypes={docTypes}
+                            docType={docType}
+                            setDocType={setDocType}
+                            uploading={uploading}
+                            onFileChange={onFileChange}
+                            docs={docs}
+                            onDelete={deleteDoc}
+                        />
+                    </CardContent>
+                </Card>
+            )}
+
+            {!loading && phase === "rejected" && (
+                <Card className="border-red-300 bg-red-50/40 tys-soft-shadow" data-testid="onboarding-rejected-panel">
+                    <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2 text-red-900">
+                            <XCircle className="h-5 w-5" /> Tu solicitud fue rechazada
+                        </CardTitle>
+                        <CardDescription className="text-red-900/80">
+                            {organizer?.rejection_reason || "El equipo TYS rechazó tu solicitud."}
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-5">
-                        <div className="grid sm:grid-cols-[1fr_2fr] gap-3 items-end">
-                            <div className="space-y-1">
-                                <Label htmlFor="doc-type">Tipo de documento</Label>
-                                <Select value={docType} onValueChange={setDocType}>
-                                    <SelectTrigger id="doc-type" data-testid="doc-type-select">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {DOC_TYPES.map((t) => (
-                                            <SelectItem
-                                                key={t.value}
-                                                value={t.value}
-                                                data-testid={`doc-type-option-${t.value}`}
-                                            >
-                                                {t.label}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <label
-                                htmlFor="file-input"
-                                data-testid="doc-dropzone"
-                                aria-disabled={uploading}
-                                className={`flex items-center justify-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 cursor-pointer transition-colors text-center ${
-                                    uploading
-                                        ? "border-primary bg-primary/5 cursor-wait"
-                                        : "border-border/70 hover:border-primary hover:bg-primary/5"
-                                }`}
-                            >
-                                {uploading ? (
-                                    <>
-                                        <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                                        <span className="text-sm font-medium text-primary">
-                                            Subiendo documento…
-                                        </span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <Upload className="h-5 w-5 text-primary" />
-                                        <span className="text-sm">
-                                            <strong className="text-primary">
-                                                Hacé click para subir
-                                            </strong>{" "}
-                                            <span className="text-muted-foreground">
-                                                — PDF, JPG, PNG, WEBP o HEIC (máx 10MB)
-                                            </span>
-                                        </span>
-                                    </>
-                                )}
-                                <input
-                                    id="file-input"
-                                    name="file"
-                                    type="file"
-                                    accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/*"
-                                    onChange={onFileChange}
-                                    disabled={uploading}
-                                    data-testid="doc-file-input"
-                                    className="sr-only"
-                                />
-                            </label>
-                        </div>
-
-                        <div data-testid="docs-list" className="space-y-2">
-                            {docs.length === 0 && (
-                                <p className="text-sm text-muted-foreground" data-testid="docs-empty">
-                                    Todavía no subiste documentos.
-                                </p>
-                            )}
-                            {docs.map((d) => (
-                                <div
-                                    key={d.id}
-                                    data-testid={`doc-row-${d.id}`}
-                                    className="flex items-center justify-between p-3 rounded-lg border border-border/70 bg-card"
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <div className="h-9 w-9 rounded-md bg-secondary grid place-items-center text-primary">
-                                            <FileText className="h-4 w-4" />
-                                        </div>
-                                        <div>
-                                            <div className="text-sm font-medium">
-                                                {d.original_filename}
-                                            </div>
-                                            <div className="text-xs text-muted-foreground">
-                                                {d.doc_type} ·{" "}
-                                                {(d.size_bytes / 1024).toFixed(1)} KB
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        data-testid={`delete-doc-${d.id}`}
-                                        onClick={() => deleteDoc(d.id)}
-                                    >
-                                        <Trash2 className="h-4 w-4 text-destructive" />
-                                    </Button>
-                                </div>
-                            ))}
-                        </div>
-
+                        <p className="text-sm text-muted-foreground">
+                            Corregí o reemplazá los documentos señalados y reenviá tu solicitud.
+                        </p>
+                        <DocumentsUploader
+                            docTypes={docTypes}
+                            docType={docType}
+                            setDocType={setDocType}
+                            uploading={uploading}
+                            onFileChange={onFileChange}
+                            docs={docs}
+                            onDelete={deleteDoc}
+                        />
                         <div className="flex justify-end">
                             <Button
-                                onClick={() => setStep(2)}
-                                disabled={!docsReady}
-                                data-testid="onboarding-next-btn"
+                                onClick={resubmit}
+                                disabled={!requiredDocsSatisfied || resubmitting}
+                                data-testid="onboarding-resubmit-btn"
                                 className="bg-primary hover:bg-primary/90 text-primary-foreground"
                             >
-                                Continuar a plan
-                                <ArrowRight className="h-4 w-4 ml-2" />
+                                {resubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                Reenviar a revisión
                             </Button>
                         </div>
                     </CardContent>
                 </Card>
             )}
 
-            {step === 2 && !loading && (
-                <Card className="border-border/70 tys-soft-shadow">
+            {!loading && phase === "suspended" && (
+                <Card className="border-red-300 bg-red-50/40 tys-soft-shadow" data-testid="onboarding-suspended-panel">
                     <CardHeader>
-                        <CardTitle className="text-lg">Paso 2 — Elegir plan</CardTitle>
+                        <CardTitle className="text-lg flex items-center gap-2 text-red-900">
+                            <ShieldAlert className="h-5 w-5" /> Tu cuenta está suspendida
+                        </CardTitle>
+                        <CardDescription className="text-red-900/80">
+                            Contactá a soporte para reactivarla.
+                        </CardDescription>
+                    </CardHeader>
+                </Card>
+            )}
+
+            {!loading && phase === "plan" && (
+                <Card className="border-border/70 tys-soft-shadow" data-testid="onboarding-plan-panel">
+                    <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2 text-emerald-700">
+                            <CheckCircle2 className="h-5 w-5" /> ¡Tu cuenta fue aprobada!
+                        </CardTitle>
                         <CardDescription>
                             {signupPlanCode ? (
                                 <>
@@ -344,7 +346,7 @@ export default function Onboarding() {
                                     Confirmá el pago con Stripe para activar tu cuenta.
                                 </>
                             ) : (
-                                <>Vas a Stripe Checkout. Al volver actualizamos tu suscripción automáticamente.</>
+                                <>Elegí un plan para activar tu cuenta. Vas a Stripe Checkout y al volver actualizamos tu suscripción automáticamente.</>
                             )}
                         </CardDescription>
                     </CardHeader>
@@ -369,6 +371,110 @@ export default function Onboarding() {
                     </CardContent>
                 </Card>
             )}
+        </div>
+    );
+}
+
+function DocumentsUploader({ docTypes, docType, setDocType, uploading, onFileChange, docs, onDelete }) {
+    return (
+        <div className="space-y-5">
+            <div className="grid sm:grid-cols-[1fr_2fr] gap-3 items-end">
+                <div className="space-y-1">
+                    <Label htmlFor="doc-type">Tipo de documento</Label>
+                    <Select value={docType} onValueChange={setDocType}>
+                        <SelectTrigger id="doc-type" data-testid="doc-type-select">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {docTypes.map((t) => (
+                                <SelectItem
+                                    key={t.code}
+                                    value={t.code}
+                                    data-testid={`doc-type-option-${t.code}`}
+                                >
+                                    {t.label}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+                <label
+                    htmlFor="file-input"
+                    data-testid="doc-dropzone"
+                    aria-disabled={uploading}
+                    className={`flex items-center justify-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 cursor-pointer transition-colors text-center ${
+                        uploading
+                            ? "border-primary bg-primary/5 cursor-wait"
+                            : "border-border/70 hover:border-primary hover:bg-primary/5"
+                    }`}
+                >
+                    {uploading ? (
+                        <>
+                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            <span className="text-sm font-medium text-primary">
+                                Subiendo documento…
+                            </span>
+                        </>
+                    ) : (
+                        <>
+                            <Upload className="h-5 w-5 text-primary" />
+                            <span className="text-sm">
+                                <strong className="text-primary">
+                                    Hacé click para subir
+                                </strong>{" "}
+                                <span className="text-muted-foreground">
+                                    — PDF, JPG, PNG, WEBP o HEIC (máx 10MB)
+                                </span>
+                            </span>
+                        </>
+                    )}
+                    <input
+                        id="file-input"
+                        name="file"
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/*"
+                        onChange={onFileChange}
+                        disabled={uploading}
+                        data-testid="doc-file-input"
+                        className="sr-only"
+                    />
+                </label>
+            </div>
+
+            <div data-testid="docs-list" className="space-y-2">
+                {docs.length === 0 && (
+                    <p className="text-sm text-muted-foreground" data-testid="docs-empty">
+                        Todavía no subiste documentos.
+                    </p>
+                )}
+                {docs.map((d) => (
+                    <div
+                        key={d.id}
+                        data-testid={`doc-row-${d.id}`}
+                        className="flex items-center justify-between p-3 rounded-lg border border-border/70 bg-card"
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className="h-9 w-9 rounded-md bg-secondary grid place-items-center text-primary">
+                                <FileText className="h-4 w-4" />
+                            </div>
+                            <div>
+                                <div className="text-sm font-medium">{d.original_filename}</div>
+                                <div className="text-xs text-muted-foreground">
+                                    {d.doc_type} · {(d.size_bytes / 1024).toFixed(1)} KB
+                                </div>
+                            </div>
+                        </div>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            data-testid={`delete-doc-${d.id}`}
+                            onClick={() => onDelete(d.id)}
+                        >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }
@@ -435,37 +541,40 @@ function DemoShortcut({ onActivated }) {
     );
 }
 
-function Stepper({ step, onChange, docsReady }) {
+function ProgressStrip({ phase }) {
     const items = [
-        { id: 1, label: "Documentos" },
-        { id: 2, label: "Plan" },
+        { id: "docs", label: "Documentos" },
+        { id: "review", label: "Revisión" },
+        { id: "plan", label: "Pago" },
     ];
+    const order = ["docs", "review", "plan"];
+    // rejected/suspended both visually sit at the "review" stage since that's
+    // where the admin decision happened.
+    const activeId = phase === "rejected" || phase === "suspended" ? "review" : phase;
+    const activeIdx = order.indexOf(activeId);
+
     return (
-        <ol data-testid="onboarding-stepper" className="flex items-center gap-3">
+        <ol data-testid="onboarding-progress" className="flex items-center gap-3">
             {items.map((it, idx) => {
-                const completed = it.id === 1 ? docsReady : false;
-                const isCurrent = it.id === step;
+                const isCurrent = it.id === activeId;
+                const isDone = idx < activeIdx;
                 return (
                     <li key={it.id} className="flex items-center gap-3">
-                        <button
-                            type="button"
-                            data-testid={`step-${it.id}`}
-                            onClick={() => onChange(it.id)}
+                        <span
+                            data-testid={`progress-${it.id}`}
                             className={`h-8 w-8 rounded-full grid place-items-center text-xs font-medium transition-colors ${
                                 isCurrent
                                     ? "bg-primary text-primary-foreground"
-                                    : completed
+                                    : isDone
                                       ? "bg-emerald-100 text-emerald-700"
                                       : "bg-muted text-foreground/60"
                             }`}
                         >
-                            {completed && !isCurrent ? <CheckCircle2 className="h-4 w-4" /> : it.id}
-                        </button>
+                            {isDone ? <CheckCircle2 className="h-4 w-4" /> : idx + 1}
+                        </span>
                         <span
                             className={`text-sm ${
-                                isCurrent
-                                    ? "font-medium text-foreground"
-                                    : "text-muted-foreground"
+                                isCurrent ? "font-medium text-foreground" : "text-muted-foreground"
                             }`}
                         >
                             {it.label}

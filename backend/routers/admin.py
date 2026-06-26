@@ -1,7 +1,7 @@
 """Admin router: organizer management + stats — Phase 2: PostgreSQL."""
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
@@ -15,13 +15,19 @@ from models import (
     AdminStats,
     ApproveBody,
     CommentBody,
+    DocumentTypeCreate,
+    DocumentTypeOut,
     OrganizerOut,
     OrganizersList,
     RejectBody,
+    RequiredDocumentsOut,
+    RequiredDocumentsUpdate,
     SuspendBody,
 )
 from orm_models import Organizer, OrganizerAdminComment, SubscriptionPlan, Tenant
 from security import require_role
+from services.document_types import create_document_type, list_document_types
+from services.required_documents import get_required_documents, set_required_documents
 
 router = APIRouter(
     prefix="/api/admin",
@@ -239,3 +245,44 @@ async def add_comment(
 
     await session.refresh(row, ["admin_comments"])
     return _org_to_out(row)
+
+
+@router.get("/settings/required-documents", response_model=RequiredDocumentsOut)
+async def get_required_documents_settings(session: AsyncSession = Depends(get_db)):
+    return await get_required_documents(session)
+
+
+@router.put("/settings/required-documents", response_model=RequiredDocumentsOut)
+async def update_required_documents_settings(
+    payload: RequiredDocumentsUpdate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    await set_required_documents(session, "individual", payload.individual, admin["id"])
+    await set_required_documents(session, "company", payload.company, admin["id"])
+    await log_audit(
+        admin["id"],
+        "settings.required_documents_updated",
+        "settings",
+        "required_documents",
+        payload.model_dump(),
+    )
+    return await get_required_documents(session)
+
+
+@router.get("/settings/document-types", response_model=List[DocumentTypeOut])
+async def get_document_types_settings(session: AsyncSession = Depends(get_db)):
+    return await list_document_types(session)
+
+
+@router.post("/settings/document-types", response_model=DocumentTypeOut, status_code=201)
+async def create_document_type_settings(
+    payload: DocumentTypeCreate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    created = await create_document_type(session, payload.label, admin["id"])
+    await log_audit(
+        admin["id"], "settings.document_type_created", "document_type", created["code"], {"label": payload.label}
+    )
+    return created

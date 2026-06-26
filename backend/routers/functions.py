@@ -27,7 +27,7 @@ GET    /api/public/events/{event_id}/functions
 GET    /api/public/events/{event_id}/functions/{function_id}
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -219,6 +219,7 @@ async def delete_ticket_type(
 @public_router.get("/api/public/events/{event_id}/ticket-types")
 async def public_list_ticket_types(
     event_id: str,
+    function_id: Optional[str] = None,
     session: AsyncSession = Depends(get_db),
 ):
     now = datetime.now(timezone.utc)
@@ -232,9 +233,34 @@ async def public_list_ticket_types(
     )
     types = result.scalars().all()
 
+    # Per-función overrides — price/capacity/availability for this ticket
+    # type may differ when the buyer is purchasing for a specific función.
+    overrides_by_type: Dict[str, FunctionTicketType] = {}
+    if function_id:
+        ov_result = await session.execute(
+            select(FunctionTicketType).where(FunctionTicketType.function_id == function_id)
+        )
+        overrides_by_type = {o.ticket_type_id: o for o in ov_result.scalars().all()}
+
     out = []
     for tt in types:
+        override = overrides_by_type.get(tt.id)
+        if override and not override.active:
+            continue  # not offered for this función
         d = _type_out(tt)
+        effective_price = (
+            override.price_cents_override
+            if override and override.price_cents_override is not None
+            else tt.price_cents
+        )
+        effective_capacity = (
+            override.capacity_override
+            if override and override.capacity_override is not None
+            else tt.capacity
+        )
+        effective_sold = override.tickets_sold if override else tt.tickets_sold
+        d["price_cents"] = effective_price
+        d["capacity"] = effective_capacity
         # Compute availability flags
         d["is_on_sale"] = True
         if tt.sale_start and now < tt.sale_start:
@@ -244,7 +270,7 @@ async def public_list_ticket_types(
         # Early bird: closes at date OR when capacity exhausted (checked client-side via sold_out)
         if tt.is_early_bird and tt.early_bird_closes_at and now > tt.early_bird_closes_at:
             d["is_on_sale"] = False
-        d["is_sold_out"] = tt.capacity is not None and tt.tickets_sold >= tt.capacity
+        d["is_sold_out"] = effective_capacity is not None and effective_sold >= effective_capacity
         out.append(d)
     return out
 
@@ -295,6 +321,48 @@ class EventFunctionUpdate(BaseModel):
     ticket_type_overrides: Optional[List[FunctionTicketTypeOverride]] = None
 
 
+# Franjas horarias — a función without an explicit end is assumed to run ~1h
+# for the purpose of detecting schedule overlaps against sibling funciones.
+_DEFAULT_FUNCTION_DURATION = timedelta(hours=1)
+
+
+def _same_venue(a: Optional[str], b: Optional[str]) -> bool:
+    return (a or "").strip().lower() == (b or "").strip().lower()
+
+
+async def _check_schedule_conflict(
+    event_id: str,
+    starts_at: Optional[datetime],
+    ends_at: Optional[datetime],
+    venue_name: Optional[str],
+    exclude_function_id: Optional[str],
+    session: AsyncSession,
+) -> None:
+    """Raise 409 if [starts_at, ends_at) overlaps a sibling, non-cancelled
+    función that shares the same venue (same venue_name, including both
+    blank = the event's main venue)."""
+    if not starts_at:
+        return
+    candidate_end = ends_at or (starts_at + _DEFAULT_FUNCTION_DURATION)
+    result = await session.execute(
+        select(EventFunction).where(
+            EventFunction.event_id == event_id,
+            EventFunction.status != "cancelled",
+        )
+    )
+    for other in result.scalars().all():
+        if exclude_function_id and other.id == exclude_function_id:
+            continue
+        if not other.starts_at or not _same_venue(venue_name, other.venue_name):
+            continue
+        other_end = other.ends_at or (other.starts_at + _DEFAULT_FUNCTION_DURATION)
+        if starts_at < other_end and other.starts_at < candidate_end:
+            raise HTTPException(
+                409,
+                f"El horario se superpone con la función '{other.name}' en el mismo lugar.",
+            )
+
+
 async def _upsert_overrides(
     function_id: str,
     overrides: List[FunctionTicketTypeOverride],
@@ -325,6 +393,9 @@ async def create_function(
 ):
     org = await _get_org(user, session)
     event = await _get_event_for_org(event_id, org.id, session)
+    await _check_schedule_conflict(
+        event_id, body.starts_at, body.ends_at, body.venue_name, None, session,
+    )
 
     func = EventFunction(
         id=str(uuid.uuid4()),
@@ -410,6 +481,13 @@ async def update_function(
     func = result.scalar_one_or_none()
     if not func:
         raise HTTPException(status_code=404, detail="Function not found")
+
+    effective_starts = body.starts_at if body.starts_at is not None else func.starts_at
+    effective_ends = body.ends_at if body.ends_at is not None else func.ends_at
+    effective_venue = body.venue_name if body.venue_name is not None else func.venue_name
+    await _check_schedule_conflict(
+        event_id, effective_starts, effective_ends, effective_venue, function_id, session,
+    )
 
     overrides = body.ticket_type_overrides
     update_data = body.model_dump(exclude_none=True, exclude={"ticket_type_overrides"})

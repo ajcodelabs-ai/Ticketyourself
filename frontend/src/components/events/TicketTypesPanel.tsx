@@ -27,6 +27,10 @@ import { isoToLocalInput, localInputToIso } from "@/lib/events";
 interface Locality {
     id: string;
     name: string;
+    price_cents?: number;
+    capacity?: number;
+    max_tickets_per_purchase?: number | null;
+    color?: string;
 }
 
 interface TicketType {
@@ -51,6 +55,7 @@ interface TicketType {
 interface Props {
     eventId: string | null;
     localities?: Locality[];
+    eventSaleWindow?: { sale_start: string | null; sale_end: string | null };
 }
 
 const COLORS = [
@@ -90,7 +95,11 @@ function centsFromDollars(dollars: string): number {
     return Math.round(n * 100);
 }
 
-export default function TicketTypesPanel({ eventId, localities = [] }: Props) {
+export default function TicketTypesPanel({
+    eventId,
+    localities = [],
+    eventSaleWindow,
+}: Props) {
     const [types, setTypes] = useState<TicketType[]>([]);
     const [loading, setLoading] = useState(false);
     const [open, setOpen] = useState(false);
@@ -119,7 +128,11 @@ export default function TicketTypesPanel({ eventId, localities = [] }: Props) {
 
     const openCreate = () => {
         setEditing(null);
-        setForm({ ...BLANK });
+        setForm({
+            ...BLANK,
+            sale_start: eventSaleWindow?.sale_start || undefined,
+            sale_end: eventSaleWindow?.sale_end || undefined,
+        });
         setPriceStr("0.00");
         setOpen(true);
     };
@@ -219,8 +232,9 @@ export default function TicketTypesPanel({ eventId, localities = [] }: Props) {
                 <div>
                     <h3 className="font-semibold">Tipos de ticket</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        Define las categorías disponibles (VIP, General, Early Bird…).
-                        El precio se determina aquí o puede heredarse de la localidad del venue.
+                        {localities.length > 0
+                            ? "Opcional para este evento numerado: la venta ya está habilitada por los precios de \"Precios por localidad\". Crea tipos (VIP, Early Bird…) solo si necesitás categorías adicionales dentro de una misma localidad."
+                            : "Define las categorías disponibles (VIP, General, Early Bird…) y su precio. Crea al menos una para habilitar la venta."}
                     </p>
                 </div>
                 <Button size="sm" onClick={openCreate} data-testid="add-ticket-type">
@@ -237,7 +251,11 @@ export default function TicketTypesPanel({ eventId, localities = [] }: Props) {
                 <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
                     <Tag className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     <p className="text-sm">Aún no hay tipos de ticket.</p>
-                    <p className="text-xs mt-1">Crea al menos uno para habilitar la venta.</p>
+                    <p className="text-xs mt-1">
+                        {localities.length > 0
+                            ? "No es obligatorio — tu evento ya vende por localidad."
+                            : "Crea al menos uno para habilitar la venta."}
+                    </p>
                 </div>
             ) : (
                 <div className="space-y-2">
@@ -320,9 +338,21 @@ export default function TicketTypesPanel({ eventId, localities = [] }: Props) {
                                 <Label>Localidad del venue</Label>
                                 <Select
                                     value={form.venue_locality_id || "__none__"}
-                                    onValueChange={(v) =>
-                                        upd("venue_locality_id", v === "__none__" ? undefined : v)
-                                    }
+                                    onValueChange={(v) => {
+                                        const loc = localities.find((l) => l.id === v);
+                                        setForm((prev) => ({
+                                            ...prev,
+                                            venue_locality_id: v === "__none__" ? undefined : v,
+                                            capacity: loc ? loc.capacity ?? prev.capacity : prev.capacity,
+                                            max_per_buyer: loc
+                                                ? loc.max_tickets_per_purchase ?? prev.max_per_buyer
+                                                : prev.max_per_buyer,
+                                            color: loc?.color || prev.color,
+                                        }));
+                                        if (loc && loc.price_cents != null) {
+                                            setPriceStr(priceDollars(loc.price_cents));
+                                        }
+                                    }}
                                 >
                                     <SelectTrigger data-testid="tt-locality">
                                         <SelectValue />
@@ -332,10 +362,18 @@ export default function TicketTypesPanel({ eventId, localities = [] }: Props) {
                                         {localities.map((l) => (
                                             <SelectItem key={l.id} value={l.id}>
                                                 {l.name}
+                                                {l.price_cents != null
+                                                    ? ` — $${priceDollars(l.price_cents)}`
+                                                    : ""}
                                             </SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>
+                                <p className="text-xs text-muted-foreground">
+                                    Al elegir una localidad se completan precio, capacidad, máx.
+                                    por comprador y color con los valores de esa localidad. Podés
+                                    ajustarlos si este tipo de ticket debe ser distinto.
+                                </p>
                             </div>
                         )}
 
@@ -363,6 +401,10 @@ export default function TicketTypesPanel({ eventId, localities = [] }: Props) {
                         {/* Sale window */}
                         <div className="space-y-1.5">
                             <Label>Ventana de venta</Label>
+                            <p className="text-xs text-muted-foreground">
+                                Por defecto es la misma del evento. Cambiala solo si este tipo
+                                debe abrir o cerrar en otro momento (ej. Early Bird).
+                            </p>
                             <div className="grid sm:grid-cols-2 gap-3">
                                 <div className="space-y-1">
                                     <span className="text-xs text-muted-foreground">Inicio</span>

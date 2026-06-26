@@ -9,12 +9,20 @@ from sqlalchemy import delete, func, or_, select, update as sa_update
 from database import AsyncSessionLocal
 from db_helpers import get_event_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import (
-    ActivationEvent, Event, EventCapacityReservation, EventSeatAssignment,
+    ActivationEvent, DocumentType, Event, EventCapacityReservation, EventSeatAssignment,
     Microsite, MicrositeAsset, Organizer, OrganizerAdminComment, OrganizerDocument,
-    SeatHold, SubscriptionPlan, Tenant, Ticket, TicketOrder, User,
+    RequiredDocumentSet, SeatHold, SubscriptionPlan, Tenant, Ticket, TicketOrder, User,
 )
 from security import hash_password, verify_password
+from services.required_documents import DEFAULTS as REQUIRED_DOC_DEFAULTS
 from slugs import normalize_slug
+
+DEFAULT_DOCUMENT_TYPES = {
+    "ruc": "RUC",
+    "id_card": "Cédula",
+    "operating_permit": "Permiso de funcionamiento",
+    "other": "Otro",
+}
 
 logger = logging.getLogger("tys.seed")
 
@@ -213,6 +221,34 @@ async def _seed_plans() -> None:
                 ))
         await session.commit()
     logger.info("Seeded %d plans", len(PLANS))
+
+
+async def _seed_document_types() -> None:
+    """Default document type catalog, only if the table is still empty (an
+    admin may have already extended it via /admin/configuracion)."""
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(select(func.count(DocumentType.code)))
+        if existing:
+            return
+        now = datetime.now(timezone.utc)
+        for code, label in DEFAULT_DOCUMENT_TYPES.items():
+            session.add(DocumentType(code=code, label=label, created_at=now))
+        await session.commit()
+    logger.info("Seeded default document types")
+
+
+async def _seed_required_documents() -> None:
+    """Default mandatory doc per org_type, only if the table is still empty
+    (an admin may have already configured it via /admin/configuracion)."""
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(select(func.count(RequiredDocumentSet.org_type)))
+        if existing:
+            return
+        now = datetime.now(timezone.utc)
+        for org_type, doc_types in REQUIRED_DOC_DEFAULTS.items():
+            session.add(RequiredDocumentSet(org_type=org_type, doc_types=doc_types, updated_at=now))
+        await session.commit()
+    logger.info("Seeded default required-document rules")
 
 
 async def _seed_demo_organizers() -> None:
@@ -698,7 +734,7 @@ async def _seed_demo_events() -> None:
                 "Disfrutá una noche acústica con tres bandas locales en un ambiente íntimo. "
                 "Sonido envolvente, luces tenues y bebida de cortesía con tu entrada."
             ),
-            "category": "entertainment",
+            "category": "music",
             "venue_name": "Teatro Bolívar",
             "venue_address": "Pasaje Royal 175 y Junín",
             "venue_city": "Quito",
@@ -1459,7 +1495,7 @@ async def _seed_demo_numbered_event() -> None:
                 "el mapa del Teatro Demo. Tres localidades disponibles: Platea, Tribuna y Gradería General."
             )
             row.short_description = "Función con asientos numerados — mapa interactivo."
-            row.category = "entertainment"
+            row.category = "theater"
             row.venue_name = "Teatro Demo"
             row.venue_address = "Pasaje Royal 175 y Junín"
             row.venue_city = "Quito"
@@ -1500,7 +1536,7 @@ async def _seed_demo_numbered_event() -> None:
                     "el mapa del Teatro Demo. Tres localidades disponibles: Platea, Tribuna y Gradería General."
                 ),
                 short_description="Función con asientos numerados — mapa interactivo.",
-                category="entertainment",
+                category="theater",
                 venue_name="Teatro Demo",
                 venue_address="Pasaje Royal 175 y Junín",
                 venue_city="Quito",
@@ -1641,6 +1677,8 @@ async def run_seeds() -> None:
     await _cleanup_ephemeral_orders()
     await _seed_admin()
     await _seed_plans()
+    await _seed_document_types()
+    await _seed_required_documents()
     await _seed_demo_organizers()
     await _reset_demo_organizers()
     await _seed_demo_microsites()

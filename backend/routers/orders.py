@@ -68,6 +68,8 @@ class CreateOrderBody(BaseModel):
     # Phase 8 — multi-función + ticket types
     function_id: Optional[str] = None
     ticket_type_selections: Optional[list[TicketTypeSelection]] = None
+    # Fase 9 — access control (lista verificada / código de acceso)
+    access_code: Optional[str] = Field(default=None, max_length=40)
 
 
 class PreviewOrderBody(BaseModel):
@@ -172,7 +174,43 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
     if event["status"] != "published":
         raise HTTPException(409, "El evento no está disponible para compra")
 
+    from services.access_control import check_purchase_access
+
+    async with AsyncSessionLocal() as access_session:
+        try:
+            access_code_id = await check_purchase_access(
+                event=event,
+                session=access_session,
+                buyer_email=payload.buyer.email,
+                buyer_document_id=payload.buyer.document_id,
+                access_code=payload.access_code,
+            )
+        except ValueError as exc:
+            raise HTTPException(403, str(exc))
+
     buyer = order_service.validate_buyer(payload.buyer.model_dump())
+
+    # Phase 8 — multi-función: validate function_id belongs to this event and
+    # is still active, and fetch its ticket-type overrides for pricing/capacity.
+    function = None
+    function_overrides: dict = {}
+    if payload.function_id:
+        from orm_models import EventFunction as _EFModel, FunctionTicketType as _FTTModel
+        async with AsyncSessionLocal() as pg:
+            func_row = await pg.scalar(
+                select(_EFModel).where(
+                    _EFModel.id == payload.function_id,
+                    _EFModel.event_id == event["id"],
+                    _EFModel.status == "active",
+                )
+            )
+            if not func_row:
+                raise HTTPException(422, "La función seleccionada no existe o ya no está disponible.")
+            function = row_to_dict(func_row)
+            ov_result = await pg.execute(
+                select(_FTTModel).where(_FTTModel.function_id == function["id"])
+            )
+            function_overrides = {o.ticket_type_id: row_to_dict(o) for o in ov_result.scalars().all()}
 
     # Phase 7 — numbered event: use seat-based totals
     seat_ids = payload.seat_ids or None
@@ -184,8 +222,13 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             raise HTTPException(409, "El venue del evento ya no está disponible.")
         if not payload.seat_holds_session_token:
             raise HTTPException(422, "Falta el token de reservas (seat_holds_session_token).")
+        # A función may override per-locality pricing; fall back to the
+        # event's own locality_pricing when it doesn't set its own.
+        pricing_event = event
+        if function and function.get("locality_pricing"):
+            pricing_event = {**event, "locality_pricing": function["locality_pricing"]}
         totals = order_service.compute_totals_with_seats(
-            event=event, venue=venue, seat_ids=seat_ids,
+            event=pricing_event, venue=venue, seat_ids=seat_ids,
         )
         quantity = len(seat_ids)
     elif payload.ticket_type_selections:
@@ -204,9 +247,25 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         items_override = []
         for sel in payload.ticket_type_selections:
             tt = tt_map[sel.ticket_type_id]
+            override = function_overrides.get(sel.ticket_type_id)
+            if override and not override.get("active", True):
+                raise HTTPException(
+                    409, f"El tipo '{tt['name']}' no está disponible para la función seleccionada."
+                )
             if not tt.get("active", True):
                 raise HTTPException(409, f"El tipo '{tt['name']}' ya no está disponible.")
-            unit = int(tt.get("price_cents") or 0)
+            unit = (
+                override["price_cents_override"]
+                if override and override.get("price_cents_override") is not None
+                else int(tt.get("price_cents") or 0)
+            )
+            cap_override = override.get("capacity_override") if override else None
+            if cap_override is not None:
+                sold_for_type = override.get("tickets_sold") or 0
+                if sold_for_type + sel.quantity > cap_override:
+                    raise HTTPException(
+                        409, f"No hay suficiente aforo de '{tt['name']}' para esta función."
+                    )
             sel_subtotal = unit * sel.quantity
             subtotal += sel_subtotal
             items_override.append({
@@ -264,8 +323,9 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         payment_method=effective_method,
         seat_ids=seat_ids,
         seat_holds_session_token=payload.seat_holds_session_token,
-        function_id=payload.function_id,
+        function=function,
         items_override=items_override,
+        access_code_id=access_code_id,
     )
 
     # FREE event — confirm instantly.
@@ -288,8 +348,9 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         await order_service.reserve_capacity(
             event_id=event["id"],
             order_id=order["id"],
-            quantity=payload.quantity,
+            quantity=quantity,
             ttl_minutes=order_service.MANUAL_RESERVATION_TTL_HOURS * 60,
+            function_id=function["id"] if function else None,
         )
         instructions = order_service.get_payment_instructions(
             event=event, payment_method=effective_method
@@ -328,7 +389,8 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         _row.stripe_session_id = session["id"]
         await _pg.commit()
     await order_service.reserve_capacity(
-        event_id=event["id"], order_id=order["id"], quantity=payload.quantity
+        event_id=event["id"], order_id=order["id"], quantity=quantity,
+        function_id=function["id"] if function else None,
     )
     return {
         "order_number": order["order_number"],

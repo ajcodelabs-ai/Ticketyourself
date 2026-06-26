@@ -120,9 +120,10 @@ def active_localities(venue: Dict[str, Any]) -> List[str]:
 
 # ── Live status (available / held / sold) for an event ──────────────────
 async def compute_event_seats_status(
-    *, event: Dict[str, Any], venue: Dict[str, Any]
+    *, event: Dict[str, Any], venue: Dict[str, Any], function_id: str = ""
 ) -> List[Dict[str, Any]]:
-    """Returns one entry per seat with its current public status."""
+    """Returns one entry per seat with its current public status, scoped to
+    one función's own pool (function_id="" = general / non-multi-función)."""
     from database import AsyncSessionLocal
     from orm_models import SeatHold, EventSeatAssignment
     from sqlalchemy import select
@@ -134,6 +135,7 @@ async def compute_event_seats_status(
         held_result = await session.execute(
             select(SeatHold.seat_id, SeatHold.expires_at, SeatHold.session_token).where(
                 SeatHold.event_id == event["id"],
+                SeatHold.function_id == function_id,
                 SeatHold.status == "held",
                 SeatHold.expires_at > now,
             )
@@ -145,7 +147,8 @@ async def compute_event_seats_status(
 
         sold_result = await session.execute(
             select(EventSeatAssignment.seat_id).where(
-                EventSeatAssignment.event_id == event["id"]
+                EventSeatAssignment.event_id == event["id"],
+                EventSeatAssignment.function_id == function_id,
             )
         )
         sold = {row.seat_id for row in sold_result.all()}
@@ -167,10 +170,14 @@ async def create_seat_holds(
     *, event_id: str, venue_id: str, seat_ids: List[str],
     session_token: str, buyer_email: Optional[str] = None,
     window_minutes: int = SEAT_HOLD_WINDOW_MIN_DEFAULT,
+    function_id: str = "",
 ) -> List[Dict[str, Any]]:
     """
     Atomically:
-      - Check no requested seat is already sold OR currently held by ANOTHER session.
+      - Check no requested seat is already sold OR currently held by ANOTHER
+        session, WITHIN THE SAME función (function_id="" = general event) —
+        the same physical seat can be held/sold independently in a different
+        función since seats reset between funciones.
       - (Re-holds for the SAME session_token are allowed — extends the lock.)
       - Insert one seat_holds row per seat with status=held, expires_at=now+window.
     Raises if anything is unavailable.
@@ -189,6 +196,7 @@ async def create_seat_holds(
         sold_result = await session.execute(
             select(EventSeatAssignment.seat_id).where(
                 EventSeatAssignment.event_id == event_id,
+                EventSeatAssignment.function_id == function_id,
                 EventSeatAssignment.seat_id.in_(seat_ids),
             )
         )
@@ -198,6 +206,7 @@ async def create_seat_holds(
         held_result = await session.execute(
             select(SeatHold.seat_id).where(
                 SeatHold.event_id == event_id,
+                SeatHold.function_id == function_id,
                 SeatHold.seat_id.in_(seat_ids),
                 SeatHold.status == "held",
                 SeatHold.expires_at > now,
@@ -221,6 +230,7 @@ async def create_seat_holds(
         await session.execute(
             delete(SeatHold).where(
                 SeatHold.event_id == event_id,
+                SeatHold.function_id == function_id,
                 SeatHold.seat_id.in_(seat_ids),
                 SeatHold.session_token == session_token,
             )
@@ -239,6 +249,7 @@ async def create_seat_holds(
                 status="held",
                 held_at=now,
                 expires_at=expires,
+                function_id=function_id,
             )
             session.add(hold)
             hold_rows.append(hold)
@@ -267,18 +278,24 @@ async def create_seat_holds(
         return [row_to_dict(h) for h in hold_rows]
 
 
-async def release_holds_for_session(*, event_id: str, session_token: str) -> int:
+async def release_holds_for_session(
+    *, event_id: str, session_token: str, function_id: Optional[str] = None,
+) -> int:
     from database import AsyncSessionLocal
     from orm_models import SeatHold
     from sqlalchemy import delete
 
+    conditions = [
+        SeatHold.event_id == event_id,
+        SeatHold.session_token == session_token,
+        SeatHold.status == "held",
+    ]
+    if function_id is not None:
+        conditions.append(SeatHold.function_id == function_id)
+
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            delete(SeatHold).where(
-                SeatHold.event_id == event_id,
-                SeatHold.session_token == session_token,
-                SeatHold.status == "held",
-            ).execution_options(synchronize_session=False)
+            delete(SeatHold).where(*conditions).execution_options(synchronize_session=False)
         )
         await session.commit()
     return result.rowcount or 0
@@ -286,6 +303,7 @@ async def release_holds_for_session(*, event_id: str, session_token: str) -> int
 
 async def consume_holds_for_order(
     *, event_id: str, session_token: str, seat_ids: List[str], order_id: str,
+    function_id: str = "",
 ) -> None:
     """Transitions held → converted at order-creation time."""
     from fastapi import HTTPException
@@ -299,6 +317,7 @@ async def consume_holds_for_order(
             update(SeatHold)
             .where(
                 SeatHold.event_id == event_id,
+                SeatHold.function_id == function_id,
                 SeatHold.seat_id.in_(seat_ids),
                 SeatHold.session_token == session_token,
                 SeatHold.status == "held",
@@ -334,6 +353,7 @@ async def assign_seats_to_tickets(
 
     by_id = seats_by_id(venue)
     now = _now()
+    function_id = order.get("function_id") or ""
 
     async with AsyncSessionLocal() as session:
         for ticket, sid in zip(tickets, seat_ids, strict=False):
@@ -366,6 +386,7 @@ async def assign_seats_to_tickets(
                 holder_email=(order.get("buyer") or {}).get("email"),
                 locality_id=loc_id,
                 assigned_at=now,
+                function_id=function_id,
             ))
         await session.commit()
 
