@@ -6,8 +6,9 @@ import {
     useCallback,
     useMemo,
 } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import api from "@/lib/api";
+import { extractSubdomainFromHostname } from "@/lib/config";
 
 const STORAGE_KEY = "tys.tenant_slug";
 const DEFAULT_PREVIEW_SLUG = "demo-org";
@@ -24,10 +25,12 @@ export function TenantProvider({ children }) {
     const [searchParams, setSearchParams] = useSearchParams();
 
     // Initial slug:
-    //   1. ?tenant=... in URL (always wins, updates storage)
-    //   2. localStorage
-    //   3. default "demo-org" for preview convenience
+    //   1. Subdomain from hostname (e.g. demo-org.ajcodelabs.ai → "demo-org")
+    //   2. ?tenant=... in URL
+    //   3. localStorage
+    //   4. default "demo-org" for preview convenience
     const initialSlug =
+        extractSubdomainFromHostname() ||
         searchParams.get("tenant") ||
         (typeof window !== "undefined" && localStorage.getItem(STORAGE_KEY)) ||
         DEFAULT_PREVIEW_SLUG;
@@ -111,5 +114,19 @@ export function TenantProvider({ children }) {
 }
 
 export function useTenant() {
-    return useContext(TenantContext);
+    const ctx = useContext(TenantContext);
+    if (!ctx) throw new Error("useTenant must be used within TenantProvider");
+    return ctx;
+}
+
+export function useSlug() {
+    const { slug, tenantSlug: ts } = useParams();
+    const { tenantSlug } = useTenant();
+    return slug || ts || tenantSlug || undefined;
+}
+
+export function useTenantSlug() {
+    const { tenantSlug: paramSlug } = useParams();
+    const { tenantSlug } = useTenant();
+    return paramSlug || tenantSlug || undefined;
 }
