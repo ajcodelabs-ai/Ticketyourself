@@ -4,13 +4,14 @@
  */
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useSlug } from "@/contexts/TenantContext";
 import { Loader2, Frown, ArrowLeft } from "lucide-react";
 
 import api from "@/lib/api";
 import MicrositeRenderer from "@/components/microsite/MicrositeRenderer";
 
 export default function MicrositePublic() {
-    const { slug } = useParams();
+    const slug = useSlug();
     const [microsite, setMicrosite] = useState(null);
     const [state, setState] = useState("loading");
 

@@ -9,6 +9,7 @@
  */
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useSlug } from "@/contexts/TenantContext";
 import { QRCodeSVG } from "qrcode.react";
 import {
     Loader2,
@@ -34,7 +35,8 @@ const POLL_INTERVAL_MS = 2000;
 const MAX_POLLS = 30; // ~60s total
 
 export default function OrderSuccess() {
-    const { slug, order_number } = useParams();
+    const { order_number } = useParams();
+    const slug = useSlug();
     const [params] = useSearchParams();
     const sessionId = params.get("session_id");
 

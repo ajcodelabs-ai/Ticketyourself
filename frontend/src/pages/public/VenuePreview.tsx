@@ -5,6 +5,7 @@
  */
 import { useEffect, useState, useMemo } from "react";
 import { useParams } from "react-router-dom";
+import { useTenantSlug } from "@/contexts/TenantContext";
 import { Loader2, MapPin } from "lucide-react";
 import EditorCanvas from "@/components/venues/EditorCanvas";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,7 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { venuesApi, computeCapacity } from "@/lib/venues";
 
 export default function VenuePreview() {
-    const { tenantSlug, venueSlug } = useParams();
+    const { venueSlug } = useParams();
+    const tenantSlug = useTenantSlug();
     const [venue, setVenue] = useState(null);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);

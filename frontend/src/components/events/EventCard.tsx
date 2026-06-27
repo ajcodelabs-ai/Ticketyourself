@@ -4,14 +4,14 @@
  */
 import { Link } from "react-router-dom";
 import { Calendar, MapPin, Ticket } from "lucide-react";
-import { formatPriceLabel, formatEventDate, eventPublicPath } from "@/lib/events";
+import { formatPriceLabel, formatEventDate } from "@/lib/events";
 
 const FALLBACK_IMG = "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=800";
 
 export default function EventCard({ event, tenantSlug, primaryColor = "#4f46e5" }) {
     if (!event) return null;
     const slug = tenantSlug || event.tenant_slug;
-    const href = eventPublicPath(slug, event.slug);
+    const href = `/o/${slug}/e/${event.slug}`;
     return (
         <Link
             to={href}

@@ -14,6 +14,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { useSlug } from "@/contexts/TenantContext";
 import {
     Loader2,
     Clock,
@@ -64,7 +65,8 @@ function timeLeftLabel(deadline) {
 }
 
 export default function PaymentInstructions() {
-    const { slug, order_number } = useParams();
+    const { order_number } = useParams();
+    const slug = useSlug();
     const navigate = useNavigate();
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
