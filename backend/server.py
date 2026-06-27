@@ -9,6 +9,7 @@ from pathlib import Path
 load_dotenv(Path(__file__).parent / ".env")
 
 import logging  # noqa: E402
+import re  # noqa: E402
 import os  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
@@ -102,14 +103,20 @@ app.include_router(guest_lists_router.public_router)
 
 
 # CORS — must NOT use "*" with allow_credentials=True per browser spec.
-# We accept any *.preview.emergentagent.com host (current + future previews)
+# We accept any *.preview.emergentagent.com custom domain (current + future previews)
 # plus localhost:3000 (dev). Specific FRONTEND_URL is also added as a literal allow.
 frontend_url = os.environ.get("FRONTEND_URL", "")
 explicit_allowed = [o for o in (frontend_url, "http://localhost:3000") if o]
+public_domain = os.environ["PUBLIC_DOMAIN"]
+cors_regex = (
+    r"^https?://[a-zA-Z0-9-]+\.(preview\.emergentagent\.com|"
+    + re.escape(public_domain)
+    + r")(:\d+)?$"
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=explicit_allowed,
-    allow_origin_regex=r"^https://[a-zA-Z0-9-]+\.preview\.emergentagent\.com$",
+    allow_origin_regex=cors_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
