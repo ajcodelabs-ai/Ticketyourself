@@ -117,10 +117,17 @@ function HoldCountdown({ expiresAt, onExpire }: { expiresAt: string; onExpire: (
     );
 }
 
-export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, seatHoldsInfo }) {
+export default function PurchaseModal({
+    open, onOpenChange, event, tenantSlug, seatHoldsInfo,
+    preSelectedFunctionId = null, preSelectedFunctionName = "",
+}) {
     const navigate = useNavigate();
     const pricingType = event?.pricing_type || "free";
     const isSeatNumbered = !!seatHoldsInfo;
+    // "Subevento" wording (independent add-on: sala VIP, cena, meet & greet)
+    // vs "función" (same show repeated) — same underlying mechanics either way.
+    const isSubevent = event?.multi_function_mode === "subevent";
+    const functionNoun = isSubevent ? "subevento" : "función";
 
     const activeMethods = useMemo(() => {
         if (pricingType === "free") return [];
@@ -132,7 +139,7 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
     const [ticketTypes, setTicketTypes] = useState<TicketTypeItem[]>([]);
     const [functions, setFunctions] = useState<EventFunction[]>([]);
     const [loadingMeta, setLoadingMeta] = useState(false);
-    const [selectedFunctionId, setSelectedFunctionId] = useState<string | null>(null);
+    const [selectedFunctionId, setSelectedFunctionId] = useState<string | null>(preSelectedFunctionId);
     // qty per ticket type id
     const [typeQty, setTypeQty] = useState<Record<string, number>>({});
 
@@ -215,13 +222,15 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
         setTicketTypes([]);
         setFunctions([]);
         setTypeQty({});
-        setSelectedFunctionId(null);
+        setSelectedFunctionId(preSelectedFunctionId);
 
         // Seat-numbered events resolve their función earlier, on the seat map
         // (each función has its own seat pool) — seatHoldsInfo.function_id
-        // already carries it, so this modal must not offer a second, possibly
-        // conflicting función selector.
-        const loadFns = event.is_multi_function && !isSeatNumbered
+        // already carries it. Same for callers that already picked a specific
+        // subevento before opening this modal (preSelectedFunctionId). Either
+        // way the selector below must not offer a second, possibly
+        // conflicting choice.
+        const loadFns = event.is_multi_function && !isSeatNumbered && !preSelectedFunctionId
             ? api
                   .get(`/public/events/${event.id}/functions`)
                   .then((r) => alive && setFunctions(
@@ -249,7 +258,7 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
         Promise.all([loadTypes, loadFns]).finally(() => alive && setLoadingMeta(false));
 
         return () => { alive = false; };
-    }, [open, event?.id, event?.is_multi_function, isSeatNumbered]);
+    }, [open, event?.id, event?.is_multi_function, isSeatNumbered, preSelectedFunctionId]);
 
     // Multi-función: (re)load ticket types scoped to the chosen función so
     // price/capacity/availability reflect that función's overrides.
@@ -417,7 +426,7 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
         if (hasTypes && !isSeatNumbered && totalQtyFromTypes < 1)
             e.ticketTypes = "Seleccioná al menos 1 ticket";
         if (event?.is_multi_function && functions.length > 0 && !selectedFunctionId)
-            e.function = "Seleccioná una función";
+            e.function = `Seleccioná un${isSubevent ? "" : "a"} ${functionNoun}`;
         setErrors(e);
         return Object.keys(e).length === 0;
     };
@@ -593,10 +602,23 @@ export default function PurchaseModal({ open, onOpenChange, event, tenantSlug, s
                     </div>
                 ) : (
                     <>
+                        {/* ── Pre-selected función/subevento (chosen before opening this modal) ── */}
+                        {preSelectedFunctionId && preSelectedFunctionName && (
+                            <div
+                                className="rounded-lg border bg-secondary/40 px-3 py-2 text-sm flex items-center gap-2"
+                                data-testid="preselected-function"
+                            >
+                                <CalendarRange className="h-4 w-4 text-muted-foreground shrink-0" />
+                                Comprando para <strong>{preSelectedFunctionName}</strong>
+                            </div>
+                        )}
+
                         {/* ── Function selector ─────────────────────────────── */}
                         {functions.length > 0 && (
                             <div className="space-y-2" data-testid="function-selector">
-                                <Label className="font-medium">Seleccioná una función *</Label>
+                                <Label className="font-medium">
+                                    Seleccioná un{isSubevent ? "" : "a"} {functionNoun} *
+                                </Label>
                                 {errors.function && (
                                     <p className="text-xs text-red-600">{errors.function}</p>
                                 )}

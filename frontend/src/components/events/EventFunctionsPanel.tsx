@@ -72,9 +72,70 @@ interface Locality {
 interface Props {
     eventId: string | null;
     localities?: Locality[];
+    mode?: "function" | "subevent";
 }
 
 type OverrideRow = { price: string; capacity: string; active: boolean };
+
+// "function" = same show repeated (Multifunción / Franjas horarias).
+// "subevent" = independent add-on under the umbrella event (sala VIP, cena,
+// meet & greet) — only changes wording; both share the EventFunction model.
+const MODE_LABELS = {
+    function: {
+        plural: "funciones",
+        addButton: "Agregar función",
+        panelTitle: "Funciones del evento",
+        panelSubtitle:
+            "Agrega múltiples fechas o franjas horarias. Cada una puede tener su propio venue, aforo y precios por tipo de ticket / localidad.",
+        emptyTitle: "Aún no hay funciones.",
+        emptyHint: "Si el evento tiene una sola fecha, no necesitas agregar funciones.",
+        namePlaceholder: "Función 1 — Sábado 14 de junio",
+        descPlaceholder: "Detalles adicionales de esta función…",
+        venueSectionTitle: "Lugar de esta función",
+        capacityLabel: "Aforo de esta función",
+        capacityHelp:
+            "Si lo dejás vacío, esta función comparte el aforo general del evento. Si pones un número, esta función tiene su propio cupo independiente de las demás.",
+        overlapHelp:
+            "Si dos funciones en el mismo lugar se superponen en horario, no vas a poder guardar — ajustá el horario o el lugar de alguna de ellas.",
+        dialogCreate: "Nueva función",
+        dialogEdit: "Editar función",
+        saveCreate: "Crear función",
+        nameRequired: "El nombre de la función es requerido",
+        savedCreate: "Función creada",
+        savedEdit: "Función actualizada",
+        deletedOk: "Función eliminada",
+        deleteConfirm: (name: string) => `¿Eliminar la función "${name}"?`,
+        deleteBlocked: "No se puede eliminar: ya hay tickets vendidos para esta función.",
+        guardFirst: "Guarda primero la información general del evento para gestionar las funciones.",
+    },
+    subevent: {
+        plural: "subeventos",
+        addButton: "Agregar subevento",
+        panelTitle: "Subeventos del evento",
+        panelSubtitle:
+            "Agrega experiencias independientes (sala VIP, cena, meet & greet). Cada una puede tener su propio venue, aforo y precios — y puede coincidir en horario con el evento principal u otros subeventos.",
+        emptyTitle: "Aún no hay subeventos.",
+        emptyHint: "Agregá uno si tu evento incluye experiencias que se compran por separado.",
+        namePlaceholder: "Cena VIP — Sábado 14 de junio",
+        descPlaceholder: "Detalles adicionales de este subevento…",
+        venueSectionTitle: "Lugar de este subevento",
+        capacityLabel: "Aforo de este subevento",
+        capacityHelp:
+            "Si lo dejás vacío, este subevento comparte el aforo general del evento. Si pones un número, tiene su propio cupo independiente de los demás.",
+        overlapHelp:
+            "Los subeventos son experiencias independientes: pueden coincidir en horario con el evento principal u otros subeventos sin problema.",
+        dialogCreate: "Nuevo subevento",
+        dialogEdit: "Editar subevento",
+        saveCreate: "Crear subevento",
+        nameRequired: "El nombre del subevento es requerido",
+        savedCreate: "Subevento creado",
+        savedEdit: "Subevento actualizado",
+        deletedOk: "Subevento eliminado",
+        deleteConfirm: (name: string) => `¿Eliminar el subevento "${name}"?`,
+        deleteBlocked: "No se puede eliminar: ya hay tickets vendidos para este subevento.",
+        guardFirst: "Guarda primero la información general del evento para gestionar los subeventos.",
+    },
+} as const;
 
 const BLANK = {
     name: "",
@@ -124,7 +185,8 @@ function sameVenue(aVenueName: string, bVenueName: string): boolean {
     return (aVenueName || "").trim().toLowerCase() === (bVenueName || "").trim().toLowerCase();
 }
 
-export default function EventFunctionsPanel({ eventId, localities = [] }: Props) {
+export default function EventFunctionsPanel({ eventId, localities = [], mode = "function" }: Props) {
+    const L = MODE_LABELS[mode] || MODE_LABELS.function;
     const [functions, setFunctions] = useState<EventFunction[]>([]);
     const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
     const [loading, setLoading] = useState(false);
@@ -215,6 +277,7 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
         }));
 
     const findScheduleConflict = (starts_at: string | null, ends_at: string | null) => {
+        if (mode === "subevent") return null; // subevents may legitimately overlap
         const candidateRange = rangeOf(starts_at, ends_at);
         if (!candidateRange) return null;
         return functions.find((f) => {
@@ -230,7 +293,7 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
     const handleSave = async () => {
         if (!eventId) return;
         if (!form.name.trim()) {
-            toast.error("El nombre de la función es requerido");
+            toast.error(L.nameRequired);
             return;
         }
         const starts_at = form.starts_at ? localInputToIso(form.starts_at as string) : null;
@@ -238,7 +301,7 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
         const conflict = findScheduleConflict(starts_at, ends_at);
         if (conflict) {
             toast.error(
-                `El horario se superpone con la función "${conflict.name}" en el mismo lugar. Ajustá el horario o cambiá el lugar.`,
+                `El horario se superpone con "${conflict.name}" en el mismo lugar. Ajustá el horario o cambiá el lugar.`,
             );
             return;
         }
@@ -278,14 +341,15 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
             venue_country: form.venue_country || null,
             ticket_type_overrides,
             locality_pricing,
+            kind: mode,
         };
         try {
             if (editing) {
                 await api.put(`/events/me/${eventId}/functions/${editing.id}`, payload);
-                toast.success("Función actualizada");
+                toast.success(L.savedEdit);
             } else {
                 await api.post(`/events/me/${eventId}/functions`, payload);
-                toast.success("Función creada");
+                toast.success(L.savedCreate);
             }
             setOpen(false);
             await load();
@@ -299,14 +363,14 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
     const handleDelete = async (fn: EventFunction) => {
         if (!eventId) return;
         if ((fn.tickets_sold ?? 0) > 0) {
-            toast.error("No se puede eliminar: ya hay tickets vendidos para esta función.");
+            toast.error(L.deleteBlocked);
             return;
         }
-        if (!confirm(`¿Eliminar la función "${fn.name}"?`)) return;
+        if (!confirm(L.deleteConfirm(fn.name))) return;
         setDeleting(fn.id);
         try {
             await api.delete(`/events/me/${eventId}/functions/${fn.id}`);
-            toast.success("Función eliminada");
+            toast.success(L.deletedOk);
             await load();
         } catch (err: any) {
             toast.error(err?.response?.data?.detail || "Error al eliminar");
@@ -319,9 +383,7 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
         return (
             <div className="flex items-center gap-2 text-muted-foreground p-6 rounded-xl border">
                 <AlertCircle className="h-4 w-4 shrink-0" />
-                <span className="text-sm">
-                    Guarda primero la información general del evento para gestionar las funciones.
-                </span>
+                <span className="text-sm">{L.guardFirst}</span>
             </div>
         );
     }
@@ -330,15 +392,12 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
         <div className="space-y-4" data-testid="section-functions">
             <div className="flex items-center justify-between">
                 <div>
-                    <h3 className="font-semibold">Funciones del evento</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                        Agrega múltiples fechas o franjas horarias. Cada una puede tener su propio
-                        venue, aforo y precios por tipo de ticket / localidad.
-                    </p>
+                    <h3 className="font-semibold">{L.panelTitle}</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">{L.panelSubtitle}</p>
                 </div>
                 <Button size="sm" onClick={openCreate} data-testid="add-function">
                     <Plus className="h-4 w-4 mr-1.5" />
-                    Agregar función
+                    {L.addButton}
                 </Button>
             </div>
 
@@ -349,10 +408,8 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
             ) : functions.length === 0 ? (
                 <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
                     <CalendarRange className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                    <p className="text-sm">Aún no hay funciones.</p>
-                    <p className="text-xs mt-1">
-                        Si el evento tiene una sola fecha, no necesitas agregar funciones.
-                    </p>
+                    <p className="text-sm">{L.emptyTitle}</p>
+                    <p className="text-xs mt-1">{L.emptyHint}</p>
                 </div>
             ) : (
                 <div className="space-y-2">
@@ -372,7 +429,7 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
                 <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>
-                            {editing ? "Editar función" : "Nueva función"}
+                            {editing ? L.dialogEdit : L.dialogCreate}
                         </DialogTitle>
                     </DialogHeader>
 
@@ -383,7 +440,7 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
                             <Input
                                 value={form.name}
                                 onChange={(e) => upd("name", e.target.value)}
-                                placeholder="Función 1 — Sábado 14 de junio"
+                                placeholder={L.namePlaceholder}
                                 data-testid="fn-name"
                             />
                         </div>
@@ -395,7 +452,7 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
                                 value={form.description}
                                 onChange={(e) => upd("description", e.target.value)}
                                 rows={2}
-                                placeholder="Detalles adicionales de esta función…"
+                                placeholder={L.descPlaceholder}
                             />
                         </div>
 
@@ -420,14 +477,11 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
                                 />
                             </div>
                         </div>
-                        <p className="text-xs text-muted-foreground -mt-2">
-                            Si dos funciones en el mismo lugar se superponen en horario, no vas a
-                            poder guardar — ajustá el horario o el lugar de alguna de ellas.
-                        </p>
+                        <p className="text-xs text-muted-foreground -mt-2">{L.overlapHelp}</p>
 
                         {/* Venue */}
                         <div className="space-y-3 rounded-lg border p-4">
-                            <p className="text-sm font-medium">Lugar de esta función</p>
+                            <p className="text-sm font-medium">{L.venueSectionTitle}</p>
                             <p className="text-xs text-muted-foreground -mt-2">
                                 Opcional. Si es diferente al venue principal del evento.
                             </p>
@@ -461,7 +515,7 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
 
                         {/* Capacity */}
                         <div className="space-y-1.5">
-                            <Label>Aforo de esta función</Label>
+                            <Label>{L.capacityLabel}</Label>
                             <Input
                                 type="number"
                                 min="1"
@@ -470,11 +524,7 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
                                 placeholder="Usa el aforo del evento"
                                 data-testid="fn-capacity"
                             />
-                            <p className="text-xs text-muted-foreground">
-                                Si lo dejás vacío, esta función comparte el aforo general del
-                                evento. Si pones un número, esta función tiene su propio cupo
-                                independiente de las demás.
-                            </p>
+                            <p className="text-xs text-muted-foreground">{L.capacityHelp}</p>
                         </div>
 
                         {/* Ticket type overrides */}
@@ -598,7 +648,7 @@ export default function EventFunctionsPanel({ eventId, localities = [] }: Props)
                         </Button>
                         <Button onClick={handleSave} disabled={saving} data-testid="fn-save">
                             {saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-                            {editing ? "Guardar cambios" : "Crear función"}
+                            {editing ? "Guardar cambios" : L.saveCreate}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

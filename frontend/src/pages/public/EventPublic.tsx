@@ -27,6 +27,7 @@ import {
 import api from "@/lib/api";
 import ShareModal from "@/components/microsite/ShareModal";
 import PurchaseModal from "@/components/orders/PurchaseModal";
+import SeasonPassPurchaseModal from "@/components/orders/SeasonPassPurchaseModal";
 import NumberedSeatSection from "@/components/events/NumberedSeatSection";
 import EventContentDisplay from "@/components/events/EventContentDisplay";
 import { assetUrl } from "@/lib/microsite";
@@ -51,6 +52,12 @@ export default function EventPublic() {
     const [lightbox, setLightbox] = useState(-1); // index in gallery, -1 = closed
     const [functions, setFunctions] = useState([]);
     const [selectedFunctionId, setSelectedFunctionId] = useState(null);
+    // General-admission (non-numbered) events: which función/subevento card
+    // the buyer clicked "Comprar" on. Numbered events use selectedFunctionId
+    // + the seat map flow instead (see NumberedSeatSection below).
+    const [buyFunctionChoice, setBuyFunctionChoice] = useState(null);
+    const [seasonPasses, setSeasonPasses] = useState([]);
+    const [buyingPass, setBuyingPass] = useState(null);
 
     useEffect(() => {
         let alive = true;
@@ -71,11 +78,13 @@ export default function EventPublic() {
         };
     }, [slug, event_slug]);
 
-    // Numbered multi-función events: each función has its own independent
-    // seat pool, so the buyer must pick a función before the seat map (which
-    // función-scopes its availability) can render.
+    // Multi-función events: numbered ones need the buyer to pick a función
+    // before the seat map (each función has its own independent seat pool —
+    // see NumberedSeatSection below). General-admission ones list each
+    // función/subevento as its own purchasable card (see the section right
+    // after the hero stats).
     useEffect(() => {
-        if (!event?.is_multi_function || !event?.venue_id) return;
+        if (!event?.is_multi_function) return;
         let alive = true;
         api.get(`/public/events/${event.id}/functions`)
             .then((r) => alive && setFunctions((r.data || []).filter((f) => f.status !== "cancelled")))
@@ -83,7 +92,21 @@ export default function EventPublic() {
         return () => { alive = false; };
     }, [event?.id, event?.is_multi_function, event?.venue_id]);
 
+    // Abono de Temporada (Fase 4) — only ever exists for general-admission events.
+    useEffect(() => {
+        if (!event?.id || event?.venue_id) return;
+        let alive = true;
+        api.get(`/public/events/${event.id}/season-passes`)
+            .then((r) => alive && setSeasonPasses((r.data || []).filter((p) => p.available !== 0)))
+            .catch(() => alive && setSeasonPasses([]));
+        return () => { alive = false; };
+    }, [event?.id, event?.venue_id]);
+
     const url = useMemo(() => eventPublicUrl(slug, event_slug), [slug, event_slug]);
+    // "Subevento" wording (independent add-on: sala VIP, cena, meet & greet)
+    // vs "función" (same show repeated) — same underlying mechanics either way.
+    const isSubevent = event?.multi_function_mode === "subevent";
+    const functionNoun = isSubevent ? "subevento" : "función";
 
     if (state === "loading") {
         return (
@@ -262,7 +285,52 @@ export default function EventPublic() {
             })()}
 
             <section className="max-w-3xl mx-auto px-6 pb-16">
-                {event.venue_id ? null : (
+                {event.venue_id ? null : event.is_multi_function && functions.length > 0 ? (
+                    <div className="space-y-3" data-testid="event-public-function-cards">
+                        <div className="flex items-center justify-between gap-3">
+                            <h2 className="text-xl font-semibold">
+                                {isSubevent ? "Subeventos disponibles" : "Funciones disponibles"}
+                            </h2>
+                            <Button
+                                onClick={() => setShareOpen(true)}
+                                variant="outline"
+                                size="sm"
+                                data-testid="event-public-share-btn"
+                            >
+                                <Share2 className="h-4 w-4 mr-1.5" />
+                                Compartir
+                            </Button>
+                        </div>
+                        {functions.map((fn) => (
+                            <div
+                                key={fn.id}
+                                className="rounded-2xl border bg-secondary/30 p-5 flex flex-col sm:flex-row gap-3 items-center justify-between"
+                                data-testid={`public-fn-card-${fn.id}`}
+                            >
+                                <div>
+                                    <div className="font-semibold">{fn.name}</div>
+                                    {fn.starts_at && (
+                                        <div className="text-sm text-muted-foreground">
+                                            {formatEventDate(fn.starts_at, event.timezone)}
+                                            {fn.venue_name ? ` · ${fn.venue_name}` : ""}
+                                        </div>
+                                    )}
+                                </div>
+                                <Button
+                                    onClick={() => {
+                                        setBuyFunctionChoice({ id: fn.id, name: fn.name });
+                                        setBuyOpen(true);
+                                    }}
+                                    className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                                    data-testid={`public-fn-buy-${fn.id}`}
+                                >
+                                    <Ticket className="h-4 w-4 mr-1.5" />
+                                    Comprar
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
                     <div className="rounded-2xl border bg-secondary/30 p-6 flex flex-col sm:flex-row gap-3 items-center justify-between">
                         <div>
                             <p className="text-sm text-muted-foreground">
@@ -308,9 +376,43 @@ export default function EventPublic() {
                 )}
             </section>
 
+            {seasonPasses.length > 0 && (
+                <section className="max-w-3xl mx-auto px-6 pb-10 space-y-3" data-testid="event-public-season-passes">
+                    <h2 className="text-xl font-semibold">Abono de Temporada</h2>
+                    {seasonPasses.map((p) => (
+                        <div
+                            key={p.id}
+                            className="rounded-2xl border bg-secondary/30 p-5 flex flex-col sm:flex-row gap-3 items-center justify-between"
+                            data-testid={`season-pass-card-${p.id}`}
+                        >
+                            <div>
+                                <div className="font-semibold">{p.name}</div>
+                                {p.description && (
+                                    <div className="text-sm text-muted-foreground">{p.description}</div>
+                                )}
+                                <div className="text-sm text-muted-foreground mt-0.5">
+                                    {p.credits_total} créditos ·{" "}
+                                    {p.price_cents === 0 ? "Gratis" : `$${(p.price_cents / 100).toFixed(2)} ${p.currency}`}
+                                </div>
+                            </div>
+                            <Button
+                                onClick={() => setBuyingPass(p)}
+                                className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                                data-testid={`season-pass-buy-${p.id}`}
+                            >
+                                <Ticket className="h-4 w-4 mr-1.5" />
+                                Comprar abono
+                            </Button>
+                        </div>
+                    ))}
+                </section>
+            )}
+
             {event.venue_id && event.is_multi_function && functions.length > 0 && !selectedFunctionId && (
                 <section className="max-w-3xl mx-auto px-6 pb-10" data-testid="event-public-function-picker">
-                    <h2 className="text-2xl font-semibold mb-4">Elegí una función</h2>
+                    <h2 className="text-2xl font-semibold mb-4">
+                        Elegí un{isSubevent ? "" : "a"} {functionNoun}
+                    </h2>
                     <div className="space-y-2">
                         {functions.map((fn) => (
                             <button
@@ -344,7 +446,7 @@ export default function EventPublic() {
                         onClick={() => setSelectedFunctionId(null)}
                         data-testid="public-fn-change"
                     >
-                        Cambiar función
+                        Cambiar {functionNoun}
                     </Button>
                 </div>
             )}
@@ -375,11 +477,24 @@ export default function EventPublic() {
                 open={buyOpen}
                 onOpenChange={(v) => {
                     setBuyOpen(v);
-                    if (!v) setSeatHoldsInfo(null);
+                    if (!v) {
+                        setSeatHoldsInfo(null);
+                        setBuyFunctionChoice(null);
+                    }
                 }}
                 event={event}
                 tenantSlug={slug}
                 seatHoldsInfo={seatHoldsInfo}
+                preSelectedFunctionId={buyFunctionChoice?.id || null}
+                preSelectedFunctionName={buyFunctionChoice?.name || ""}
+            />
+
+            <SeasonPassPurchaseModal
+                open={!!buyingPass}
+                onOpenChange={(v) => { if (!v) setBuyingPass(null); }}
+                seasonPass={buyingPass}
+                event={event}
+                tenantSlug={slug}
             />
 
             {/* Lightbox for gallery */}

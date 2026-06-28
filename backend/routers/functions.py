@@ -28,7 +28,7 @@ GET    /api/public/events/{event_id}/functions/{function_id}
 """
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
@@ -300,6 +300,7 @@ class EventFunctionCreate(BaseModel):
     locality_pricing: List[Dict[str, Any]] = []
     capacity: Optional[int] = None
     sort_order: int = 0
+    kind: Literal["function", "subevent"] = "function"
     ticket_type_overrides: List[FunctionTicketTypeOverride] = []
 
 
@@ -318,6 +319,7 @@ class EventFunctionUpdate(BaseModel):
     capacity: Optional[int] = None
     sort_order: Optional[int] = None
     status: Optional[str] = None
+    kind: Optional[Literal["function", "subevent"]] = None
     ticket_type_overrides: Optional[List[FunctionTicketTypeOverride]] = None
 
 
@@ -337,17 +339,25 @@ async def _check_schedule_conflict(
     venue_name: Optional[str],
     exclude_function_id: Optional[str],
     session: AsyncSession,
+    kind: str = "function",
 ) -> None:
     """Raise 409 if [starts_at, ends_at) overlaps a sibling, non-cancelled
     función that shares the same venue (same venue_name, including both
-    blank = the event's main venue)."""
-    if not starts_at:
+    blank = the event's main venue).
+
+    Subeventos (kind="subevent") are independent add-ons under the umbrella
+    event — sala VIP, cena, meet & greet — and are explicitly allowed to run
+    concurrently with the main event or other subevents, so they're exempt
+    from this check in both directions (a subevent never conflicts, and
+    nothing conflicts with a subevent)."""
+    if not starts_at or kind == "subevent":
         return
     candidate_end = ends_at or (starts_at + _DEFAULT_FUNCTION_DURATION)
     result = await session.execute(
         select(EventFunction).where(
             EventFunction.event_id == event_id,
             EventFunction.status != "cancelled",
+            EventFunction.kind != "subevent",
         )
     )
     for other in result.scalars().all():
@@ -395,6 +405,7 @@ async def create_function(
     event = await _get_event_for_org(event_id, org.id, session)
     await _check_schedule_conflict(
         event_id, body.starts_at, body.ends_at, body.venue_name, None, session,
+        kind=body.kind,
     )
 
     func = EventFunction(
@@ -414,6 +425,7 @@ async def create_function(
         locality_pricing=body.locality_pricing,
         capacity=body.capacity,
         sort_order=body.sort_order,
+        kind=body.kind,
     )
     session.add(func)
     await session.flush()
@@ -485,8 +497,10 @@ async def update_function(
     effective_starts = body.starts_at if body.starts_at is not None else func.starts_at
     effective_ends = body.ends_at if body.ends_at is not None else func.ends_at
     effective_venue = body.venue_name if body.venue_name is not None else func.venue_name
+    effective_kind = body.kind if body.kind is not None else func.kind
     await _check_schedule_conflict(
         event_id, effective_starts, effective_ends, effective_venue, function_id, session,
+        kind=effective_kind,
     )
 
     overrides = body.ticket_type_overrides

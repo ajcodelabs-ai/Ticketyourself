@@ -216,6 +216,9 @@ class EventBase(BaseModel):
     ticket_delivery_mode: Optional[str] = Field(default="al_momento", max_length=20)
     ticket_delivery_hours: Optional[int] = Field(default=None, ge=1)
     ticket_delivery_at: Optional[datetime] = None
+    # "function" = Multifunción/Franjas horarias, "subevent" = Evento con
+    # Subeventos — drives wording + the default EventFunction.kind.
+    multi_function_mode: Literal["function", "subevent"] = "function"
 
     @field_validator("ends_at")
     @classmethod
@@ -260,6 +263,7 @@ class EventUpdate(BaseModel):
     ticket_delivery_mode: Optional[str] = Field(default=None, max_length=20)
     ticket_delivery_hours: Optional[int] = Field(default=None, ge=1)
     ticket_delivery_at: Optional[datetime] = None
+    multi_function_mode: Optional[Literal["function", "subevent"]] = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -535,6 +539,7 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             currency=payload.currency,
             capacity=payload.capacity,
             visibility=payload.visibility,
+            multi_function_mode=payload.multi_function_mode,
             payment_methods=(
                 payload.payment_methods.model_dump() if payload.payment_methods
                 else PaymentMethodConfig().model_dump()

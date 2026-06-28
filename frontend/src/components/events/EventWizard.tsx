@@ -31,6 +31,7 @@ import DiscountRulesPanel from "@/components/events/DiscountRulesPanel";
 import EventContentPanel from "@/components/events/EventContentPanel";
 import TicketTypesPanel from "@/components/events/TicketTypesPanel";
 import EventFunctionsPanel from "@/components/events/EventFunctionsPanel";
+import SeasonPassPanel from "@/components/events/SeasonPassPanel";
 import GuestListPanel from "@/components/events/GuestListPanel";
 import AccessCodesPanel from "@/components/events/AccessCodesPanel";
 import { capacityByLocality } from "@/lib/venues";
@@ -120,6 +121,7 @@ const STEPS = [
     { id: "venue_localidades", label: "Venue y localidades" },
     { id: "tipos_ticket", label: "Tipos de ticket" },
     { id: "funciones", label: "Funciones" },
+    { id: "abono", label: "Abono de Temporada" },
     { id: "media", label: "Media" },
     { id: "payments", label: "Formas de pago" },
     { id: "discounts", label: "Descuentos" },
@@ -198,6 +200,7 @@ function makeInitial(d) {
             ticket_delivery_mode: "al_momento",
             ticket_delivery_hours: "",
             ticket_delivery_at: "",
+            multi_function_mode: "function",
         };
     }
     const startsIso = d.starts_at || null;
@@ -242,6 +245,7 @@ function makeInitial(d) {
         ticket_delivery_mode: d.ticket_delivery_mode || "al_momento",
         ticket_delivery_hours: d.ticket_delivery_hours != null ? String(d.ticket_delivery_hours) : "",
         ticket_delivery_at: d.ticket_delivery_at ? isoToLocalInput(d.ticket_delivery_at) : "",
+        multi_function_mode: d.multi_function_mode || "function",
     };
 }
 
@@ -582,7 +586,14 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     />
                 </TabsContent>
                 <TabsContent value="funciones" className="mt-4">
-                    <EventFunctionsPanel eventId={eventId} localities={venueLocalities} />
+                    <EventFunctionsPanel
+                        eventId={eventId}
+                        localities={venueLocalities}
+                        mode={form.multi_function_mode}
+                    />
+                </TabsContent>
+                <TabsContent value="abono" className="mt-4">
+                    <SeasonPassPanel eventId={eventId} hasVenue={!!(form.venue_id || currentEvent?.venue_id)} />
                 </TabsContent>
                 <TabsContent value="media" className="mt-4">
                     <SectionMedia
@@ -742,6 +753,7 @@ function buildPayload(form) {
             form.ticket_delivery_mode === "fecha_especifica" && form.ticket_delivery_at
                 ? localInputToIso(form.ticket_delivery_at)
                 : null,
+        multi_function_mode: form.multi_function_mode || "function",
     };
 }
 
@@ -1009,26 +1021,48 @@ function CuandoBlock({ form, update, disabled, onJumpToFunctions }) {
                 )}
             </div>
 
-            <div className="rounded-lg border p-3 bg-muted/30 flex items-center justify-between gap-3">
-                <div className="text-sm">
-                    <div className="font-medium">Evento multi-función</div>
-                    <div className="text-xs text-muted-foreground">
-                        ¿Tu evento se repite en varias fechas u horarios? Agregalas en la
-                        pestaña "Funciones" — cada una puede tener su propio venue, horario y
-                        aforo.
+            <div className="rounded-lg border p-3 bg-muted/30 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm">
+                        <div className="font-medium">Evento multi-función</div>
+                        <div className="text-xs text-muted-foreground">
+                            ¿Tu evento se repite en varias fechas u horarios, o agrupa varios
+                            subeventos (sala VIP, cena, meet & greet)? Agregalos en la pestaña
+                            "Funciones" — cada uno puede tener su propio venue, horario, aforo y
+                            precios.
+                        </div>
                     </div>
+                    {onJumpToFunctions && (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={onJumpToFunctions}
+                            data-testid="jump-to-functions"
+                        >
+                            Ir a Funciones
+                        </Button>
+                    )}
                 </div>
-                {onJumpToFunctions && (
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={onJumpToFunctions}
-                        data-testid="jump-to-functions"
+                <Field label="¿Mismo show repetido o subeventos independientes?">
+                    <Select
+                        value={form.multi_function_mode}
+                        onValueChange={(v) => update("multi_function_mode", v)}
+                        disabled={disabled}
                     >
-                        Ir a Funciones
-                    </Button>
-                )}
+                        <SelectTrigger data-testid="wiz-multi-function-mode">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="function">
+                                Funciones — el mismo show se repite (multifunción / franjas horarias)
+                            </SelectItem>
+                            <SelectItem value="subevent">
+                                Subeventos — experiencias independientes (sala VIP, cena, meet &amp; greet)
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
+                </Field>
             </div>
         </div>
     );

@@ -29,6 +29,7 @@ export default function AppRoutes() {
                 element={<LazyPage page={Pages.VenuePreview} />}
             />
             <Route path="/o/:slug/orden/:order_number" element={<LazyPage page={Pages.OrderSuccess} />} />
+            <Route path="/o/:slug/abono/:token" element={<LazyPage page={Pages.SeasonPassRedeem} />} />
             <Route path="/orden/:token" element={<LazyPage page={Pages.OrderByToken} />} />
             <Route path="/staff/login" element={<Public><LazyPage page={Pages.StaffLogin} /></Public>} />
             <Route path="/staff/scanner" element={<LazyPage page={Pages.StaffScanner} />} />

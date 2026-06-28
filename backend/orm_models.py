@@ -286,6 +286,11 @@ class Event(Base):
 
     # Phase 8 — multi-function support
     is_multi_function = Column(Boolean, nullable=False, default=False)
+    # "function" = Multifunción/Franjas horarias (same show repeated).
+    # "subevent" = Evento con Subeventos (independent add-ons: sala VIP,
+    # cena, meet & greet). Drives wording + EventFunction.kind default and
+    # whether sibling funciones are allowed to overlap in time.
+    multi_function_mode = Column(String(20), nullable=False, default="function")
 
     # Phase 8 — eTicket delivery mode
     # Values: al_momento | horas_antes | fecha_especifica | manual
@@ -647,6 +652,12 @@ class EventFunction(Base):
     tickets_sold = Column(Integer, nullable=False, default=0)
     status = Column(String(20), nullable=False, default="active")  # active | cancelled | soldout
     sort_order = Column(Integer, nullable=False, default=0)
+    # "function" = same show repeated (Multifunción/Franjas horarias) — blocked
+    # from overlapping a sibling in the same venue. "subevent" = independent
+    # add-on under the umbrella event (sala VIP, cena, meet & greet) — may
+    # legitimately run concurrently with the main event or other subevents,
+    # so the schedule-overlap check skips it. See _check_schedule_conflict.
+    kind = Column(String(20), nullable=False, default="function")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
@@ -767,3 +778,83 @@ class StaffEventAssignment(Base):
     assigned_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
     staff = relationship("StaffMember", back_populates="event_assignments")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Abono de Temporada — Fase 4 (season pass: prepay N credits, redeem later
+# against specific funciones of one multi-función event)
+# ─────────────────────────────────────────────────────────────────────────────
+class SeasonPass(Base):
+    """Organizer-defined product: N redeemable credits for one event's
+    funciones, sold as a single upfront payment."""
+
+    __tablename__ = "season_passes"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    event_id = Column(
+        String(36), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    price_cents = Column(Integer, nullable=False, default=0)
+    currency = Column(String(3), nullable=False, default="USD")
+    credits_total = Column(Integer, nullable=False)
+    # Capacity of the pass itself (how many people can buy it) — independent
+    # from event/función capacity, which is only checked at redemption time.
+    max_passes = Column(Integer, nullable=True)
+    passes_sold = Column(Integer, nullable=False, default=0)
+    redemption_starts_at = Column(DateTime(timezone=True), nullable=True)
+    redemption_ends_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(20), nullable=False, default="active")  # active | cancelled
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+class SeasonPassPurchase(Base):
+    """One buyer's purchase of a SeasonPass — guest-accessed later via
+    `purchase_token` to redeem individual credits (no buyer accounts in TYS)."""
+
+    __tablename__ = "season_pass_purchases"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    season_pass_id = Column(
+        String(36), ForeignKey("season_passes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
+    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    purchase_token = Column(String(36), unique=True, nullable=False, index=True)
+    order_number = Column(String(20), unique=True, nullable=False)
+    buyer = Column(JSONB, nullable=False, default=dict)
+    buyer_email = Column(String(254), nullable=False, index=True)
+    credits_total = Column(Integer, nullable=False)
+    credits_used = Column(Integer, nullable=False, default=0)
+    subtotal_cents = Column(Integer, nullable=False, default=0)
+    fees_cents = Column(Integer, nullable=False, default=0)
+    total_cents = Column(Integer, nullable=False, default=0)
+    currency = Column(String(3), nullable=False, default="USD")
+    # pending | pending_manual_payment | paid | cancelled — mirrors TicketOrder.
+    status = Column(String(30), nullable=False, default="pending")
+    payment_method = Column(String(20), nullable=False, default="stripe")
+    stripe_session_id = Column(String(200), nullable=True)
+    manual_payment_info = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class SeasonPassRedemption(Base):
+    """One credit redeemed against one función — links the purchase to the
+    real TicketOrder/Ticket created at redemption time (capacity for that
+    función is only consumed now, never at purchase time)."""
+
+    __tablename__ = "season_pass_redemptions"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    season_pass_purchase_id = Column(
+        String(36), ForeignKey("season_pass_purchases.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    function_id = Column(String(36), ForeignKey("event_functions.id"), nullable=False, index=True)
+    order_id = Column(String(36), ForeignKey("ticket_orders.id"), nullable=False)
+    redeemed_at = Column(DateTime(timezone=True), nullable=False, default=_now)

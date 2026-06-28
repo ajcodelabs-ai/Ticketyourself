@@ -18,6 +18,7 @@ export const OrderSuccess = lazy(() => import("@/pages/public/orders/OrderSucces
 export const OrderCancel = lazy(() => import("@/pages/public/orders/OrderCancel"));
 export const PaymentInstructions = lazy(() => import("@/pages/public/orders/PaymentInstructions"));
 export const OrderByToken = lazy(() => import("@/pages/public/orders/OrderByToken"));
+export const SeasonPassRedeem = lazy(() => import("@/pages/public/orders/SeasonPassRedeem"));
 export const StaffLogin = lazy(() => import("@/pages/public/StaffLogin"));
 export const StaffScanner = lazy(() => import("@/pages/staff/StaffScanner"));
 

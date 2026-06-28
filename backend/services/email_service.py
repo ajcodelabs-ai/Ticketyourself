@@ -268,6 +268,94 @@ async def send_purchase_confirmation(
     return await send_email(to=order["buyer"]["email"], subject=subject, html=html)
 
 
+# ── Season pass (Abono de Temporada) purchase confirmation — Fase 4 ────────
+def render_season_pass_html(
+    *,
+    purchase: dict,
+    season_pass: dict,
+    event: dict,
+    organizer: dict,
+    primary_color: str,
+    frontend_base: str,
+) -> str:
+    total = f"${(purchase['total_cents'] / 100):.2f} {purchase.get('currency', 'USD')}"
+    redeem_url = f"{frontend_base}/o/{organizer['slug']}/abono/{purchase['purchase_token']}"
+
+    return f"""
+<table cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background:#f4f4f9;padding:32px 0;font-family:Helvetica,Arial,sans-serif;color:#1f1f33;">
+  <tr><td align="center">
+    <table cellpadding="0" cellspacing="0" border="0" width="560"
+           style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e6e6f0;">
+      <tr><td style="background:{primary_color};padding:24px 32px;color:#ffffff;">
+        <div style="font-size:13px;letter-spacing:2px;text-transform:uppercase;opacity:.8;">
+          {organizer.get('company_name', 'Ticket Yourself')}
+        </div>
+        <div style="font-size:22px;font-weight:600;margin-top:4px;">
+          ¡Tu abono está listo!
+        </div>
+      </td></tr>
+      <tr><td style="padding:32px;line-height:1.55;font-size:15px;color:#33334a;">
+        <p style="margin:0 0 6px;font-size:18px;font-weight:600;">{season_pass.get('name','')}</p>
+        <p style="margin:0 0 16px;color:#6e6e84;">{event.get('title','')}</p>
+        <p style="margin:0 0 4px;color:#6e6e84;font-size:13px;">Abono</p>
+        <p style="margin:0 0 16px;font-weight:600;">
+          {purchase['order_number']} · {purchase['credits_total']} crédito{'s' if purchase['credits_total'] != 1 else ''} · {total}
+        </p>
+        <p style="margin:0 0 16px;color:#6e6e84;">
+          Todavía no elegiste a qué funciones vas a ir — entrá al link de abajo cuando quieras
+          durante la temporada para redimir tus créditos, función por función.
+        </p>
+
+        <table cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;">
+          <tr><td align="center" style="background:{primary_color};border-radius:10px;">
+            <a href="{redeem_url}"
+               style="display:inline-block;padding:12px 28px;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">
+              Elegir mis funciones
+            </a>
+          </td></tr>
+        </table>
+        <p style="margin:24px 0 0;color:#6e6e84;font-size:13px;">
+          Guardá este link — es tu acceso para administrar el abono y ver tus tickets.
+        </p>
+      </td></tr>
+      <tr><td style="background:#f4f4f9;padding:16px 32px;color:#8c8ca6;font-size:12px;text-align:center;">
+        Ticket Yourself · {organizer.get('company_name', '')}
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+""".strip()
+
+
+async def send_season_pass_confirmation(
+    *,
+    purchase: dict,
+    season_pass: dict,
+    event: dict,
+    organizer: dict,
+) -> dict:
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    primary = "#4f46e5"
+    try:
+        microsite = await get_microsite_by_organizer(purchase["organizer_id"])
+        if microsite and (microsite.get("branding") or {}).get("primary_color"):
+            primary = microsite["branding"]["primary_color"]
+    except Exception:  # noqa: BLE001
+        pass
+
+    html = render_season_pass_html(
+        purchase=purchase,
+        season_pass=season_pass,
+        event=event,
+        organizer=organizer,
+        primary_color=primary,
+        frontend_base=frontend or "",
+    )
+    subject = f"Tu abono para {event.get('title','el evento')} — TYS"
+    return await send_email(to=purchase["buyer"]["email"], subject=subject, html=html)
+
+
 # ── Manual payment templates (Phase 5b) ─────────────────────────────────────
 def _format_dollars(cents: int, currency: str = "USD") -> str:
     return f"${(cents or 0) / 100:.2f} {currency}"

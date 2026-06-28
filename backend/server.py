@@ -66,6 +66,7 @@ app.include_router(activation_router.admin_router)
 app.include_router(dev_router.router)
 from routers import events as events_router  # noqa: E402
 from routers import functions as functions_router  # noqa: E402
+from routers import season_passes as season_passes_router  # noqa: E402
 from routers import orders as orders_router  # noqa: E402
 from routers import tickets as tickets_router  # noqa: E402
 from routers import dashboard as dashboard_router  # noqa: E402
@@ -81,6 +82,9 @@ app.include_router(events_router.router)
 # these literal-suffixed 2-segment paths (`/{event_id}/functions`,
 # `/{event_id}/ticket-types`), making them always 404.
 app.include_router(functions_router.public_router)
+# season_passes_router.public_router has the same 2-segment-shadowing risk
+# for GET /api/public/events/{event_id}/season-passes — same fix as above.
+app.include_router(season_passes_router.public_router)
 app.include_router(events_router.public_router)
 app.include_router(events_router.admin_router)
 app.include_router(events_router.asset_router)
@@ -97,6 +101,7 @@ from routers import guest_lists as guest_lists_router  # noqa: E402
 app.include_router(staff_router.auth_router)
 app.include_router(staff_router.router)
 app.include_router(functions_router.router)
+app.include_router(season_passes_router.router)
 app.include_router(guest_lists_router.router)
 app.include_router(guest_lists_router.public_router)
 

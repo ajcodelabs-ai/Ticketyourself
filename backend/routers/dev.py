@@ -217,3 +217,30 @@ async def simulate_purchase_paid(payload: SimulatePurchasePaidBody):
         len(tickets),
     )
     return {"ok": True, "order": finalized, "tickets": tickets}
+
+
+# ── Demo shortcut — simulate season pass purchase paid ───────────────────────
+class SimulatePassPurchasePaidBody(BaseModel):
+    order_number: str
+
+
+@router.post("/simulate-season-pass-paid")
+async def simulate_season_pass_paid(payload: SimulatePassPurchasePaidBody):
+    """Same idea as /simulate-purchase-paid but for season pass purchases."""
+    _dev_only()
+    from orm_models import SeasonPassPurchase
+    from services import season_pass_service
+
+    async with AsyncSessionLocal() as _pg:
+        _row = await _pg.scalar(
+            select(SeasonPassPurchase).where(SeasonPassPurchase.order_number == payload.order_number)
+        )
+        if not _row:
+            raise HTTPException(status_code=404, detail="Purchase not found")
+        purchase = row_to_dict(_row)
+        if purchase["status"] == "paid":
+            return {"ok": True, "already_paid": True, "purchase": purchase}
+
+    finalized = await season_pass_service.finalize_paid_purchase(purchase=purchase)
+    logger.info("Demo simulate-season-pass-paid order=%s", finalized["order_number"])
+    return {"ok": True, "purchase": finalized}

@@ -25,7 +25,7 @@ MANUAL_RESERVATION_TTL_HOURS = 48  # transfer / cash buyers get 48h to complete
 DEFAULT_FEE_PERCENT = float(os.environ.get("TYS_FEE_PERCENT", "5"))
 MAX_QUANTITY = 10
 ORDER_PREFIX = "TYS-"
-VALID_PAYMENT_METHODS = ("stripe", "transfer", "cash")
+VALID_PAYMENT_METHODS = ("stripe", "transfer", "cash", "season_pass")
 
 
 def _now() -> datetime:
