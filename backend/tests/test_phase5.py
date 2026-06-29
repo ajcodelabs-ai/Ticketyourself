@@ -105,7 +105,7 @@ class TestEventFase5Fields:
         assert created_event["payment_methods"]["cash"]["enabled"] is False
         assert created_event["discounts"]["disability_law"]["enabled"] is False
         assert created_event["discounts"]["presale"]["enabled"] is False
-        assert created_event["access_params"]["visibility"] == "public"
+        assert created_event["visibility"] == "public"
         assert created_event["access_params"]["access_type"] == "open"
         assert created_event["access_params"]["max_per_purchase"] == 10
 
@@ -230,7 +230,7 @@ class TestSeedEventsFase5:
         assert ev["payment_methods"]["stripe"]["enabled"] is True
         assert "discounts" in ev
         assert "access_params" in ev
-        assert ev["access_params"]["visibility"] == "public"
+        assert ev["visibility"] == "public"
 
 
 # ── 5. Phase 4 regression — public order create (free) ────────────────────

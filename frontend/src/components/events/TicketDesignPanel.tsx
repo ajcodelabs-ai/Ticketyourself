@@ -7,13 +7,14 @@
  * real-world page sizes used when actually rendering the PDF.
  *
  * The canvas here is an editing surface, not the renderer — organizers use
- * the "Descargar PDF de prueba" button to see the real reportlab output.
+ * the "Vista previa" button to render the real reportlab output (with
+ * sample data) inline below the canvas.
  */
 import { useEffect, useRef, useState } from "react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group } from "react-konva";
 import { toast } from "sonner";
 import {
-    Image as ImageIcon, QrCode, Type, Trash2, Upload, Download, Loader2,
+    Image as ImageIcon, QrCode, Type, Trash2, Upload, Loader2, Eye, ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -84,6 +85,7 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
     const [selectedId, setSelectedId] = useState(null);
     const [uploading, setUploading] = useState(false);
     const [previewing, setPreviewing] = useState(false);
+    const [previewUrl, setPreviewUrl] = useState(null);
     const stageRef = useRef(null);
     const trRef = useRef(null);
     const shapeRefs = useRef({});
@@ -101,6 +103,14 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
         tr.nodes(node ? [node] : []);
         tr.getLayer()?.batchDraw();
     }, [selectedId, safeDesign.elements.length]);
+
+    // Revoke the last generated preview's blob URL on unmount / regeneration
+    // so we don't leak memory across edits.
+    useEffect(() => {
+        return () => {
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+        };
+    }, [previewUrl]);
 
     const updateDesign = (patch) => onChange({ ...safeDesign, ...patch });
     const updateElement = (id, patch) =>
@@ -160,7 +170,7 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
         }
     };
 
-    const downloadPreview = async () => {
+    const generatePreview = async () => {
         if (!eventId) return;
         setPreviewing(true);
         try {
@@ -181,8 +191,7 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                 throw new Error(body?.detail || "No se pudo generar el PDF de prueba");
             }
             const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            window.open(url, "_blank");
+            setPreviewUrl(URL.createObjectURL(blob));
         } catch (e: any) {
             toast.error(e.message || "No se pudo generar el PDF de prueba");
         } finally {
@@ -232,13 +241,21 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                 <Button
                     size="sm"
                     variant="secondary"
-                    onClick={downloadPreview}
+                    onClick={generatePreview}
                     disabled={previewing || !safeDesign.elements.length}
                     data-testid={`td-preview-${slot}`}
                 >
-                    {previewing ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Download className="h-4 w-4 mr-1.5" />}
-                    Descargar PDF de prueba
+                    {previewing ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Eye className="h-4 w-4 mr-1.5" />}
+                    Vista previa
                 </Button>
+                {previewUrl && (
+                    <Button size="sm" variant="ghost" asChild>
+                        <a href={previewUrl} target="_blank" rel="noreferrer" data-testid={`td-preview-open-${slot}`}>
+                            <ExternalLink className="h-4 w-4 mr-1.5" />
+                            Abrir / descargar
+                        </a>
+                    </Button>
+                )}
             </div>
 
             <div className="flex flex-wrap gap-4">
@@ -391,6 +408,30 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                         </>
                     )}
                 </div>
+            </div>
+
+            {/* Real preview — the canvas above is an editing surface (shows
+                {{field}} placeholders); this is the actual reportlab PDF with
+                sample data, so fonts/scaling/poster match exactly what buyers get. */}
+            <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Vista previa real
+                </div>
+                {previewUrl ? (
+                    <iframe
+                        src={previewUrl}
+                        title="Vista previa del ticket"
+                        className="w-full border rounded-lg"
+                        style={{ height: 600 }}
+                        data-testid={`td-preview-frame-${slot}`}
+                    />
+                ) : (
+                    <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                        {safeDesign.elements.length
+                            ? "Hacé click en \"Vista previa\" para ver el ticket con datos de muestra."
+                            : "Agregá al menos un elemento (logo, QR o texto) para poder generar una vista previa."}
+                    </div>
+                )}
             </div>
         </div>
     );

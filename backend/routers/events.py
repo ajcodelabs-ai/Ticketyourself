@@ -13,12 +13,16 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm.attributes import flag_modified
 
 from database import AsyncSessionLocal
 from db_helpers import get_venue_by_id, row_to_dict
-from orm_models import AuditLog, Event, EventAsset, Organizer, Tenant, TicketOrder
+from orm_models import (
+    AuditLog, Event, EventAsset, EventCapacityReservation, EventSeatAssignment,
+    Organizer, SeasonPassPurchase, SeatHold, StaffEventAssignment, Tenant, Ticket,
+    TicketOrder, TicketScan,
+)
 from security import get_current_user, require_role
 from services.plan_features import assert_feature
 from slugs import normalize_slug
@@ -171,7 +175,9 @@ class EventDiscounts(BaseModel):
 
 
 class EventAccessParams(BaseModel):
-    visibility: Visibility = "public"
+    # Visibility lives only on `Event.visibility` (top-level column) — it used
+    # to be duplicated here too, written by hand on every update. Removed to
+    # avoid the two values drifting apart; see EventBase.visibility instead.
     access_type: Literal["open", "link_only", "verified_list", "access_code"] = "open"
     max_per_purchase: int = Field(default=10, ge=1, le=100)
     max_per_email: Optional[int] = Field(default=None, ge=1)
@@ -837,6 +843,20 @@ async def delete_event(event_id: str, user=Depends(get_current_user)):
             raise HTTPException(
                 status_code=422, detail="Sólo eventos en borrador pueden eliminarse"
             )
+        # A handful of child tables don't have ON DELETE CASCADE on their
+        # event_id FK (ticket_types/event_functions/season_passes/etc. do and
+        # need no help here). A draft normally has none of these, but media
+        # uploads (EventAsset) or a leftover seat-picker preview can exist —
+        # clean them up explicitly instead of letting the DELETE 500.
+        await session.execute(delete(TicketScan).where(TicketScan.event_id == event_id))
+        await session.execute(delete(EventSeatAssignment).where(EventSeatAssignment.event_id == event_id))
+        await session.execute(delete(SeatHold).where(SeatHold.event_id == event_id))
+        await session.execute(delete(EventCapacityReservation).where(EventCapacityReservation.event_id == event_id))
+        await session.execute(delete(Ticket).where(Ticket.event_id == event_id))
+        await session.execute(delete(TicketOrder).where(TicketOrder.event_id == event_id))
+        await session.execute(delete(StaffEventAssignment).where(StaffEventAssignment.event_id == event_id))
+        await session.execute(delete(SeasonPassPurchase).where(SeasonPassPurchase.event_id == event_id))
+        await session.execute(delete(EventAsset).where(EventAsset.event_id == event_id))
         await session.delete(row)
         await session.commit()
     return None

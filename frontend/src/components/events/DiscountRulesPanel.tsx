@@ -106,7 +106,12 @@ function inputToISO(v) {
     }
 }
 
-export default function DiscountRulesPanel({ rules, onChange, localities = [] }) {
+export default function DiscountRulesPanel({
+    rules,
+    onChange,
+    localities = [],
+    enabledPaymentMethods = Object.keys(PAYMENT_METHOD_LABELS),
+}) {
     const [editing, setEditing] = useState(null); // null = closed; {} = new; full obj = edit
 
     const open = (rule) => setEditing(rule || newRule());
@@ -183,6 +188,7 @@ export default function DiscountRulesPanel({ rules, onChange, localities = [] })
                 onCancel={close}
                 onSave={save}
                 localities={localities}
+                enabledPaymentMethods={enabledPaymentMethods}
             />
         </div>
     );
@@ -276,7 +282,7 @@ function RuleCard({ rule, localities, onEdit, onRemove, onToggle }) {
     );
 }
 
-function RuleDialog({ open, rule, onChange, onCancel, onSave, localities }) {
+function RuleDialog({ open, rule, onChange, onCancel, onSave, localities, enabledPaymentMethods = Object.keys(PAYMENT_METHOD_LABELS) }) {
     const upd = (patch) => onChange({ ...rule, ...patch });
     const updCond = (patch) =>
         onChange({ ...rule, conditions: { ...rule.conditions, ...patch } });
@@ -465,12 +471,24 @@ function RuleDialog({ open, rule, onChange, onCancel, onSave, localities }) {
                                 <CreditCard className="h-3.5 w-3.5" /> Formas de pago habilitadas
                             </Label>
                             <div className="flex flex-wrap gap-2">
-                                {Object.entries(PAYMENT_METHOD_LABELS).map(([key, label]) => {
+                                {Array.from(
+                                    new Set([
+                                        ...enabledPaymentMethods,
+                                        ...(rule.conditions.payment_methods || []),
+                                    ]),
+                                ).map((key) => {
+                                    const label = PAYMENT_METHOD_LABELS[key] || key;
                                     const checked = (rule.conditions.payment_methods || []).includes(key);
+                                    const isEnabled = enabledPaymentMethods.includes(key);
                                     return (
                                         <button
                                             key={key}
                                             type="button"
+                                            title={
+                                                isEnabled
+                                                    ? undefined
+                                                    : "Este método no está habilitado en \"Formas de pago\""
+                                            }
                                             onClick={() => {
                                                 const list = new Set(rule.conditions.payment_methods || []);
                                                 if (list.has(key)) list.delete(key);
@@ -479,18 +497,27 @@ function RuleDialog({ open, rule, onChange, onCancel, onSave, localities }) {
                                             }}
                                             className={`text-xs px-2 py-1 rounded-md border transition ${
                                                 checked
-                                                    ? "border-primary bg-primary/10"
+                                                    ? isEnabled
+                                                        ? "border-primary bg-primary/10"
+                                                        : "border-amber-400 bg-amber-50 text-amber-700"
                                                     : "border-border hover:bg-secondary"
                                             }`}
                                             data-testid={`rule-pm-${key}`}
                                         >
                                             {label}
+                                            {!isEnabled && " ⚠"}
                                         </button>
                                     );
                                 })}
                             </div>
                             <p className="text-xs text-muted-foreground">
-                                Vacío = aplica con cualquier forma de pago.
+                                Vacío = aplica con cualquier forma de pago. Solo se muestran
+                                los métodos habilitados en "Formas de pago"
+                                {(rule.conditions.payment_methods || []).some(
+                                    (m) => !enabledPaymentMethods.includes(m),
+                                )
+                                    ? " (⚠ = ya no está habilitado, el descuento nunca se aplicaría con ese método)."
+                                    : "."}
                             </p>
                         </div>
                         {localities.length > 0 && (

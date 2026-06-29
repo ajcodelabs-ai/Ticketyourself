@@ -25,7 +25,7 @@ export default function EventNew() {
                     Configurá tu evento
                 </h1>
                 <p className="text-sm text-muted-foreground mt-1">
-                    Completá las 6 secciones. Podés guardar como borrador y volver luego.
+                    Completá las secciones del wizard. Podés guardar como borrador y volver luego.
                 </p>
             </header>
             <EventWizard mode="create" />

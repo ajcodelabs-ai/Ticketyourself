@@ -49,6 +49,10 @@ export default function EventEdit() {
                 <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight mt-1">
                     {event.title}
                 </h1>
+                <p className="text-sm text-muted-foreground mt-1">
+                    Ajustá cualquier sección del wizard. Los cambios se guardan al hacer clic en
+                    "Guardar borrador" o "Publicar ahora".
+                </p>
             </header>
             <EventWizard initial={event} mode="edit" />
         </div>

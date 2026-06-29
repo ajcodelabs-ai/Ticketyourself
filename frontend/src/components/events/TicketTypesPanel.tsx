@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Tag, Loader2, AlertCircle } from "lucide-react";
+import { Plus, Pencil, Trash2, Tag, Loader2, AlertCircle, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,12 @@ import {
     DialogTitle,
     DialogFooter,
 } from "@/components/ui/dialog";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+    TooltipProvider,
+} from "@/components/ui/tooltip";
 import {
     Select,
     SelectContent,
@@ -120,6 +126,11 @@ export default function TicketTypesPanel({
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState<string | null>(null);
     const [priceStr, setPriceStr] = useState("0.00");
+    // Snapshot of the event's sale window at the moment the dialog opened —
+    // lets the inputs show the dates that actually apply (instead of being
+    // blank) without freezing them as an explicit per-type override unless
+    // the organizer actually edits them away from this snapshot.
+    const [inheritedWindow, setInheritedWindow] = useState<{ sale_start?: string; sale_end?: string }>({});
 
     const load = async () => {
         if (!eventId) return;
@@ -140,17 +151,26 @@ export default function TicketTypesPanel({
 
     const openCreate = () => {
         setEditing(null);
-        setForm({
-            ...BLANK,
+        const inherited = {
             sale_start: eventSaleWindow?.sale_start || undefined,
             sale_end: eventSaleWindow?.sale_end || undefined,
-        });
+        };
+        setInheritedWindow(inherited);
+        setForm({ ...BLANK, ...inherited });
         setPriceStr("0.00");
         setOpen(true);
     };
 
     const openEdit = (tt: TicketType) => {
         setEditing(tt);
+        // Falls back to the event's sale window, same as a brand-new ticket
+        // type — an existing one that never set its own window should still
+        // show the dates that actually apply to it.
+        const inherited = {
+            sale_start: tt.sale_start || eventSaleWindow?.sale_start || undefined,
+            sale_end: tt.sale_end || eventSaleWindow?.sale_end || undefined,
+        };
+        setInheritedWindow(inherited);
         setForm({
             name: tt.name,
             description: tt.description || "",
@@ -160,8 +180,8 @@ export default function TicketTypesPanel({
             venue_locality_id: tt.venue_locality_id,
             color: tt.color || COLORS[0].value,
             sort_order: tt.sort_order,
-            sale_start: tt.sale_start,
-            sale_end: tt.sale_end,
+            sale_start: inherited.sale_start,
+            sale_end: inherited.sale_end,
             max_per_buyer: tt.max_per_buyer,
             is_early_bird: tt.is_early_bird,
             early_bird_closes_at: tt.early_bird_closes_at,
@@ -189,8 +209,11 @@ export default function TicketTypesPanel({
             venue_locality_id: form.venue_locality_id || null,
             max_per_buyer: form.max_per_buyer || null,
             early_bird_closes_at: form.early_bird_closes_at || null,
-            sale_start: form.sale_start || null,
-            sale_end: form.sale_end || null,
+            // Only persist as an explicit override if it was actually edited
+            // away from the event's window shown when the dialog opened —
+            // otherwise keep tracking the event's window dynamically (null).
+            sale_start: form.sale_start === inheritedWindow.sale_start ? null : form.sale_start || null,
+            sale_end: form.sale_end === inheritedWindow.sale_end ? null : form.sale_end || null,
             min_quantity: form.min_quantity || null,
             exact_quantity: form.exact_quantity || null,
         };
@@ -230,6 +253,13 @@ export default function TicketTypesPanel({
             setDeleting(null);
         }
     };
+
+    const selectedLocality = localities.find((l) => l.id === form.venue_locality_id) || null;
+    const colorFromLocality = !!selectedLocality?.color && form.color === selectedLocality.color;
+    const maxBuyerFromLocality =
+        !!selectedLocality &&
+        selectedLocality.max_tickets_per_purchase != null &&
+        form.max_per_buyer === selectedLocality.max_tickets_per_purchase;
 
     if (!eventId) {
         return (
@@ -308,6 +338,68 @@ export default function TicketTypesPanel({
                             />
                         </div>
 
+                        {/* Locality — first, since picking it pre-fills price, capacity,
+                            color and max. per buyer below; asking it last meant those
+                            fields got asked once manually and then silently overwritten. */}
+                        {localities.length > 0 && (
+                            <div className="space-y-1.5">
+                                <Label>Localidad del venue</Label>
+                                <Select
+                                    value={form.venue_locality_id || "__none__"}
+                                    onValueChange={(v) => {
+                                        const loc = localities.find((l) => l.id === v);
+                                        setForm((prev) => ({
+                                            ...prev,
+                                            venue_locality_id: v === "__none__" ? undefined : v,
+                                            capacity: loc ? loc.capacity ?? prev.capacity : prev.capacity,
+                                            max_per_buyer: loc
+                                                ? loc.max_tickets_per_purchase ?? prev.max_per_buyer
+                                                : prev.max_per_buyer,
+                                            color: loc?.color || prev.color,
+                                        }));
+                                        if (loc && loc.price_cents != null) {
+                                            setPriceStr(priceDollars(loc.price_cents));
+                                        }
+                                    }}
+                                >
+                                    <SelectTrigger data-testid="tt-locality">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="__none__">Sin localidad específica</SelectItem>
+                                        {localities.map((l) => (
+                                            <SelectItem key={l.id} value={l.id}>
+                                                <span className="inline-flex items-center gap-1.5">
+                                                    {l.color && (
+                                                        <span
+                                                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                                                            style={{ backgroundColor: l.color }}
+                                                        />
+                                                    )}
+                                                    {l.name}
+                                                    {l.price_cents != null
+                                                        ? ` — $${priceDollars(l.price_cents)}`
+                                                        : ""}
+                                                </span>
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                {selectedLocality ? (
+                                    <p className="text-xs text-muted-foreground">
+                                        Usando los valores de <strong>{selectedLocality.name}</strong>:
+                                        precio, capacidad, color y máx. por comprador. Podés ajustar
+                                        cualquiera de estos campos abajo si este tipo debe ser distinto.
+                                    </p>
+                                ) : (
+                                    <p className="text-xs text-muted-foreground">
+                                        Al elegir una localidad se completan precio, capacidad, color y
+                                        máx. por comprador con sus valores. Podés ajustarlos después.
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
                         {/* Description */}
                         <div className="space-y-1.5">
                             <Label>Descripción</Label>
@@ -348,54 +440,16 @@ export default function TicketTypesPanel({
                             </div>
                         </div>
 
-                        {/* Locality */}
-                        {localities.length > 0 && (
-                            <div className="space-y-1.5">
-                                <Label>Localidad del venue</Label>
-                                <Select
-                                    value={form.venue_locality_id || "__none__"}
-                                    onValueChange={(v) => {
-                                        const loc = localities.find((l) => l.id === v);
-                                        setForm((prev) => ({
-                                            ...prev,
-                                            venue_locality_id: v === "__none__" ? undefined : v,
-                                            capacity: loc ? loc.capacity ?? prev.capacity : prev.capacity,
-                                            max_per_buyer: loc
-                                                ? loc.max_tickets_per_purchase ?? prev.max_per_buyer
-                                                : prev.max_per_buyer,
-                                            color: loc?.color || prev.color,
-                                        }));
-                                        if (loc && loc.price_cents != null) {
-                                            setPriceStr(priceDollars(loc.price_cents));
-                                        }
-                                    }}
-                                >
-                                    <SelectTrigger data-testid="tt-locality">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="__none__">Sin localidad específica</SelectItem>
-                                        {localities.map((l) => (
-                                            <SelectItem key={l.id} value={l.id}>
-                                                {l.name}
-                                                {l.price_cents != null
-                                                    ? ` — $${priceDollars(l.price_cents)}`
-                                                    : ""}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <p className="text-xs text-muted-foreground">
-                                    Al elegir una localidad se completan precio, capacidad, máx.
-                                    por comprador y color con los valores de esa localidad. Podés
-                                    ajustarlos si este tipo de ticket debe ser distinto.
-                                </p>
-                            </div>
-                        )}
-
                         {/* Color */}
                         <div className="space-y-1.5">
-                            <Label>Color de identificación</Label>
+                            <Label className="flex items-center gap-1.5">
+                                Color de identificación
+                                {colorFromLocality && (
+                                    <span className="text-xs font-normal text-muted-foreground">
+                                        · de la localidad
+                                    </span>
+                                )}
+                            </Label>
                             <div className="flex gap-2 flex-wrap">
                                 {COLORS.map((c) => (
                                     <button
@@ -418,8 +472,9 @@ export default function TicketTypesPanel({
                         <div className="space-y-1.5">
                             <Label>Ventana de venta</Label>
                             <p className="text-xs text-muted-foreground">
-                                Por defecto es la misma del evento. Cambiala solo si este tipo
-                                debe abrir o cerrar en otro momento (ej. Early Bird).
+                                Por defecto sigue la del evento (las fechas ya están cargadas
+                                abajo). Cambiala solo si este tipo debe abrir o cerrar en otro
+                                momento (ej. Early Bird).
                             </p>
                             <div className="grid sm:grid-cols-2 gap-3">
                                 <div className="space-y-1">
@@ -453,7 +508,27 @@ export default function TicketTypesPanel({
 
                         {/* Max per buyer */}
                         <div className="space-y-1.5">
-                            <Label>Máx. por comprador</Label>
+                            <Label className="flex items-center gap-1.5">
+                                Máx. por comprador
+                                {maxBuyerFromLocality && (
+                                    <span className="text-xs font-normal text-muted-foreground">
+                                        · de la localidad
+                                    </span>
+                                )}
+                                <TooltipProvider delayDuration={150}>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                                        </TooltipTrigger>
+                                        <TooltipContent className="max-w-xs">
+                                            Límite de unidades de <strong>este tipo de ticket</strong> por
+                                            comprador. Es independiente del límite general en "Accesos y
+                                            parámetros", que aplica a la compra completa sumando todos los
+                                            tipos.
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
+                            </Label>
                             <Input
                                 type="number"
                                 min="1"
