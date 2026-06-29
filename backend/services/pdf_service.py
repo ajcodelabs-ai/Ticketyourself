@@ -237,7 +237,6 @@ async def render_ticket_pdf(
     body_top = y - 20
     info_x = 20 * mm
     qr_x = page_w - 95 * mm
-    qr_size = 75 * mm
 
     # Left column: event + holder
     c.setFont("Helvetica-Bold", 10)
@@ -310,17 +309,43 @@ async def render_ticket_pdf(
     c.setFillColor(primary)
     c.drawString(info_x, price_y_value, price_label)
 
-    # Right column: QR
+    # Right column: poster (cover) stacked above the QR
+    col_w = 75 * mm
+    poster_size = 50 * mm
+    qr_size = 50 * mm
+    gap = 8 * mm
+    box_x = qr_x + (col_w - poster_size) / 2
+
+    poster_drawn = False
+    poster_url = event.get("poster_url")
+    if poster_url:
+        try:
+            from services.assets import open_event_asset
+
+            poster_img = await open_event_asset(poster_url)
+            if poster_img:
+                poster_y = body_top - poster_size
+                c.saveState()
+                c.setStrokeColor(colors.HexColor("#e6e6f0"))
+                c.roundRect(box_x - 1, poster_y - 1, poster_size + 2, poster_size + 2, 4, fill=0, stroke=1)
+                c.drawImage(ImageReader(poster_img), box_x, poster_y, poster_size, poster_size, mask="auto")
+                c.restoreState()
+                poster_drawn = True
+        except Exception:
+            logger.exception("Failed to draw ticket poster %s", poster_url)
+
+    qr_top = (body_top - poster_size - gap) if poster_drawn else body_top
+    qr_y = qr_top - qr_size
     qr_img = qrcode.make(ticket.get("qr_token", ""))
     qr_buf = io.BytesIO()
     qr_img.save(qr_buf, format="PNG")
     qr_buf.seek(0)
-    c.drawImage(ImageReader(qr_buf), qr_x, body_top - 245, qr_size, qr_size)
+    c.drawImage(ImageReader(qr_buf), box_x, qr_y, qr_size, qr_size)
     c.setFont("Helvetica", 9)
     c.setFillColor(colors.HexColor("#6e6e84"))
     c.drawCentredString(
-        qr_x + qr_size / 2,
-        body_top - 260,
+        box_x + qr_size / 2,
+        qr_y - 14,
         "Presentá este QR en la entrada del evento.",
     )
 

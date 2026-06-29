@@ -91,6 +91,12 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+    TooltipProvider,
+} from "@/components/ui/tooltip";
 import api, { formatApiError } from "@/lib/api";
 import { venuesApi } from "@/lib/venues";
 import { assetUrl } from "@/lib/microsite";
@@ -119,12 +125,12 @@ const ALLOWED_MIME = [
 
 const STEPS = [
     { id: "info", label: "Información general" },
+    { id: "media", label: "Media" },
     { id: "content", label: "Contenido" },
     { id: "venue_localidades", label: "Venue y localidades" },
     { id: "tipos_ticket", label: "Tipos de ticket" },
     { id: "funciones", label: "Funciones" },
     { id: "abono", label: "Abono de Temporada" },
-    { id: "media", label: "Media" },
     { id: "ticket_design", label: "Diseño de ticket" },
     { id: "payments", label: "Formas de pago" },
     { id: "discounts", label: "Descuentos" },
@@ -155,7 +161,6 @@ function defaultDiscounts() {
 
 function defaultAccessParams() {
     return {
-        visibility: "public",
         access_type: "open",
         max_per_purchase: 10,
         max_per_email: null,
@@ -356,6 +361,31 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     }, [initial]);
 
     const lockCritical = mode === "edit" && (initial?.tickets_sold || 0) > 0;
+
+    // Live sale window — computed straight from the (possibly unsaved) form
+    // state, same as buildPayload() does, so "Tipos de ticket" reflects
+    // whatever is set in "Información general" even before the first save.
+    const liveSaleWindow = useMemo(() => {
+        const startsIso = form.starts_at ? localInputToIso(form.starts_at) : null;
+        return {
+            sale_start: computeSalesStart(
+                startsIso,
+                form.sales_window_preset_start,
+                form.sales_start_custom ? localInputToIso(form.sales_start_custom) : null,
+            ),
+            sale_end: computeSalesEnd(
+                startsIso,
+                form.sales_window_preset_end,
+                form.sales_end_custom ? localInputToIso(form.sales_end_custom) : null,
+            ),
+        };
+    }, [
+        form.starts_at,
+        form.sales_window_preset_start,
+        form.sales_window_preset_end,
+        form.sales_start_custom,
+        form.sales_end_custom,
+    ]);
 
     const stepStatus = useMemo(
         () => evalStepStatus(form, poster, currentEvent),
@@ -569,6 +599,18 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         onJumpToFunctions={() => handleTabChange("funciones")}
                     />
                 </TabsContent>
+                <TabsContent value="media" className="mt-4">
+                    <SectionMedia
+                        poster={poster}
+                        banner={banner}
+                        gallery={gallery}
+                        uploadingKind={uploadingKind}
+                        onUpload={uploadImages}
+                        onDeleteGallery={deleteGalleryAt}
+                        onReorderGallery={reorderGallery}
+                        eventId={eventId}
+                    />
+                </TabsContent>
                 <TabsContent value="content" className="mt-4">
                     <EventContentPanel
                         content={form.content}
@@ -590,10 +632,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     <TicketTypesPanel
                         eventId={eventId}
                         localities={venueLocalities}
-                        eventSaleWindow={{
-                            sale_start: currentEvent?.sales_start || null,
-                            sale_end: currentEvent?.sales_end || null,
-                        }}
+                        eventSaleWindow={liveSaleWindow}
                     />
                 </TabsContent>
                 <TabsContent value="funciones" className="mt-4">
@@ -605,18 +644,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                 </TabsContent>
                 <TabsContent value="abono" className="mt-4">
                     <SeasonPassPanel eventId={eventId} hasVenue={!!(form.venue_id || currentEvent?.venue_id)} />
-                </TabsContent>
-                <TabsContent value="media" className="mt-4">
-                    <SectionMedia
-                        poster={poster}
-                        banner={banner}
-                        gallery={gallery}
-                        uploadingKind={uploadingKind}
-                        onUpload={uploadImages}
-                        onDeleteGallery={deleteGalleryAt}
-                        onReorderGallery={reorderGallery}
-                        eventId={eventId}
-                    />
                 </TabsContent>
                 <TabsContent value="ticket_design" className="mt-4">
                     <SectionTicketDesign form={form} update={update} eventId={eventId} />
@@ -706,6 +733,13 @@ function evalStepStatus(form, poster, currentEvent) {
         : form.venue_id || currentEvent?.venue_id
         ? "ok"
         : "warn";
+    // Optional sections with sensible defaults — same convention as
+    // content/payments/discounts below: "ok" means "nothing blocking here",
+    // not "configured by the organizer".
+    s.tipos_ticket = "ok";
+    s.funciones = "ok";
+    s.abono = "ok";
+    s.ticket_design = "ok";
     s.payments = "ok";
     s.discounts = "ok";
     s.access = form.access_params.max_per_purchase > 0 ? "ok" : "warn";
@@ -758,7 +792,7 @@ function buildPayload(form) {
             form.unlimited_capacity || form.capacity === ""
                 ? null
                 : parseInt(form.capacity, 10),
-        visibility: form.access_params?.visibility || form.visibility,
+        visibility: form.visibility,
         raffle_enabled: form.pricing_type === "donation" ? !!form.raffle_enabled : false,
         custom_questions: (form.custom_questions || []).filter((q) => q.label?.trim()),
         ticket_design: form.ticket_design,
@@ -1607,9 +1641,10 @@ function SectionMedia({
                     </div>
                     <p className="text-sm text-muted-foreground mt-1 leading-snug">
                         Imagen <strong>cuadrada</strong>: aparece en la grilla del
-                        microsite y como portada del ticket PDF. Recomendado{" "}
-                        <strong>1080 × 1080 px</strong>. JPG/PNG/WEBP/HEIC · 5 MB
-                        máx.
+                        microsite y junto al código QR en el ticket PDF (si no
+                        diseñás un ticket propio en la pestaña "Diseño de
+                        ticket"). Recomendado <strong>1080 × 1080 px</strong>.
+                        JPG/PNG/WEBP/HEIC · 5 MB máx.
                     </p>
                 </header>
                 <div className="grid sm:grid-cols-[1fr_auto] gap-4 items-start">
@@ -1927,6 +1962,15 @@ function PaymentRow({ title, description, checked, onChange = undefined, disable
     );
 }
 
+function enabledPaymentMethodsOf(pm) {
+    // Stripe's toggle is forced on in SectionPayments (it can't be disabled),
+    // so it's always available as a discount condition.
+    const list = ["stripe"];
+    if (pm?.transfer?.enabled) list.push("transfer");
+    if (pm?.cash?.enabled) list.push("cash");
+    return list;
+}
+
 // ── Section: Discounts ──────────────────────────────────────────────────────
 function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }) {
     const d = form.discounts;
@@ -2009,6 +2053,7 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                 rules={d.rules || []}
                 onChange={(next) => update("discounts.rules", next)}
                 localities={venueLocalities}
+                enabledPaymentMethods={enabledPaymentMethodsOf(form.payment_methods)}
             />
 
             {eventId && <DiscountsReportPanel eventId={eventId} />}
@@ -2099,123 +2144,150 @@ function SectionAccess({ form, update, eventId }) {
     const ap = form.access_params;
     const deliveryMode = form.ticket_delivery_mode || "al_momento";
     return (
-        <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="section-access">
-            <Field label="Visibilidad">
-                <Select
-                    value={ap.visibility}
-                    onValueChange={(v) => {
-                        update("access_params.visibility", v);
-                        update("visibility", v);
-                    }}
-                >
-                    <SelectTrigger data-testid="access-visibility">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="public">Público — aparece en tu microsite</SelectItem>
-                        <SelectItem value="public_blocked">
-                            Público bloqueado — aparece en tu microsite, pero solo se puede
-                            comprar con código o estando en lista
-                        </SelectItem>
-                        <SelectItem value="private">Privado — solo con link directo</SelectItem>
-                    </SelectContent>
-                </Select>
-            </Field>
-
-            <Field label="Tipo de acceso">
-                <Select
-                    value={ap.access_type}
-                    onValueChange={(v) => update("access_params.access_type", v)}
-                >
-                    <SelectTrigger data-testid="access-type">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="open">Abierto · cualquiera puede comprar</SelectItem>
-                        <SelectItem value="link_only">
-                            Solo con link · no aparece en listados
-                        </SelectItem>
-                        <SelectItem value="verified_list">Lista verificada</SelectItem>
-                        <SelectItem value="access_code">Código de acceso</SelectItem>
-                    </SelectContent>
-                </Select>
-            </Field>
-
-            {ap.access_type === "verified_list" && <GuestListPanel eventId={eventId} />}
-            {ap.access_type === "access_code" && <AccessCodesPanel eventId={eventId} />}
-
-            <div className="grid sm:grid-cols-2 gap-3">
-                <Field label="Máx. tickets por compra">
-                    <Input
-                        type="number"
-                        min="1"
-                        max="100"
-                        value={ap.max_per_purchase}
-                        onChange={(e) =>
-                            update(
-                                "access_params.max_per_purchase",
-                                parseInt(e.target.value || "1", 10),
-                            )
-                        }
-                        data-testid="access-max-purchase"
-                    />
+        <div className="space-y-5" data-testid="section-access">
+            <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="access-control-block">
+                <SubHeader icon="🔒" title="Control de acceso" />
+                <Field label="Visibilidad">
+                    <Select
+                        value={form.visibility}
+                        onValueChange={(v) => update("visibility", v)}
+                    >
+                        <SelectTrigger data-testid="access-visibility">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="public">Público — aparece en tu microsite</SelectItem>
+                            <SelectItem value="public_blocked">
+                                Público bloqueado — aparece en tu microsite, pero solo se puede
+                                comprar con código o estando en lista
+                            </SelectItem>
+                            <SelectItem value="private">Privado — solo con link directo</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </Field>
-                <Field label="Máx. por persona / email (opcional)">
-                    <Input
-                        type="number"
-                        min="1"
-                        value={ap.max_per_email || ""}
-                        onChange={(e) =>
-                            update(
-                                "access_params.max_per_email",
-                                e.target.value ? parseInt(e.target.value, 10) : null,
-                            )
-                        }
-                        placeholder="Sin límite"
-                        data-testid="access-max-email"
-                    />
+
+                <Field label="Tipo de acceso">
+                    <Select
+                        value={ap.access_type}
+                        onValueChange={(v) => update("access_params.access_type", v)}
+                    >
+                        <SelectTrigger data-testid="access-type">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="open">Abierto · cualquiera puede comprar</SelectItem>
+                            <SelectItem value="link_only">
+                                Solo con link · no aparece en listados
+                            </SelectItem>
+                            <SelectItem value="verified_list">Lista verificada</SelectItem>
+                            <SelectItem value="access_code">Código de acceso</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </Field>
+
+                {ap.access_type === "verified_list" && <GuestListPanel eventId={eventId} />}
+                {ap.access_type === "access_code" && <AccessCodesPanel eventId={eventId} />}
             </div>
 
-            <Field label="Reembolsos hasta X horas antes del evento">
-                <Input
-                    type="number"
-                    min="0"
-                    value={ap.refund_window_hours}
-                    onChange={(e) =>
-                        update(
-                            "access_params.refund_window_hours",
-                            parseInt(e.target.value || "0", 10),
-                        )
-                    }
-                    data-testid="access-refund-window"
-                />
-            </Field>
-
-            <div className="flex items-center justify-between p-3 rounded-lg border">
-                <div className="text-sm">
-                    <div className="font-medium">Mostrar nombre del comprador en el ticket</div>
-                    <div className="text-xs text-muted-foreground">
-                        Útil para tickets nominativos
-                    </div>
+            <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="access-purchase-block">
+                <SubHeader icon="🎟️" title="Parámetros de compra" />
+                <div className="grid sm:grid-cols-2 gap-3">
+                    <Field
+                        label={
+                            <LabelWithTip
+                                text="Máx. tickets por compra"
+                                tip={
+                                    <>
+                                        Tope por <strong>transacción</strong>, sumando todos los
+                                        tipos de ticket. No se acumula entre compras distintas del
+                                        mismo comprador — para eso usá "Máx. por persona / email".
+                                    </>
+                                }
+                            />
+                        }
+                    >
+                        <Input
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={ap.max_per_purchase}
+                            onChange={(e) =>
+                                update(
+                                    "access_params.max_per_purchase",
+                                    parseInt(e.target.value || "1", 10),
+                                )
+                            }
+                            data-testid="access-max-purchase"
+                        />
+                    </Field>
+                    <Field
+                        label={
+                            <LabelWithTip
+                                text="Máx. por persona / email (opcional)"
+                                tip={
+                                    <>
+                                        Tope acumulado entre <strong>todas las compras</strong> de un
+                                        mismo email a este evento. Si además configuraste un "Máx.
+                                        por comprador" dentro de un tipo de ticket específico (pestaña
+                                        Tipos de ticket), ese límite se aplica adicionalmente.
+                                    </>
+                                }
+                            />
+                        }
+                    >
+                        <Input
+                            type="number"
+                            min="1"
+                            value={ap.max_per_email || ""}
+                            onChange={(e) =>
+                                update(
+                                    "access_params.max_per_email",
+                                    e.target.value ? parseInt(e.target.value, 10) : null,
+                                )
+                            }
+                            placeholder="Sin límite"
+                            data-testid="access-max-email"
+                        />
+                    </Field>
                 </div>
-                <Switch
-                    checked={ap.show_buyer_name_on_ticket}
-                    onCheckedChange={(v) =>
-                        update("access_params.show_buyer_name_on_ticket", v)
-                    }
-                    data-testid="access-show-name"
-                />
+
+                <Field label="Reembolsos hasta X horas antes del evento">
+                    <Input
+                        type="number"
+                        min="0"
+                        value={ap.refund_window_hours}
+                        onChange={(e) =>
+                            update(
+                                "access_params.refund_window_hours",
+                                parseInt(e.target.value || "0", 10),
+                            )
+                        }
+                        data-testid="access-refund-window"
+                    />
+                </Field>
+
+                <div className="flex items-center justify-between p-3 rounded-lg border">
+                    <div className="text-sm">
+                        <div className="font-medium">Mostrar nombre del comprador en el ticket</div>
+                        <div className="text-xs text-muted-foreground">
+                            Útil para tickets nominativos
+                        </div>
+                    </div>
+                    <Switch
+                        checked={ap.show_buyer_name_on_ticket}
+                        onCheckedChange={(v) =>
+                            update("access_params.show_buyer_name_on_ticket", v)
+                        }
+                        data-testid="access-show-name"
+                    />
+                </div>
             </div>
 
-            {/* eTicket delivery */}
-            <div className="rounded-lg border p-4 space-y-3">
-                <div>
-                    <div className="font-medium text-sm">Envío del eTicket (QR)</div>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                        Define cuándo se envían los QR por email al comprador.
-                    </div>
-                </div>
+            <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="access-delivery-block">
+                <SubHeader icon="📤" title="Envío del eTicket (QR)" />
+                <p className="text-xs text-muted-foreground -mt-2">
+                    Define cuándo se envían los QR por email al comprador.
+                </p>
                 <Field label="Modo de envío">
                     <Select
                         value={deliveryMode}
@@ -2269,10 +2341,13 @@ function SectionAccess({ form, update, eventId }) {
                 )}
             </div>
 
-            <CustomQuestionsPanel
-                questions={form.custom_questions || []}
-                onChange={(next) => update("custom_questions", next)}
-            />
+            <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="access-questions-block">
+                <SubHeader icon="💬" title="Preguntas para el comprador" />
+                <CustomQuestionsPanel
+                    questions={form.custom_questions || []}
+                    onChange={(next) => update("custom_questions", next)}
+                />
+            </div>
         </div>
     );
 }
@@ -2391,6 +2466,22 @@ function SubHeader({ icon, title }) {
             <span aria-hidden>{icon}</span>
             {title}
         </h3>
+    );
+}
+
+function LabelWithTip({ text, tip }) {
+    return (
+        <span className="inline-flex items-center gap-1.5">
+            {text}
+            <TooltipProvider delayDuration={150}>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">{tip}</TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
+        </span>
     );
 }
 

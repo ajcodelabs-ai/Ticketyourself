@@ -1,6 +1,7 @@
 /**
  * /eventos/:id — organizer-facing detail. Shows poster + stats + actions (edit,
- * unpublish, cancel, share). Editing happens inline via EventForm.
+ * unpublish, cancel, share). Editing navigates to the EventWizard at /editar —
+ * same wizard used to create the event.
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -21,7 +22,6 @@ import {
     ScanQrCode,
 } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
-import EventForm from "@/components/events/EventForm";
 import ShareModal from "@/components/microsite/ShareModal";
 import EventSalesTabs from "@/components/events/EventSalesTabs";
 import PublishPendingDialog from "@/components/PublishPendingDialog";
@@ -42,7 +42,6 @@ export default function EventDetail() {
     const { organizer } = useAuth();
     const [event, setEvent] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [editMode, setEditMode] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
     const [publishPendingOpen, setPublishPendingOpen] = useState(false);
 
@@ -107,29 +106,6 @@ export default function EventDetail() {
         }
     };
 
-    if (editMode) {
-        return (
-            <div className="space-y-4 max-w-3xl mx-auto">
-                <Button
-                    variant="ghost"
-                    onClick={() => setEditMode(false)}
-                    className="-ml-2"
-                >
-                    <ArrowLeft className="h-4 w-4 mr-1" /> Volver al detalle
-                </Button>
-                <h1 className="text-2xl font-semibold">Editar evento</h1>
-                <EventForm
-                    initial={event}
-                    mode="edit"
-                    onSaved={() => {
-                        load();
-                        setEditMode(false);
-                    }}
-                />
-            </div>
-        );
-    }
-
     const posterSrc = event.poster_url
         ? `${import.meta.env.VITE_BACKEND_URL || ""}${event.poster_url}`
         : FALLBACK_IMG;
@@ -178,7 +154,10 @@ export default function EventDetail() {
                     </div>
 
                     <div className="flex flex-wrap gap-2 pt-3">
-                        <Button onClick={() => setEditMode(true)} data-testid="event-edit-btn">
+                        <Button
+                            onClick={() => navigate(`/app/eventos/${event.id}/editar`)}
+                            data-testid="event-edit-btn"
+                        >
                             <Edit3 className="h-4 w-4 mr-1.5" />
                             Editar
                         </Button>

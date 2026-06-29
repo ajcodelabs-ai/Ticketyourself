@@ -11,7 +11,7 @@ from db_helpers import get_event_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import (
     ActivationEvent, DocumentType, Event, EventCapacityReservation, EventSeatAssignment,
     Microsite, MicrositeAsset, Organizer, OrganizerAdminComment, OrganizerDocument,
-    RequiredDocumentSet, SeatHold, SubscriptionPlan, Tenant, Ticket, TicketOrder, User,
+    RequiredDocumentSet, SeatHold, SubscriptionPlan, Tenant, Ticket, TicketOrder, TicketScan, User,
 )
 from security import hash_password, verify_password
 from services.required_documents import DEFAULTS as REQUIRED_DOC_DEFAULTS
@@ -548,6 +548,14 @@ async def _cleanup_ephemeral_orders() -> None:
         res_result = await _pg.execute(
             delete(EventCapacityReservation).where(EventCapacityReservation.order_id.in_(order_ids))
         )
+        ticket_ids_result = await _pg.execute(
+            select(Ticket.id).where(Ticket.order_id.in_(order_ids))
+        )
+        ticket_ids = [r.id for r in ticket_ids_result.all()]
+        if ticket_ids:
+            await _pg.execute(
+                delete(TicketScan).where(TicketScan.ticket_id.in_(ticket_ids))
+            )
         tix_result = await _pg.execute(
             delete(Ticket).where(Ticket.order_id.in_(order_ids))
         )
@@ -813,7 +821,7 @@ async def _seed_demo_events() -> None:
         "presale": {"enabled": False, "percent": 0, "ends_at": None},
     }
     _demo_access_params = {
-        "visibility": "public", "access_type": "open",
+        "access_type": "open",
         "max_per_purchase": 10, "max_per_email": None,
         "refund_window_hours": 24, "show_buyer_name_on_ticket": True,
     }
@@ -1475,7 +1483,7 @@ async def _seed_demo_numbered_event() -> None:
         "presale": {"enabled": False, "percent": 0, "ends_at": None},
     }
     _ap_num = {
-        "visibility": "public", "access_type": "open",
+        "access_type": "open",
         "max_per_purchase": 10, "max_per_email": None,
         "refund_window_hours": 24, "show_buyer_name_on_ticket": True,
     }
