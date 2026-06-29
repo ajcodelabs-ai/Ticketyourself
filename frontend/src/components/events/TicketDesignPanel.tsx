@@ -44,6 +44,31 @@ const FIELD_LABELS = {
 };
 const DISPLAY_W = 560;
 
+const PALETTE = [
+    "#ffffff", "#f8fafc", "#1f1f33", "#0f172a",
+    "#6366f1", "#0ea5e9", "#22c55e", "#f59e0b",
+    "#ef4444", "#a855f7", "#ec4899", "#14b8a6",
+];
+
+function ColorSwatches({ value, onChange, testid }) {
+    return (
+        <div className="flex gap-1.5 flex-wrap" data-testid={testid}>
+            {PALETTE.map((c) => (
+                <button
+                    key={c}
+                    type="button"
+                    title={c}
+                    onClick={() => onChange(c)}
+                    className={`h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 ${
+                        value?.toLowerCase() === c ? "border-foreground scale-110" : "border-border"
+                    }`}
+                    style={{ backgroundColor: c }}
+                />
+            ))}
+        </div>
+    );
+}
+
 function defaultDesign() {
     return { format: "digital", background_url: null, background_color: "#ffffff", elements: [] };
 }
@@ -238,6 +263,21 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                         </span>
                     </Button>
                 </label>
+                <div className="flex items-center gap-1.5 pl-2 border-l">
+                    <span className="text-xs text-muted-foreground">Color de fondo:</span>
+                    <ColorSwatches
+                        value={safeDesign.background_color || "#ffffff"}
+                        onChange={(c) => updateDesign({ background_color: c })}
+                        testid={`td-bg-palette-${slot}`}
+                    />
+                    <Input
+                        type="color"
+                        value={safeDesign.background_color || "#ffffff"}
+                        onChange={(e) => updateDesign({ background_color: e.target.value })}
+                        className="h-7 w-9 p-0.5 cursor-pointer"
+                        data-testid={`td-bg-color-${slot}`}
+                    />
+                </div>
                 <Button
                     size="sm"
                     variant="secondary"
@@ -360,28 +400,31 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                                             />
                                         </div>
                                     )}
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div className="space-y-1.5">
-                                            <Label>Tamaño</Label>
-                                            <Input
-                                                type="number"
-                                                min="6"
-                                                max="72"
-                                                value={selected.font_size || 14}
-                                                onChange={(e) => updateElement(selected.id, { font_size: parseInt(e.target.value, 10) || 14 })}
-                                                data-testid={`td-font-size-${slot}`}
-                                            />
-                                        </div>
-                                        <div className="space-y-1.5">
-                                            <Label>Color</Label>
-                                            <Input
-                                                type="color"
-                                                value={selected.color || "#1f1f33"}
-                                                onChange={(e) => updateElement(selected.id, { color: e.target.value })}
-                                                className="h-9 cursor-pointer"
-                                                data-testid={`td-color-${slot}`}
-                                            />
-                                        </div>
+                                    <div className="space-y-1.5">
+                                        <Label>Tamaño</Label>
+                                        <Input
+                                            type="number"
+                                            min="6"
+                                            max="72"
+                                            value={selected.font_size || 14}
+                                            onChange={(e) => updateElement(selected.id, { font_size: parseInt(e.target.value, 10) || 14 })}
+                                            data-testid={`td-font-size-${slot}`}
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label>Color</Label>
+                                        <ColorSwatches
+                                            value={selected.color || "#1f1f33"}
+                                            onChange={(c) => updateElement(selected.id, { color: c })}
+                                            testid={`td-color-palette-${slot}`}
+                                        />
+                                        <Input
+                                            type="color"
+                                            value={selected.color || "#1f1f33"}
+                                            onChange={(e) => updateElement(selected.id, { color: e.target.value })}
+                                            className="h-8 w-full cursor-pointer"
+                                            data-testid={`td-color-${slot}`}
+                                        />
                                     </div>
                                     <div className="space-y-1.5">
                                         <Label>Alineación</Label>
@@ -468,19 +511,25 @@ function DesignElementNode({ el, displayW, displayH, isSelected, onSelect, onDra
         );
     }
     if (el.type === "logo") {
-        if (logoImg) {
-            return <KonvaImage {...common} image={logoImg} width={w} height={h} />;
-        }
+        // Always the same outer Group — whether the image is loaded yet or
+        // not — so the registered ref (and the Transformer attached to it)
+        // never goes stale when the placeholder swaps for the real image.
         return (
             <Group {...common} width={w} height={h}>
-                <Rect
-                    width={w}
-                    height={h}
-                    fill="#f1f1f6"
-                    stroke={isSelected ? "#6366f1" : "#c7c7d6"}
-                    strokeWidth={isSelected ? 2 : 1}
-                />
-                <Text width={w} height={h} text="LOGO" fontSize={Math.min(w, h) * 0.18} fill="#9292a8" align="center" verticalAlign="middle" />
+                {logoImg ? (
+                    <KonvaImage image={logoImg} width={w} height={h} />
+                ) : (
+                    <>
+                        <Rect
+                            width={w}
+                            height={h}
+                            fill="#f1f1f6"
+                            stroke={isSelected ? "#6366f1" : "#c7c7d6"}
+                            strokeWidth={isSelected ? 2 : 1}
+                        />
+                        <Text width={w} height={h} text="LOGO" fontSize={Math.min(w, h) * 0.18} fill="#9292a8" align="center" verticalAlign="middle" />
+                    </>
+                )}
             </Group>
         );
     }
