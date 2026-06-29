@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -16,38 +16,44 @@ function pageChunk(id: string): string | undefined {
     return undefined;
 }
 
-export default defineConfig({
-    plugins: [react()],
-    resolve: {
-        alias: {
-            "@": path.resolve(__dirname, "src"),
-        },
-    },
-    server: {
-        port: 3000,
-        host: true,
-        watch: {
-            usePolling: true,
-        },
-    },
-    build: {
-        rollupOptions: {
-            output: {
-                manualChunks(id) {
-                    const page = pageChunk(id);
-                    if (page) return page;
+export default defineConfig(({ mode }) => {
+    const env = loadEnv(mode, process.cwd(), "VITE_");
+    const publicDomain = env.VITE_PUBLIC_DOMAIN || "ajcodelabs.ai";
 
-                    if (id.includes("node_modules/konva") || id.includes("node_modules/react-konva")) {
-                        return "vendor-konva";
-                    }
-                    if (id.includes("node_modules/recharts")) {
-                        return "vendor-recharts";
-                    }
-                    if (id.includes("node_modules/html5-qrcode")) {
-                        return "vendor-qrcode";
-                    }
+    return {
+        plugins: [react()],
+        resolve: {
+            alias: {
+                "@": path.resolve(__dirname, "src"),
+            },
+        },
+        server: {
+            port: 3000,
+            host: true,
+            allowedHosts: [`.${publicDomain}`],
+            watch: {
+                usePolling: true,
+            },
+        },
+        build: {
+            rollupOptions: {
+                output: {
+                    manualChunks(id) {
+                        const page = pageChunk(id);
+                        if (page) return page;
+
+                        if (id.includes("node_modules/konva") || id.includes("node_modules/react-konva")) {
+                            return "vendor-konva";
+                        }
+                        if (id.includes("node_modules/recharts")) {
+                            return "vendor-recharts";
+                        }
+                        if (id.includes("node_modules/html5-qrcode")) {
+                            return "vendor-qrcode";
+                        }
+                    },
                 },
             },
         },
-    },
+    };
 });

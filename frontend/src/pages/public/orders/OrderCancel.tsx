@@ -9,6 +9,7 @@
  */
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { useSlug } from "@/contexts/TenantContext";
 import { XCircle, Loader2, Sparkles, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,8 @@ import { eventPublicPath } from "@/lib/events";
 import { formatCents, orderSuccessPath } from "@/lib/orders";
 
 export default function OrderCancel() {
-    const { slug, order_number } = useParams();
+    const { order_number } = useParams();
+    const slug = useSlug();
     const navigate = useNavigate();
     const [order, setOrder] = useState(null);
     const [event, setEvent] = useState(null);
