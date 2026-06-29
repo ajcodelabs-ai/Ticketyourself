@@ -272,6 +272,7 @@ uvicorn server:app --reload --port 8000
 ```bash
 cd frontend && yarn install
 echo "VITE_BACKEND_URL=http://localhost:8000" > .env
+echo "VITE_PUBLIC_DOMAIN=localhost" >> .env
 yarn start    # http://localhost:3000
 ```
 

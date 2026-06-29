@@ -4,6 +4,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { useSlug } from "@/contexts/TenantContext";
 import {
     Loader2,
     Frown,
@@ -43,7 +44,8 @@ import { PAYMENT_METHOD_META } from "@/lib/orders";
 const FALLBACK_IMG = "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200";
 
 export default function EventPublic() {
-    const { slug, event_slug } = useParams();
+    const { event_slug } = useParams();
+    const slug = useSlug();
     const [event, setEvent] = useState(null);
     const [state, setState] = useState("loading");
     const [shareOpen, setShareOpen] = useState(false);

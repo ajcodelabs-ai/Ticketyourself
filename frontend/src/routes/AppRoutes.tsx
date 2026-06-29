@@ -1,7 +1,9 @@
+import { useMemo } from "react";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { LazyPage } from "@/routes/LazyPage";
 import { AdminArea, Dashboard, OrgArea, Public } from "@/routes/layouts";
 import * as Pages from "@/routes/lazyPages";
+import { extractSubdomainFromHostname } from "@/lib/config";
 
 function RedirectEvent() {
     const { event_id } = useParams();
@@ -14,14 +16,40 @@ function RedirectEventEdit() {
 }
 
 export default function AppRoutes() {
+    const isSubdomain = useMemo(() => extractSubdomainFromHostname() !== null, []);
+
     return (
         <Routes>
-            {/* ── Marketing ─────────────────────────────────────────────── */}
-            <Route path="/" element={<Public><LazyPage page={Pages.Landing} /></Public>} />
+            {isSubdomain ? (
+                <>
+                    {/* ── Subdominio: rutas espejo (slug.domain.com/*) ─────── */}
+                    <Route path="/" element={<LazyPage page={Pages.MicrositePublic} />} />
+                    <Route path="/e/:event_slug" element={<LazyPage page={Pages.EventPublic} />} />
+                    <Route
+                        path="/venues/:venueSlug/preview"
+                        element={<LazyPage page={Pages.VenuePreview} />}
+                    />
+                    <Route path="/orden/:order_number" element={<LazyPage page={Pages.OrderSuccess} />} />
+                    <Route
+                        path="/orden/:order_number/cancelado"
+                        element={<LazyPage page={Pages.OrderCancel} />}
+                    />
+                    <Route
+                        path="/orden/:order_number/instrucciones"
+                        element={<LazyPage page={Pages.PaymentInstructions} />}
+                    />
+                </>
+            ) : (
+                <>
+                    {/* ── Marketing (dominio base) ──────────────────────────── */}
+                    <Route path="/" element={<Public><LazyPage page={Pages.Landing} /></Public>} />
+                </>
+            )}
+            {/* ── Login/Registro — funcionan desde cualquier dominio ───── */}
             <Route path="/login" element={<Public><LazyPage page={Pages.Login} /></Public>} />
             <Route path="/registro" element={<Public><LazyPage page={Pages.Register} /></Public>} />
 
-            {/* ── Público del tenant (/o/:slug/*) ───────────────────────── */}
+            {/* ── Público del tenant (/o/:slug/*) — siempre disponibles ──── */}
             <Route path="/o/:slug" element={<LazyPage page={Pages.MicrositePublic} />} />
             <Route path="/o/:slug/e/:event_slug" element={<LazyPage page={Pages.EventPublic} />} />
             <Route
