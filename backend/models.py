@@ -186,14 +186,35 @@ class OrganizerProfileUpdate(BaseModel):
     legal_id: Optional[str] = Field(default=None, min_length=2, max_length=40)
 
 
+# Document types are an admin-extensible catalog (services/document_types.py),
+# not a fixed enum — validated at runtime against the document_types table.
 class OrganizerDocumentOut(TimestampedModel):
     id: str
     organizer_id: str
-    doc_type: Literal["ruc", "id_card", "operating_permit", "other"]
+    doc_type: str
     original_filename: str
     mime_type: str
     size_bytes: int
     uploaded_at: datetime
+
+
+class RequiredDocumentsOut(BaseModel):
+    individual: List[str]
+    company: List[str]
+
+
+class RequiredDocumentsUpdate(BaseModel):
+    individual: List[str] = Field(default_factory=list)
+    company: List[str] = Field(default_factory=list)
+
+
+class DocumentTypeOut(BaseModel):
+    code: str
+    label: str
+
+
+class DocumentTypeCreate(BaseModel):
+    label: str = Field(min_length=2, max_length=80)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

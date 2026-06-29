@@ -26,7 +26,7 @@ def is_valid_slug(slug: str) -> bool:
 
 async def find_unique_slug(base: str, collection, *, exclude_id: Optional[str] = None) -> str:
     """
-    Devuelve un slug único en `collection` (campo `slug`). Si base ya está
+    Devuelve un slug único en `collection` (MongoDB). Si base ya está
     tomado, sufija -2, -3, etc.
     """
     candidate = normalize_slug(base) or "organizador"
@@ -36,6 +36,30 @@ async def find_unique_slug(base: str, collection, *, exclude_id: Optional[str] =
         if exclude_id:
             query["id"] = {"$ne": exclude_id}
         existing = await collection.find_one(query, {"_id": 0, "id": 1})
+        if not existing:
+            return candidate
+        suffix += 1
+        candidate = f"{normalize_slug(base)}-{suffix}"
+        if suffix > 999:
+            raise RuntimeError("Could not allocate unique slug")
+
+
+async def find_unique_slug_pg(
+    base: str, session, model, *, exclude_id: Optional[str] = None
+) -> str:
+    """
+    Devuelve un slug único en `model` (SQLAlchemy). Si base ya está
+    tomado, sufija -2, -3, etc.
+    """
+    from sqlalchemy import select
+
+    candidate = normalize_slug(base) or "organizador"
+    suffix = 1
+    while True:
+        stmt = select(model.id).where(model.slug == candidate)
+        if exclude_id:
+            stmt = stmt.where(model.id != exclude_id)
+        existing = await session.scalar(stmt)
         if not existing:
             return candidate
         suffix += 1

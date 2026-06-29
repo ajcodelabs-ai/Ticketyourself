@@ -17,8 +17,13 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
-from db import db
+from database import get_db
+from db_helpers import get_organizer_by_id, get_organizer_by_slug, row_to_dict
+from orm_models import Event, Organizer, SubscriptionPlan, Venue
 from security import get_current_user
 from services.plan_features import get_plan_features
 from slugs import normalize_slug
@@ -28,23 +33,20 @@ router = APIRouter(prefix="/api/venues/me", tags=["venues"])
 public_router = APIRouter(prefix="/api/public/venues", tags=["venues-public"])
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 async def _require_active_organizer(user) -> Dict[str, Any]:
     """Panel-level access. Allows `pending` (so the org can build drafts while
     awaiting admin approval). Rejects `rejected` / `suspended` / unknown."""
     if not user.get("organizer_id"):
         raise HTTPException(status_code=403, detail="No organizer profile")
-    org = await db.organizers.find_one({"id": user["organizer_id"]}, {"_id": 0})
+    org = await get_organizer_by_id(user["organizer_id"])
     if not org:
         raise HTTPException(status_code=403, detail="Organizer profile missing")
     if org.get("status") not in {"pending", "approved"}:
         raise HTTPException(status_code=403, detail="Tu cuenta no tiene acceso al panel de venues.")
-    if org.get("plan_id"):
-        plan = await db.subscription_plans.find_one(
-            {"id": org["plan_id"]}, {"_id": 0, "code": 1}
-        )
-        org["plan_code"] = plan.get("code") if plan else None
-    else:
-        org["plan_code"] = None
     return org
 
 
@@ -135,6 +137,9 @@ class VenueElement(BaseModel):
     chair_distance: Optional[int] = 20
     # Table rect — chairs_per_side keyed by top/right/bottom/left
     chairs_per_side: Optional[Dict[str, int]] = None
+    # §4.2.6 — "mesa / fila completa": buyer must take every available seat
+    # of this table/row in one purchase.
+    require_full_purchase: Optional[bool] = None
 
 
 class VenueIn(BaseModel):
@@ -161,10 +166,6 @@ class LocalityIn(BaseModel):
 
 
 # ───────────────────────── Helpers ─────────────────────────────────────────
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _compute_capacity(elements: List[Dict[str, Any]]) -> int:
     """Sum of seat counts across all element kinds that contribute."""
     total = 0
@@ -172,7 +173,7 @@ def _compute_capacity(elements: List[Dict[str, Any]]) -> int:
         k = e.get("kind")
         if k == "unnumbered_zone":
             total += int(e.get("capacity") or 0)
-        elif k == "seat_row_straight" or k == "seat_row_curved":
+        elif k in ("seat_row_straight", "seat_row_curved"):
             total += int(e.get("seats_count") or 0)
         elif k == "seat_individual":
             total += 1
@@ -228,49 +229,87 @@ def _validate_elements(elements: List[VenueElement]) -> None:
 
 async def _get_active_events_using(venue_id: str) -> List[Dict[str, Any]]:
     """Events that bind to venue and have tickets_sold > 0 and not ended."""
-    now_iso = _now_iso()
-    cur = db.events.find(
-        {
-            "venue_id": venue_id,
-            "tickets_sold": {"$gt": 0},
-            "$or": [{"ends_at": None}, {"ends_at": {"$gte": now_iso}}],
-        },
-        {"_id": 0, "id": 1, "title": 1, "starts_at": 1, "tickets_sold": 1},
-    )
-    return [d async for d in cur]
+    from database import AsyncSessionLocal
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as pg:
+        result = await pg.execute(
+            select(Event.id, Event.title, Event.starts_at, Event.tickets_sold)
+            .where(
+                Event.venue_id == venue_id,
+                Event.tickets_sold > 0,
+                or_(Event.ends_at.is_(None), Event.ends_at >= now),
+            )
+        )
+        return [
+            {"id": r.id, "title": r.title, "starts_at": r.starts_at, "tickets_sold": r.tickets_sold}
+            for r in result.all()
+        ]
 
 
-async def _ensure_organizer_owns(organizer_id: str, venue_id: str) -> Dict[str, Any]:
-    v = await db.venues.find_one({"id": venue_id}, {"_id": 0})
-    if not v:
+async def _ensure_organizer_owns(organizer_id: str, venue_id: str, session: AsyncSession) -> dict:
+    result = await session.execute(select(Venue).where(Venue.id == venue_id))
+    row = result.scalar_one_or_none()
+    if not row or row.organizer_id != organizer_id or row.is_template:
         raise HTTPException(404, "Venue not found")
-    if v.get("organizer_id") != organizer_id:
+    return row_to_dict(row)
+
+
+async def _ensure_organizer_owns_row(organizer_id: str, venue_id: str, session: AsyncSession) -> Venue:
+    result = await session.execute(select(Venue).where(Venue.id == venue_id))
+    row = result.scalar_one_or_none()
+    if not row or row.organizer_id != organizer_id or row.is_template:
         raise HTTPException(404, "Venue not found")
-    return v
+    return row
 
 
-def _new_slug(name: str) -> str:
-    return normalize_slug(name)
-
-
-async def _unique_slug(organizer_id: str, base: str, ignore_id: Optional[str] = None) -> str:
+async def _unique_slug(
+    organizer_id: str,
+    base: str,
+    session: AsyncSession,
+    *,
+    ignore_id: Optional[str] = None,
+) -> str:
     candidate = base
     i = 2
     while True:
-        q = {"organizer_id": organizer_id, "slug": candidate}
+        stmt = select(Venue.id).where(
+            Venue.organizer_id == organizer_id,
+            Venue.slug == candidate,
+        )
         if ignore_id:
-            q["id"] = {"$ne": ignore_id}
-        existing = await db.venues.find_one(q, {"_id": 0, "id": 1})
+            stmt = stmt.where(Venue.id != ignore_id)
+        existing = await session.scalar(stmt)
         if not existing:
             return candidate
         candidate = f"{base}-{i}"
         i += 1
 
 
-async def _venue_count(organizer_id: str) -> int:
-    return await db.venues.count_documents(
-        {"organizer_id": organizer_id, "status": {"$ne": "archived"}}
-    )
+async def _venue_count(organizer_id: str, session: AsyncSession) -> int:
+    return await session.scalar(
+        select(func.count(Venue.id)).where(
+            Venue.organizer_id == organizer_id,
+            Venue.status != "archived",
+            Venue.is_template.is_(False),
+        )
+    ) or 0
+
+
+def _clone_venue_elements(original: Venue) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Regenerate locality + element ids for a copy."""
+    loc_map: Dict[str, str] = {}
+    new_locs: List[Dict[str, Any]] = []
+    for loc in (original.localities or []):
+        new_id = str(uuid.uuid4())
+        loc_map[loc["id"]] = new_id
+        new_locs.append({**loc, "id": new_id})
+    new_elements: List[Dict[str, Any]] = []
+    for el in (original.elements or []):
+        ne = {**el, "id": str(uuid.uuid4())}
+        if ne.get("locality_id"):
+            ne["locality_id"] = loc_map.get(ne["locality_id"])
+        new_elements.append(ne)
+    return new_elements, new_locs
 
 
 def _is_locked(active_events: List[Dict[str, Any]]) -> bool:
@@ -279,16 +318,25 @@ def _is_locked(active_events: List[Dict[str, Any]]) -> bool:
 
 # ───────────────────────── Public preview ──────────────────────────────────
 @public_router.get("/{tenant_slug}/{venue_slug}")
-async def public_venue(tenant_slug: str, venue_slug: str) -> Dict[str, Any]:
-    org = await db.organizers.find_one({"slug": tenant_slug}, {"_id": 0, "id": 1, "status": 1, "company_name": 1, "slug": 1})
+async def public_venue(
+    tenant_slug: str,
+    venue_slug: str,
+    session: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    org = await get_organizer_by_slug(tenant_slug)
     if not org or org.get("status") != "approved":
         raise HTTPException(404, "Venue not found")
-    v = await db.venues.find_one(
-        {"organizer_id": org["id"], "slug": venue_slug, "status": "published"},
-        {"_id": 0},
+    result = await session.execute(
+        select(Venue).where(
+            Venue.organizer_id == org["id"],
+            Venue.slug == venue_slug,
+            Venue.status == "published",
+        )
     )
-    if not v:
+    row = result.scalar_one_or_none()
+    if not row:
         raise HTTPException(404, "Venue not found")
+    v = row_to_dict(row)
     v["organizer"] = {"slug": org["slug"], "company_name": org["company_name"]}
     return v
 
@@ -299,28 +347,31 @@ async def list_venues(
     org: Dict[str, Any] = Depends(require_organizer),
     status_f: Optional[str] = Query(default=None, alias="status"),
     search: Optional[str] = Query(default=None),
+    session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    org = org  # noqa: PLW0127  (kept after auth refactor; org comes from dep)
-    q: dict = {"organizer_id": org["id"]}
+    stmt = select(Venue).where(
+        Venue.organizer_id == org["id"],
+        Venue.is_template.is_(False),
+    )
     if status_f:
-        q["status"] = status_f
+        stmt = stmt.where(Venue.status == status_f)
     if search:
-        q["$or"] = [
-            {"name": {"$regex": search.strip(), "$options": "i"}},
-            {"slug": {"$regex": search.strip(), "$options": "i"}},
-        ]
-    cur = db.venues.find(q, {"_id": 0}).sort("created_at", -1)
-    items = [v async for v in cur]
-    # Enrich: # of events using each venue
+        like = f"%{search.strip()}%"
+        stmt = stmt.where(or_(Venue.name.ilike(like), Venue.slug.ilike(like)))
+    stmt = stmt.order_by(Venue.created_at.desc())
+    result = await session.execute(stmt)
+    items = [row_to_dict(r) for r in result.scalars().all()]
+
+    # Enrich: # of events using each venue (PG)
     venue_ids = [v["id"] for v in items]
     counts: Dict[str, int] = {}
     if venue_ids:
-        pipe = [
-            {"$match": {"venue_id": {"$in": venue_ids}}},
-            {"$group": {"_id": "$venue_id", "n": {"$sum": 1}}},
-        ]
-        async for r in db.events.aggregate(pipe):
-            counts[r["_id"]] = r["n"]
+        evt_result = await session.execute(
+            select(Event.venue_id, func.count(Event.id).label("n"))
+            .where(Event.venue_id.in_(venue_ids))
+            .group_by(Event.venue_id)
+        )
+        counts = {r.venue_id: r.n for r in evt_result.all()}
     for v in items:
         v["events_count"] = counts.get(v["id"], 0)
 
@@ -337,47 +388,114 @@ async def list_venues(
 async def create_venue(
     body: VenueIn,
     org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    org = org  # noqa: PLW0127  (kept after auth refactor; org comes from dep)
     features = get_plan_features(org.get("plan_code"))
     max_v = features.get("max_venues", 1)
     if max_v != -1:
-        active = await _venue_count(org["id"])
+        active = await _venue_count(org["id"], session)
         if active >= max_v:
             raise HTTPException(
                 403,
                 f"Tu plan permite hasta {max_v} venue(s) activos. Archivá uno para crear otro.",
             )
-    base = _new_slug(body.name)
-    venue_slug = await _unique_slug(org["id"], base)
-    now = _now_iso()
+    base = normalize_slug(body.name)
+    venue_slug = await _unique_slug(org["id"], base, session)
+    now = _now()
     canvas = (body.canvas or CanvasCfg()).model_dump()
-    doc = {
-        "id": str(uuid.uuid4()),
-        "organizer_id": org["id"],
-        "tenant_slug": org["slug"],
-        "name": body.name,
-        "slug": venue_slug,
-        "description": body.description,
-        "type": body.type,
-        "canvas": canvas,
-        "elements": [],
-        "localities": [],
-        "capacity_calculated": 0,
-        "status": "draft",
-        "is_template": False,
-        "created_at": now,
-        "updated_at": now,
-        "published_at": None,
-    }
-    await db.venues.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    row = Venue(
+        id=str(uuid.uuid4()),
+        organizer_id=org["id"],
+        tenant_slug=org["slug"],
+        name=body.name,
+        slug=venue_slug,
+        description=body.description,
+        type=body.type,
+        canvas=canvas,
+        elements=[],
+        localities=[],
+        capacity_calculated=0,
+        status="draft",
+        is_template=False,
+        created_at=now,
+        updated_at=now,
+        published_at=None,
+    )
+    session.add(row)
+    await session.flush()
+    return row_to_dict(row)
+
+
+@router.get("/templates")
+async def list_platform_templates(
+    org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    _ = org
+    result = await session.execute(
+        select(Venue).where(Venue.is_template.is_(True)).order_by(Venue.name.asc())
+    )
+    items = [row_to_dict(r) for r in result.scalars().all()]
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/from-template/{template_id}", status_code=201)
+async def create_from_template(
+    template_id: str,
+    org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    features = get_plan_features(org.get("plan_code"))
+    max_v = features.get("max_venues", 1)
+    if max_v != -1:
+        active = await _venue_count(org["id"], session)
+        if active >= max_v:
+            raise HTTPException(
+                403,
+                f"Tu plan permite hasta {max_v} venue(s). Archivá uno para usar una plantilla.",
+            )
+    result = await session.execute(
+        select(Venue).where(Venue.id == template_id, Venue.is_template.is_(True))
+    )
+    original = result.scalar_one_or_none()
+    if not original:
+        raise HTTPException(404, "Plantilla no encontrada")
+
+    name = original.name
+    new_slug = await _unique_slug(org["id"], normalize_slug(name), session)
+    now = _now()
+    new_elements, new_locs = _clone_venue_elements(original)
+
+    row = Venue(
+        id=str(uuid.uuid4()),
+        organizer_id=org["id"],
+        tenant_slug=org["slug"],
+        name=name,
+        slug=new_slug,
+        description=original.description,
+        type=original.type,
+        canvas=dict(original.canvas or {}),
+        elements=new_elements,
+        localities=new_locs,
+        capacity_calculated=original.capacity_calculated,
+        status="draft",
+        is_template=False,
+        created_at=now,
+        updated_at=now,
+        published_at=None,
+    )
+    session.add(row)
+    await session.flush()
+    return row_to_dict(row)
 
 
 @router.get("/{venue_id}")
-async def get_venue(venue_id: str, org: Dict[str, Any] = Depends(require_organizer)):
-    v = await _ensure_organizer_owns(org["id"], venue_id)
+async def get_venue(
+    venue_id: str,
+    org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
+):
+    v = await _ensure_organizer_owns(org["id"], venue_id, session)
     active = await _get_active_events_using(venue_id)
     v["lock_status"] = {
         "locked": _is_locked(active),
@@ -387,8 +505,12 @@ async def get_venue(venue_id: str, org: Dict[str, Any] = Depends(require_organiz
 
 
 @router.get("/{venue_id}/lock-status")
-async def lock_status(venue_id: str, org: Dict[str, Any] = Depends(require_organizer)):
-    await _ensure_organizer_owns(org["id"], venue_id)
+async def lock_status(
+    venue_id: str,
+    org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
+):
+    await _ensure_organizer_owns(org["id"], venue_id, session)
     active = await _get_active_events_using(venue_id)
     locked = _is_locked(active)
     return {
@@ -404,9 +526,9 @@ async def update_venue(
     venue_id: str,
     body: VenuePut,
     org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
 ):
-    org = org  # noqa: PLW0127  (kept after auth refactor; org comes from dep)
-    v = await _ensure_organizer_owns(org["id"], venue_id)
+    row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
     active = await _get_active_events_using(venue_id)
     locked = _is_locked(active)
 
@@ -426,9 +548,8 @@ async def update_venue(
             )
 
     if locked:
-        # Block any structural mutation.
-        old_elements = v.get("elements", [])
-        old_locs = v.get("localities", [])
+        old_elements = row.elements or []
+        old_locs = row.localities or []
         if _structural_diff(old_elements, elements) or _locality_structural_diff(old_locs, localities):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -439,27 +560,27 @@ async def update_venue(
                 },
             )
 
-    # Slug stays unless name changed
-    new_slug = v["slug"]
-    if v["name"] != body.name:
-        new_slug = await _unique_slug(org["id"], _new_slug(body.name), ignore_id=venue_id)
+    new_slug = row.slug
+    if row.name != body.name:
+        new_slug = await _unique_slug(org["id"], normalize_slug(body.name), session, ignore_id=venue_id)
 
-    cap = _compute_capacity(elements)
-    update_doc = {
-        "name": body.name,
-        "slug": new_slug,
-        "description": body.description,
-        "type": body.type,
-        "canvas": body.canvas.model_dump(),
-        "elements": elements,
-        "localities": localities,
-        "capacity_calculated": cap,
-        "updated_at": _now_iso(),
-    }
-    await db.venues.update_one({"id": venue_id}, {"$set": update_doc})
-    fresh = await db.venues.find_one({"id": venue_id}, {"_id": 0})
-    fresh["lock_status"] = {"locked": locked, "active_events": active}
-    return fresh
+    row.name = body.name
+    row.slug = new_slug
+    row.description = body.description
+    row.type = body.type
+    row.canvas = body.canvas.model_dump()
+    row.elements = elements
+    row.localities = localities
+    row.capacity_calculated = _compute_capacity(elements)
+    row.updated_at = _now()
+    flag_modified(row, "canvas")
+    flag_modified(row, "elements")
+    flag_modified(row, "localities")
+    await session.flush()
+
+    v = row_to_dict(row)
+    v["lock_status"] = {"locked": locked, "active_events": active}
+    return v
 
 
 def _structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> bool:
@@ -487,7 +608,6 @@ def _locality_structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any
     by_id_new = {it["id"]: it for it in new}
     if set(by_id_old) != set(by_id_new):
         return True
-    # Color + default_price are structural-ish; allow renames + description.
     for k, a in by_id_old.items():
         b = by_id_new[k]
         if a.get("color") != b.get("color"):
@@ -498,80 +618,89 @@ def _locality_structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any
 
 
 @router.delete("/{venue_id}", status_code=204)
-async def delete_venue(venue_id: str, org: Dict[str, Any] = Depends(require_organizer)):
-    await _ensure_organizer_owns(org["id"], venue_id)
-    bound = await db.events.count_documents({"venue_id": venue_id})
+async def delete_venue(
+    venue_id: str,
+    org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
+    bound = await session.scalar(
+        select(func.count(Event.id)).where(Event.venue_id == venue_id)
+    ) or 0
     if bound > 0:
         raise HTTPException(409, f"No se puede eliminar: {bound} evento(s) lo usan.")
-    await db.venues.delete_one({"id": venue_id})
+    await session.delete(row)
     return None
 
 
 @router.post("/{venue_id}/duplicate", status_code=201)
-async def duplicate_venue(venue_id: str, org: Dict[str, Any] = Depends(require_organizer)):
+async def duplicate_venue(
+    venue_id: str,
+    org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
+):
     features = get_plan_features(org.get("plan_code"))
     max_v = features.get("max_venues", 1)
     if max_v != -1:
-        active = await _venue_count(org["id"])
+        active = await _venue_count(org["id"], session)
         if active >= max_v:
             raise HTTPException(403, f"Tu plan permite hasta {max_v} venue(s).")
-    v = await _ensure_organizer_owns(org["id"], venue_id)
-    name = f"{v['name']} (copia)"
-    new_slug = await _unique_slug(org["id"], _new_slug(name))
-    now = _now_iso()
-    # Regenerate element + locality ids to avoid cross-venue collision.
-    loc_map = {}
-    new_locs = []
-    for loc in v.get("localities", []):
-        new_id = str(uuid.uuid4())
-        loc_map[loc["id"]] = new_id
-        new_locs.append({**loc, "id": new_id})
-    new_elements = []
-    for el in v.get("elements", []):
-        ne = {**el, "id": str(uuid.uuid4())}
-        if ne.get("locality_id"):
-            ne["locality_id"] = loc_map.get(ne["locality_id"])
-        new_elements.append(ne)
-    doc = {
-        **v,
-        "id": str(uuid.uuid4()),
-        "name": name,
-        "slug": new_slug,
-        "status": "draft",
-        "is_template": False,
-        "elements": new_elements,
-        "localities": new_locs,
-        "created_at": now,
-        "updated_at": now,
-        "published_at": None,
-    }
-    await db.venues.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    original = await _ensure_organizer_owns_row(org["id"], venue_id, session)
+    name = f"{original.name} (copia)"
+    new_slug = await _unique_slug(org["id"], normalize_slug(name), session)
+    now = _now()
+
+    new_elements, new_locs = _clone_venue_elements(original)
+
+    row = Venue(
+        id=str(uuid.uuid4()),
+        organizer_id=org["id"],
+        tenant_slug=org["slug"],
+        name=name,
+        slug=new_slug,
+        description=original.description,
+        type=original.type,
+        canvas=dict(original.canvas or {}),
+        elements=new_elements,
+        localities=new_locs,
+        capacity_calculated=original.capacity_calculated,
+        status="draft",
+        is_template=False,
+        created_at=now,
+        updated_at=now,
+        published_at=None,
+    )
+    session.add(row)
+    await session.flush()
+    return row_to_dict(row)
 
 
 @router.post("/{venue_id}/publish")
 async def publish_venue(
     venue_id: str,
     org: Dict[str, Any] = Depends(require_organizer_can_publish),
+    session: AsyncSession = Depends(get_db),
 ):
-    v = await _ensure_organizer_owns(org["id"], venue_id)
-    if not v.get("elements"):
+    row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
+    if not row.elements:
         raise HTTPException(422, "Agregá al menos un elemento antes de publicar el venue.")
-    await db.venues.update_one(
-        {"id": venue_id},
-        {"$set": {"status": "published", "published_at": _now_iso(), "updated_at": _now_iso()}},
-    )
+    row.status = "published"
+    row.published_at = _now()
+    row.updated_at = _now()
+    await session.flush()
     return {"id": venue_id, "status": "published"}
 
 
 @router.post("/{venue_id}/archive")
-async def archive_venue(venue_id: str, org: Dict[str, Any] = Depends(require_organizer)):
-    await _ensure_organizer_owns(org["id"], venue_id)
-    await db.venues.update_one(
-        {"id": venue_id},
-        {"$set": {"status": "archived", "updated_at": _now_iso()}},
-    )
+async def archive_venue(
+    venue_id: str,
+    org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
+    row.status = "archived"
+    row.updated_at = _now()
+    await session.flush()
     return {"id": venue_id, "status": "archived"}
 
 
@@ -581,9 +710,9 @@ async def add_locality(
     venue_id: str,
     body: LocalityIn,
     org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
 ):
-    org = org  # noqa: PLW0127  (kept after auth refactor; org comes from dep)
-    await _ensure_organizer_owns(org["id"], venue_id)
+    row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
     loc = Locality(
         id=str(uuid.uuid4()),
         name=body.name,
@@ -591,10 +720,10 @@ async def add_locality(
         description=body.description,
         default_price_cents=body.default_price_cents,
     ).model_dump()
-    await db.venues.update_one(
-        {"id": venue_id},
-        {"$push": {"localities": loc}, "$set": {"updated_at": _now_iso()}},
-    )
+    row.localities = [*(row.localities or []), loc]
+    row.updated_at = _now()
+    flag_modified(row, "localities")
+    await session.flush()
     return loc
 
 
@@ -604,22 +733,28 @@ async def update_locality(
     loc_id: str,
     body: LocalityIn,
     org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
 ):
-    org = org  # noqa: PLW0127  (kept after auth refactor; org comes from dep)
-    await _ensure_organizer_owns(org["id"], venue_id)
-    new_doc = {
-        "localities.$.name": body.name,
-        "localities.$.color": body.color,
-        "localities.$.description": body.description,
-        "localities.$.default_price_cents": body.default_price_cents,
-        "updated_at": _now_iso(),
-    }
-    res = await db.venues.update_one(
-        {"id": venue_id, "localities.id": loc_id},
-        {"$set": new_doc},
-    )
-    if res.matched_count == 0:
+    row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
+    locs = list(row.localities or [])
+    found = False
+    for i, loc in enumerate(locs):
+        if loc["id"] == loc_id:
+            locs[i] = {
+                **loc,
+                "name": body.name,
+                "color": body.color,
+                "description": body.description,
+                "default_price_cents": body.default_price_cents,
+            }
+            found = True
+            break
+    if not found:
         raise HTTPException(404, "Locality not found")
+    row.localities = locs
+    row.updated_at = _now()
+    flag_modified(row, "localities")
+    await session.flush()
     return {"id": loc_id, "updated": True}
 
 
@@ -628,17 +763,18 @@ async def delete_locality(
     venue_id: str,
     loc_id: str,
     org: Dict[str, Any] = Depends(require_organizer),
+    session: AsyncSession = Depends(get_db),
 ):
-    org = org  # noqa: PLW0127  (kept after auth refactor; org comes from dep)
-    v = await _ensure_organizer_owns(org["id"], venue_id)
-    in_use = sum(1 for e in v.get("elements", []) if e.get("locality_id") == loc_id)
+    row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
+    elements = row.elements or []
+    in_use = sum(1 for e in elements if e.get("locality_id") == loc_id)
     if in_use > 0:
         raise HTTPException(
             409,
             f"Hay {in_use} elemento(s) asignados a esta localidad. Reasignalos antes de borrarla.",
         )
-    await db.venues.update_one(
-        {"id": venue_id},
-        {"$pull": {"localities": {"id": loc_id}}, "$set": {"updated_at": _now_iso()}},
-    )
+    row.localities = [loc for loc in (row.localities or []) if loc["id"] != loc_id]
+    row.updated_at = _now()
+    flag_modified(row, "localities")
+    await session.flush()
     return None

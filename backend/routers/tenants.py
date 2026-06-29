@@ -1,10 +1,14 @@
-"""Tenant resolution endpoint (carryover from Fase 0)."""
+"""Tenant resolution endpoint — Phase 1: migrated to PostgreSQL."""
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import db
+from database import get_db
+from db_helpers import row_to_dict
 from models import ResolveResponse, TenantOut
+from orm_models import Tenant
 
 RESERVED_SUBDOMAINS = {"www", "api", "admin", "app", "static", "assets"}
 
@@ -25,18 +29,25 @@ def _extract_subdomain(host: str) -> Optional[str]:
 
 
 @router.get("/resolve", response_model=ResolveResponse)
-async def resolve_tenant(request: Request, tenant: Optional[str] = Query(default=None)):
+async def resolve_tenant(
+    request: Request,
+    tenant: Optional[str] = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+):
     host = request.headers.get("host", "")
     slug = _extract_subdomain(host)
 
     if slug:
-        doc = await db.tenants.find_one({"slug": slug}, {"_id": 0})
-        if doc and doc.get("status") == "active":
-            return ResolveResponse(tenant=TenantOut(**doc))
+        result = await session.execute(select(Tenant).where(Tenant.slug == slug))
+        row = result.scalar_one_or_none()
+        if row and row.status == "active":
+            return ResolveResponse(tenant=TenantOut(**row_to_dict(row)))
 
     if tenant:
-        doc = await db.tenants.find_one({"slug": tenant.strip().lower()}, {"_id": 0})
-        if doc:
-            return ResolveResponse(tenant=TenantOut(**doc))
+        slug_clean = tenant.strip().lower()
+        result = await session.execute(select(Tenant).where(Tenant.slug == slug_clean))
+        row = result.scalar_one_or_none()
+        if row:
+            return ResolveResponse(tenant=TenantOut(**row_to_dict(row)))
 
     return ResolveResponse(tenant=None)

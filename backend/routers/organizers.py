@@ -1,4 +1,4 @@
-"""Organizer self-service: profile + document uploads."""
+"""Organizer self-service: profile + document uploads — Phase 2: PostgreSQL."""
 import logging
 import os
 import uuid
@@ -8,11 +8,24 @@ from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from audit import log_audit
-from db import db
-from models import OrganizerDocumentOut, OrganizerOut, OrganizerProfileUpdate
+from database import get_db
+from db_helpers import organizer_row_to_dict, row_to_dict
+from models import (
+    DocumentTypeOut,
+    OrganizerDocumentOut,
+    OrganizerOut,
+    OrganizerProfileUpdate,
+    RequiredDocumentsOut,
+)
+from orm_models import Organizer, OrganizerDocument, Tenant
 from security import require_role
+from services.document_types import is_valid_doc_type, list_document_types
+from services.required_documents import get_required_documents, is_satisfied
 
 logger = logging.getLogger("tys.organizers")
 
@@ -30,83 +43,121 @@ ALLOWED_MIME = {
     "image/heic",
     "image/heif",
 }
-ALLOWED_DOC_TYPES = {"ruc", "id_card", "operating_permit", "other"}
 
 
-def _doc_to_out(d: dict) -> OrganizerDocumentOut:
-    uploaded = d["uploaded_at"]
-    if isinstance(uploaded, str):
-        uploaded = datetime.fromisoformat(uploaded)
-    return OrganizerDocumentOut(
-        id=d["id"],
-        organizer_id=d["organizer_id"],
-        doc_type=d["doc_type"],
-        original_filename=d["original_filename"],
-        mime_type=d["mime_type"],
-        size_bytes=d["size_bytes"],
-        uploaded_at=uploaded,
-    )
+def _doc_row_to_out(row: OrganizerDocument) -> OrganizerDocumentOut:
+    return OrganizerDocumentOut(**row_to_dict(row))
 
 
-async def _organizer_to_out(doc: dict) -> OrganizerOut:
-    plan_code = None
-    if doc.get("plan_id"):
-        plan = await db.subscription_plans.find_one(
-            {"id": doc["plan_id"]}, {"_id": 0, "code": 1}
-        )
-        if plan:
-            plan_code = plan["code"]
-    return OrganizerOut(plan_code=plan_code, **doc)
+def _org_row_to_out(row: Organizer) -> OrganizerOut:
+    return OrganizerOut(**organizer_row_to_dict(row))
 
 
-async def _get_my_organizer(user: dict) -> dict:
+async def _get_my_organizer(user: dict, session: AsyncSession) -> Organizer:
     org_id = user.get("organizer_id")
     if not org_id:
         raise HTTPException(404, "Organizer profile not found")
-    doc = await db.organizers.find_one({"id": org_id}, {"_id": 0})
-    if not doc:
+    result = await session.execute(
+        select(Organizer)
+        .where(Organizer.id == org_id)
+        .options(selectinload(Organizer.admin_comments))
+    )
+    row = result.scalar_one_or_none()
+    if not row:
         raise HTTPException(404, "Organizer not found")
-    return doc
+    return row
 
 
 # ────────────────────────────────────────────────────────────────────
 # Self-service (organizer)
 # ────────────────────────────────────────────────────────────────────
 @router.get("/me", response_model=OrganizerOut)
-async def get_me(user=Depends(require_role("organizer"))):
-    org = await _get_my_organizer(user)
-    return await _organizer_to_out(org)
+async def get_me(
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _get_my_organizer(user, session)
+    return _org_row_to_out(row)
 
 
 @router.patch("/me", response_model=OrganizerOut)
-async def update_me(payload: OrganizerProfileUpdate, user=Depends(require_role("organizer"))):
+async def update_me(
+    payload: OrganizerProfileUpdate,
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
     updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
     if not updates:
         raise HTTPException(400, "No fields to update")
-    org_id = user["organizer_id"]
-    result = await db.organizers.find_one_and_update(
-        {"id": org_id},
-        {"$set": updates},
-        return_document=True,
-        projection={"_id": 0},
-    )
-    if not result:
-        raise HTTPException(404, "Organizer not found")
+
+    row = await _get_my_organizer(user, session)
+    for key, val in updates.items():
+        setattr(row, key, val)
+
     # If company_name changes, propagate to tenant name (slug is immutable).
     if "company_name" in updates:
-        await db.tenants.update_one(
-            {"slug": result["slug"]},
-            {"$set": {"name": updates["company_name"]}},
-        )
-    return await _organizer_to_out(result)
+        tenant_result = await session.execute(select(Tenant).where(Tenant.slug == row.slug))
+        tenant_row = tenant_result.scalar_one_or_none()
+        if tenant_row:
+            tenant_row.name = updates["company_name"]
+
+    await session.flush()
+    return _org_row_to_out(row)
+
+
+@router.post("/me/resubmit", response_model=OrganizerOut)
+async def resubmit_me(
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _get_my_organizer(user, session)
+    if row.status != "rejected":
+        raise HTTPException(400, "Only rejected organizers can resubmit for review")
+
+    docs_result = await session.execute(
+        select(OrganizerDocument).where(OrganizerDocument.organizer_id == row.id)
+    )
+    present = {d.doc_type for d in docs_result.scalars().all()}
+    if not await is_satisfied(session, row.org_type, present):
+        raise HTTPException(400, "Missing required documents for resubmission")
+
+    row.status = "pending"
+    row.rejection_reason = None
+    await session.flush()
+    await log_audit(user["id"], "organizer.resubmitted", "organizer", row.id, {})
+
+    await session.refresh(row, ["admin_comments"])
+    return _org_row_to_out(row)
+
+
+@router.get("/required-documents", response_model=RequiredDocumentsOut)
+async def get_required_docs(
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    return await get_required_documents(session)
+
+
+@router.get("/document-types", response_model=List[DocumentTypeOut])
+async def get_document_types(
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    return await list_document_types(session)
 
 
 @router.get("/me/documents", response_model=List[OrganizerDocumentOut])
-async def list_my_docs(user=Depends(require_role("organizer"))):
-    org = await _get_my_organizer(user)
-    cursor = db.organizer_documents.find({"organizer_id": org["id"]}, {"_id": 0}).sort("uploaded_at", -1)
-    docs = await cursor.to_list(length=100)
-    return [_doc_to_out(d) for d in docs]
+async def list_my_docs(
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _get_my_organizer(user, session)
+    result = await session.execute(
+        select(OrganizerDocument)
+        .where(OrganizerDocument.organizer_id == row.id)
+        .order_by(OrganizerDocument.uploaded_at.desc())
+    )
+    return [_doc_row_to_out(d) for d in result.scalars().all()]
 
 
 @router.post("/me/documents", response_model=OrganizerDocumentOut, status_code=201)
@@ -114,14 +165,15 @@ async def upload_my_doc(
     doc_type: str = Form(...),
     file: UploadFile = File(...),
     user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
 ):
-    if doc_type not in ALLOWED_DOC_TYPES:
-        raise HTTPException(400, f"Invalid doc_type. Allowed: {sorted(ALLOWED_DOC_TYPES)}")
-    org = await _get_my_organizer(user)
+    if not await is_valid_doc_type(session, doc_type):
+        raise HTTPException(400, f"Invalid doc_type: {doc_type}")
+    row = await _get_my_organizer(user, session)
     if file.content_type not in ALLOWED_MIME:
         logger.warning(
             "Document upload rejected: organizer=%s mime=%s filename=%s",
-            org["id"], file.content_type, file.filename,
+            row.id, file.content_type, file.filename,
         )
         raise HTTPException(
             415,
@@ -137,54 +189,61 @@ async def upload_my_doc(
 
     doc_id = str(uuid.uuid4())
     safe_name = (file.filename or "file").replace("/", "_").replace("\\", "_")[:120]
-    dest_dir = UPLOAD_ROOT / org["id"]
+    dest_dir = UPLOAD_ROOT / row.id
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / f"{doc_id}_{safe_name}"
     dest_path.write_bytes(contents)
 
-    record = {
-        "id": doc_id,
-        "organizer_id": org["id"],
-        "doc_type": doc_type,
-        "file_path": str(dest_path),
-        "original_filename": file.filename,
-        "mime_type": file.content_type,
-        "size_bytes": len(contents),
-        "uploaded_at": datetime.now(timezone.utc).isoformat(),
-        "is_demo": False,
-    }
-    await db.organizer_documents.insert_one(record)
+    doc_row = OrganizerDocument(
+        id=doc_id,
+        organizer_id=row.id,
+        doc_type=doc_type,
+        file_path=str(dest_path),
+        original_filename=file.filename,
+        mime_type=file.content_type,
+        size_bytes=len(contents),
+        uploaded_at=datetime.now(timezone.utc),
+        is_demo=False,
+    )
+    session.add(doc_row)
+    await session.flush()
     await log_audit(
         user["id"],
         "document.uploaded",
         "document",
         doc_id,
-        {"doc_type": doc_type, "organizer_id": org["id"]},
+        {"doc_type": doc_type, "organizer_id": row.id},
     )
-    # Funnel — best-effort.
     try:
         from services.activation import log_funnel_event
-
-        await log_funnel_event(organizer_id=org["id"], event_name="first_doc_uploaded")
+        await log_funnel_event(organizer_id=row.id, event_name="first_doc_uploaded")
     except Exception:  # noqa: BLE001
         pass
-    return _doc_to_out(record)
+    return _doc_row_to_out(doc_row)
 
 
 @router.delete("/me/documents/{doc_id}", status_code=204)
-async def delete_my_doc(doc_id: str, user=Depends(require_role("organizer"))):
-    org = await _get_my_organizer(user)
-    rec = await db.organizer_documents.find_one(
-        {"id": doc_id, "organizer_id": org["id"]}, {"_id": 0}
+async def delete_my_doc(
+    doc_id: str,
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _get_my_organizer(user, session)
+    doc_result = await session.execute(
+        select(OrganizerDocument).where(
+            OrganizerDocument.id == doc_id,
+            OrganizerDocument.organizer_id == row.id,
+        )
     )
-    if not rec:
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
         raise HTTPException(404, "Document not found")
-    if rec.get("file_path") and os.path.exists(rec["file_path"]):
+    if doc.file_path and os.path.exists(doc.file_path):
         try:
-            os.remove(rec["file_path"])
+            os.remove(doc.file_path)
         except OSError:
-            logger.warning("Could not delete file %s", rec["file_path"])
-    await db.organizer_documents.delete_one({"id": doc_id})
+            logger.warning("Could not delete file %s", doc.file_path)
+    await session.delete(doc)
     return None
 
 
@@ -199,25 +258,39 @@ admin_router = APIRouter(
 
 
 @admin_router.get("/{organizer_id}/documents", response_model=List[OrganizerDocumentOut])
-async def admin_list_docs(organizer_id: str):
-    cursor = db.organizer_documents.find({"organizer_id": organizer_id}, {"_id": 0}).sort("uploaded_at", -1)
-    docs = await cursor.to_list(length=200)
-    return [_doc_to_out(d) for d in docs]
+async def admin_list_docs(
+    organizer_id: str,
+    session: AsyncSession = Depends(get_db),
+):
+    result = await session.execute(
+        select(OrganizerDocument)
+        .where(OrganizerDocument.organizer_id == organizer_id)
+        .order_by(OrganizerDocument.uploaded_at.desc())
+    )
+    return [_doc_row_to_out(d) for d in result.scalars().all()]
 
 
 @admin_router.get("/{organizer_id}/documents/{doc_id}/download")
-async def admin_download_doc(organizer_id: str, doc_id: str):
-    rec = await db.organizer_documents.find_one(
-        {"id": doc_id, "organizer_id": organizer_id}, {"_id": 0}
+async def admin_download_doc(
+    organizer_id: str,
+    doc_id: str,
+    session: AsyncSession = Depends(get_db),
+):
+    result = await session.execute(
+        select(OrganizerDocument).where(
+            OrganizerDocument.id == doc_id,
+            OrganizerDocument.organizer_id == organizer_id,
+        )
     )
-    if not rec:
+    doc = result.scalar_one_or_none()
+    if not doc:
         raise HTTPException(404, "Document not found")
-    if rec.get("is_demo") or not rec.get("file_path"):
+    if doc.is_demo or not doc.file_path:
         raise HTTPException(404, "Demo document — file not on disk")
-    if not os.path.exists(rec["file_path"]):
+    if not os.path.exists(doc.file_path):
         raise HTTPException(410, "File missing from disk")
     return FileResponse(
-        rec["file_path"],
-        media_type=rec.get("mime_type", "application/octet-stream"),
-        filename=rec.get("original_filename") or "document",
+        doc.file_path,
+        media_type=doc.mime_type or "application/octet-stream",
+        filename=doc.original_filename or "document",
     )

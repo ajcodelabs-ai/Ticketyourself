@@ -1,4 +1,4 @@
-"""Auth router: register, login, logout, refresh, me, slug-check."""
+"""Auth router — Phase 2: users, tenants, organizers migrated to PostgreSQL."""
 import logging
 import os
 import uuid
@@ -7,8 +7,12 @@ from typing import Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from db import db
+from database import get_db
+from db_helpers import organizer_row_to_dict, row_to_dict
 from models import (
     AuthMeResponse,
     LoginRequest,
@@ -17,6 +21,7 @@ from models import (
     SlugCheckResponse,
     UserOut,
 )
+from orm_models import Organizer, OrganizerAdminComment, Tenant, User
 from security import (
     clear_auth_cookies,
     create_access_token,
@@ -32,48 +37,38 @@ from services.activation import (
     ensure_activation_record,
 )
 from services.email_service import send_welcome_email
-from slugs import find_unique_slug, is_valid_slug, normalize_slug
+from slugs import find_unique_slug_pg, is_valid_slug, normalize_slug
 
 logger = logging.getLogger("tys.auth")
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-async def _organizer_to_out(organizer_doc: Optional[dict]) -> Optional[OrganizerOut]:
-    if not organizer_doc:
+def _user_row_to_out(row: User) -> UserOut:
+    return UserOut(**row_to_dict(row))
+
+
+def _org_row_to_out(row: Optional[Organizer]) -> Optional[OrganizerOut]:
+    if not row:
         return None
-    plan_code = None
-    if organizer_doc.get("plan_id"):
-        plan = await db.subscription_plans.find_one(
-            {"id": organizer_doc["plan_id"]}, {"_id": 0, "code": 1}
-        )
-        if plan:
-            plan_code = plan["code"]
-    return OrganizerOut(plan_code=plan_code, **organizer_doc)
+    return OrganizerOut(**organizer_row_to_dict(row))
 
 
-def _user_to_out(user_doc: dict) -> UserOut:
-    return UserOut(**user_doc)
-
+# ── Slug check ────────────────────────────────────────────────────────────────
 
 @router.post("/check-slug", response_model=SlugCheckResponse)
-async def check_slug(payload: dict):
+async def check_slug(
+    payload: dict,
+    session: AsyncSession = Depends(get_db),
+):
     raw = (payload.get("slug") or payload.get("company_name") or "").strip()
     base = normalize_slug(raw)
     if not base:
-        # Input normalised to empty (user typed only spaces / symbols).
-        return SlugCheckResponse(
-            slug="", available=False, suggestion=None, reason="empty"
-        )
+        return SlugCheckResponse(slug="", available=False, suggestion=None, reason="empty")
     if not is_valid_slug(base):
-        # 1 char or contains invalid characters after normalisation.
-        # Surface a specific reason so the UI explains why instead of saying
-        # "ya está en uso" (which would be misleading).
         reason = "too_short" if len(base) < 2 else "invalid"
-        return SlugCheckResponse(
-            slug=base, available=False, suggestion=None, reason=reason
-        )
-    suggestion = await find_unique_slug(base, db.organizers)
+        return SlugCheckResponse(slug=base, available=False, suggestion=None, reason=reason)
+    suggestion = await find_unique_slug_pg(base, session, Organizer)
     available = suggestion == base
     return SlugCheckResponse(
         slug=base,
@@ -83,11 +78,14 @@ async def check_slug(payload: dict):
     )
 
 
+# ── Register ──────────────────────────────────────────────────────────────────
+
 @router.post("/register", response_model=AuthMeResponse)
-async def register(payload: RegisterRequest):
+async def register(payload: RegisterRequest, session: AsyncSession = Depends(get_db)):
     email = payload.email.lower().strip()
-    existing = await db.users.find_one({"email": email})
-    if existing:
+
+    existing = await session.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")
 
     desired_slug = (payload.slug or "").strip()
@@ -96,75 +94,75 @@ async def register(payload: RegisterRequest):
         raise HTTPException(status_code=400, detail="Invalid slug")
     if not is_valid_slug(base_slug):
         raise HTTPException(status_code=400, detail="Slug contains invalid characters")
-    slug = await find_unique_slug(base_slug, db.organizers)
+    slug = await find_unique_slug_pg(base_slug, session, Organizer)
     if desired_slug and slug != base_slug:
         raise HTTPException(
             status_code=409,
             detail=f"Slug '{base_slug}' is taken. Suggestion: {slug}",
         )
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
     user_id = str(uuid.uuid4())
     organizer_id = str(uuid.uuid4())
 
-    await db.users.insert_one(
-        {
-            "id": user_id,
-            "email": email,
-            "password_hash": hash_password(payload.password),
-            "role": "organizer",
-            "organizer_id": organizer_id,
-            "created_at": now,
-            "last_login": None,
-        }
+    # User → PostgreSQL
+    user_row = User(
+        id=user_id,
+        email=email,
+        password_hash=hash_password(payload.password),
+        role="organizer",
+        organizer_id=organizer_id,
+        created_at=now,
+        last_login=None,
     )
+    session.add(user_row)
 
-    await db.organizers.insert_one(
-        {
-            "id": organizer_id,
-            "user_id": user_id,
-            "company_name": payload.company_name.strip(),
-            "legal_id": payload.legal_id.strip(),
-            "org_type": payload.org_type,
-            "email": email,
-            "phone": payload.phone.strip(),
-            "country": payload.country.strip(),
-            "slug": slug,
-            "status": "pending",
-            "rejection_reason": None,
-            "admin_comments": [],
-            "plan_id": None,
-            "subscription_status": "none",
-            "stripe_customer_id": None,
-            "stripe_subscription_id": None,
-            "current_period_end": None,
-            "created_at": now,
-            "approved_at": None,
-            "approved_by": None,
-        }
+    # Tenant → PostgreSQL
+    tenant_result = await session.execute(select(Tenant).where(Tenant.slug == slug))
+    tenant_row = tenant_result.scalar_one_or_none()
+    if tenant_row:
+        tenant_row.name = payload.company_name.strip()
+        tenant_row.status = "inactive"
+    else:
+        session.add(Tenant(slug=slug, name=payload.company_name.strip(), status="inactive", created_at=now))
+
+    # Flush so the tenant row exists before the organizer FK insert below.
+    # SQLAlchemy's unit-of-work only orders inserts via relationship(), and
+    # Organizer/Tenant aren't linked by one — without this, it can emit the
+    # organizers INSERT before the tenants INSERT in the same flush.
+    await session.flush()
+
+    # Organizer → PostgreSQL
+    org_row = Organizer(
+        id=organizer_id,
+        user_id=user_id,
+        company_name=payload.company_name.strip(),
+        legal_id=payload.legal_id.strip(),
+        org_type=payload.org_type,
+        email=email,
+        phone=payload.phone.strip(),
+        country=payload.country.strip(),
+        slug=slug,
+        status="pending",
+        rejection_reason=None,
+        plan_id=None,
+        plan_code=None,
+        subscription_status="none",
+        stripe_customer_id=None,
+        stripe_subscription_id=None,
+        current_period_end=None,
+        created_at=now,
+        approved_at=None,
+        approved_by=None,
     )
+    session.add(org_row)
+    await session.flush()
 
-    await db.tenants.update_one(
-        {"slug": slug},
-        {
-            "$set": {"name": payload.company_name.strip(), "status": "inactive"},
-            "$setOnInsert": {
-                "id": str(uuid.uuid4()),
-                "slug": slug,
-                "created_at": now,
-            },
-        },
-        upsert=True,
-    )
-
-    user_doc = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
-    organizer_doc = await db.organizers.find_one({"id": organizer_id}, {"_id": 0})
     logger.info("Registered organizer slug=%s email=%s", slug, email)
 
-    # Fire-and-forget welcome email + activation record (best-effort).
+    # Welcome email + activation (best-effort)
     try:
         token = create_activation_token(user_id=user_id, organizer_id=organizer_id)
-        # JTI for the row — extract from the JWT itself.
         token_payload = jwt.decode(token, options={"verify_signature": False})
         await ensure_activation_record(
             user_id=user_id,
@@ -173,9 +171,7 @@ async def register(payload: RegisterRequest):
         )
         frontend_base = os.environ.get("FRONTEND_URL", "").rstrip("/")
         continue_url = (
-            f"{frontend_base}/onboarding?at={token}"
-            if frontend_base
-            else f"/onboarding?at={token}"
+            f"{frontend_base}/onboarding?at={token}" if frontend_base else f"/onboarding?at={token}"
         )
         await send_welcome_email(
             to=email,
@@ -185,42 +181,55 @@ async def register(payload: RegisterRequest):
     except Exception as exc:  # noqa: BLE001
         logger.warning("Welcome flow side-effects failed for %s: %s", email, exc)
 
+    # Reload with relationships for response
+    await session.refresh(org_row, ["admin_comments"])
     return AuthMeResponse(
-        user=_user_to_out(user_doc),
-        organizer=await _organizer_to_out(organizer_doc),
+        user=_user_row_to_out(user_row),
+        organizer=_org_row_to_out(org_row),
     )
 
+
+# ── Login ─────────────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=AuthMeResponse)
-async def login(payload: LoginRequest, response: Response):
+async def login(
+    payload: LoginRequest,
+    response: Response,
+    session: AsyncSession = Depends(get_db),
+):
     email = payload.email.lower().strip()
-    user = await db.users.find_one({"email": email})
-    if not user or not verify_password(payload.password, user["password_hash"]):
+
+    result = await session.execute(select(User).where(User.email == email))
+    user_row = result.scalar_one_or_none()
+    if not user_row or not verify_password(payload.password, user_row.password_hash):
         raise HTTPException(status_code=401, detail="Email o contraseña incorrectos")
 
-    user_safe = {k: v for k, v in user.items() if k not in ("_id", "password_hash")}
-    access = create_access_token(user_safe["id"], user_safe["email"], user_safe["role"])
-    refresh = create_refresh_token(user_safe["id"])
+    access = create_access_token(user_row.id, user_row.email, user_row.role)
+    refresh = create_refresh_token(user_row.id)
     set_auth_cookies(response, access, refresh)
 
-    await db.users.update_one(
-        {"id": user_safe["id"]},
-        {"$set": {"last_login": datetime.now(timezone.utc).isoformat()}},
-    )
+    user_row.last_login = datetime.now(timezone.utc)
 
-    organizer_doc = None
-    if user_safe.get("organizer_id"):
-        organizer_doc = await db.organizers.find_one(
-            {"id": user_safe["organizer_id"]}, {"_id": 0}
+    org_row = None
+    if user_row.organizer_id:
+        org_result = await session.execute(
+            select(Organizer)
+            .where(Organizer.id == user_row.organizer_id)
+            .options(selectinload(Organizer.admin_comments))
         )
+        org_row = org_result.scalar_one_or_none()
+
+    await session.flush()
 
     return AuthMeResponse(
-        user=_user_to_out(user_safe),
-        organizer=await _organizer_to_out(organizer_doc),
+        user=_user_row_to_out(user_row),
+        organizer=_org_row_to_out(org_row),
         access_token=access,
         refresh_token=refresh,
     )
 
+
+# ── Logout ────────────────────────────────────────────────────────────────────
 
 @router.post("/logout")
 async def logout(response: Response):
@@ -228,26 +237,47 @@ async def logout(response: Response):
     return {"ok": True}
 
 
+# ── Refresh ───────────────────────────────────────────────────────────────────
+
 @router.post("/refresh")
-async def refresh_token(request: Request, response: Response):
+async def refresh_token(
+    request: Request,
+    response: Response,
+    session: AsyncSession = Depends(get_db),
+):
     payload = await get_refresh_payload(request)
-    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
-    if not user:
+    result = await session.execute(select(User).where(User.id == payload["sub"]))
+    user_row = result.scalar_one_or_none()
+    if not user_row:
         raise HTTPException(status_code=401, detail="User not found")
-    access = create_access_token(user["id"], user["email"], user["role"])
-    new_refresh = create_refresh_token(user["id"])
+    access = create_access_token(user_row.id, user_row.email, user_row.role)
+    new_refresh = create_refresh_token(user_row.id)
     set_auth_cookies(response, access, new_refresh)
     return {"ok": True, "access_token": access, "refresh_token": new_refresh}
 
 
+# ── Me ────────────────────────────────────────────────────────────────────────
+
 @router.get("/me", response_model=AuthMeResponse)
-async def me(user: dict = Depends(get_current_user)):
-    organizer_doc = None
-    if user.get("organizer_id"):
-        organizer_doc = await db.organizers.find_one(
-            {"id": user["organizer_id"]}, {"_id": 0}
+async def me(
+    user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    result = await session.execute(select(User).where(User.id == user["id"]))
+    user_row = result.scalar_one_or_none()
+    if not user_row:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    org_row = None
+    if user_row.organizer_id:
+        org_result = await session.execute(
+            select(Organizer)
+            .where(Organizer.id == user_row.organizer_id)
+            .options(selectinload(Organizer.admin_comments))
         )
+        org_row = org_result.scalar_one_or_none()
+
     return AuthMeResponse(
-        user=_user_to_out(user),
-        organizer=await _organizer_to_out(organizer_doc),
+        user=_user_row_to_out(user_row),
+        organizer=_org_row_to_out(org_row),
     )

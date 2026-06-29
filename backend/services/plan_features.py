@@ -10,6 +10,8 @@ To enforce later: have endpoints call `assert_feature(plan_code, "xxx")`.
 """
 from typing import Dict, Any, Optional
 
+from fastapi import HTTPException
+
 # Feature shape — kept flat for easy serialisation to the frontend.
 DEFAULT_FEATURES: Dict[str, Any] = {
     # Toggles (boolean)
@@ -81,3 +83,12 @@ def get_plan_features(plan_code: Optional[str]) -> Dict[str, Any]:
         base.update(PLAN_OVERRIDES[plan_code])
     base["_plan_code"] = plan_code
     return base
+
+
+def assert_feature(plan_code: Optional[str], feature: str) -> None:
+    """Raises 403 when `feature` is not enabled for the organizer's plan."""
+    if not get_plan_features(plan_code).get(feature, False):
+        raise HTTPException(
+            403,
+            f"Tu plan actual no incluye esta función ({feature}). Mejorá tu plan para usarla.",
+        )

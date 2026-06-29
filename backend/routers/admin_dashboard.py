@@ -11,8 +11,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import db
+from database import get_db
+from db_helpers import get_event_by_id, row_to_dict
+from orm_models import AuditLog, Event, Organizer, SubscriptionPlan, TicketOrder, User
+from sqlalchemy import desc
 from security import require_role
 
 logger = logging.getLogger("tys.admin_dashboard")
@@ -43,155 +48,154 @@ def _delta_pct(curr: float, prev: float) -> Optional[float]:
 
 # ── /admin/dashboard/stats ──────────────────────────────────────────────────
 @router.get("/dashboard/stats")
-async def dashboard_stats() -> Dict[str, Any]:
+async def dashboard_stats(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     """
     Returns the global KPIs + distribution + activity + top tables for the
-    super-admin home. Uses $facet so the entire payload is a single round-trip
-    to Mongo for the heavy aggregations.
+    super-admin home.
     """
     month_now = _month_start(0)
     month_prev = _month_start(-1)
-    month_now_iso = month_now.isoformat()
-    month_prev_iso = month_prev.isoformat()
 
     # ── KPIs from organizers + plans (MRR + active organizers) ────────────
-    plans = await db.subscription_plans.find(
-        {}, {"_id": 0, "id": 1, "code": 1, "name": 1, "price_cents": 1, "billing_period": 1}
-    ).to_list(length=200)
+    plans_result = await session.execute(select(SubscriptionPlan))
+    plans = [row_to_dict(r) for r in plans_result.scalars().all()]
     plan_by_id = {p["id"]: p for p in plans}
     plan_codes = {p["code"]: p for p in plans}
 
-    mrr_cents = 0
-    active_organizers = 0
-    orgs_cursor = db.organizers.find(
-        {},
-        {"_id": 0, "id": 1, "company_name": 1, "plan_id": 1, "status": 1, "subscription_status": 1},
+    orgs_result = await session.execute(
+        select(Organizer.id, Organizer.company_name, Organizer.plan_id,
+               Organizer.status, Organizer.subscription_status)
     )
     organizers_by_status: Dict[str, int] = {"pending": 0, "approved": 0, "rejected": 0, "suspended": 0}
     organizers_by_plan: Dict[str, int] = {c: 0 for c in plan_codes}
     organizers_by_plan["sin_plan"] = 0
-    async for o in orgs_cursor:
-        sb = o.get("status")
+    mrr_cents = 0
+    active_organizers = 0
+    for o in orgs_result.all():
+        sb = o.status
         if sb in organizers_by_status:
             organizers_by_status[sb] += 1
-        plan = plan_by_id.get(o.get("plan_id"))
+        plan = plan_by_id.get(o.plan_id)
         if plan:
             organizers_by_plan[plan["code"]] = organizers_by_plan.get(plan["code"], 0) + 1
         else:
             organizers_by_plan["sin_plan"] += 1
-        is_active = (
-            o.get("status") == "approved" and o.get("subscription_status") == "active"
-        )
+        is_active = (o.status == "approved" and o.subscription_status == "active")
         if is_active:
             active_organizers += 1
             if plan and plan["billing_period"] == "monthly":
                 mrr_cents += plan["price_cents"]
 
     # ── GMV + fees (paid orders) — current vs prev month ──────────────────
-    gmv_pipeline = [
-        {
-            "$facet": {
-                "month": [
-                    {"$match": {"status": "paid", "paid_at": {"$gte": month_now_iso}}},
-                    {"$group": {"_id": None, "gmv": {"$sum": "$total_cents"}, "fees": {"$sum": "$fees_cents"}, "tickets": {"$sum": "$quantity_total"}, "n": {"$sum": 1}}},
-                ],
-                "prev": [
-                    {"$match": {"status": "paid", "paid_at": {"$gte": month_prev_iso, "$lt": month_now_iso}}},
-                    {"$group": {"_id": None, "gmv": {"$sum": "$total_cents"}, "n": {"$sum": 1}}},
-                ],
-                "month_breakdown": [
-                    {"$match": {"created_at": {"$gte": month_now_iso}}},
-                    {"$group": {"_id": "$status", "n": {"$sum": 1}}},
-                ],
-                "tickets_total": [
-                    {"$match": {"status": "paid"}},
-                    {"$group": {"_id": None, "n": {"$sum": "$quantity_total"}}},
-                ],
-            }
-        }
-    ]
-    agg = (await db.ticket_orders.aggregate(gmv_pipeline).to_list(length=1))[0]
-    cur = (agg["month"][0] if agg["month"] else {"gmv": 0, "fees": 0, "tickets": 0, "n": 0})
-    prev = (agg["prev"][0] if agg["prev"] else {"gmv": 0, "n": 0})
-    breakdown = {d["_id"]: d["n"] for d in agg["month_breakdown"]}
-    tickets_total = (agg["tickets_total"][0]["n"] if agg["tickets_total"] else 0)
+    cur_row = (await session.execute(
+        select(
+            func.coalesce(func.sum(TicketOrder.total_cents), 0).label("gmv"),
+            func.coalesce(func.sum(TicketOrder.fees_cents), 0).label("fees"),
+            func.coalesce(func.sum(TicketOrder.quantity_total), 0).label("tickets"),
+            func.count(TicketOrder.id).label("n"),
+        ).where(TicketOrder.status == "paid", TicketOrder.paid_at >= month_now)
+    )).first()
+    cur = {"gmv": cur_row.gmv or 0, "fees": cur_row.fees or 0, "tickets": cur_row.tickets or 0, "n": cur_row.n or 0}
+
+    prev_row = (await session.execute(
+        select(
+            func.coalesce(func.sum(TicketOrder.total_cents), 0).label("gmv"),
+            func.count(TicketOrder.id).label("n"),
+        ).where(
+            TicketOrder.status == "paid",
+            TicketOrder.paid_at >= month_prev,
+            TicketOrder.paid_at < month_now,
+        )
+    )).first()
+    prev = {"gmv": prev_row.gmv or 0, "n": prev_row.n or 0}
+
+    breakdown_rows = await session.execute(
+        select(TicketOrder.status, func.count(TicketOrder.id).label("n"))
+        .where(TicketOrder.created_at >= month_now)
+        .group_by(TicketOrder.status)
+    )
+    breakdown = {r.status: r.n for r in breakdown_rows.all()}
+
+    tickets_total = await session.scalar(
+        select(func.coalesce(func.sum(TicketOrder.quantity_total), 0)).where(TicketOrder.status == "paid")
+    ) or 0
 
     # ── Events activity ───────────────────────────────────────────────────
-    events_published_total = await db.events.count_documents({"status": "published"})
-    events_published_month = await db.events.count_documents(
-        {"status": "published", "published_at": {"$gte": month_now_iso}}
-    )
+    events_published_total = await session.scalar(
+        select(func.count(Event.id)).where(Event.status == "published")
+    ) or 0
+    events_published_month = await session.scalar(
+        select(func.count(Event.id)).where(
+            Event.status == "published",
+            Event.published_at >= month_now,
+        )
+    ) or 0
 
     # ── Top 5 organizers by GMV (current month) ───────────────────────────
-    top_orgs_pipeline = [
-        {"$match": {"status": "paid", "paid_at": {"$gte": month_now_iso}}},
-        {
-            "$group": {
-                "_id": "$organizer_id",
-                "gmv": {"$sum": "$total_cents"},
-                "tickets": {"$sum": "$quantity_total"},
-                "orders": {"$sum": 1},
-            }
-        },
-        {"$sort": {"gmv": -1}},
-        {"$limit": 5},
-    ]
-    top_orgs_raw = await db.ticket_orders.aggregate(top_orgs_pipeline).to_list(length=5)
-    top_organizers_by_gmv = []
-    for row in top_orgs_raw:
-        org = await db.organizers.find_one(
-            {"id": row["_id"]}, {"_id": 0, "id": 1, "slug": 1, "company_name": 1, "plan_id": 1}
+    top_orgs_result = await session.execute(
+        select(
+            TicketOrder.organizer_id,
+            func.sum(TicketOrder.total_cents).label("gmv"),
+            func.sum(TicketOrder.quantity_total).label("tickets"),
+            func.count(TicketOrder.id).label("orders"),
         )
-        if not org:
+        .where(TicketOrder.status == "paid", TicketOrder.paid_at >= month_now)
+        .group_by(TicketOrder.organizer_id)
+        .order_by(desc("gmv"))
+        .limit(5)
+    )
+    top_organizers_by_gmv = []
+    for row in top_orgs_result.all():
+        org_res = await session.execute(
+            select(Organizer.id, Organizer.slug, Organizer.company_name, Organizer.plan_id)
+            .where(Organizer.id == row.organizer_id)
+        )
+        org_row = org_res.first()
+        if not org_row:
             continue
-        plan = plan_by_id.get(org.get("plan_id"))
+        plan = plan_by_id.get(org_row.plan_id)
         top_organizers_by_gmv.append({
-            "organizer_id": org["id"],
-            "slug": org["slug"],
-            "company_name": org["company_name"],
+            "organizer_id": org_row.id,
+            "slug": org_row.slug,
+            "company_name": org_row.company_name,
             "plan_name": plan["name"] if plan else None,
-            "gmv_cents": row["gmv"],
-            "tickets": row["tickets"],
-            "orders": row["orders"],
+            "gmv_cents": row.gmv,
+            "tickets": row.tickets,
+            "orders": row.orders,
         })
 
     # ── Top 5 events by sales (current month) ─────────────────────────────
-    top_events_pipeline = [
-        {"$match": {"status": "paid", "paid_at": {"$gte": month_now_iso}}},
-        {
-            "$group": {
-                "_id": "$event_id",
-                "gmv": {"$sum": "$total_cents"},
-                "tickets": {"$sum": "$quantity_total"},
-            }
-        },
-        {"$sort": {"gmv": -1}},
-        {"$limit": 5},
-    ]
-    top_evt_raw = await db.ticket_orders.aggregate(top_events_pipeline).to_list(length=5)
-    top_events_by_sales = []
-    for row in top_evt_raw:
-        evt = await db.events.find_one(
-            {"id": row["_id"]},
-            {"_id": 0, "id": 1, "slug": 1, "title": 1, "starts_at": 1, "capacity": 1,
-             "tickets_sold": 1, "organizer_id": 1, "tenant_slug": 1},
+    top_evt_result = await session.execute(
+        select(
+            TicketOrder.event_id,
+            func.sum(TicketOrder.total_cents).label("gmv"),
+            func.sum(TicketOrder.quantity_total).label("tickets"),
         )
+        .where(TicketOrder.status == "paid", TicketOrder.paid_at >= month_now)
+        .group_by(TicketOrder.event_id)
+        .order_by(desc("gmv"))
+        .limit(5)
+    )
+    top_events_by_sales = []
+    for row in top_evt_result.all():
+        evt = await get_event_by_id(row.event_id)
         if not evt:
             continue
-        org = await db.organizers.find_one(
-            {"id": evt["organizer_id"]}, {"_id": 0, "company_name": 1}
+        org_res2 = await session.execute(
+            select(Organizer.company_name).where(Organizer.id == evt["organizer_id"])
         )
+        company_name = org_res2.scalar_one_or_none() or ""
         top_events_by_sales.append({
             "event_id": evt["id"],
             "slug": evt["slug"],
             "title": evt["title"],
             "starts_at": evt.get("starts_at"),
             "tenant_slug": evt.get("tenant_slug"),
-            "company_name": (org or {}).get("company_name"),
+            "company_name": company_name,
             "tickets_sold": evt.get("tickets_sold", 0),
             "capacity": evt.get("capacity"),
-            "gmv_cents": row["gmv"],
-            "tickets": row["tickets"],
+            "gmv_cents": row.gmv,
+            "tickets": row.tickets,
         })
 
     return {
@@ -228,15 +232,20 @@ async def dashboard_stats() -> Dict[str, Any]:
 
 # ── /admin/attention-items ──────────────────────────────────────────────────
 @router.get("/attention-items")
-async def attention_items() -> Dict[str, Any]:
-    pending_organizers = await db.organizers.count_documents({"status": "pending"})
-    cutoff_24h = (_now() - timedelta(hours=24)).isoformat()
-    stale_manual_orders = await db.ticket_orders.count_documents(
-        {"status": "pending_manual_payment", "created_at": {"$lt": cutoff_24h}}
-    )
-    past_due_subs = await db.organizers.count_documents(
-        {"subscription_status": "past_due"}
-    )
+async def attention_items(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    pending_organizers = await session.scalar(
+        select(func.count(Organizer.id)).where(Organizer.status == "pending")
+    ) or 0
+    cutoff_24h = _now() - timedelta(hours=24)
+    stale_manual_orders = await session.scalar(
+        select(func.count(TicketOrder.id)).where(
+            TicketOrder.status == "pending_manual_payment",
+            TicketOrder.created_at < cutoff_24h,
+        )
+    ) or 0
+    past_due_subs = await session.scalar(
+        select(func.count(Organizer.id)).where(Organizer.subscription_status == "past_due")
+    ) or 0
     return {
         "pending_organizers": pending_organizers,
         "stale_manual_orders": stale_manual_orders,
@@ -264,66 +273,74 @@ async def organizers_rich(
     direction: Literal["asc", "desc"] = Query(default="desc"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
+    session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
     Rich list of organizers with aggregated metrics: revenue, tickets_emitted,
-    events_published, last_login. Filter + sort done in-memory for now (small
-    dataset). Total < 10k organizers expected at this stage.
+    events_published, last_login. Filter + sort done in-memory (small dataset).
     """
-    plans = await db.subscription_plans.find(
-        {}, {"_id": 0, "id": 1, "code": 1, "name": 1}
-    ).to_list(length=200)
+    plans_result = await session.execute(
+        select(SubscriptionPlan.id, SubscriptionPlan.code, SubscriptionPlan.name)
+    )
+    plans = [{"id": r.id, "code": r.code, "name": r.name} for r in plans_result.all()]
     plan_by_id = {p["id"]: p for p in plans}
     plan_id_by_code = {p["code"]: p["id"] for p in plans}
 
-    base_query: dict = {}
+    stmt = select(Organizer)
     if status:
-        base_query["status"] = status
+        stmt = stmt.where(Organizer.status == status)
     if subscription_status:
-        base_query["subscription_status"] = subscription_status
+        stmt = stmt.where(Organizer.subscription_status == subscription_status)
     if plan_code:
-        base_query["plan_id"] = plan_id_by_code.get(plan_code, "____none____")
-    if created_from or created_to:
-        cq: dict = {}
-        if created_from:
-            cq["$gte"] = created_from
-        if created_to:
-            cq["$lte"] = created_to
-        base_query["created_at"] = cq
+        target_plan_id = plan_id_by_code.get(plan_code, "____none____")
+        stmt = stmt.where(Organizer.plan_id == target_plan_id)
+    if created_from:
+        stmt = stmt.where(Organizer.created_at >= datetime.fromisoformat(created_from))
+    if created_to:
+        stmt = stmt.where(Organizer.created_at <= datetime.fromisoformat(created_to))
     if search:
-        regex = {"$regex": search.strip(), "$options": "i"}
-        base_query["$or"] = [
-            {"company_name": regex},
-            {"email": regex},
-            {"slug": regex},
-        ]
+        like = f"%{search.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Organizer.company_name.ilike(like),
+                Organizer.email.ilike(like),
+                Organizer.slug.ilike(like),
+            )
+        )
 
-    organizers = await db.organizers.find(base_query, {"_id": 0}).to_list(length=10_000)
+    orgs_result = await session.execute(stmt)
+    organizers = [row_to_dict(r) for r in orgs_result.scalars().all()]
     org_ids = [o["id"] for o in organizers]
     if not org_ids:
         return {"items": [], "total": 0, "page": page, "limit": limit}
 
     # Aggregate revenue + tickets per organizer
-    rev_pipeline = [
-        {"$match": {"organizer_id": {"$in": org_ids}, "status": "paid"}},
-        {"$group": {"_id": "$organizer_id", "revenue": {"$sum": "$total_cents"},
-                    "tickets": {"$sum": "$quantity_total"}}},
-    ]
-    rev_map = {r["_id"]: r async for r in db.ticket_orders.aggregate(rev_pipeline)}
+    rev_result = await session.execute(
+        select(
+            TicketOrder.organizer_id,
+            func.sum(TicketOrder.total_cents).label("revenue"),
+            func.sum(TicketOrder.quantity_total).label("tickets"),
+        )
+        .where(TicketOrder.organizer_id.in_(org_ids), TicketOrder.status == "paid")
+        .group_by(TicketOrder.organizer_id)
+    )
+    rev_map = {r.organizer_id: {"revenue": r.revenue, "tickets": r.tickets} for r in rev_result.all()}
 
-    # Events published count per organizer
-    evt_pipeline = [
-        {"$match": {"organizer_id": {"$in": org_ids}, "status": "published"}},
-        {"$group": {"_id": "$organizer_id", "n": {"$sum": 1}}},
-    ]
-    evt_map = {e["_id"]: e["n"] async for e in db.events.aggregate(evt_pipeline)}
+    # Events published count per organizer (PG)
+    evt_result = await session.execute(
+        select(Event.organizer_id, func.count(Event.id).label("n"))
+        .where(Event.organizer_id.in_(org_ids), Event.status == "published")
+        .group_by(Event.organizer_id)
+    )
+    evt_map = {row.organizer_id: row.n for row in evt_result.all()}
 
-    # Last login from users collection
-    user_pipeline = [
-        {"$match": {"organizer_id": {"$in": org_ids}, "role": "organizer"}},
-        {"$group": {"_id": "$organizer_id", "last_login": {"$max": "$last_login"}}},
-    ]
-    login_map = {u["_id"]: u["last_login"] async for u in db.users.aggregate(user_pipeline)}
+    # Last login from PG users
+    login_result = await session.execute(
+        select(User.organizer_id, User.last_login).where(
+            User.organizer_id.in_(org_ids), User.role == "organizer"
+        )
+    )
+    login_map = {row.organizer_id: row.last_login for row in login_result.all()}
 
     enriched: List[Dict[str, Any]] = []
     for o in organizers:
@@ -383,39 +400,39 @@ async def audit_log(
     created_to: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
+    session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    q: dict = {}
+    stmt = select(AuditLog)
     if action:
-        q["action"] = {"$regex": action, "$options": "i"}
+        stmt = stmt.where(AuditLog.action.ilike(f"%{action}%"))
     if actor_user_id:
-        q["actor_user_id"] = actor_user_id
+        stmt = stmt.where(AuditLog.actor_user_id == actor_user_id)
     if target_type:
-        q["target_type"] = target_type
+        stmt = stmt.where(AuditLog.target_type == target_type)
     if target_id:
-        q["target_id"] = target_id
-    if created_from or created_to:
-        cq: dict = {}
-        if created_from:
-            cq["$gte"] = created_from
-        if created_to:
-            cq["$lte"] = created_to
-        q["created_at"] = cq
-    total = await db.audit_log.count_documents(q)
-    cursor = (
-        db.audit_log.find(q, {"_id": 0})
-        .sort("created_at", -1)
-        .skip((page - 1) * limit)
+        stmt = stmt.where(AuditLog.target_id == target_id)
+    if created_from:
+        stmt = stmt.where(AuditLog.created_at >= datetime.fromisoformat(created_from))
+    if created_to:
+        stmt = stmt.where(AuditLog.created_at <= datetime.fromisoformat(created_to))
+
+    total = await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    result = await session.execute(
+        stmt.order_by(AuditLog.created_at.desc())
+        .offset((page - 1) * limit)
         .limit(limit)
     )
-    items = [d async for d in cursor]
+    items = [row_to_dict(r) for r in result.scalars().all()]
+
     # Enrich actor with email
-    actor_ids = list({i.get("actor_user_id") for i in items if i.get("actor_user_id")})
-    actors = {}
+    actor_ids = list({it.get("actor_user_id") for it in items if it.get("actor_user_id")})
+    actors: Dict[str, dict] = {}
     if actor_ids:
-        async for u in db.users.find(
-            {"id": {"$in": actor_ids}}, {"_id": 0, "id": 1, "email": 1, "role": 1}
-        ):
-            actors[u["id"]] = u
+        users_result = await session.execute(
+            select(User.id, User.email, User.role).where(User.id.in_(actor_ids))
+        )
+        for u in users_result.all():
+            actors[u.id] = {"id": u.id, "email": u.email, "role": u.role}
     for it in items:
         it["actor"] = actors.get(it.get("actor_user_id"))
     return {"items": items, "total": total, "page": page, "limit": limit}

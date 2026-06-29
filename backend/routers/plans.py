@@ -1,13 +1,17 @@
-"""Plans router. Public: list/get active. Admin: full CRUD."""
+"""Plans router — fully migrated to PostgreSQL."""
 import uuid
 from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select, update, delete
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import log_audit
-from db import db
+from database import get_db
+from db_helpers import row_to_dict
 from models import PlanCreate, PlanOut, PlanUpdate
+from orm_models import Organizer, SubscriptionPlan
 from security import get_current_user, require_role
 from services.plan_features import get_plan_features
 
@@ -19,102 +23,135 @@ admin_router = APIRouter(
 )
 
 
-def _to_out(doc: dict) -> PlanOut:
-    return PlanOut(**doc)
+def _to_out(row) -> PlanOut:
+    return PlanOut(**row_to_dict(row))
 
 
 @router.get("/me/features")
-async def my_plan_features(user=Depends(get_current_user)):
-    """
-    Returns the feature flags for the current organizer's plan.
-    Used by the frontend to decide what to enable / show "Próximamente".
-    Enforcement is OFF in Phase 5 (architecture only).
-    """
+async def my_plan_features(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
     plan_code = None
     if user.get("organizer_id"):
-        org = await db.organizers.find_one(
-            {"id": user["organizer_id"]}, {"_id": 0, "plan_id": 1}
+        result = await session.execute(
+            select(Organizer.plan_id).where(Organizer.id == user["organizer_id"])
         )
-        if org and org.get("plan_id"):
-            plan = await db.subscription_plans.find_one(
-                {"id": org["plan_id"]}, {"_id": 0, "code": 1}
+        plan_id = result.scalar_one_or_none()
+        if plan_id:
+            code_result = await session.execute(
+                select(SubscriptionPlan.code).where(SubscriptionPlan.id == plan_id)
             )
-            if plan:
-                plan_code = plan["code"]
+            plan_code = code_result.scalar_one_or_none()
     return get_plan_features(plan_code)
 
 
 @router.get("", response_model=List[PlanOut])
-async def list_active_plans():
-    cursor = db.subscription_plans.find({"active": True}, {"_id": 0}).sort("price_cents", 1)
-    docs = await cursor.to_list(length=100)
-    return [_to_out(d) for d in docs]
+async def list_active_plans(session: AsyncSession = Depends(get_db)):
+    result = await session.execute(
+        select(SubscriptionPlan)
+        .where(SubscriptionPlan.active == True)  # noqa: E712
+        .order_by(SubscriptionPlan.price_cents)
+    )
+    return [_to_out(row) for row in result.scalars().all()]
 
 
 @router.get("/{code}", response_model=PlanOut)
-async def get_plan(code: str):
-    doc = await db.subscription_plans.find_one({"code": code, "active": True}, {"_id": 0})
-    if not doc:
+async def get_plan(code: str, session: AsyncSession = Depends(get_db)):
+    result = await session.execute(
+        select(SubscriptionPlan).where(
+            SubscriptionPlan.code == code,
+            SubscriptionPlan.active == True,  # noqa: E712
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
         raise HTTPException(404, "Plan not found")
-    return _to_out(doc)
+    return _to_out(row)
 
 
-# ────────────────────────────────────────────────────────────────────
-# Admin CRUD
-# ────────────────────────────────────────────────────────────────────
+# ── Admin CRUD ────────────────────────────────────────────────────────────────
+
 @admin_router.get("", response_model=List[PlanOut])
-async def admin_list_plans():
-    cursor = db.subscription_plans.find({}, {"_id": 0}).sort("price_cents", 1)
-    docs = await cursor.to_list(length=200)
-    return [_to_out(d) for d in docs]
+async def admin_list_plans(session: AsyncSession = Depends(get_db)):
+    result = await session.execute(
+        select(SubscriptionPlan).order_by(SubscriptionPlan.price_cents)
+    )
+    return [_to_out(row) for row in result.scalars().all()]
 
 
 @admin_router.post("", response_model=PlanOut, status_code=201)
-async def admin_create_plan(payload: PlanCreate, admin=Depends(require_role("super_admin"))):
-    existing = await db.subscription_plans.find_one({"code": payload.code})
-    if existing:
+async def admin_create_plan(
+    payload: PlanCreate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    existing = await session.execute(
+        select(SubscriptionPlan).where(SubscriptionPlan.code == payload.code)
+    )
+    if existing.scalar_one_or_none():
         raise HTTPException(409, "Plan code already exists")
-    now = datetime.now(timezone.utc).isoformat()
-    doc = {
-        "id": str(uuid.uuid4()),
+
+    now = datetime.now(timezone.utc)
+    plan = SubscriptionPlan(
+        id=str(uuid.uuid4()),
+        created_at=now,
+        updated_at=now,
         **payload.model_dump(),
-        "created_at": now,
-        "updated_at": now,
-    }
-    await db.subscription_plans.insert_one(doc)
-    await log_audit(admin["id"], "plan.created", "plan", doc["id"], {"code": doc["code"]})
-    return _to_out(doc)
+    )
+    session.add(plan)
+    await session.flush()
+    await log_audit(admin["id"], "plan.created", "plan", plan.id, {"code": plan.code})
+    return _to_out(plan)
 
 
 @admin_router.patch("/{code}", response_model=PlanOut)
-async def admin_update_plan(code: str, payload: PlanUpdate, admin=Depends(require_role("super_admin"))):
+async def admin_update_plan(
+    code: str,
+    payload: PlanUpdate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
     updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
     if not updates:
         raise HTTPException(400, "No fields to update")
-    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-    result = await db.subscription_plans.find_one_and_update(
-        {"code": code},
-        {"$set": updates},
-        return_document=True,
-        projection={"_id": 0},
+    updates["updated_at"] = datetime.now(timezone.utc)
+
+    result = await session.execute(
+        select(SubscriptionPlan).where(SubscriptionPlan.code == code)
     )
-    if not result:
+    row = result.scalar_one_or_none()
+    if not row:
         raise HTTPException(404, "Plan not found")
-    await log_audit(admin["id"], "plan.updated", "plan", result["id"], {"fields": list(updates.keys())})
-    return _to_out(result)
+    for key, val in updates.items():
+        setattr(row, key, val)
+    await session.flush()
+    await log_audit(admin["id"], "plan.updated", "plan", row.id, {"fields": list(updates.keys())})
+    return _to_out(row)
 
 
 @admin_router.delete("/{code}", status_code=204)
-async def admin_delete_plan(code: str, admin=Depends(require_role("super_admin"))):
-    plan = await db.subscription_plans.find_one({"code": code})
+async def admin_delete_plan(
+    code: str,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    result = await session.execute(
+        select(SubscriptionPlan).where(SubscriptionPlan.code == code)
+    )
+    plan = result.scalar_one_or_none()
     if not plan:
         raise HTTPException(404, "Plan not found")
-    subscribed = await db.organizers.count_documents({"plan_id": plan["id"]})
+
+    subscribed = await session.scalar(
+        select(func.count(Organizer.id)).where(Organizer.plan_id == plan.id)
+    ) or 0
     if subscribed > 0:
         raise HTTPException(
             409,
             f"Cannot delete plan: {subscribed} organizer(s) are subscribed.",
         )
-    await db.subscription_plans.delete_one({"code": code})
-    await log_audit(admin["id"], "plan.deleted", "plan", plan["id"], {"code": code})
+
+    await session.delete(plan)
+    await log_audit(admin["id"], "plan.deleted", "plan", plan.id, {"code": code})
     return None

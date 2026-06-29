@@ -2,9 +2,8 @@
 Activation token + funnel event logger.
 
 Token = JWT (HS256) with 7-day TTL signed by the same secret as auth.
-Purpose claim distinguishes it from auth tokens. The funnel is stored as a
-single document per organizer in `activation_events`, mutated in place as
-the user progresses through onboarding.
+Purpose claim distinguishes it from auth tokens. The funnel is stored as
+one row per (organizer_id, event_type) in `activation_events` (PostgreSQL).
 """
 import logging
 import uuid
@@ -13,8 +12,11 @@ from typing import Literal
 
 import jwt
 from fastapi import HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from db import db
+from database import AsyncSessionLocal
+from orm_models import ActivationEvent
 from security import JWT_ALGORITHM, _jwt_secret
 
 logger = logging.getLogger("tys.activation")
@@ -31,7 +33,6 @@ FunnelEvent = Literal[
     "subscription_active",
 ]
 
-# Funnel order — used by the admin endpoint to compute conversion rates.
 FUNNEL_ORDER: tuple[FunnelEvent, ...] = (
     "email_sent",
     "link_clicked",
@@ -40,16 +41,6 @@ FUNNEL_ORDER: tuple[FunnelEvent, ...] = (
     "checkout_started",
     "subscription_active",
 )
-
-# Maps event name → field in activation_events doc.
-_FIELD_MAP = {
-    "email_sent": "email_sent_at",
-    "link_clicked": "link_clicked_at",
-    "first_doc_uploaded": "first_doc_uploaded_at",
-    "plan_selected": "plan_selected_at",
-    "checkout_started": "checkout_started_at",
-    "subscription_active": "subscription_active_at",
-}
 
 
 def create_activation_token(*, user_id: str, organizer_id: str) -> str:
@@ -78,70 +69,58 @@ def decode_activation_token(token: str) -> dict:
 
 
 async def ensure_activation_record(*, user_id: str, organizer_id: str, token_jti: str) -> None:
-    """Idempotent — only creates if missing."""
-    existing = await db.activation_events.find_one({"organizer_id": organizer_id})
-    if existing:
-        return
-    now_iso = datetime.now(timezone.utc).isoformat()
-    await db.activation_events.insert_one(
-        {
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "organizer_id": organizer_id,
-            "token_jti": token_jti,
-            "email_sent_at": now_iso,
-            "link_clicked_at": None,
-            "first_doc_uploaded_at": None,
-            "plan_selected_at": None,
-            "checkout_started_at": None,
-            "subscription_active_at": None,
-            "created_at": now_iso,
-        }
-    )
+    """Idempotent — only creates the email_sent row if missing."""
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            pg_insert(ActivationEvent)
+            .values(
+                id=str(uuid.uuid4()),
+                organizer_id=organizer_id,
+                event_type="email_sent",
+                metadata_={"user_id": user_id, "token_jti": token_jti},
+                created_at=now,
+            )
+            .on_conflict_do_nothing(constraint="uq_activation_org_type")
+        )
+        await session.execute(stmt)
+        await session.commit()
 
 
-async def log_funnel_event(
-    *,
-    organizer_id: str,
-    event_name: FunnelEvent,
-) -> None:
-    """Sets the *_at field to now if not already set (no clobber)."""
-    field = _FIELD_MAP.get(event_name)
-    if not field:
-        return
-    doc = await db.activation_events.find_one(
-        {"organizer_id": organizer_id}, {"_id": 0, field: 1}
-    )
-    if doc and doc.get(field):
-        return  # Already logged.
-    now_iso = datetime.now(timezone.utc).isoformat()
-    # upsert: create the row if no welcome email was logged (defensive).
-    await db.activation_events.update_one(
-        {"organizer_id": organizer_id},
-        {
-            "$set": {field: now_iso},
-            "$setOnInsert": {
-                "id": str(uuid.uuid4()),
-                "organizer_id": organizer_id,
-                "created_at": now_iso,
-            },
-        },
-        upsert=True,
-    )
+async def log_funnel_event(*, organizer_id: str, event_name: FunnelEvent) -> None:
+    """Inserts a funnel event row; silently no-ops if already logged."""
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            pg_insert(ActivationEvent)
+            .values(
+                id=str(uuid.uuid4()),
+                organizer_id=organizer_id,
+                event_type=event_name,
+                metadata_=None,
+                created_at=now,
+            )
+            .on_conflict_do_nothing(constraint="uq_activation_org_type")
+        )
+        await session.execute(stmt)
+        await session.commit()
     logger.info("Funnel event organizer=%s event=%s", organizer_id, event_name)
 
 
 async def aggregate_funnel() -> dict:
     """
     Returns {counts: {event_name: int}, conversion: {step: pct_vs_previous}}.
-    Each event is counted as "any organizer with that *_at field non-null".
+    Each funnel step is counted as the number of distinct organizers that have
+    a row with that event_type.
     """
-    counts = {}
-    for event in FUNNEL_ORDER:
-        field = _FIELD_MAP[event]
-        counts[event] = await db.activation_events.count_documents(
-            {field: {"$ne": None, "$exists": True}}
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ActivationEvent.event_type, func.count(ActivationEvent.id).label("n"))
+            .group_by(ActivationEvent.event_type)
         )
+        counts_by_type = {r.event_type: r.n for r in result.all()}
+
+    counts = {event: counts_by_type.get(event, 0) for event in FUNNEL_ORDER}
     conversion = {}
     prev_event = None
     for event in FUNNEL_ORDER:

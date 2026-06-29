@@ -16,9 +16,12 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends
 
-from db import db
+from database import AsyncSessionLocal
+from db_helpers import get_microsite_by_organizer, get_organizer_by_id, row_to_dict
+from orm_models import Event, SubscriptionPlan, TicketOrder
 from security import get_current_user
 from services.plan_features import get_plan_features
+from sqlalchemy import func, select
 
 logger = logging.getLogger("tys.dashboard")
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -39,93 +42,99 @@ async def my_dashboard(user=Depends(get_current_user)) -> Dict[str, Any]:
     if not org_id:
         return {"organizer": None}
 
-    organizer = await db.organizers.find_one({"id": org_id}, {"_id": 0})
+    organizer = await get_organizer_by_id(org_id)
     if not organizer:
         return {"organizer": None}
 
     # ── Plan info ─────────────────────────────────────────────────────────
     plan = None
     if organizer.get("plan_id"):
-        plan = await db.subscription_plans.find_one(
-            {"id": organizer["plan_id"]}, {"_id": 0}
-        )
+        async with AsyncSessionLocal() as pg:
+            plan_result = await pg.execute(
+                select(SubscriptionPlan).where(SubscriptionPlan.id == organizer["plan_id"])
+            )
+            plan_row = plan_result.scalar_one_or_none()
+        plan = row_to_dict(plan_row) if plan_row else None
 
     # ── This-month financials ─────────────────────────────────────────────
-    month_iso = _month_start().isoformat()
-    revenue_pipeline = [
-        {
-            "$match": {
-                "organizer_id": org_id,
-                "status": "paid",
-                "paid_at": {"$gte": month_iso},
-            }
-        },
-        {
-            "$group": {
-                "_id": None,
-                "revenue": {"$sum": "$subtotal_cents"},
-                "fees": {"$sum": "$fees_cents"},
-                "tickets": {"$sum": "$quantity_total"},
-                "orders": {"$sum": 1},
-            }
-        },
-    ]
-    cursor = db.ticket_orders.aggregate(revenue_pipeline)
-    agg = await cursor.to_list(length=1)
-    month = agg[0] if agg else {"revenue": 0, "fees": 0, "tickets": 0, "orders": 0}
+    month_start = _month_start()
 
-    # ── Published events count + upcoming ─────────────────────────────────
-    published_count = await db.events.count_documents(
-        {"organizer_id": org_id, "status": "published"}
-    )
-    draft_count = await db.events.count_documents(
-        {"organizer_id": org_id, "status": "draft"}
-    )
-
-    now_iso = _now().isoformat()
-    upcoming_cursor = (
-        db.events.find(
-            {
-                "organizer_id": org_id,
-                "status": "published",
-                "starts_at": {"$gte": now_iso},
-            },
-            {
-                "_id": 0,
-                "id": 1,
-                "slug": 1,
-                "title": 1,
-                "starts_at": 1,
-                "venue_name": 1,
-                "venue_city": 1,
-                "tickets_sold": 1,
-                "capacity": 1,
-                "status": 1,
-            },
+    # ── Published events count + upcoming + monthly revenue ───────────────
+    async with AsyncSessionLocal() as pg:
+        rev_row = (await pg.execute(
+            select(
+                func.coalesce(func.sum(TicketOrder.subtotal_cents), 0).label("revenue"),
+                func.coalesce(func.sum(TicketOrder.fees_cents), 0).label("fees"),
+                func.coalesce(func.sum(TicketOrder.quantity_total), 0).label("tickets"),
+                func.count(TicketOrder.id).label("orders"),
+            ).where(
+                TicketOrder.organizer_id == org_id,
+                TicketOrder.status == "paid",
+                TicketOrder.paid_at >= month_start,
+            )
+        )).first()
+        month = {
+            "revenue": rev_row.revenue or 0,
+            "fees": rev_row.fees or 0,
+            "tickets": rev_row.tickets or 0,
+            "orders": rev_row.orders or 0,
+        }
+        total_orders = await pg.scalar(
+            select(func.count(TicketOrder.id)).where(TicketOrder.organizer_id == org_id)
+        ) or 0
+        paid_orders_total = await pg.scalar(
+            select(func.count(TicketOrder.id)).where(
+                TicketOrder.organizer_id == org_id, TicketOrder.status == "paid"
+            )
+        ) or 0
+        published_count = await pg.scalar(
+            select(func.count(Event.id)).where(
+                Event.organizer_id == org_id, Event.status == "published"
+            )
+        ) or 0
+        draft_count = await pg.scalar(
+            select(func.count(Event.id)).where(
+                Event.organizer_id == org_id, Event.status == "draft"
+            )
+        ) or 0
+        now_dt = _now()
+        upcoming_result = await pg.execute(
+            select(
+                Event.id, Event.slug, Event.title, Event.starts_at,
+                Event.venue_name, Event.venue_city, Event.tickets_sold,
+                Event.capacity, Event.status,
+            )
+            .where(
+                Event.organizer_id == org_id,
+                Event.status == "published",
+                Event.starts_at >= now_dt,
+            )
+            .order_by(Event.starts_at.asc())
+            .limit(5)
         )
-        .sort("starts_at", 1)
-        .limit(5)
-    )
-    upcoming: List[Dict[str, Any]] = [e async for e in upcoming_cursor]
+        upcoming: List[Dict[str, Any]] = [
+            {
+                "id": r.id, "slug": r.slug, "title": r.title,
+                "starts_at": r.starts_at, "venue_name": r.venue_name,
+                "venue_city": r.venue_city, "tickets_sold": r.tickets_sold,
+                "capacity": r.capacity, "status": r.status,
+            }
+            for r in upcoming_result.all()
+        ]
     next_event = upcoming[0] if upcoming else None
     days_to_next = None
     if next_event:
         try:
-            t = datetime.fromisoformat(next_event["starts_at"].replace("Z", "+00:00"))
+            t = next_event["starts_at"]
+            if isinstance(t, str):
+                t = datetime.fromisoformat(t.replace("Z", "+00:00"))
             days_to_next = max(0, (t - _now()).days)
         except (ValueError, AttributeError):
             days_to_next = None
 
     # ── Microsite ─────────────────────────────────────────────────────────
-    microsite = await db.microsites.find_one(
-        {"organizer_id": org_id}, {"_id": 0, "published": 1, "template": 1, "updated_at": 1}
-    )
+    microsite = await get_microsite_by_organizer(org_id)
 
-    # ── Funnel — basic ────────────────────────────────────────────────────
-    total_orders = await db.ticket_orders.count_documents({"organizer_id": org_id})
-    paid_orders_total = await db.ticket_orders.count_documents(
-        {"organizer_id": org_id, "status": "paid"}
-    )
     conversion = round(paid_orders_total / total_orders, 4) if total_orders else 0
 
     # ── Plan features ─────────────────────────────────────────────────────
