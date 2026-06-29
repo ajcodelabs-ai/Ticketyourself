@@ -33,6 +33,7 @@ import TicketTypesPanel from "@/components/events/TicketTypesPanel";
 import EventFunctionsPanel from "@/components/events/EventFunctionsPanel";
 import SeasonPassPanel from "@/components/events/SeasonPassPanel";
 import GuestListPanel from "@/components/events/GuestListPanel";
+import TicketDesignPanel from "@/components/events/TicketDesignPanel";
 import AccessCodesPanel from "@/components/events/AccessCodesPanel";
 import { capacityByLocality } from "@/lib/venues";
 import ImageDropzone from "@/components/ui/ImageDropzone";
@@ -69,6 +70,7 @@ import {
     Unlink,
     Eye,
     CalendarClock,
+    Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -123,6 +125,7 @@ const STEPS = [
     { id: "funciones", label: "Funciones" },
     { id: "abono", label: "Abono de Temporada" },
     { id: "media", label: "Media" },
+    { id: "ticket_design", label: "Diseño de ticket" },
     { id: "payments", label: "Formas de pago" },
     { id: "discounts", label: "Descuentos" },
     { id: "access", label: "Accesos y parámetros" },
@@ -189,6 +192,10 @@ function makeInitial(d) {
             capacity: "",
             unlimited_capacity: true,
             visibility: "public",
+            raffle_enabled: false,
+            custom_questions: [],
+            ticket_design: null,
+            courtesy_ticket_design: null,
             // ON by default => event uses numbered seating with a venue.
             // (Internally `no_seating_mode === true` means "general / no seats".)
             no_seating_mode: false,
@@ -233,6 +240,10 @@ function makeInitial(d) {
         capacity: d.capacity != null ? String(d.capacity) : "",
         unlimited_capacity: d.capacity == null,
         visibility: d.visibility || "public",
+        raffle_enabled: !!d.raffle_enabled,
+        custom_questions: d.custom_questions || [],
+        ticket_design: d.ticket_design || null,
+        courtesy_ticket_design: d.courtesy_ticket_design || null,
         // If event has a venue_id, force numbered mode regardless of legacy flags.
         no_seating_mode: !d.venue_id && !!d.venue_name && d.pricing_type !== undefined
             ? !d.venue_id // legacy events with venue_name but no venue_id default to general
@@ -607,11 +618,19 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         eventId={eventId}
                     />
                 </TabsContent>
+                <TabsContent value="ticket_design" className="mt-4">
+                    <SectionTicketDesign form={form} update={update} eventId={eventId} />
+                </TabsContent>
                 <TabsContent value="payments" className="mt-4">
                     <SectionPayments form={form} update={update} />
                 </TabsContent>
                 <TabsContent value="discounts" className="mt-4">
-                    <SectionDiscounts form={form} update={update} venueLocalities={venueLocalities} />
+                    <SectionDiscounts
+                        form={form}
+                        update={update}
+                        venueLocalities={venueLocalities}
+                        eventId={eventId}
+                    />
                 </TabsContent>
                 <TabsContent value="access" className="mt-4">
                     <SectionAccess form={form} update={update} eventId={eventId} />
@@ -740,6 +759,10 @@ function buildPayload(form) {
                 ? null
                 : parseInt(form.capacity, 10),
         visibility: form.access_params?.visibility || form.visibility,
+        raffle_enabled: form.pricing_type === "donation" ? !!form.raffle_enabled : false,
+        custom_questions: (form.custom_questions || []).filter((q) => q.label?.trim()),
+        ticket_design: form.ticket_design,
+        courtesy_ticket_design: form.courtesy_ticket_design,
         payment_methods: form.payment_methods,
         discounts: form.discounts,
         access_params: form.access_params,
@@ -870,6 +893,23 @@ function DatosBlock({ form, update, disabled }) {
                     numerados (el comprador elige el monto).
                 </p>
             </Field>
+            {form.pricing_type === "donation" && (
+                <div className="sm:col-span-2 flex items-center justify-between rounded-lg border p-4 bg-card">
+                    <div>
+                        <div className="font-medium text-sm">Emitir tickets tipo RIFA</div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Cada ticket recibe un número de rifa secuencial autogenerado,
+                            útil para sorteos asociados a la donación.
+                        </p>
+                    </div>
+                    <Switch
+                        checked={!!form.raffle_enabled}
+                        onCheckedChange={(v) => update("raffle_enabled", v)}
+                        disabled={disabled}
+                        data-testid="wiz-raffle-enabled"
+                    />
+                </div>
+            )}
         </div>
     );
 }
@@ -1657,6 +1697,85 @@ function SectionMedia({
     );
 }
 
+// ── Section: Ticket design (M4) ─────────────────────────────────────────────
+function SectionTicketDesign({ form, update, eventId }) {
+    if (!eventId) {
+        return (
+            <div className="flex items-center gap-2 text-muted-foreground p-6 rounded-xl border">
+                <Info className="h-4 w-4 shrink-0" />
+                <span className="text-sm">
+                    Guardá primero la información general del evento para diseñar el ticket.
+                </span>
+            </div>
+        );
+    }
+    // Whether the courtesy panel is shown is a local UI choice, independent
+    // from whether it has any elements yet (a freshly-enabled design starts
+    // empty). Persistence-wise, "off" is saved as an empty-elements design —
+    // the generic PUT diff can't clear a field back to `null`, but the
+    // renderer already treats empty elements the same as "no design" (falls
+    // back to inheriting the main one).
+    const [showCourtesy, setShowCourtesy] = useState(
+        () => !!form.courtesy_ticket_design?.elements?.length,
+    );
+    return (
+        <div className="space-y-6" data-testid="section-ticket-design">
+            <div className="rounded-xl border p-5 bg-card space-y-3">
+                <div>
+                    <div className="font-medium">Diseño del ticket</div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        Subí un fondo, posicioná tu logo, el QR y la información del
+                        asistente. Si no diseñás nada, se usa el formato estándar de TYS.
+                    </p>
+                </div>
+                <TicketDesignPanel
+                    eventId={eventId}
+                    slot="main"
+                    design={form.ticket_design}
+                    onChange={(next) => update("ticket_design", next)}
+                />
+            </div>
+
+            <div className="flex items-center justify-between p-3 rounded-lg border">
+                <div className="text-sm">
+                    <div className="font-medium">Diseño separado para cortesías</div>
+                    <div className="text-xs text-muted-foreground">
+                        Para invitados sin costo. Si lo dejás apagado, las cortesías
+                        heredan el diseño principal.
+                    </div>
+                </div>
+                <Switch
+                    checked={showCourtesy}
+                    onCheckedChange={(v) => {
+                        setShowCourtesy(v);
+                        if (!v) {
+                            update("courtesy_ticket_design", {
+                                format: form.courtesy_ticket_design?.format || "digital",
+                                background_color: form.courtesy_ticket_design?.background_color || "#ffffff",
+                                background_url: form.courtesy_ticket_design?.background_url || null,
+                                elements: [],
+                            });
+                        }
+                    }}
+                    data-testid="td-use-courtesy"
+                />
+            </div>
+
+            {showCourtesy && (
+                <div className="rounded-xl border p-5 bg-card space-y-3">
+                    <div className="font-medium text-sm">Diseño de cortesía</div>
+                    <TicketDesignPanel
+                        eventId={eventId}
+                        slot="courtesy"
+                        design={form.courtesy_ticket_design}
+                        onChange={(next) => update("courtesy_ticket_design", next)}
+                    />
+                </div>
+            )}
+        </div>
+    );
+}
+
 // ── Section: Payments ───────────────────────────────────────────────────────
 function SectionPayments({ form, update }) {
     if (form.pricing_type === "free") {
@@ -1809,7 +1928,7 @@ function PaymentRow({ title, description, checked, onChange = undefined, disable
 }
 
 // ── Section: Discounts ──────────────────────────────────────────────────────
-function SectionDiscounts({ form, update, venueLocalities = [] }) {
+function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }) {
     const d = form.discounts;
     return (
         <div className="space-y-4" data-testid="section-discounts">
@@ -1891,6 +2010,86 @@ function SectionDiscounts({ form, update, venueLocalities = [] }) {
                 onChange={(next) => update("discounts.rules", next)}
                 localities={venueLocalities}
             />
+
+            {eventId && <DiscountsReportPanel eventId={eventId} />}
+        </div>
+    );
+}
+
+function DiscountsReportPanel({ eventId }) {
+    const [report, setReport] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        let active = true;
+        setLoading(true);
+        api
+            .get(`/events/me/${eventId}/discounts/report`)
+            .then(({ data }) => {
+                if (active) setReport(data.rules || []);
+            })
+            .catch(() => active && setReport([]))
+            .finally(() => active && setLoading(false));
+        return () => {
+            active = false;
+        };
+    }, [eventId]);
+
+    if (loading || !report || report.length === 0) return null;
+
+    return (
+        <div className="rounded-lg border p-4 bg-card space-y-3" data-testid="discounts-report-panel">
+            <div>
+                <div className="font-medium">Reporte de uso y conversión</div>
+                <div className="text-xs text-muted-foreground">
+                    Cuántas órdenes pagadas usaron cada regla, y cuánto descuento e
+                    ingreso generaron — útil para medir códigos de influencer.
+                </div>
+            </div>
+            <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                    <thead>
+                        <tr className="text-left text-xs text-muted-foreground border-b">
+                            <th className="py-1.5 pr-3">Regla</th>
+                            <th className="py-1.5 pr-3">Influencer</th>
+                            <th className="py-1.5 pr-3 text-right">Usos</th>
+                            <th className="py-1.5 pr-3 text-right">Órdenes pagadas</th>
+                            <th className="py-1.5 pr-3 text-right">Descuento otorgado</th>
+                            <th className="py-1.5 text-right">Ingreso atribuido</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {report.map((r) => (
+                            <tr key={r.rule_id} className="border-b last:border-0" data-testid={`report-row-${r.rule_id}`}>
+                                <td className="py-1.5 pr-3">
+                                    {r.name}
+                                    {r.code && (
+                                        <code className="ml-1.5 text-xs bg-secondary px-1 py-0.5 rounded">
+                                            {r.code}
+                                        </code>
+                                    )}
+                                </td>
+                                <td className="py-1.5 pr-3 text-muted-foreground">
+                                    {r.influencer_name
+                                        ? `${r.influencer_name}${r.channel ? ` · ${r.channel}` : ""}`
+                                        : "—"}
+                                </td>
+                                <td className="py-1.5 pr-3 text-right">
+                                    {r.uses_count}
+                                    {r.max_uses ? `/${r.max_uses}` : ""}
+                                </td>
+                                <td className="py-1.5 pr-3 text-right">{r.orders_count}</td>
+                                <td className="py-1.5 pr-3 text-right">
+                                    ${(r.total_discount_cents / 100).toFixed(2)}
+                                </td>
+                                <td className="py-1.5 text-right">
+                                    ${(r.total_revenue_cents / 100).toFixed(2)}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 }
@@ -2069,6 +2268,118 @@ function SectionAccess({ form, update, eventId }) {
                     </Field>
                 )}
             </div>
+
+            <CustomQuestionsPanel
+                questions={form.custom_questions || []}
+                onChange={(next) => update("custom_questions", next)}
+            />
+        </div>
+    );
+}
+
+// ── §4.2.8 — Preguntas adicionales al comprador ─────────────────────────────
+function newCustomQuestion() {
+    return {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        label: "",
+        type: "text",
+        required: false,
+        options: [],
+    };
+}
+
+function CustomQuestionsPanel({ questions, onChange }) {
+    const add = () => onChange([...questions, newCustomQuestion()]);
+    const remove = (id) => onChange(questions.filter((q) => q.id !== id));
+    const upd = (id, patch) =>
+        onChange(questions.map((q) => (q.id === id ? { ...q, ...patch } : q)));
+
+    return (
+        <div className="rounded-lg border p-4 bg-card space-y-3" data-testid="custom-questions-panel">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <div className="font-medium">Preguntas adicionales al comprador</div>
+                    <div className="text-xs text-muted-foreground">
+                        Se muestran al momento de la compra. Las respuestas quedan
+                        visibles en el detalle de cada orden.
+                    </div>
+                </div>
+                <Button size="sm" onClick={add} data-testid="cq-add">
+                    <Plus className="h-4 w-4 mr-1.5" /> Agregar pregunta
+                </Button>
+            </div>
+
+            {questions.length === 0 ? (
+                <div className="rounded-md border border-dashed py-6 text-center text-sm text-muted-foreground">
+                    Sin preguntas adicionales todavía.
+                </div>
+            ) : (
+                <ul className="space-y-2" data-testid="cq-list">
+                    {questions.map((q) => (
+                        <li
+                            key={q.id}
+                            className="rounded-lg border p-3 space-y-2"
+                            data-testid={`cq-row-${q.id}`}
+                        >
+                            <div className="grid sm:grid-cols-[1fr_140px] gap-2">
+                                <Input
+                                    value={q.label}
+                                    onChange={(e) => upd(q.id, { label: e.target.value })}
+                                    placeholder="Ej: ¿Restricción alimentaria?"
+                                    data-testid={`cq-label-${q.id}`}
+                                />
+                                <Select
+                                    value={q.type}
+                                    onValueChange={(v) => upd(q.id, { type: v })}
+                                >
+                                    <SelectTrigger data-testid={`cq-type-${q.id}`}>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="text">Texto libre</SelectItem>
+                                        <SelectItem value="select">Opción múltiple</SelectItem>
+                                        <SelectItem value="checkbox">Sí / No</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            {q.type === "select" && (
+                                <Input
+                                    value={(q.options || []).join(", ")}
+                                    onChange={(e) =>
+                                        upd(q.id, {
+                                            options: e.target.value
+                                                .split(",")
+                                                .map((s) => s.trim())
+                                                .filter(Boolean),
+                                        })
+                                    }
+                                    placeholder="Opciones separadas por coma: Vegetariano, Vegano, Ninguna"
+                                    data-testid={`cq-options-${q.id}`}
+                                />
+                            )}
+                            <div className="flex items-center justify-between">
+                                <label className="flex items-center gap-2 text-sm">
+                                    <Switch
+                                        checked={!!q.required}
+                                        onCheckedChange={(v) => upd(q.id, { required: v })}
+                                        data-testid={`cq-required-${q.id}`}
+                                    />
+                                    Obligatoria
+                                </label>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => remove(q.id)}
+                                    className="text-red-600 hover:bg-red-50"
+                                    data-testid={`cq-remove-${q.id}`}
+                                >
+                                    <Trash2 className="h-4 w-4" />
+                                </Button>
+                            </div>
+                        </li>
+                    ))}
+                </ul>
+            )}
         </div>
     );
 }

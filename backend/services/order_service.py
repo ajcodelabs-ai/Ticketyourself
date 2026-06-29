@@ -234,6 +234,7 @@ async def create_order_skeleton(
     function: dict | None = None,
     items_override: list[dict] | None = None,
     access_code_id: str | None = None,
+    custom_answers: dict[str, str] | None = None,
 ) -> dict:
     from database import AsyncSessionLocal
     from orm_models import TicketOrder
@@ -308,10 +309,11 @@ async def create_order_skeleton(
             }
             if is_manual else None
         ),
-        metadata_=(
-            {"source": "web", "access_code_id": access_code_id}
-            if access_code_id else {"source": "web"}
-        ),
+        metadata_={
+            "source": "web",
+            **({"access_code_id": access_code_id} if access_code_id else {}),
+            **({"custom_answers": custom_answers} if custom_answers else {}),
+        },
         expires_at=now + ttl,
         created_at=now,
         updated_at=now,
@@ -356,8 +358,19 @@ async def issue_tickets_for_order(order: dict) -> list[dict]:
 
     holder_base = order.get("buyer") or {}
     now = _now()
+    raffle_enabled = event.get("pricing_type") == "donation" and event.get("raffle_enabled")
 
     async with AsyncSessionLocal() as session:
+        next_raffle_number = None
+        if raffle_enabled:
+            from orm_models import Event as _EventModel
+            ev_row = await session.scalar(
+                select(_EventModel)
+                .where(_EventModel.id == order["event_id"])
+                .with_for_update()
+            )
+            next_raffle_number = ev_row.raffle_numbers_issued or 0
+
         for _ in range(order["quantity_total"]):
             ticket_id = str(uuid.uuid4())
             token = issue_ticket_token(
@@ -367,6 +380,10 @@ async def issue_tickets_for_order(order: dict) -> list[dict]:
                 buyer_email=holder_base.get("email", ""),
                 event_ends_at_iso=event.get("ends_at"),
             )
+            raffle_number = None
+            if raffle_enabled:
+                next_raffle_number += 1
+                raffle_number = f"{next_raffle_number:06d}"
             session.add(TicketModel(
                 id=ticket_id,
                 order_id=order["id"],
@@ -386,7 +403,10 @@ async def issue_tickets_for_order(order: dict) -> list[dict]:
                 status="issued",
                 issued_at=now,
                 created_at=now,
+                raffle_number=raffle_number,
             ))
+        if raffle_enabled:
+            ev_row.raffle_numbers_issued = next_raffle_number
         await session.commit()
         result = await session.execute(
             select(TicketModel).where(TicketModel.order_id == order["id"])

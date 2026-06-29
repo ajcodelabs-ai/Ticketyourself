@@ -12,9 +12,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+
+const FULL_PURCHASE_KINDS = ["seat_row_straight", "seat_row_curved", "table_round", "table_rect"];
 
 export default function PropertiesPanel({
     selection,
@@ -266,6 +269,25 @@ export default function PropertiesPanel({
                            disabled={readOnly} className="h-8"
                            onChange={(e) => onUpdate(el.id, { seat_radius: Math.max(6, Math.min(24, Number(e.target.value))) })} />
                 </Field>
+            )}
+
+            {FULL_PURCHASE_KINDS.includes(el.kind) && (
+                <div className="flex items-center justify-between rounded-md border p-2">
+                    <div>
+                        <div className="text-xs font-medium">
+                            {el.kind.startsWith("table") ? "Comprar mesa completa" : "Comprar fila completa"}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                            El comprador debe llevarse todos los asientos disponibles.
+                        </p>
+                    </div>
+                    <Switch
+                        checked={!!el.require_full_purchase}
+                        disabled={readOnly}
+                        data-testid="prop-require-full-purchase"
+                        onCheckedChange={(v) => onUpdate(el.id, { require_full_purchase: v })}
+                    />
+                </div>
             )}
 
             {el.kind !== "stage" && (

@@ -15,6 +15,9 @@ import {
     BadgeCheck,
     Hash,
     Zap,
+    Gift,
+    Megaphone,
+    CreditCard,
     Calendar as CalendarIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -41,12 +44,20 @@ const TYPE_ICONS = {
     promo_code: Tag,
     auto: Zap,
     quantity: Hash,
+    buy_n_get_m: Gift,
 };
 
 const TYPE_LABELS = {
     promo_code: "Código promocional",
     auto: "Automático",
     quantity: "Por cantidad",
+    buy_n_get_m: "Compra y recibe gratis (NxM)",
+};
+
+const PAYMENT_METHOD_LABELS = {
+    stripe: "Tarjeta (Stripe)",
+    transfer: "Transferencia",
+    cash: "Efectivo",
 };
 
 function newRule() {
@@ -59,11 +70,16 @@ function newRule() {
         max_uses: null,
         uses_count: 0,
         min_quantity: null,
+        buy_quantity: null,
+        free_quantity: null,
+        influencer_name: "",
+        channel: "",
         conditions: {
             locality_ids: [],
             max_per_buyer: null,
             valid_from: null,
             valid_until: null,
+            payment_methods: [],
         },
         discount: { type: "percent", value: 10 },
     };
@@ -101,8 +117,13 @@ export default function DiscountRulesPanel({ rules, onChange, localities = [] })
         if (!rule.name || rule.name.trim().length < 2) return;
         if (rule.type === "promo_code" && !rule.code) return;
         if (rule.type === "quantity" && (!rule.min_quantity || rule.min_quantity < 1)) return;
-        if (!rule.discount.value || rule.discount.value <= 0) return;
-        if (rule.discount.type === "percent" && rule.discount.value > 100) return;
+        if (rule.type === "buy_n_get_m") {
+            if (!rule.buy_quantity || rule.buy_quantity < 1) return;
+            if (!rule.free_quantity || rule.free_quantity < 1) return;
+        } else {
+            if (!rule.discount.value || rule.discount.value <= 0) return;
+            if (rule.discount.type === "percent" && rule.discount.value > 100) return;
+        }
 
         const exists = rules.find((r) => r.id === rule.id);
         const next = exists
@@ -170,9 +191,11 @@ export default function DiscountRulesPanel({ rules, onChange, localities = [] })
 function RuleCard({ rule, localities, onEdit, onRemove, onToggle }) {
     const Icon = TYPE_ICONS[rule.type] || BadgeCheck;
     const benefit =
-        rule.discount.type === "percent"
-            ? `${rule.discount.value}% off`
-            : `–$${rule.discount.value} fijo`;
+        rule.type === "buy_n_get_m"
+            ? `${rule.buy_quantity}x${rule.free_quantity} gratis`
+            : rule.discount.type === "percent"
+              ? `${rule.discount.value}% off`
+              : `–$${rule.discount.value} fijo`;
     const cond = rule.conditions || {};
     const condParts = [];
     if (cond.locality_ids?.length > 0) {
@@ -180,6 +203,11 @@ function RuleCard({ rule, localities, onEdit, onRemove, onToggle }) {
             .map((id) => localities.find((l) => l.id === id)?.name || id)
             .join(", ");
         condParts.push(`Solo ${names}`);
+    }
+    if (cond.payment_methods?.length > 0) {
+        condParts.push(
+            `Solo ${cond.payment_methods.map((m) => PAYMENT_METHOD_LABELS[m] || m).join(", ")}`,
+        );
     }
     if (cond.max_per_buyer) condParts.push(`Máx ${cond.max_per_buyer}/compra`);
     if (cond.valid_until)
@@ -206,6 +234,13 @@ function RuleCard({ rule, localities, onEdit, onRemove, onToggle }) {
                             <code className="text-xs bg-secondary px-1.5 py-0.5 rounded">
                                 {rule.code}
                             </code>
+                        )}
+                        {rule.influencer_name && (
+                            <Badge variant="outline" className="text-[10px]">
+                                <Megaphone className="h-3 w-3 mr-1" />
+                                {rule.influencer_name}
+                                {rule.channel ? ` · ${rule.channel}` : ""}
+                            </Badge>
                         )}
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">
@@ -292,6 +327,7 @@ function RuleDialog({ open, rule, onChange, onCancel, onSave, localities }) {
                                     <SelectItem value="promo_code">Código promocional</SelectItem>
                                     <SelectItem value="auto">Automático</SelectItem>
                                     <SelectItem value="quantity">Por cantidad</SelectItem>
+                                    <SelectItem value="buy_n_get_m">Compra N y recibe M gratis</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -328,6 +364,32 @@ function RuleDialog({ open, rule, onChange, onCancel, onSave, localities }) {
                                 </div>
                             </div>
                         )}
+                        {rule.type === "promo_code" && (
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                    <Label className="flex items-center gap-1">
+                                        <Megaphone className="h-3.5 w-3.5" /> Influencer (opcional)
+                                    </Label>
+                                    <Input
+                                        value={rule.influencer_name || ""}
+                                        onChange={(e) => upd({ influencer_name: e.target.value })}
+                                        placeholder="Ej: @juanaperez"
+                                        maxLength={80}
+                                        data-testid="rule-influencer-name"
+                                    />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label>Canal</Label>
+                                    <Input
+                                        value={rule.channel || ""}
+                                        onChange={(e) => upd({ channel: e.target.value })}
+                                        placeholder="Instagram, TikTok…"
+                                        maxLength={40}
+                                        data-testid="rule-channel"
+                                    />
+                                </div>
+                            </div>
+                        )}
                         {rule.type === "quantity" && (
                             <div className="space-y-1.5">
                                 <Label>Cantidad mínima de tickets *</Label>
@@ -347,6 +409,50 @@ function RuleDialog({ open, rule, onChange, onCancel, onSave, localities }) {
                                 />
                             </div>
                         )}
+                        {rule.type === "buy_n_get_m" && (
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                    <Label>Compra (N) *</Label>
+                                    <Input
+                                        type="number"
+                                        min="1"
+                                        value={rule.buy_quantity ?? ""}
+                                        onChange={(e) =>
+                                            upd({
+                                                buy_quantity: e.target.value
+                                                    ? parseInt(e.target.value, 10)
+                                                    : null,
+                                            })
+                                        }
+                                        placeholder="Ej: 2"
+                                        data-testid="rule-buy-qty"
+                                    />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label>Recibe gratis (M) *</Label>
+                                    <Input
+                                        type="number"
+                                        min="1"
+                                        value={rule.free_quantity ?? ""}
+                                        onChange={(e) =>
+                                            upd({
+                                                free_quantity: e.target.value
+                                                    ? parseInt(e.target.value, 10)
+                                                    : null,
+                                            })
+                                        }
+                                        placeholder="Ej: 1"
+                                        data-testid="rule-free-qty"
+                                    />
+                                </div>
+                                <p className="text-xs text-muted-foreground col-span-2 bg-secondary/40 rounded p-2">
+                                    Por cada grupo de{" "}
+                                    <strong>{(rule.buy_quantity || 0) + (rule.free_quantity || 0)}</strong>{" "}
+                                    tickets elegibles, los <strong>{rule.free_quantity || 0}</strong> más
+                                    económicos del grupo van gratis.
+                                </p>
+                            </div>
+                        )}
                     </section>
 
                     {/* Section 2 — conditions */}
@@ -354,6 +460,39 @@ function RuleDialog({ open, rule, onChange, onCancel, onSave, localities }) {
                         <h4 className="text-xs uppercase tracking-wide font-semibold text-muted-foreground">
                             Condiciones (opcionales)
                         </h4>
+                        <div className="space-y-1.5">
+                            <Label className="flex items-center gap-1">
+                                <CreditCard className="h-3.5 w-3.5" /> Formas de pago habilitadas
+                            </Label>
+                            <div className="flex flex-wrap gap-2">
+                                {Object.entries(PAYMENT_METHOD_LABELS).map(([key, label]) => {
+                                    const checked = (rule.conditions.payment_methods || []).includes(key);
+                                    return (
+                                        <button
+                                            key={key}
+                                            type="button"
+                                            onClick={() => {
+                                                const list = new Set(rule.conditions.payment_methods || []);
+                                                if (list.has(key)) list.delete(key);
+                                                else list.add(key);
+                                                updCond({ payment_methods: Array.from(list) });
+                                            }}
+                                            className={`text-xs px-2 py-1 rounded-md border transition ${
+                                                checked
+                                                    ? "border-primary bg-primary/10"
+                                                    : "border-border hover:bg-secondary"
+                                            }`}
+                                            data-testid={`rule-pm-${key}`}
+                                        >
+                                            {label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                Vacío = aplica con cualquier forma de pago.
+                            </p>
+                        </div>
                         {localities.length > 0 && (
                             <div className="space-y-1.5">
                                 <Label>Localidades a las que aplica</Label>
@@ -443,49 +582,51 @@ function RuleDialog({ open, rule, onChange, onCancel, onSave, localities }) {
                     </section>
 
                     {/* Section 3 — benefit */}
-                    <section className="space-y-3">
-                        <h4 className="text-xs uppercase tracking-wide font-semibold text-muted-foreground">
-                            Beneficio *
-                        </h4>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1.5">
-                                <Label>Tipo</Label>
-                                <Select
-                                    value={rule.discount.type}
-                                    onValueChange={(v) => updBenefit({ type: v })}
-                                >
-                                    <SelectTrigger data-testid="rule-discount-type">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="percent">Porcentaje</SelectItem>
-                                        <SelectItem value="fixed">Monto fijo (USD)</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                    {rule.type !== "buy_n_get_m" && (
+                        <section className="space-y-3">
+                            <h4 className="text-xs uppercase tracking-wide font-semibold text-muted-foreground">
+                                Beneficio *
+                            </h4>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                    <Label>Tipo</Label>
+                                    <Select
+                                        value={rule.discount.type}
+                                        onValueChange={(v) => updBenefit({ type: v })}
+                                    >
+                                        <SelectTrigger data-testid="rule-discount-type">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="percent">Porcentaje</SelectItem>
+                                            <SelectItem value="fixed">Monto fijo (USD)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label>{rule.discount.type === "percent" ? "%" : "USD"}</Label>
+                                    <Input
+                                        type="number"
+                                        min="1"
+                                        max={rule.discount.type === "percent" ? "100" : undefined}
+                                        value={rule.discount.value || ""}
+                                        onChange={(e) =>
+                                            updBenefit({
+                                                value: e.target.value
+                                                    ? parseInt(e.target.value, 10)
+                                                    : 0,
+                                            })
+                                        }
+                                        data-testid="rule-discount-value"
+                                    />
+                                </div>
                             </div>
-                            <div className="space-y-1.5">
-                                <Label>{rule.discount.type === "percent" ? "%" : "USD"}</Label>
-                                <Input
-                                    type="number"
-                                    min="1"
-                                    max={rule.discount.type === "percent" ? "100" : undefined}
-                                    value={rule.discount.value || ""}
-                                    onChange={(e) =>
-                                        updBenefit({
-                                            value: e.target.value
-                                                ? parseInt(e.target.value, 10)
-                                                : 0,
-                                        })
-                                    }
-                                    data-testid="rule-discount-value"
-                                />
-                            </div>
-                        </div>
-                        <p className="text-xs text-muted-foreground bg-secondary/40 rounded p-2" data-testid="rule-preview">
-                            En un ticket de <strong>$20.00</strong>: descuento <strong>${preview}</strong>{" "}
-                            ({rule.discount.type === "percent" ? `${rule.discount.value || 0}%` : "fijo"})
-                        </p>
-                    </section>
+                            <p className="text-xs text-muted-foreground bg-secondary/40 rounded p-2" data-testid="rule-preview">
+                                En un ticket de <strong>$20.00</strong>: descuento <strong>${preview}</strong>{" "}
+                                ({rule.discount.type === "percent" ? `${rule.discount.value || 0}%` : "fijo"})
+                            </p>
+                        </section>
+                    )}
 
                     {/* Section 4 — enabled */}
                     <section className="flex items-center justify-between rounded-md border p-3">

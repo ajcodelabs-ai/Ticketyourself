@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm.attributes import flag_modified
@@ -98,6 +98,7 @@ class DiscountConditions(BaseModel):
     max_per_buyer: Optional[int] = Field(default=None, ge=1)
     valid_from: Optional[datetime] = None
     valid_until: Optional[datetime] = None
+    payment_methods: Optional[List[Literal["stripe", "transfer", "cash"]]] = None
 
 
 class DiscountBenefit(BaseModel):
@@ -108,14 +109,20 @@ class DiscountBenefit(BaseModel):
 class DiscountRule(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = Field(min_length=2, max_length=80)
-    type: Literal["promo_code", "auto", "quantity"]
+    type: Literal["promo_code", "auto", "quantity", "buy_n_get_m"]
     enabled: bool = True
     code: Optional[str] = Field(default=None, max_length=40)
     max_uses: Optional[int] = Field(default=None, ge=1)
     uses_count: int = Field(default=0, ge=0)
     min_quantity: Optional[int] = Field(default=None, ge=1)
+    # NxM — "compra N y recibe M gratis"
+    buy_quantity: Optional[int] = Field(default=None, ge=1)
+    free_quantity: Optional[int] = Field(default=None, ge=1)
+    # Tracking de códigos de influencer (informativo, no afecta el cálculo)
+    influencer_name: Optional[str] = Field(default=None, max_length=80)
+    channel: Optional[str] = Field(default=None, max_length=40)
     conditions: DiscountConditions = Field(default_factory=DiscountConditions)
-    discount: DiscountBenefit
+    discount: Optional[DiscountBenefit] = None
 
     @model_validator(mode="after")
     def _check_shape(self):
@@ -127,13 +134,18 @@ class DiscountRule(BaseModel):
                 raise ValueError("Code cannot be empty after trimming.")
         if self.type == "quantity" and not self.min_quantity:
             raise ValueError("quantity rules require `min_quantity`")
+        if self.type == "buy_n_get_m":
+            if not self.buy_quantity or not self.free_quantity:
+                raise ValueError("buy_n_get_m rules require `buy_quantity` and `free_quantity`")
+        elif not self.discount:
+            raise ValueError("Esta regla requiere un beneficio (`discount`).")
         if (
             self.conditions.valid_from
             and self.conditions.valid_until
             and self.conditions.valid_until <= self.conditions.valid_from
         ):
             raise ValueError("`valid_until` debe ser posterior a `valid_from`")
-        if self.discount.type == "percent" and self.discount.value > 100:
+        if self.discount and self.discount.type == "percent" and self.discount.value > 100:
             raise ValueError("Un porcentaje no puede superar 100")
         return self
 
@@ -186,6 +198,61 @@ class EventContent(BaseModel):
     faq: List[FaqItem] = Field(default_factory=list)
 
 
+# M4 — diseñador visual de tickets (drag & drop): elements are positioned as
+# fractions [0,1] of the canvas so the same design renders correctly at any
+# output size (digital / A4 / PVC) without unit-conversion math.
+TicketDesignField = Literal[
+    "title", "starts_at", "venue", "holder_name", "holder_email",
+    "price", "seat_or_raffle", "order_number", "organizer_name", "custom",
+]
+
+
+class TicketDesignElement(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    type: Literal["logo", "qr", "text"]
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+    rotation: float = 0
+    # type="logo"
+    image_url: Optional[str] = None
+    # type="text"
+    field: Optional[TicketDesignField] = None
+    text: Optional[str] = Field(default=None, max_length=200)  # field="custom"
+    font_size: Optional[int] = Field(default=14, ge=6, le=72)
+    color: Optional[str] = Field(default="#1f1f33", max_length=7)
+    align: Optional[Literal["left", "center", "right"]] = "left"
+
+    @model_validator(mode="after")
+    def _check_shape(self):
+        if self.type == "text" and self.field == "custom" and not (self.text or "").strip():
+            raise ValueError("Un texto personalizado requiere `text`")
+        return self
+
+
+class TicketDesign(BaseModel):
+    format: Literal["digital", "a4", "pvc"] = "digital"
+    background_url: Optional[str] = None
+    background_color: str = Field(default="#ffffff", max_length=7)
+    elements: List[TicketDesignElement] = Field(default_factory=list)
+
+
+# §4.2.8 — preguntas adicionales al comprador al momento de la compra
+class CustomQuestion(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    label: str = Field(min_length=2, max_length=200)
+    type: Literal["text", "select", "checkbox"] = "text"
+    required: bool = False
+    options: Optional[List[str]] = Field(default=None, max_length=20)
+
+    @model_validator(mode="after")
+    def _check_options(self):
+        if self.type == "select" and not self.options:
+            raise ValueError("Las preguntas de tipo 'select' requieren `options`")
+        return self
+
+
 class EventBase(BaseModel):
     title: str = Field(min_length=2, max_length=140)
     description: str = Field(default="", max_length=8000)
@@ -208,6 +275,13 @@ class EventBase(BaseModel):
     currency: str = Field(default="USD", max_length=3)
     capacity: Optional[int] = Field(default=None, ge=0)
     visibility: Visibility = "public"
+    # §4.2.1 — "Por Donación" events may emit RIFA-numbered tickets
+    raffle_enabled: bool = False
+    # §4.2.8 — preguntas adicionales al comprador
+    custom_questions: List[CustomQuestion] = Field(default_factory=list)
+    # M4 — diseñador visual de tickets; courtesy null = hereda el diseño principal
+    ticket_design: Optional[TicketDesign] = None
+    courtesy_ticket_design: Optional[TicketDesign] = None
     payment_methods: Optional[PaymentMethodConfig] = None
     discounts: Optional[EventDiscounts] = None
     access_params: Optional[EventAccessParams] = None
@@ -255,6 +329,10 @@ class EventUpdate(BaseModel):
     currency: Optional[str] = None
     capacity: Optional[int] = None
     visibility: Optional[Visibility] = None
+    raffle_enabled: Optional[bool] = None
+    custom_questions: Optional[List[CustomQuestion]] = None
+    ticket_design: Optional[TicketDesign] = None
+    courtesy_ticket_design: Optional[TicketDesign] = None
     payment_methods: Optional[PaymentMethodConfig] = None
     discounts: Optional[EventDiscounts] = None
     access_params: Optional[EventAccessParams] = None
@@ -484,6 +562,58 @@ async def get_my_event(event_id: str, user=Depends(get_current_user)):
     return row_to_dict(row)
 
 
+@router.get("/{event_id}/discounts/report")
+async def get_discounts_report(event_id: str, user=Depends(get_current_user)):
+    """Per-rule conversion stats — uses_count plus what it actually drove:
+    number of paid orders, total discount granted, total revenue attributed.
+    Reads `TicketOrder.discounts_applied` (set at order creation time)."""
+    org = await _require_active_organizer(user)
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        event = row_to_dict(row)
+        orders_result = await session.execute(
+            select(TicketOrder.discounts_applied, TicketOrder.total_cents).where(
+                TicketOrder.event_id == event_id, TicketOrder.status == "paid",
+            )
+        )
+        orders = orders_result.all()
+
+    stats: Dict[str, Dict[str, int]] = {}
+    for discounts_applied, total_cents in orders:
+        for d in (discounts_applied or []):
+            rule_id = d.get("rule_id")
+            if not rule_id:
+                continue
+            s = stats.setdefault(
+                rule_id, {"orders_count": 0, "total_discount_cents": 0, "total_revenue_cents": 0}
+            )
+            s["orders_count"] += 1
+            s["total_discount_cents"] += int(d.get("amount_cents") or 0)
+            s["total_revenue_cents"] += int(total_cents or 0)
+
+    rules = (event.get("discounts") or {}).get("rules") or []
+    report = []
+    for r in rules:
+        s = stats.get(r["id"], {"orders_count": 0, "total_discount_cents": 0, "total_revenue_cents": 0})
+        report.append({
+            "rule_id": r["id"],
+            "name": r["name"],
+            "type": r["type"],
+            "code": r.get("code"),
+            "influencer_name": r.get("influencer_name"),
+            "channel": r.get("channel"),
+            "enabled": r.get("enabled"),
+            "max_uses": r.get("max_uses"),
+            "uses_count": r.get("uses_count") or 0,
+            **s,
+        })
+    return {"rules": report}
+
+
 def _assert_access_type_allowed(plan_code: Optional[str], access_type: Optional[str]) -> None:
     if access_type == "verified_list":
         assert_feature(plan_code, "verified_lists")
@@ -539,6 +669,8 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             currency=payload.currency,
             capacity=payload.capacity,
             visibility=payload.visibility,
+            raffle_enabled=payload.raffle_enabled,
+            custom_questions=[q.model_dump() for q in payload.custom_questions],
             multi_function_mode=payload.multi_function_mode,
             payment_methods=(
                 payload.payment_methods.model_dump() if payload.payment_methods
@@ -573,7 +705,10 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
     return result
 
 
-_JSONB_FIELDS = {"payment_methods", "discounts", "access_params", "content"}
+_JSONB_FIELDS = {
+    "payment_methods", "discounts", "access_params", "content", "custom_questions",
+    "ticket_design", "courtesy_ticket_design",
+}
 
 
 @router.put("/{event_id}")
@@ -602,6 +737,12 @@ async def update_my_event(
             )
         if "content" in diff and payload.content is not None:
             diff["content"] = payload.content.model_dump()
+        if "custom_questions" in diff and payload.custom_questions is not None:
+            diff["custom_questions"] = [q.model_dump() for q in payload.custom_questions]
+        if "ticket_design" in diff and payload.ticket_design is not None:
+            diff["ticket_design"] = payload.ticket_design.model_dump()
+        if "courtesy_ticket_design" in diff and payload.courtesy_ticket_design is not None:
+            diff["courtesy_ticket_design"] = payload.courtesy_ticket_design.model_dump()
 
         # Lock critical fields once tickets are sold.
         if (row.tickets_sold or 0) > 0:
@@ -777,6 +918,71 @@ async def upload_banner(
         row.updated_at = _now()
         await session.commit()
     return {"banner_url": url}
+
+
+# ── M4 — diseñador visual de tickets: assets (fondo / logo) ─────────────────
+@router.post("/{event_id}/ticket-design/asset")
+async def upload_ticket_design_asset(
+    event_id: str,
+    slot: Literal["main", "courtesy"] = Query(default="main"),
+    role: Literal["background", "logo"] = Query(default="background"),
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+):
+    org = await _require_approved_organizer(user)
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+    url = await _store_event_image(event_id, org["id"], file, f"ticket_{slot}_{role}")
+    return {"url": url}
+
+
+@router.get("/{event_id}/ticket-design/preview.pdf")
+async def preview_ticket_design(
+    event_id: str,
+    slot: Literal["main", "courtesy"] = Query(default="main"),
+    user=Depends(get_current_user),
+):
+    """Renders a sample ticket PDF with placeholder data so the organizer can
+    see exactly what the real PDF (fonts, image scaling) will look like —
+    the canvas in the designer is an editing surface, not the renderer."""
+    org = await _require_active_organizer(user)
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        event = row_to_dict(row)
+
+    design = (event.get("courtesy_ticket_design") if slot == "courtesy" else None) or event.get("ticket_design")
+    if not design or not design.get("elements"):
+        raise HTTPException(422, "Todavía no hay un diseño configurado.")
+
+    sample_order = {
+        "order_number": "TYS-000000",
+        "donation_amount_cents": 1500,
+    }
+    sample_ticket = {
+        "id": str(uuid.uuid4()),
+        "holder": {"name": "Asistente de Prueba", "email": "asistente@ejemplo.com"},
+        "qr_token": "PREVIEW-SAMPLE-TOKEN",
+        "seat_label": "A-12" if event.get("venue_id") else None,
+        "raffle_number": "000123" if event.get("raffle_enabled") else None,
+        "issued_at": _now().isoformat(),
+    }
+    from services.pdf_service import render_ticket_pdf_from_design
+    pdf_bytes = await render_ticket_pdf_from_design(
+        design=design, event=event, order=sample_order, ticket=sample_ticket, organizer=org,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="preview.pdf"'},
+    )
 
 
 # ── Gallery ─────────────────────────────────────────────────────────────────

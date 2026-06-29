@@ -37,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import PhoneInput from "@/components/ui/phone-input";
 import api, { formatApiError } from "@/lib/api";
 import { formatPriceLabel } from "@/lib/events";
@@ -62,6 +63,8 @@ interface TicketTypeItem {
     is_sold_out?: boolean;
     is_early_bird?: boolean;
     max_per_buyer?: number;
+    min_quantity?: number;
+    exact_quantity?: number;
 }
 
 interface EventFunction {
@@ -124,6 +127,8 @@ export default function PurchaseModal({
     const navigate = useNavigate();
     const pricingType = event?.pricing_type || "free";
     const isSeatNumbered = !!seatHoldsInfo;
+    // §4.2.6 — límite "por compra/transacción" configurado en el evento.
+    const maxPerPurchase = event?.access_params?.max_per_purchase || 10;
     // "Subevento" wording (independent add-on: sala VIP, cena, meet & greet)
     // vs "función" (same show repeated) — same underlying mechanics either way.
     const isSubevent = event?.multi_function_mode === "subevent";
@@ -155,6 +160,9 @@ export default function PurchaseModal({
     });
     const [submitting, setSubmitting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
+    // §4.2.8 — preguntas adicionales al comprador, por id de pregunta
+    const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
+    const customQuestions = event?.custom_questions || [];
     const [promoCodeInput, setPromoCodeInput] = useState("");
     const [appliedPromo, setAppliedPromo] = useState<{
         code: string;
@@ -320,11 +328,23 @@ export default function PurchaseModal({
         [typeSelections],
     );
 
-    const setTypeCount = (id: string, delta: number, max?: number) => {
+    // §4.2.6 — "mínimo N" steps from 0 straight to N, then +1; "cantidad
+    // exacta N" steps in multiples of N so the selection is always valid.
+    const setTypeCount = (tt: TicketTypeItem, direction: 1 | -1) => {
+        const max = tt.exact_quantity || tt.max_per_buyer || 10;
+        const floor = tt.exact_quantity || tt.min_quantity || 0;
+        const step = tt.exact_quantity || 1;
         setTypeQty((prev) => {
-            const cur = prev[id] || 0;
-            const next = Math.max(0, Math.min(max ?? 10, cur + delta));
-            return { ...prev, [id]: next };
+            const cur = prev[tt.id] || 0;
+            let next: number;
+            if (direction > 0) {
+                next = cur === 0 && floor > 0 ? floor : cur + step;
+            } else {
+                next = cur - step;
+                if (floor > 0 && next < floor) next = 0;
+            }
+            next = Math.max(0, Math.min(max, next));
+            return { ...prev, [tt.id]: next };
         });
     };
 
@@ -389,6 +409,7 @@ export default function PurchaseModal({
                 event_slug: event.slug,
                 quantity: effectiveQty || 1,
                 promo_code: code,
+                payment_method: pricingType === "free" ? "stripe" : paymentMethod,
             };
             if (isSeatNumbered) (body as any).seat_ids = seatHoldsInfo.seat_ids;
             const { data } = await api.post("/public/orders/preview", body);
@@ -421,12 +442,29 @@ export default function PurchaseModal({
             const d = parseFloat(donation || "0");
             if (!d || d < 1) e.donation = "Mínimo $1";
         }
-        if (!isSeatNumbered && !hasTypes && (quantity < 1 || quantity > 10))
-            e.quantity = "Entre 1 y 10";
+        if (!isSeatNumbered && !hasTypes && (quantity < 1 || quantity > maxPerPurchase))
+            e.quantity = `Entre 1 y ${maxPerPurchase}`;
         if (hasTypes && !isSeatNumbered && totalQtyFromTypes < 1)
             e.ticketTypes = "Seleccioná al menos 1 ticket";
+        if (hasTypes && !isSeatNumbered && totalQtyFromTypes > maxPerPurchase)
+            e.ticketTypes = `Máximo ${maxPerPurchase} entradas por compra`;
+        for (const tt of ticketTypes) {
+            const sel = typeSelections.find((s) => s.ticket_type_id === tt.id);
+            const qty = sel?.quantity || 0;
+            if (qty === 0) continue;
+            if (tt.exact_quantity && qty !== tt.exact_quantity) {
+                e.ticketTypes = `'${tt.name}' se vende en paquetes de exactamente ${tt.exact_quantity}`;
+            } else if (tt.min_quantity && qty < tt.min_quantity) {
+                e.ticketTypes = `'${tt.name}' requiere comprar al menos ${tt.min_quantity}`;
+            }
+        }
         if (event?.is_multi_function && functions.length > 0 && !selectedFunctionId)
             e.function = `Seleccioná un${isSubevent ? "" : "a"} ${functionNoun}`;
+        for (const q of customQuestions) {
+            if (q.required && !(customAnswers[q.id] || "").trim()) {
+                e[`cq_${q.id}`] = "Requerido";
+            }
+        }
         setErrors(e);
         return Object.keys(e).length === 0;
     };
@@ -476,6 +514,9 @@ export default function PurchaseModal({
             if (effectiveFunctionId) payload.function_id = effectiveFunctionId;
             if (hasTypes && typeSelections.length > 0) {
                 payload.ticket_type_selections = typeSelections;
+            }
+            if (customQuestions.length > 0) {
+                payload.custom_answers = customAnswers;
             }
 
             const { data } = await api.post("/public/orders", payload);
@@ -670,7 +711,9 @@ export default function PurchaseModal({
                                 <div className="space-y-2">
                                     {ticketTypes.map((tt) => {
                                         const qty = typeQty[tt.id] || 0;
-                                        const maxQty = tt.max_per_buyer ?? 10;
+                                        // exact_quantity caps the stepper too — it's an on/off
+                                        // toggle (0 or exactly N), not a multiples-of-N counter.
+                                        const maxQty = tt.exact_quantity || tt.max_per_buyer || 10;
                                         const priceLabel =
                                             tt.price_cents === 0
                                                 ? "Gratis"
@@ -711,6 +754,15 @@ export default function PurchaseModal({
                                                             {tt.description}
                                                         </div>
                                                     )}
+                                                    {tt.exact_quantity ? (
+                                                        <div className="text-xs text-amber-600 mt-0.5">
+                                                            Se vende en paquetes de {tt.exact_quantity}
+                                                        </div>
+                                                    ) : tt.min_quantity ? (
+                                                        <div className="text-xs text-amber-600 mt-0.5">
+                                                            Mínimo {tt.min_quantity} por compra
+                                                        </div>
+                                                    ) : null}
                                                 </div>
                                                 <div className="flex items-center gap-1.5 shrink-0">
                                                     <Button
@@ -718,9 +770,7 @@ export default function PurchaseModal({
                                                         variant="outline"
                                                         size="icon"
                                                         className="h-7 w-7"
-                                                        onClick={() =>
-                                                            setTypeCount(tt.id, -1, maxQty)
-                                                        }
+                                                        onClick={() => setTypeCount(tt, -1)}
                                                         disabled={qty <= 0}
                                                         data-testid={`tt-minus-${tt.id}`}
                                                     >
@@ -737,9 +787,7 @@ export default function PurchaseModal({
                                                         variant="outline"
                                                         size="icon"
                                                         className="h-7 w-7"
-                                                        onClick={() =>
-                                                            setTypeCount(tt.id, 1, maxQty)
-                                                        }
+                                                        onClick={() => setTypeCount(tt, 1)}
                                                         disabled={qty >= maxQty}
                                                         data-testid={`tt-plus-${tt.id}`}
                                                     >
@@ -800,12 +848,12 @@ export default function PurchaseModal({
                                         id="qty"
                                         type="number"
                                         min="1"
-                                        max="10"
+                                        max={maxPerPurchase}
                                         value={quantity}
                                         onChange={(e) =>
                                             setQuantity(
                                                 Math.min(
-                                                    10,
+                                                    maxPerPurchase,
                                                     Math.max(
                                                         1,
                                                         parseInt(e.target.value || "1", 10),
@@ -819,14 +867,14 @@ export default function PurchaseModal({
                                     <Button
                                         variant="outline"
                                         size="icon"
-                                        onClick={() => setQuantity((q) => Math.min(10, q + 1))}
-                                        disabled={quantity >= 10}
+                                        onClick={() => setQuantity((q) => Math.min(maxPerPurchase, q + 1))}
+                                        disabled={quantity >= maxPerPurchase}
                                         data-testid="qty-plus"
                                     >
                                         +
                                     </Button>
                                     <span className="text-xs text-muted-foreground ml-2">
-                                        Máx. 10 por compra
+                                        Máx. {maxPerPurchase} por compra
                                     </span>
                                 </div>
                                 {errors.quantity && (
@@ -950,6 +998,68 @@ export default function PurchaseModal({
                                 testId="buyer-doc"
                             />
                         </div>
+
+                        {/* ── Preguntas adicionales (§4.2.8) ─────────────────── */}
+                        {customQuestions.length > 0 && (
+                            <div className="space-y-3 border-t pt-3" data-testid="custom-questions-block">
+                                {customQuestions.map((q: any) => (
+                                    <div key={q.id} className="space-y-1.5">
+                                        <Label htmlFor={`cq-${q.id}`}>
+                                            {q.label} {q.required && "*"}
+                                        </Label>
+                                        {q.type === "text" && (
+                                            <Input
+                                                id={`cq-${q.id}`}
+                                                value={customAnswers[q.id] || ""}
+                                                onChange={(e) =>
+                                                    setCustomAnswers((prev) => ({
+                                                        ...prev,
+                                                        [q.id]: e.target.value,
+                                                    }))
+                                                }
+                                                data-testid={`cq-input-${q.id}`}
+                                            />
+                                        )}
+                                        {q.type === "select" && (
+                                            <select
+                                                id={`cq-${q.id}`}
+                                                value={customAnswers[q.id] || ""}
+                                                onChange={(e) =>
+                                                    setCustomAnswers((prev) => ({
+                                                        ...prev,
+                                                        [q.id]: e.target.value,
+                                                    }))
+                                                }
+                                                className="w-full text-sm border rounded-md px-3 py-2 bg-background"
+                                                data-testid={`cq-select-${q.id}`}
+                                            >
+                                                <option value="">Seleccioná una opción</option>
+                                                {(q.options || []).map((opt: string) => (
+                                                    <option key={opt} value={opt}>
+                                                        {opt}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        )}
+                                        {q.type === "checkbox" && (
+                                            <Switch
+                                                checked={customAnswers[q.id] === "true"}
+                                                onCheckedChange={(v) =>
+                                                    setCustomAnswers((prev) => ({
+                                                        ...prev,
+                                                        [q.id]: v ? "true" : "false",
+                                                    }))
+                                                }
+                                                data-testid={`cq-switch-${q.id}`}
+                                            />
+                                        )}
+                                        {errors[`cq_${q.id}`] && (
+                                            <p className="text-xs text-red-600">{errors[`cq_${q.id}`]}</p>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
 
                         {/* ── Promo code ────────────────────────────────────── */}
                         {(pricingType !== "free" || (hasTypes && totals.subtotal > 0)) && (

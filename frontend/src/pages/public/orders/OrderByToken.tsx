@@ -265,6 +265,19 @@ export default function OrderByToken() {
                                                 </p>
                                                 <p className="font-mono text-sm">{orderNumber}</p>
                                             </div>
+                                            {ticket.raffle_number && (
+                                                <div>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        N° de rifa
+                                                    </p>
+                                                    <p
+                                                        className="font-mono text-sm font-semibold text-primary"
+                                                        data-testid={`ticket-raffle-${ticket.id}`}
+                                                    >
+                                                        #{ticket.raffle_number}
+                                                    </p>
+                                                </div>
+                                            )}
                                             {event && organizer?.slug && (
                                                 <Button
                                                     variant="outline"

@@ -105,6 +105,26 @@ def seats_by_id(venue: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return {s["seat_id"]: s for s in expand_venue_seats(venue)}
 
 
+# ── Mesa / fila completa (§4.2.6) ─────────────────────────────────────────
+def full_purchase_elements(venue: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Elements flagged `require_full_purchase` — the buyer must take every
+    available seat of the table/row in one purchase, not just some of them."""
+    return {
+        el["id"]: el
+        for el in venue.get("elements", [])
+        if el.get("require_full_purchase")
+        and el.get("kind") in (
+            "seat_row_straight", "seat_row_curved", "table_round", "table_rect",
+        )
+    }
+
+
+def _group_label(element: Dict[str, Any]) -> str:
+    kind = element.get("kind") or ""
+    noun = "Mesa" if kind.startswith("table") else "Fila"
+    return element.get("label") or element.get("row_label") or noun
+
+
 # ── Active locality-pricing validation ──────────────────────────────────
 def active_localities(venue: Dict[str, Any]) -> List[str]:
     used: set[str] = set()
@@ -186,18 +206,42 @@ async def create_seat_holds(
     from database import AsyncSessionLocal
     from orm_models import SeatHold, EventSeatAssignment
     from sqlalchemy import select, delete
-    from db_helpers import row_to_dict
+    from db_helpers import row_to_dict, get_venue_by_id
 
     now = _now()
     expires = now + timedelta(minutes=window_minutes)
+    requested = set(seat_ids)
+
+    # §4.2.6 — "mesa / fila completa": if any requested seat belongs to an
+    # element flagged `require_full_purchase`, every other AVAILABLE seat of
+    # that same element must be included too. Pull in those extra seat_ids so
+    # the availability queries below also cover them.
+    touched_elements: Dict[str, Dict[str, Any]] = {}
+    members_by_element: Dict[str, List[str]] = {}
+    venue = await get_venue_by_id(venue_id)
+    if venue:
+        flagged = full_purchase_elements(venue)
+        if flagged:
+            by_id = seats_by_id(venue)
+            for s in by_id.values():
+                if s["element_id"] in flagged:
+                    members_by_element.setdefault(s["element_id"], []).append(s["seat_id"])
+            for sid in seat_ids:
+                seat = by_id.get(sid)
+                if seat and seat["element_id"] in flagged:
+                    touched_elements[seat["element_id"]] = flagged[seat["element_id"]]
+    group_extra_ids: set[str] = set()
+    for element_id in touched_elements:
+        group_extra_ids.update(members_by_element.get(element_id, []))
+    lookup_ids = list(requested | group_extra_ids)
 
     async with AsyncSessionLocal() as session:
-        # 1. Verify no sold seats
+        # 1. Verify no sold seats (covers requested seats + full-purchase group members)
         sold_result = await session.execute(
             select(EventSeatAssignment.seat_id).where(
                 EventSeatAssignment.event_id == event_id,
                 EventSeatAssignment.function_id == function_id,
-                EventSeatAssignment.seat_id.in_(seat_ids),
+                EventSeatAssignment.seat_id.in_(lookup_ids),
             )
         )
         sold_ids = {row.seat_id for row in sold_result.all()}
@@ -207,7 +251,7 @@ async def create_seat_holds(
             select(SeatHold.seat_id).where(
                 SeatHold.event_id == event_id,
                 SeatHold.function_id == function_id,
-                SeatHold.seat_id.in_(seat_ids),
+                SeatHold.seat_id.in_(lookup_ids),
                 SeatHold.status == "held",
                 SeatHold.expires_at > now,
                 SeatHold.session_token != session_token,
@@ -215,7 +259,8 @@ async def create_seat_holds(
         )
         held_ids = {row.seat_id for row in held_result.all()}
 
-        conflicts = sold_ids | held_ids
+        unavailable = sold_ids | held_ids
+        conflicts = unavailable & requested
         if conflicts:
             raise HTTPException(
                 status_code=409,
@@ -225,6 +270,24 @@ async def create_seat_holds(
                     "message": f"{len(conflicts)} asiento(s) ya no están disponibles.",
                 },
             )
+
+        # 2.5 Full-group completeness — every available member of a flagged
+        # element must be part of this request, not just some of its seats.
+        for element_id, element in touched_elements.items():
+            members = members_by_element.get(element_id, [])
+            available_members = [m for m in members if m not in unavailable]
+            missing = [m for m in available_members if m not in requested]
+            if missing:
+                label = _group_label(element)
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error": "full_group_required",
+                        "element_id": element_id,
+                        "missing_seat_ids": missing,
+                        "message": f"'{label}' debe comprarse completa: faltan {len(missing)} asiento(s) por seleccionar.",
+                    },
+                )
 
         # 3. Release any previous holds of this session for these seats
         await session.execute(

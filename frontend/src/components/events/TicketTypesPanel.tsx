@@ -50,6 +50,8 @@ interface TicketType {
     is_early_bird: boolean;
     early_bird_closes_at?: string;
     tickets_sold?: number;
+    min_quantity?: number;
+    exact_quantity?: number;
 }
 
 interface Props {
@@ -83,7 +85,17 @@ const BLANK: Omit<TicketType, "id" | "active" | "tickets_sold"> = {
     max_per_buyer: undefined,
     is_early_bird: false,
     early_bird_closes_at: undefined,
+    min_quantity: undefined,
+    exact_quantity: undefined,
 };
+
+type PurchaseLimitMode = "none" | "min" | "exact";
+
+function limitModeOf(min?: number, exact?: number): PurchaseLimitMode {
+    if (exact) return "exact";
+    if (min) return "min";
+    return "none";
+}
 
 function priceDollars(cents: number): string {
     return (cents / 100).toFixed(2);
@@ -153,6 +165,8 @@ export default function TicketTypesPanel({
             max_per_buyer: tt.max_per_buyer,
             is_early_bird: tt.is_early_bird,
             early_bird_closes_at: tt.early_bird_closes_at,
+            min_quantity: tt.min_quantity,
+            exact_quantity: tt.exact_quantity,
         });
         setPriceStr(priceDollars(tt.price_cents));
         setOpen(true);
@@ -177,6 +191,8 @@ export default function TicketTypesPanel({
             early_bird_closes_at: form.early_bird_closes_at || null,
             sale_start: form.sale_start || null,
             sale_end: form.sale_end || null,
+            min_quantity: form.min_quantity || null,
+            exact_quantity: form.exact_quantity || null,
         };
         try {
             if (editing) {
@@ -453,6 +469,57 @@ export default function TicketTypesPanel({
                             />
                         </div>
 
+                        {/* Purchase-quantity limit (§4.2.6) */}
+                        <div className="space-y-1.5">
+                            <Label>Límite de compra por transacción</Label>
+                            <Select
+                                value={limitModeOf(form.min_quantity, form.exact_quantity)}
+                                onValueChange={(v: PurchaseLimitMode) =>
+                                    setForm((prev) => ({
+                                        ...prev,
+                                        min_quantity: v === "min" ? prev.min_quantity || 4 : undefined,
+                                        exact_quantity: v === "exact" ? prev.exact_quantity || 4 : undefined,
+                                    }))
+                                }
+                            >
+                                <SelectTrigger data-testid="tt-limit-mode">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="none">Sin límite</SelectItem>
+                                    <SelectItem value="min">Mínimo N por compra</SelectItem>
+                                    <SelectItem value="exact">Cantidad exacta (paquete de N)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            {form.min_quantity !== undefined && form.min_quantity !== null && (
+                                <Input
+                                    type="number"
+                                    min="2"
+                                    value={form.min_quantity ?? ""}
+                                    onChange={(e) =>
+                                        upd("min_quantity", e.target.value ? parseInt(e.target.value) : undefined)
+                                    }
+                                    placeholder="Ej: 4"
+                                    data-testid="tt-min-quantity"
+                                />
+                            )}
+                            {form.exact_quantity !== undefined && form.exact_quantity !== null && (
+                                <Input
+                                    type="number"
+                                    min="2"
+                                    value={form.exact_quantity ?? ""}
+                                    onChange={(e) =>
+                                        upd("exact_quantity", e.target.value ? parseInt(e.target.value) : undefined)
+                                    }
+                                    placeholder="Ej: 4"
+                                    data-testid="tt-exact-quantity"
+                                />
+                            )}
+                            <p className="text-xs text-muted-foreground">
+                                Ej: mesas o paquetes familiares que deben comprarse juntos.
+                            </p>
+                        </div>
+
                         {/* Early bird */}
                         <div className="rounded-lg border p-4 space-y-3">
                             <div className="flex items-center justify-between">
@@ -552,6 +619,11 @@ function TicketTypeRow({
                     {tt.is_early_bird && (
                         <Badge variant="secondary" className="text-xs">Early Bird</Badge>
                     )}
+                    {tt.exact_quantity ? (
+                        <Badge variant="outline" className="text-xs">Paquete de {tt.exact_quantity}</Badge>
+                    ) : tt.min_quantity ? (
+                        <Badge variant="outline" className="text-xs">Mín. {tt.min_quantity}</Badge>
+                    ) : null}
                     {!tt.active && (
                         <Badge variant="destructive" className="text-xs">Inactivo</Badge>
                     )}

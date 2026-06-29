@@ -100,6 +100,34 @@ export default function NumberedSeatSection({
 
     const toggleSeat = (seat) => {
         if (seat.status !== "available") return;
+
+        // §4.2.6 — "mesa / fila completa": clicking any seat of a flagged
+        // element selects (or deselects) every available seat of that group.
+        const element = (event.venue?.elements || []).find((e) => e.id === seat.element_id);
+        if (element?.require_full_purchase) {
+            const groupSeats = seatsStatus.filter(
+                (s) => s.element_id === seat.element_id && s.status === "available",
+            );
+            const groupIds = new Set(groupSeats.map((s) => s.seat_id));
+            setSelected((prev) => {
+                const allSelected = groupSeats.every((s) =>
+                    prev.some((p) => p.seat_id === s.seat_id),
+                );
+                if (allSelected) {
+                    return prev.filter((p) => !groupIds.has(p.seat_id));
+                }
+                const withoutGroup = prev.filter((p) => !groupIds.has(p.seat_id));
+                if (withoutGroup.length + groupSeats.length > 10) {
+                    toast.error("Máximo 10 asientos por compra.");
+                    return prev;
+                }
+                const noun = element.kind?.startsWith("table") ? "mesa" : "fila";
+                toast.success(`Se seleccionó la ${noun} completa (${groupSeats.length} asientos).`);
+                return [...withoutGroup, ...groupSeats];
+            });
+            return;
+        }
+
         setSelected((prev) => {
             const exists = prev.find((s) => s.seat_id === seat.seat_id);
             if (exists) return prev.filter((s) => s.seat_id !== seat.seat_id);

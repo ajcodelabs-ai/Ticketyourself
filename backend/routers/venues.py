@@ -137,6 +137,9 @@ class VenueElement(BaseModel):
     chair_distance: Optional[int] = 20
     # Table rect — chairs_per_side keyed by top/right/bottom/left
     chairs_per_side: Optional[Dict[str, int]] = None
+    # §4.2.6 — "mesa / fila completa": buyer must take every available seat
+    # of this table/row in one purchase.
+    require_full_purchase: Optional[bool] = None
 
 
 class VenueIn(BaseModel):

@@ -350,6 +350,7 @@ function OrdersTab({ event }) {
     const [filterMethod, setFilterMethod] = useState("all");
     const [filterStatus, setFilterStatus] = useState("all");
     const [manualOrder, setManualOrder] = useState(null); // open dialog
+    const [answersOrder, setAnswersOrder] = useState(null); // §4.2.8 — Q&A dialog
 
     const load = async () => {
         setLoading(true);
@@ -496,6 +497,16 @@ function OrdersTab({ event }) {
                                         <div className="text-xs text-muted-foreground">
                                             {o.buyer?.email}
                                         </div>
+                                        {o.metadata?.custom_answers && (
+                                            <button
+                                                type="button"
+                                                className="text-xs text-primary underline mt-0.5"
+                                                onClick={() => setAnswersOrder(o)}
+                                                data-testid={`view-answers-${o.order_number}`}
+                                            >
+                                                Ver respuestas
+                                            </button>
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-xs">
                                         <span className="mr-1">{METHOD_ICON[method]}</span>
@@ -565,6 +576,31 @@ function OrdersTab({ event }) {
                     await load();
                 }}
             />
+
+            <Dialog open={!!answersOrder} onOpenChange={(o) => !o && setAnswersOrder(null)}>
+                <DialogContent data-testid="answers-dialog">
+                    <DialogHeader>
+                        <DialogTitle>Respuestas — {answersOrder?.order_number}</DialogTitle>
+                        <DialogDescription>
+                            {answersOrder?.buyer?.name} · {answersOrder?.buyer?.email}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        {(event.custom_questions || []).map((q) => {
+                            const answer = answersOrder?.metadata?.custom_answers?.[q.id];
+                            if (answer === undefined) return null;
+                            return (
+                                <div key={q.id} className="text-sm">
+                                    <div className="text-muted-foreground text-xs">{q.label}</div>
+                                    <div className="font-medium">
+                                        {q.type === "checkbox" ? (answer === "true" ? "Sí" : "No") : answer || "—"}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

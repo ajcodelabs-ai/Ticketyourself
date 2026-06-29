@@ -70,6 +70,8 @@ class CreateOrderBody(BaseModel):
     ticket_type_selections: Optional[list[TicketTypeSelection]] = None
     # Fase 9 — access control (lista verificada / código de acceso)
     access_code: Optional[str] = Field(default=None, max_length=40)
+    # §4.2.8 — respuestas a las preguntas adicionales del evento, por id
+    custom_answers: Optional[dict[str, str]] = None
 
 
 class PreviewOrderBody(BaseModel):
@@ -78,6 +80,7 @@ class PreviewOrderBody(BaseModel):
     quantity: int = Field(ge=1, le=20)
     seat_ids: Optional[list[str]] = None
     promo_code: Optional[str] = Field(default=None, max_length=40)
+    payment_method: Optional[str] = Field(default=None, max_length=20)
 
 
 async def _resolve_event_for_pricing(tenant_slug: str, event_slug: str):
@@ -138,6 +141,7 @@ async def preview_order(payload: PreviewOrderBody):
     )
     applied, warnings = discount_service.evaluate_discounts(
         event=event, items=items, promo_code=payload.promo_code,
+        payment_method=payload.payment_method,
     )
     out = _apply_discount_breakdown(totals, applied)
     out["organizer_id"] = organizer["id"]
@@ -254,6 +258,17 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                 )
             if not tt.get("active", True):
                 raise HTTPException(409, f"El tipo '{tt['name']}' ya no está disponible.")
+            # §4.2.6 — mínimo de compra / cantidad exacta por tipo de ticket
+            exact_qty = tt.get("exact_quantity")
+            if exact_qty and sel.quantity != exact_qty:
+                raise HTTPException(
+                    422, f"'{tt['name']}' se vende en paquetes de exactamente {exact_qty} entradas."
+                )
+            min_qty = tt.get("min_quantity")
+            if min_qty and sel.quantity < min_qty:
+                raise HTTPException(
+                    422, f"'{tt['name']}' requiere comprar al menos {min_qty} entradas."
+                )
             unit = (
                 override["price_cents_override"]
                 if override and override.get("price_cents_override") is not None
@@ -292,13 +307,34 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         )
         quantity = payload.quantity
 
-    # Phase 9.5 — apply discount rules (promo_code + best auto/quantity) BEFORE
-    # creating the order so the persisted totals match what the buyer was shown.
+    # §4.2.6 — límite "por compra / transacción" configurado en el evento.
+    max_per_purchase = (event.get("access_params") or {}).get("max_per_purchase")
+    if max_per_purchase and quantity > max_per_purchase:
+        raise HTTPException(
+            422, f"Esta compra admite un máximo de {max_per_purchase} entradas por transacción."
+        )
+
+    # §4.2.8 — preguntas adicionales al comprador: las requeridas deben venir respondidas.
+    custom_answers = payload.custom_answers or {}
+    for q in (event.get("custom_questions") or []):
+        if q.get("required") and not (custom_answers.get(q["id"]) or "").strip():
+            raise HTTPException(422, f"Falta responder: {q['label']}")
+
+    # Free events ignore payment_method (no payment at all)
+    effective_method = (
+        "stripe" if event.get("pricing_type") == "free" else payload.payment_method
+    )
+
+    # Phase 9.5 — apply discount rules (promo_code + best auto/quantity/buy_n_get_m)
+    # BEFORE creating the order so the persisted totals match what the buyer was
+    # shown. Resolved against `effective_method` so payment-method-conditioned
+    # rules see the form of payment that will actually be charged.
     items = discount_service.items_from_payload(
         event=event, venue=venue, seat_ids=seat_ids, quantity=quantity,
     )
     applied_discounts, discount_warnings = discount_service.evaluate_discounts(
         event=event, items=items, promo_code=payload.promo_code,
+        payment_method=effective_method,
     )
     if payload.promo_code and not any(
         a.get("type") == "promo_code" for a in applied_discounts
@@ -308,11 +344,6 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         reason = discount_warnings[0] if discount_warnings else "Código no válido."
         raise HTTPException(422, reason)
     totals = _apply_discount_breakdown(totals, applied_discounts)
-
-    # Free events ignore payment_method (no payment at all)
-    effective_method = (
-        "stripe" if event.get("pricing_type") == "free" else payload.payment_method
-    )
 
     order = await order_service.create_order_skeleton(
         event=event,
@@ -326,6 +357,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         function=function,
         items_override=items_override,
         access_code_id=access_code_id,
+        custom_answers=custom_answers or None,
     )
 
     # FREE event — confirm instantly.
@@ -550,7 +582,7 @@ async def ticket_pdf(order_number: str, ticket_id: str):
     event = await get_event_by_id(ticket["event_id"])
     organizer = await get_organizer_by_id(ticket["organizer_id"])
     microsite = await get_microsite_by_organizer(ticket["organizer_id"])
-    pdf_bytes = render_ticket_pdf(
+    pdf_bytes = await render_ticket_pdf(
         event=event, order=order, ticket=ticket, organizer=organizer, microsite=microsite
     )
     filename = f"ticket-{order_number}-{ticket_id[:8]}.pdf"

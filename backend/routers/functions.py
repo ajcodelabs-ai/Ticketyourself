@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -104,6 +104,9 @@ class TicketTypeCreate(BaseModel):
     # Early bird
     is_early_bird: bool = False
     early_bird_closes_at: Optional[datetime] = None
+    # §4.2.6 — purchase-quantity limits (mutually exclusive)
+    min_quantity: Optional[int] = Field(default=None, ge=2)
+    exact_quantity: Optional[int] = Field(default=None, ge=2)
 
     @field_validator("price_cents")
     @classmethod
@@ -111,6 +114,12 @@ class TicketTypeCreate(BaseModel):
         if v < 0:
             raise ValueError("price_cents must be >= 0")
         return v
+
+    @model_validator(mode="after")
+    def _check_quantity_limits(self):
+        if self.min_quantity and self.exact_quantity:
+            raise ValueError("Elegí mínimo de compra O cantidad exacta, no ambos.")
+        return self
 
 
 class TicketTypeUpdate(BaseModel):
@@ -127,6 +136,14 @@ class TicketTypeUpdate(BaseModel):
     max_per_buyer: Optional[int] = None
     is_early_bird: Optional[bool] = None
     early_bird_closes_at: Optional[datetime] = None
+    min_quantity: Optional[int] = Field(default=None, ge=2)
+    exact_quantity: Optional[int] = Field(default=None, ge=2)
+
+    @model_validator(mode="after")
+    def _check_quantity_limits(self):
+        if self.min_quantity and self.exact_quantity:
+            raise ValueError("Elegí mínimo de compra O cantidad exacta, no ambos.")
+        return self
 
 
 @router.post("/api/events/me/{event_id}/ticket-types", status_code=201)

@@ -330,6 +330,14 @@ function TicketCard({ ticket, order, idx, primaryColor }) {
                             🎫 {ticket.seat_label}
                         </p>
                     )}
+                    {ticket.raffle_number && (
+                        <p
+                            className="text-xs font-medium text-primary mt-1 truncate"
+                            data-testid={`ticket-raffle-${ticket.id}`}
+                        >
+                            🎟️ N° de rifa #{ticket.raffle_number}
+                        </p>
+                    )}
                     <Button
                         asChild
                         size="sm"

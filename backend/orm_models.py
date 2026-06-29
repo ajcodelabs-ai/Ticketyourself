@@ -264,6 +264,10 @@ class Event(Base):
     capacity = Column(Integer, nullable=True)
     tickets_sold = Column(Integer, nullable=False, default=0)
 
+    # §4.2.1 — donation events may emit RIFA-numbered tickets
+    raffle_enabled = Column(Boolean, nullable=False, default=False)
+    raffle_numbers_issued = Column(Integer, nullable=False, default=0)
+
     # Media
     poster_url = Column(Text, nullable=True)
     banner_url = Column(Text, nullable=True)
@@ -283,6 +287,11 @@ class Event(Base):
     access_params = Column(JSONB, nullable=False, default=dict)
     # policies_html, agenda[], faq[] — rich event page content
     content = Column(JSONB, nullable=False, default=dict)
+    # §4.2.8 — [{id, label, type, required, options}] asked at checkout
+    custom_questions = Column(JSONB, nullable=False, default=list)
+    # M4 — diseñador visual de tickets; courtesy NULL = hereda el diseño principal
+    ticket_design = Column(JSONB, nullable=True)
+    courtesy_ticket_design = Column(JSONB, nullable=True)
 
     # Phase 8 — multi-function support
     is_multi_function = Column(Boolean, nullable=False, default=False)
@@ -334,6 +343,11 @@ class TicketType(Base):
     max_per_buyer = Column(Integer, nullable=True)
     is_early_bird = Column(Boolean, nullable=False, default=False)
     early_bird_closes_at = Column(DateTime(timezone=True), nullable=True)
+
+    # §4.2.6 — purchase-quantity limits (mutually exclusive; min_quantity is
+    # "comprá al menos N", exact_quantity is "comprá exactamente N")
+    min_quantity = Column(Integer, nullable=True)
+    exact_quantity = Column(Integer, nullable=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -438,6 +452,10 @@ class Ticket(Base):
     # Phase 8 — function link & captured price
     function_id = Column(String(36), ForeignKey("event_functions.id"), nullable=True)
     price_cents = Column(Integer, nullable=True)
+
+    # §4.2.1 — sequential raffle number, set only when the event has
+    # raffle_enabled (donation pricing); NULL otherwise.
+    raffle_number = Column(String(20), nullable=True)
 
     order = relationship("TicketOrder", back_populates="tickets")
 
