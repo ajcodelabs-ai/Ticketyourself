@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -52,7 +52,7 @@ class ContentIn(BaseModel):
     hero_cta_text: Optional[str] = Field(default=None, max_length=30)
     about_title: Optional[str] = Field(default=None, max_length=80)
     about_body: Optional[str] = Field(default=None, max_length=1000)
-    contact_email: Optional[str] = Field(default=None, max_length=120)
+    contact_email: Optional[EmailStr] = Field(default=None, max_length=120)
     contact_phone: Optional[str] = Field(default=None, max_length=40)
     address: Optional[str] = Field(default=None, max_length=200)
 
@@ -386,13 +386,18 @@ async def serve_asset(asset_id: str):
         )
     if not asset_row:
         raise HTTPException(status_code=404, detail="Asset not found")
-    abs_path = ASSETS_DIR / asset_row.file_path
+    abs_path = (ASSETS_DIR / asset_row.file_path).resolve()
+    if not str(abs_path).startswith(str(ASSETS_DIR.resolve())):
+        raise HTTPException(status_code=403, detail="Forbidden")
     if not abs_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
     return FileResponse(
         abs_path,
         media_type=asset_row.mime_type or "application/octet-stream",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
