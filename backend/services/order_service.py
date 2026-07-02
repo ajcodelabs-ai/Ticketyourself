@@ -538,12 +538,16 @@ async def finalize_paid_order(
     from orm_models import TicketOrder as TOModel, Ticket as TicketModel, Event as _Event
     from sqlalchemy import select, update as _sa_update
 
-    if order["status"] == "paid":
+    async with AsyncSessionLocal() as _re_read:
+        fresh = await _re_read.scalar(select(TOModel).where(TOModel.id == order["id"]))
+    if fresh is None:
+        raise HTTPException(404, "Orden no encontrada")
+    if fresh.status == "paid":
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(TicketModel).where(TicketModel.order_id == order["id"])
             )
-            return order, [row_to_dict(r) for r in result.scalars().all()]
+            return row_to_dict(fresh), [row_to_dict(r) for r in result.scalars().all()]
 
     now = _now()
     async with AsyncSessionLocal() as session:
@@ -629,13 +633,10 @@ async def refund_order(*, order: dict, reason: str | None = None) -> dict:
         raise HTTPException(422, "Sólo órdenes pagadas pueden reembolsarse")
 
     if order.get("stripe_session_id"):
-        try:
-            session = stripe.checkout.Session.retrieve(order["stripe_session_id"])
-            pi = session.get("payment_intent")
-            if pi:
-                stripe.Refund.create(payment_intent=pi, reason="requested_by_customer")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Stripe refund failed for %s: %s", order["order_number"], e)
+        session = stripe.checkout.Session.retrieve(order["stripe_session_id"])
+        pi = session.get("payment_intent")
+        if pi:
+            stripe.Refund.create(payment_intent=pi, reason="requested_by_customer")
 
     now = _now()
     async with AsyncSessionLocal() as session:

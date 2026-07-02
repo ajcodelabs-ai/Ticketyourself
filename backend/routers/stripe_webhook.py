@@ -163,6 +163,21 @@ async def _handle_event(
                 await log_funnel_event(organizer_id=org_id, event_name="subscription_active")
             except Exception:  # noqa: BLE001
                 pass
+    elif event_type == "checkout.session.expired":
+        if not session_id:
+            return
+        async with AsyncSessionLocal() as _pg:
+            _order_row = await _pg.scalar(
+                select(TicketOrder).where(TicketOrder.stripe_session_id == session_id)
+            )
+            if not _order_row or _order_row.status == "paid":
+                return
+            from services.order_service import release_reservation
+            await release_reservation(_order_row.id)
+            _order_row.status = "cancelled"
+            _order_row.updated_at = datetime.now(timezone.utc)
+            await _pg.commit()
+            logger.info("Order %s cancelled due to expired checkout session", _order_row.order_number)
     elif event_type == "customer.subscription.updated":
         await _apply_subscription_status(
             organizer_id=organizer_id,
@@ -215,7 +230,7 @@ async def stripe_webhook(request: Request):
     obj = event["data"]["object"]
     md = obj.get("metadata", {}) if isinstance(obj, dict) else {}
     organizer_id = md.get("organizer_id")
-    session_id = obj.get("id") if et == "checkout.session.completed" else None
+    session_id = obj.get("id") if et in ("checkout.session.completed", "checkout.session.expired") else None
     subscription_id = (
         obj.get("subscription") if et == "checkout.session.completed" else obj.get("id")
     )
