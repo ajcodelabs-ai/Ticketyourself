@@ -89,20 +89,44 @@ async def compute_availability(event: dict, function: dict | None = None) -> dic
 
 async def reserve_capacity(
     *,
-    event_id: str,
+    event: dict,
     order_id: str,
     quantity: int,
     ttl_minutes: int | None = None,
     function_id: str | None = None,
 ) -> None:
     from database import AsyncSessionLocal
-    from orm_models import EventCapacityReservation
+    from orm_models import Event as _Event, EventCapacityReservation
+    from sqlalchemy import func, select
 
     minutes = ttl_minutes if ttl_minutes is not None else RESERVATION_TTL_MIN
     now = _now()
     async with AsyncSessionLocal() as session:
+        event_row = await session.scalar(
+            select(_Event).where(_Event.id == event["id"]).with_for_update()
+        )
+        if event_row is None:
+            raise HTTPException(404, "Evento no encontrado")
+
+        capacity = event_row.capacity
+        if capacity is not None:
+            sold = event_row.tickets_sold or 0
+            reserved_result = await session.scalar(
+                select(func.coalesce(func.sum(EventCapacityReservation.quantity), 0))
+                .where(
+                    EventCapacityReservation.event_id == event["id"],
+                    EventCapacityReservation.expires_at > now,
+                    EventCapacityReservation.order_id != order_id,
+                )
+            )
+            already_reserved = reserved_result or 0
+            if sold + already_reserved + quantity > capacity:
+                raise HTTPException(
+                    409, "No hay suficiente capacidad disponible en este momento"
+                )
+
         session.add(EventCapacityReservation(
-            event_id=event_id,
+            event_id=event["id"],
             order_id=order_id,
             quantity=quantity,
             function_id=function_id,
@@ -631,11 +655,23 @@ async def refund_order(*, order: dict, reason: str | None = None) -> dict:
         refreshed = row_to_dict(row)
 
     async with AsyncSessionLocal() as _pg:
-        await _pg.execute(
+        event_row = await _pg.scalar(
+            select(_Event).where(_Event.id == order["event_id"]).with_for_update()
+        )
+        if event_row is None:
+            raise HTTPException(404, "Evento no encontrado")
+        stmt = (
             _sa_update(_Event)
             .where(_Event.id == order["event_id"])
-            .values(tickets_sold=_Event.tickets_sold - order["quantity_total"])
+            .values(tickets_sold=_Event.tickets_sold + order["quantity_total"], updated_at=now)
         )
+        if event_row.capacity is not None:
+            stmt = stmt.where(
+                _Event.tickets_sold + order["quantity_total"] <= _Event.capacity
+            )
+        result = await _pg.execute(stmt)
+        if result.rowcount == 0:
+            raise HTTPException(409, "El evento ya no tiene capacidad disponible")
         await _pg.commit()
     await _adjust_function_counters(order, -1)
 
@@ -692,11 +728,23 @@ async def confirm_manual_payment(
     await _assign_seats_if_needed(order, tickets)
 
     async with AsyncSessionLocal() as _pg:
-        await _pg.execute(
+        event_row = await _pg.scalar(
+            select(_Event).where(_Event.id == order["event_id"]).with_for_update()
+        )
+        if event_row is None:
+            raise HTTPException(404, "Evento no encontrado")
+        stmt = (
             _sa_update(_Event)
             .where(_Event.id == order["event_id"])
             .values(tickets_sold=_Event.tickets_sold + order["quantity_total"], updated_at=now)
         )
+        if event_row.capacity is not None:
+            stmt = stmt.where(
+                _Event.tickets_sold + order["quantity_total"] <= _Event.capacity
+            )
+        result = await _pg.execute(stmt)
+        if result.rowcount == 0:
+            raise HTTPException(409, "El evento ya no tiene capacidad disponible")
         await _pg.commit()
     await _adjust_function_counters(order, +1)
     await release_reservation(order["id"])
