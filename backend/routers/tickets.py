@@ -91,15 +91,25 @@ async def organizer_get_order(
 
 
 @router.get("/events/me/{event_id}/tickets")
-async def list_event_tickets(event_id: str, user=Depends(get_current_user)):
+async def list_event_tickets(
+    event_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=500),
+    user=Depends(get_current_user),
+):
     _org, _event = await _require_event_for_user(event_id, user)
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Ticket).where(Ticket.event_id == event_id)
             .order_by(Ticket.issued_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
         )
         items = [row_to_dict(r) for r in result.scalars().all()]
-    return {"items": items, "total": len(items)}
+        total = await session.scalar(
+            select(func.count(Ticket.id)).where(Ticket.event_id == event_id)
+        )
+    return {"items": items, "total": total or 0, "page": page, "limit": limit}
 
 
 @router.get("/events/me/{event_id}/tickets.csv")
