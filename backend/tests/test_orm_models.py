@@ -4,6 +4,7 @@ Unit tests for SQLAlchemy ORM models (orm_models.py).
 Tests model instantiation, default values (via column metadata), UUID generation,
 and field constraints — without a database connection (pure Python checks).
 """
+
 import os
 import uuid as _uuid_mod
 from datetime import datetime, timezone
@@ -15,13 +16,40 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 from sqlalchemy import Column  # noqa: E402
 
 from orm_models import (  # noqa: E402
-    Tenant, User, SubscriptionPlan, Organizer, OrganizerAdminComment, OrganizerDocument,
-    RequiredDocumentSet, DocumentType, Venue, Event, TicketType, TicketOrder,
-    Ticket, TicketScan, SeatHold, EventCapacityReservation, EventSeatAssignment,
-    Microsite, AuditLog, BillingIntent, ActivationEvent, MicrositeAsset,
-    EventAsset, EventFunction, FunctionTicketType, EventGuestListEntry,
-    EventAccessCode, StaffMember, StaffEventAssignment, SeasonPass,
-    SeasonPassPurchase, SeasonPassRedemption, _uuid4, _now,
+    Tenant,
+    User,
+    SubscriptionPlan,
+    Organizer,
+    OrganizerAdminComment,
+    OrganizerDocument,
+    RequiredDocumentSet,
+    DocumentType,
+    Venue,
+    Event,
+    TicketType,
+    TicketOrder,
+    Ticket,
+    TicketScan,
+    SeatHold,
+    EventCapacityReservation,
+    EventSeatAssignment,
+    Microsite,
+    AuditLog,
+    BillingIntent,
+    ActivationEvent,
+    MicrositeAsset,
+    EventAsset,
+    EventFunction,
+    FunctionTicketType,
+    EventGuestListEntry,
+    EventAccessCode,
+    StaffMember,
+    StaffEventAssignment,
+    SeasonPass,
+    SeasonPassPurchase,
+    SeasonPassRedemption,
+    _uuid4,
+    _now,
 )
 
 
@@ -63,12 +91,17 @@ def _has_unique_constraint(model_class, name_substr: str) -> bool:
     args = model_class.__table_args__
     if isinstance(args, tuple):
         for a in args:
-            if "UniqueConstraint" in type(a).__name__ and a.name and name_substr in a.name:
+            if (
+                "UniqueConstraint" in type(a).__name__
+                and a.name
+                and name_substr in a.name
+            ):
                 return True
     return False
 
 
 # ── Utility tests ─────────────────────────────────────────────────────────────
+
 
 class TestUtils:
     def test_uuid4_generates_valid_uuid(self):
@@ -96,6 +129,7 @@ class TestUtils:
 
 # ── Tenant ────────────────────────────────────────────────────────────────────
 
+
 class TestTenant:
     def test_tablename(self):
         assert Tenant.__tablename__ == "tenants"
@@ -115,6 +149,7 @@ class TestTenant:
 
 
 # ── User ──────────────────────────────────────────────────────────────────────
+
 
 class TestUser:
     def test_tablename(self):
@@ -148,6 +183,7 @@ class TestUser:
 
 # ── SubscriptionPlan ──────────────────────────────────────────────────────────
 
+
 class TestSubscriptionPlan:
     def test_tablename(self):
         assert SubscriptionPlan.__tablename__ == "subscription_plans"
@@ -170,10 +206,12 @@ class TestSubscriptionPlan:
 
     def test_features_jsonb(self):
         from sqlalchemy.dialects.postgresql import JSONB
+
         assert isinstance(SubscriptionPlan.__table__.columns["features"].type, JSONB)
 
 
 # ── Organizer ─────────────────────────────────────────────────────────────────
+
 
 class TestOrganizer:
     def test_tablename(self):
@@ -238,6 +276,7 @@ class TestDocumentType:
 
 # ── Venue ─────────────────────────────────────────────────────────────────────
 
+
 class TestVenue:
     def test_tablename(self):
         assert Venue.__tablename__ == "venues"
@@ -263,14 +302,23 @@ class TestVenue:
 
 # ── Event ─────────────────────────────────────────────────────────────────────
 
+
 class TestEvent:
     def test_tablename(self):
         assert Event.__tablename__ == "events"
 
     def test_columns(self):
         cols = Event.__table__.columns
-        for name in ("title", "slug", "category", "status", "pricing_type",
-                     "visibility", "base_price_cents", "currency"):
+        for name in (
+            "title",
+            "slug",
+            "category",
+            "status",
+            "pricing_type",
+            "visibility",
+            "base_price_cents",
+            "currency",
+        ):
             assert name in cols, f"missing column: {name}"
 
     def test_defaults(self):
@@ -296,6 +344,7 @@ class TestEvent:
 
 # ── TicketType ────────────────────────────────────────────────────────────────
 
+
 class TestTicketType:
     def test_tablename(self):
         assert TicketType.__tablename__ == "ticket_types"
@@ -320,15 +369,22 @@ class TestTicketType:
 
 # ── TicketOrder ───────────────────────────────────────────────────────────────
 
+
 class TestTicketOrder:
     def test_tablename(self):
         assert TicketOrder.__tablename__ == "ticket_orders"
 
     def test_columns(self):
         cols = TicketOrder.__table__.columns
-        for name in ("order_number", "status", "payment_method",
-                     "quantity_total", "subtotal_cents", "fees_cents",
-                     "total_cents"):
+        for name in (
+            "order_number",
+            "status",
+            "payment_method",
+            "quantity_total",
+            "subtotal_cents",
+            "fees_cents",
+            "total_cents",
+        ):
             assert name in cols
 
     def test_defaults(self):
@@ -353,6 +409,7 @@ class TestTicketOrder:
 
 
 # ── Ticket ────────────────────────────────────────────────────────────────────
+
 
 class TestTicket:
     def test_tablename(self):
@@ -382,6 +439,7 @@ class TestTicket:
 
 # ── TicketScan ────────────────────────────────────────────────────────────────
 
+
 class TestTicketScan:
     def test_tablename(self):
         assert TicketScan.__tablename__ == "ticket_scans"
@@ -394,6 +452,7 @@ class TestTicketScan:
 
 
 # ── SeatHold ──────────────────────────────────────────────────────────────────
+
 
 class TestSeatHold:
     def test_tablename(self):
@@ -412,6 +471,7 @@ class TestSeatHold:
 
 # ── EventCapacityReservation ──────────────────────────────────────────────────
 
+
 class TestEventCapacityReservation:
     def test_tablename(self):
         assert EventCapacityReservation.__tablename__ == "event_capacity_reservations"
@@ -420,10 +480,13 @@ class TestEventCapacityReservation:
         assert _col_default(EventCapacityReservation, "quantity") == 1
 
     def test_function_id_nullable(self):
-        assert EventCapacityReservation.__table__.columns["function_id"].nullable is True
+        assert (
+            EventCapacityReservation.__table__.columns["function_id"].nullable is True
+        )
 
 
 # ── EventSeatAssignment ───────────────────────────────────────────────────────
+
 
 class TestEventSeatAssignment:
     def test_tablename(self):
@@ -434,6 +497,7 @@ class TestEventSeatAssignment:
 
 
 # ── Microsite ─────────────────────────────────────────────────────────────────
+
 
 class TestMicrosite:
     def test_tablename(self):
@@ -457,6 +521,7 @@ class TestMicrosite:
 
 # ── AuditLog ──────────────────────────────────────────────────────────────────
 
+
 class TestAuditLog:
     def test_tablename(self):
         assert AuditLog.__tablename__ == "audit_log"
@@ -474,6 +539,7 @@ class TestAuditLog:
 
 # ── BillingIntent ─────────────────────────────────────────────────────────────
 
+
 class TestBillingIntent:
     def test_tablename(self):
         assert BillingIntent.__tablename__ == "billing_intents"
@@ -484,6 +550,7 @@ class TestBillingIntent:
 
 # ── ActivationEvent ───────────────────────────────────────────────────────────
 
+
 class TestActivationEvent:
     def test_tablename(self):
         assert ActivationEvent.__tablename__ == "activation_events"
@@ -493,6 +560,7 @@ class TestActivationEvent:
 
 
 # ── EventFunction ─────────────────────────────────────────────────────────────
+
 
 class TestEventFunction:
     def test_tablename(self):
@@ -510,6 +578,7 @@ class TestEventFunction:
 
 # ── FunctionTicketType ────────────────────────────────────────────────────────
 
+
 class TestFunctionTicketType:
     def test_tablename(self):
         assert FunctionTicketType.__tablename__ == "function_ticket_types"
@@ -519,14 +588,20 @@ class TestFunctionTicketType:
         assert _col_default(FunctionTicketType, "tickets_sold") == 0
 
     def test_nullable_overrides(self):
-        assert FunctionTicketType.__table__.columns["price_cents_override"].nullable is True
-        assert FunctionTicketType.__table__.columns["capacity_override"].nullable is True
+        assert (
+            FunctionTicketType.__table__.columns["price_cents_override"].nullable
+            is True
+        )
+        assert (
+            FunctionTicketType.__table__.columns["capacity_override"].nullable is True
+        )
 
     def test_unique_constraint(self):
         assert _has_unique_constraint(FunctionTicketType, "uq_function_ticket_type")
 
 
 # ── Guest List & Access Codes ─────────────────────────────────────────────────
+
 
 class TestEventGuestListEntry:
     def test_tablename(self):
@@ -550,6 +625,7 @@ class TestEventAccessCode:
 
 
 # ── Staff ─────────────────────────────────────────────────────────────────────
+
 
 class TestStaffMember:
     def test_tablename(self):
@@ -575,6 +651,7 @@ class TestStaffEventAssignment:
 
 
 # ── Season Pass ───────────────────────────────────────────────────────────────
+
 
 class TestSeasonPass:
     def test_tablename(self):
@@ -610,6 +687,7 @@ class TestSeasonPassRedemption:
 
 # ── Model instantiation (limited — SQLAlchemy doesn't apply defaults in Python) ─
 
+
 class TestInstantiation:
     """Minimal smoke tests: models can be constructed without a DB session."""
 
@@ -621,65 +699,121 @@ class TestInstantiation:
 
     def test_organizer_with_explicit_values(self):
         oid = _uuid4()
-        o = Organizer(id=oid, user_id=_uuid4(), company_name="T", legal_id="1",
-                      org_type="company", email="o@t.com", phone="+1",
-                      country="EC", slug="t", status="pending",
-                      subscription_status="none")
+        o = Organizer(
+            id=oid,
+            user_id=_uuid4(),
+            company_name="T",
+            legal_id="1",
+            org_type="company",
+            email="o@t.com",
+            phone="+1",
+            country="EC",
+            slug="t",
+            status="pending",
+            subscription_status="none",
+        )
         assert o.id == oid
         assert o.company_name == "T"
         assert o.status == "pending"
 
     def test_event_with_explicit_values(self):
         eid = _uuid4()
-        e = Event(id=eid, organizer_id=_uuid4(), tenant_slug="t", title="E",
-                  slug="e", category="music", status="draft",
-                  pricing_type="paid", visibility="public")
+        e = Event(
+            id=eid,
+            organizer_id=_uuid4(),
+            tenant_slug="t",
+            title="E",
+            slug="e",
+            category="music",
+            status="draft",
+            pricing_type="paid",
+            visibility="public",
+        )
         assert e.id == eid
         assert e.title == "E"
         assert e.pricing_type == "paid"
 
     def test_ticket_order_with_explicit_values(self):
         oid = _uuid4()
-        o = TicketOrder(id=oid, order_number="T-1", event_id=_uuid4(),
-                        organizer_id=_uuid4(), buyer={"name": "A"},
-                        buyer_email="a@b.com", status="pending")
+        o = TicketOrder(
+            id=oid,
+            order_number="T-1",
+            event_id=_uuid4(),
+            organizer_id=_uuid4(),
+            buyer={"name": "A"},
+            buyer_email="a@b.com",
+            status="pending",
+        )
         assert o.id == oid
         assert o.order_number == "T-1"
         assert o.status == "pending"
 
     def test_ticket_with_explicit_values(self):
         tid = _uuid4()
-        t = Ticket(id=tid, order_id=_uuid4(), event_id=_uuid4(),
-                   organizer_id=_uuid4(), order_number="T-1",
-                   holder={}, holder_name="", holder_email="",
-                   status="issued")
+        t = Ticket(
+            id=tid,
+            order_id=_uuid4(),
+            event_id=_uuid4(),
+            organizer_id=_uuid4(),
+            order_number="T-1",
+            holder={},
+            holder_name="",
+            holder_email="",
+            status="issued",
+        )
         assert t.id == tid
         assert t.status == "issued"
 
     def test_season_pass_with_explicit_values(self):
-        sp = SeasonPass(id=_uuid4(), event_id=_uuid4(), organizer_id=_uuid4(),
-                        name="A", credits_total=5, status="active")
+        sp = SeasonPass(
+            id=_uuid4(),
+            event_id=_uuid4(),
+            organizer_id=_uuid4(),
+            name="A",
+            credits_total=5,
+            status="active",
+        )
         assert sp.name == "A"
         assert sp.credits_total == 5
 
     def test_season_pass_purchase_with_explicit_values(self):
         spp = SeasonPassPurchase(
-            id=_uuid4(), season_pass_id=_uuid4(), event_id=_uuid4(),
-            organizer_id=_uuid4(), purchase_token=_uuid4(),
-            order_number="SP-1", buyer={}, buyer_email="", credits_total=1,
+            id=_uuid4(),
+            season_pass_id=_uuid4(),
+            event_id=_uuid4(),
+            organizer_id=_uuid4(),
+            purchase_token=_uuid4(),
+            order_number="SP-1",
+            buyer={},
+            buyer_email="",
+            credits_total=1,
             status="pending",
         )
         assert spp.credits_total == 1
 
     def test_staff_member_with_explicit_values(self):
-        sm = StaffMember(id=_uuid4(), organizer_id=_uuid4(), name="N",
-                         email="e@e.com", password_hash="h", roles=[],
-                         active=True)
+        sm = StaffMember(
+            id=_uuid4(),
+            organizer_id=_uuid4(),
+            name="N",
+            email="e@e.com",
+            password_hash="h",
+            roles=[],
+            active=True,
+        )
         assert sm.name == "N"
         assert sm.active is True
 
     def test_venue_with_explicit_values(self):
-        v = Venue(id=_uuid4(), organizer_id=_uuid4(), tenant_slug="t",
-                  name="V", slug="v", status="draft", canvas={},
-                  elements=[], localities=[])
+        v = Venue(
+            id=_uuid4(),
+            organizer_id=_uuid4(),
+            tenant_slug="t",
+            name="V",
+            slug="v",
+            status="draft",
+            canvas={},
+            elements=[],
+            localities=[],
+        )
         assert v.name == "V"

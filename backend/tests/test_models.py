@@ -3,19 +3,42 @@ Unit tests for Pydantic models (models.py).
 
 Tests field validation, constraints, serialization, and edge cases.
 """
+
 from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
 
 from models import (
-    TenantOut, ResolveResponse, UserOut, RegisterRequest, LoginRequest,
-    AuthMeResponse, TokenResponse, SlugCheckResponse, PlanOut, PlanCreate,
-    PlanUpdate, AdminCommentOut, OrganizerOut, OrganizerProfileUpdate,
-    OrganizerDocumentOut, RequiredDocumentsOut, RequiredDocumentsUpdate,
-    DocumentTypeOut, DocumentTypeCreate, ApproveBody, RejectBody, SuspendBody,
-    CommentBody, AdminStats, OrganizersList, CheckoutRequest, CheckoutResponse,
-    PortalResponse, SimulateWebhookBody,
+    TenantOut,
+    ResolveResponse,
+    UserOut,
+    RegisterRequest,
+    LoginRequest,
+    AuthMeResponse,
+    TokenResponse,
+    SlugCheckResponse,
+    PlanOut,
+    PlanCreate,
+    PlanUpdate,
+    AdminCommentOut,
+    OrganizerOut,
+    OrganizerProfileUpdate,
+    OrganizerDocumentOut,
+    RequiredDocumentsOut,
+    RequiredDocumentsUpdate,
+    DocumentTypeOut,
+    DocumentTypeCreate,
+    ApproveBody,
+    RejectBody,
+    SuspendBody,
+    CommentBody,
+    AdminStats,
+    OrganizersList,
+    CheckoutRequest,
+    CheckoutResponse,
+    PortalResponse,
+    SimulateWebhookBody,
 )
 
 
@@ -24,6 +47,7 @@ def _dt() -> datetime:
 
 
 # ── Tenant ────────────────────────────────────────────────────────────────────
+
 
 class TestTenantOut:
     def test_valid(self):
@@ -54,34 +78,41 @@ class TestResolveResponse:
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
+
 class TestUserOut:
     def test_valid(self):
-        u = UserOut(id="abc", email="a@b.com", role="organizer",
-                    created_at=_dt())
+        u = UserOut(id="abc", email="a@b.com", role="organizer", created_at=_dt())
         assert u.email == "a@b.com"
         assert u.organizer_id is None
 
     def test_invalid_email(self):
         with pytest.raises(ValidationError):
-            UserOut(id="x", email="not-an-email", role="organizer",
-                    created_at=_dt())
+            UserOut(id="x", email="not-an-email", role="organizer", created_at=_dt())
 
     def test_invalid_role(self):
         with pytest.raises(ValidationError):
-            UserOut(id="x", email="a@b.com", role="bogus",
-                    created_at=_dt())
+            UserOut(id="x", email="a@b.com", role="bogus", created_at=_dt())
 
     def test_with_organizer_id(self):
-        u = UserOut(id="x", email="a@b.com", role="organizer",
-                    organizer_id="org-123", created_at=_dt())
+        u = UserOut(
+            id="x",
+            email="a@b.com",
+            role="organizer",
+            organizer_id="org-123",
+            created_at=_dt(),
+        )
         assert u.organizer_id == "org-123"
 
 
 class TestRegisterRequest:
     def test_valid(self):
         r = RegisterRequest(
-            email="a@b.com", password="12345678", company_name="ACME",
-            legal_id="J123", org_type="company", phone="+593991234567",
+            email="a@b.com",
+            password="12345678",
+            company_name="ACME",
+            legal_id="J123",
+            org_type="company",
+            phone="+593991234567",
             country="EC",
         )
         assert r.email == "a@b.com"
@@ -89,55 +120,83 @@ class TestRegisterRequest:
     def test_password_too_short(self):
         with pytest.raises(ValidationError):
             RegisterRequest(
-                email="a@b.com", password="123", company_name="ACME",
-                legal_id="J123", org_type="company", phone="+593991234567",
+                email="a@b.com",
+                password="123",
+                company_name="ACME",
+                legal_id="J123",
+                org_type="company",
+                phone="+593991234567",
                 country="EC",
             )
 
     def test_password_too_long(self):
         with pytest.raises(ValidationError):
             RegisterRequest(
-                email="a@b.com", password="x" * 200, company_name="ACME",
-                legal_id="J123", org_type="company", phone="+593991234567",
+                email="a@b.com",
+                password="x" * 200,
+                company_name="ACME",
+                legal_id="J123",
+                org_type="company",
+                phone="+593991234567",
                 country="EC",
             )
 
     def test_invalid_email(self):
         with pytest.raises(ValidationError):
             RegisterRequest(
-                email="bademail", password="12345678", company_name="ACME",
-                legal_id="J123", org_type="company", phone="+593991234567",
+                email="bademail",
+                password="12345678",
+                company_name="ACME",
+                legal_id="J123",
+                org_type="company",
+                phone="+593991234567",
                 country="EC",
             )
 
     def test_invalid_org_type(self):
         with pytest.raises(ValidationError):
             RegisterRequest(
-                email="a@b.com", password="12345678", company_name="ACME",
-                legal_id="J123", org_type="ngo", phone="+593991234567",
+                email="a@b.com",
+                password="12345678",
+                company_name="ACME",
+                legal_id="J123",
+                org_type="ngo",
+                phone="+593991234567",
                 country="EC",
             )
 
     def test_company_name_too_short(self):
         with pytest.raises(ValidationError):
             RegisterRequest(
-                email="a@b.com", password="12345678", company_name="A",
-                legal_id="J123", org_type="company", phone="+593991234567",
+                email="a@b.com",
+                password="12345678",
+                company_name="A",
+                legal_id="J123",
+                org_type="company",
+                phone="+593991234567",
                 country="EC",
             )
 
     def test_phone_too_short(self):
         with pytest.raises(ValidationError):
             RegisterRequest(
-                email="a@b.com", password="12345678", company_name="ACME",
-                legal_id="J123", org_type="company", phone="+5",
+                email="a@b.com",
+                password="12345678",
+                company_name="ACME",
+                legal_id="J123",
+                org_type="company",
+                phone="+5",
                 country="EC",
             )
 
     def test_optional_slug(self):
         r = RegisterRequest(
-            email="a@b.com", password="12345678", company_name="ACME",
-            legal_id="J123", org_type="company", phone="+593991234567",
+            email="a@b.com",
+            password="12345678",
+            company_name="ACME",
+            legal_id="J123",
+            org_type="company",
+            phone="+593991234567",
             country="EC",
         )
         assert r.slug is None
@@ -161,8 +220,9 @@ class TestSlugCheckResponse:
         assert r.reason is None
 
     def test_taken(self):
-        r = SlugCheckResponse(slug="demo", available=False,
-                              suggestion="demo-1", reason="taken")
+        r = SlugCheckResponse(
+            slug="demo", available=False, suggestion="demo-1", reason="taken"
+        )
         assert r.available is False
         assert r.suggestion == "demo-1"
         assert r.reason == "taken"
@@ -174,14 +234,25 @@ class TestSlugCheckResponse:
 
 # ── Plans ─────────────────────────────────────────────────────────────────────
 
+
 class TestPlanOut:
     def test_valid(self):
         p = PlanOut(
-            id="p1", code="basico", name="Básico", description="Desc",
-            price_cents=2000, currency="usd", billing_period="monthly",
-            features=["f1"], max_events=5, max_tickets_per_event=500,
-            includes_numbered=False, includes_ai_design=False,
-            includes_custom_domain=False, active=True, created_at=_dt(),
+            id="p1",
+            code="basico",
+            name="Básico",
+            description="Desc",
+            price_cents=2000,
+            currency="usd",
+            billing_period="monthly",
+            features=["f1"],
+            max_events=5,
+            max_tickets_per_event=500,
+            includes_numbered=False,
+            includes_ai_design=False,
+            includes_custom_domain=False,
+            active=True,
+            created_at=_dt(),
             updated_at=_dt(),
         )
         assert p.code == "basico"
@@ -191,8 +262,11 @@ class TestPlanOut:
 class TestPlanCreate:
     def test_valid(self):
         p = PlanCreate(
-            code="basic", name="Basic", description="A basic plan",
-            price_cents=1000, billing_period="monthly",
+            code="basic",
+            name="Basic",
+            description="A basic plan",
+            price_cents=1000,
+            billing_period="monthly",
         )
         assert p.currency == "usd"
         assert p.active is True
@@ -201,29 +275,41 @@ class TestPlanCreate:
     def test_price_cents_negative(self):
         with pytest.raises(ValidationError):
             PlanCreate(
-                code="x", name="X", description="D",
-                price_cents=-1, billing_period="monthly",
+                code="x",
+                name="X",
+                description="D",
+                price_cents=-1,
+                billing_period="monthly",
             )
 
     def test_price_cents_too_high(self):
         with pytest.raises(ValidationError):
             PlanCreate(
-                code="x", name="X", description="D",
-                price_cents=100_000_01, billing_period="monthly",
+                code="x",
+                name="X",
+                description="D",
+                price_cents=100_000_01,
+                billing_period="monthly",
             )
 
     def test_invalid_billing_period(self):
         with pytest.raises(ValidationError):
             PlanCreate(
-                code="x", name="X", description="D",
-                price_cents=0, billing_period="yearly",
+                code="x",
+                name="X",
+                description="D",
+                price_cents=0,
+                billing_period="yearly",
             )
 
     def test_code_too_short(self):
         with pytest.raises(ValidationError):
             PlanCreate(
-                code="x", name="X", description="D",
-                price_cents=0, billing_period="monthly",
+                code="x",
+                name="X",
+                description="D",
+                price_cents=0,
+                billing_period="monthly",
             )
 
 
@@ -240,12 +326,21 @@ class TestPlanUpdate:
 
 # ── Organizers ────────────────────────────────────────────────────────────────
 
+
 class TestOrganizerOut:
     def test_valid(self):
         o = OrganizerOut(
-            id="o1", user_id="u1", company_name="Test", legal_id="J123",
-            org_type="company", email="o@t.com", phone="+123", country="EC",
-            slug="test-org", status="approved", subscription_status="active",
+            id="o1",
+            user_id="u1",
+            company_name="Test",
+            legal_id="J123",
+            org_type="company",
+            email="o@t.com",
+            phone="+123",
+            country="EC",
+            slug="test-org",
+            status="approved",
+            subscription_status="active",
             created_at=_dt(),
         )
         assert o.company_name == "Test"
@@ -254,38 +349,72 @@ class TestOrganizerOut:
     def test_invalid_org_type(self):
         with pytest.raises(ValidationError):
             OrganizerOut(
-                id="o1", user_id="u1", company_name="T", legal_id="J1",
-                org_type="invalid", email="o@t.com", phone="+1", country="EC",
-                slug="t", status="approved", subscription_status="active",
+                id="o1",
+                user_id="u1",
+                company_name="T",
+                legal_id="J1",
+                org_type="invalid",
+                email="o@t.com",
+                phone="+1",
+                country="EC",
+                slug="t",
+                status="approved",
+                subscription_status="active",
                 created_at=_dt(),
             )
 
     def test_invalid_status(self):
         with pytest.raises(ValidationError):
             OrganizerOut(
-                id="o1", user_id="u1", company_name="T", legal_id="J1",
-                org_type="company", email="o@t.com", phone="+1", country="EC",
-                slug="t", status="unknown", subscription_status="active",
+                id="o1",
+                user_id="u1",
+                company_name="T",
+                legal_id="J1",
+                org_type="company",
+                email="o@t.com",
+                phone="+1",
+                country="EC",
+                slug="t",
+                status="unknown",
+                subscription_status="active",
                 created_at=_dt(),
             )
 
     def test_invalid_subscription_status(self):
         with pytest.raises(ValidationError):
             OrganizerOut(
-                id="o1", user_id="u1", company_name="T", legal_id="J1",
-                org_type="company", email="o@t.com", phone="+1", country="EC",
-                slug="t", status="approved", subscription_status="bogus",
+                id="o1",
+                user_id="u1",
+                company_name="T",
+                legal_id="J1",
+                org_type="company",
+                email="o@t.com",
+                phone="+1",
+                country="EC",
+                slug="t",
+                status="approved",
+                subscription_status="bogus",
                 created_at=_dt(),
             )
 
     def test_with_admin_comments(self):
-        c = AdminCommentOut(id="c1", admin_id="u2", comment="Looks good",
-                            created_at=_dt())
+        c = AdminCommentOut(
+            id="c1", admin_id="u2", comment="Looks good", created_at=_dt()
+        )
         o = OrganizerOut(
-            id="o1", user_id="u1", company_name="T", legal_id="J1",
-            org_type="company", email="o@t.com", phone="+1", country="EC",
-            slug="t", status="pending", subscription_status="none",
-            admin_comments=[c], created_at=_dt(),
+            id="o1",
+            user_id="u1",
+            company_name="T",
+            legal_id="J1",
+            org_type="company",
+            email="o@t.com",
+            phone="+1",
+            country="EC",
+            slug="t",
+            status="pending",
+            subscription_status="none",
+            admin_comments=[c],
+            created_at=_dt(),
         )
         assert len(o.admin_comments) == 1
         assert o.admin_comments[0].comment == "Looks good"
@@ -307,6 +436,7 @@ class TestOrganizerProfileUpdate:
 
 
 # ── Admin actions ─────────────────────────────────────────────────────────────
+
 
 class TestApproveBody:
     def test_valid_with_comment(self):
@@ -338,11 +468,16 @@ class TestRejectBody:
 
 # ── AdminStats / OrganizersList ───────────────────────────────────────────────
 
+
 class TestAdminStats:
     def test_valid(self):
         s = AdminStats(
-            organizers_total=10, organizers_pending=2, organizers_approved=5,
-            organizers_rejected=2, organizers_suspended=1, active_subscriptions=3,
+            organizers_total=10,
+            organizers_pending=2,
+            organizers_approved=5,
+            organizers_rejected=2,
+            organizers_suspended=1,
+            active_subscriptions=3,
             monthly_revenue_estimate_cents=100_00,
         )
         assert s.organizers_total == 10
@@ -351,9 +486,17 @@ class TestAdminStats:
 class TestOrganizersList:
     def test_valid(self):
         o = OrganizerOut(
-            id="o1", user_id="u1", company_name="T", legal_id="J1",
-            org_type="company", email="o@t.com", phone="+1", country="EC",
-            slug="t", status="approved", subscription_status="active",
+            id="o1",
+            user_id="u1",
+            company_name="T",
+            legal_id="J1",
+            org_type="company",
+            email="o@t.com",
+            phone="+1",
+            country="EC",
+            slug="t",
+            status="approved",
+            subscription_status="active",
             created_at=_dt(),
         )
         lst = OrganizersList(items=[o], total=1, page=1, limit=20)
@@ -362,6 +505,7 @@ class TestOrganizersList:
 
 
 # ── Billing / Stripe ──────────────────────────────────────────────────────────
+
 
 class TestCheckoutRequest:
     def test_valid(self):
@@ -377,14 +521,16 @@ class TestCheckoutResponse:
     def test_valid(self):
         r = CheckoutResponse(
             checkout_url="https://checkout.stripe.com/...",
-            session_id="cs_test_abc", mode="subscription",
+            session_id="cs_test_abc",
+            mode="subscription",
         )
         assert r.mode == "subscription"
 
     def test_invalid_mode(self):
         with pytest.raises(ValidationError):
             CheckoutResponse(
-                checkout_url="https://...", session_id="cs_1",
+                checkout_url="https://...",
+                session_id="cs_1",
                 mode="invalid",
             )
 
@@ -414,10 +560,10 @@ class TestSimulateWebhookBody:
 
 # ── Serialization ─────────────────────────────────────────────────────────────
 
+
 class TestSerialization:
     def test_user_out_serializes_to_dict(self):
-        u = UserOut(id="abc", email="a@b.com", role="organizer",
-                    created_at=_dt())
+        u = UserOut(id="abc", email="a@b.com", role="organizer", created_at=_dt())
         d = u.model_dump()
         assert d["id"] == "abc"
         assert d["email"] == "a@b.com"
@@ -435,6 +581,7 @@ class TestSerialization:
     def test_extra_fields_ignored(self):
         class Sub(TenantOut):
             pass
+
         t = TenantOut.model_validate(
             {"slug": "x", "name": "X", "status": "active", "extra": "ignored"}
         )
@@ -442,8 +589,12 @@ class TestSerialization:
 
     def test_register_request_serializes(self):
         r = RegisterRequest(
-            email="a@b.com", password="12345678", company_name="ACME",
-            legal_id="J123", org_type="company", phone="+593991234567",
+            email="a@b.com",
+            password="12345678",
+            company_name="ACME",
+            legal_id="J123",
+            org_type="company",
+            phone="+593991234567",
             country="EC",
         )
         d = r.model_dump()

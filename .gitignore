@@ -51,6 +51,10 @@ __pycache__/
 *pyc*
 venv/
 .venv/
+.pytest_cache/
+
+# Backend dev artifacts
+backend/email_log/
 
 # Development tools
 chainlit.md
