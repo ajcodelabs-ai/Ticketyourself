@@ -24,9 +24,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel, EmailStr, Field, model_validator
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -69,7 +69,7 @@ async def _get_event_for_org(event_id: str, org_id: str, session: AsyncSession) 
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class GuestListEntryCreate(BaseModel):
-    email: Optional[str] = Field(default=None, max_length=254)
+    email: Optional[EmailStr] = Field(default=None, max_length=254)
     cedula: Optional[str] = Field(default=None, max_length=40)
     name: Optional[str] = Field(default=None, max_length=140)
     notes: Optional[str] = Field(default=None, max_length=300)
@@ -102,7 +102,6 @@ async def add_guest_list_entry(
         notes=(body.notes or "").strip() or None,
     )
     session.add(entry)
-    await session.commit()
     await session.refresh(entry)
     return row_to_dict(entry)
 
@@ -110,6 +109,8 @@ async def add_guest_list_entry(
 @router.get("/api/events/me/{event_id}/guest-list")
 async def list_guest_list_entries(
     event_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=500),
     user: dict = Depends(require_role("organizer")),
     session: AsyncSession = Depends(get_db),
 ):
@@ -119,8 +120,19 @@ async def list_guest_list_entries(
         select(EventGuestListEntry)
         .where(EventGuestListEntry.event_id == event_id)
         .order_by(EventGuestListEntry.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
     )
-    return [row_to_dict(r) for r in result.scalars().all()]
+    total = await session.scalar(
+        select(func.count(EventGuestListEntry.id))
+        .where(EventGuestListEntry.event_id == event_id)
+    )
+    return {
+        "items": [row_to_dict(r) for r in result.scalars().all()],
+        "total": total or 0,
+        "page": page,
+        "limit": limit,
+    }
 
 
 @router.post("/api/events/me/{event_id}/guest-list/import")
@@ -134,6 +146,8 @@ async def import_guest_list(
     await _get_event_for_org(event_id, org.id, session)
     assert_feature(org.plan_code, "verified_lists")
 
+    if file.size and file.size > 10 * 1024 * 1024:
+        raise HTTPException(413, "El archivo supera los 10MB")
     raw = await file.read()
     try:
         text = raw.decode("utf-8-sig")
@@ -186,7 +200,6 @@ async def import_guest_list(
             seen_cedulas.add(cedula)
         inserted += 1
 
-    await session.commit()
     return {"inserted": inserted, "skipped": skipped}
 
 
@@ -208,7 +221,6 @@ async def delete_guest_list_entry(
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
     await session.delete(entry)
-    await session.commit()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -255,7 +267,6 @@ async def create_access_code(
         active=body.active,
     )
     session.add(row)
-    await session.commit()
     await session.refresh(row)
     return row_to_dict(row)
 
@@ -297,7 +308,6 @@ async def update_access_code(
     for field, val in body.model_dump(exclude_none=True).items():
         setattr(row, field, val)
     row.updated_at = datetime.now(timezone.utc)
-    await session.commit()
     await session.refresh(row)
     return row_to_dict(row)
 
@@ -320,7 +330,6 @@ async def delete_access_code(
     if not row:
         raise HTTPException(status_code=404, detail="Access code not found")
     await session.delete(row)
-    await session.commit()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -328,7 +337,7 @@ async def delete_access_code(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class CheckAccessBody(BaseModel):
-    email: Optional[str] = Field(default=None, max_length=254)
+    email: Optional[EmailStr] = Field(default=None, max_length=254)
     cedula: Optional[str] = Field(default=None, max_length=40)
     access_code: Optional[str] = Field(default=None, max_length=40)
 

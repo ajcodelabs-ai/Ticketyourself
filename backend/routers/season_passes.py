@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import stripe
@@ -129,7 +129,6 @@ async def create_season_pass(
         redemption_ends_at=body.redemption_ends_at,
     )
     session.add(pass_row)
-    await session.commit()
     await session.refresh(pass_row)
     return row_to_dict(pass_row)
 
@@ -171,7 +170,6 @@ async def update_season_pass(
 
     for field, val in body.model_dump(exclude_none=True).items():
         setattr(pass_row, field, val)
-    await session.commit()
     await session.refresh(pass_row)
     return row_to_dict(pass_row)
 
@@ -199,7 +197,6 @@ async def delete_season_pass(
             detail="No se puede eliminar: ya hay abonos vendidos. Cancelalo en su lugar.",
         )
     await session.delete(pass_row)
-    await session.commit()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -224,7 +221,7 @@ async def public_list_season_passes(event_id: str, session: AsyncSession = Depen
 
 class PassBuyerIn(BaseModel):
     name: str = Field(min_length=2, max_length=140)
-    email: str = Field(max_length=140)
+    email: EmailStr = Field(max_length=140)
     phone: Optional[str] = Field(default=None, max_length=40)
     document_id: Optional[str] = Field(default=None, max_length=40)
     document_type: Optional[str] = Field(default=None, max_length=20)
