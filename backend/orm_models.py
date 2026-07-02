@@ -66,6 +66,7 @@ class User(Base):
     organizer_id = Column(String(36), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     last_login = Column(DateTime(timezone=True), nullable=True)
+    token_version = Column(Integer, nullable=False, default=0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
