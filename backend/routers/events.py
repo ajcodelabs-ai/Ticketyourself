@@ -1172,6 +1172,7 @@ async def get_public_event(
                 Event.organizer_id == organizer["id"],
                 Event.slug == event_slug,
                 Event.status == "published",
+                Event.visibility.in_(["public", "public_blocked"]),
             )
         )
     if not event_row:
@@ -1239,6 +1240,7 @@ async def _resolve_public_event(tenant_slug: str, event_slug: str) -> tuple:
                 Event.organizer_id == organizer["id"],
                 Event.slug == event_slug,
                 Event.status == "published",
+                Event.visibility.in_(["public", "public_blocked"]),
             )
         )
     if not event_row:
