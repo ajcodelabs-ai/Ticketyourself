@@ -63,7 +63,7 @@ async def export_organizers(
     plan_by_id = {p["id"]: p for p in plans}
     plan_id_by_code = {p["code"]: p["id"] for p in plans}
 
-    stmt = select(Organizer)
+    stmt = select(Organizer).limit(10_000)
     if status:
         stmt = stmt.where(Organizer.status == status)
     if plan_code:
@@ -72,7 +72,7 @@ async def export_organizers(
 
     orgs_result = await session.execute(stmt)
     organizers = [row_to_dict(r) for r in orgs_result.scalars().all()]
-    org_ids = [o["id"] for o in organizers]
+    org_ids = [o["id"] for o in organizers][:10_000]
 
     rev_map: Dict[str, dict] = {}
     if org_ids:
