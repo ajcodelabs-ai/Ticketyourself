@@ -115,7 +115,7 @@ class PlanCreate(BaseModel):
     code: str = Field(min_length=2, max_length=40)
     name: str = Field(min_length=2, max_length=80)
     description: str = Field(min_length=2, max_length=500)
-    price_cents: int = Field(ge=0, le=100_000_00)
+    price_cents: int = Field(ge=0, le=10_000_000)
     currency: str = "usd"
     billing_period: BillingPeriod
     features: List[str] = Field(default_factory=list)

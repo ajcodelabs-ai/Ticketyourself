@@ -256,7 +256,7 @@ class Event(Base):
     venue_slug = Column(String(120), nullable=True)
     # [{locality_id, price_cents, max_tickets_per_purchase}]
     locality_pricing = Column(JSONB, nullable=False, default=list)
-    seat_holds_window_minutes = Column(Integer, nullable=True, default=10)
+    seat_holds_window_minutes = Column(Integer, nullable=False, default=10)
 
     # Capacity & sales
     base_price_cents = Column(Integer, nullable=False, default=0)
