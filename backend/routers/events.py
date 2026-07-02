@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -874,6 +874,8 @@ async def _store_event_image(
                 "Aceptados: JPEG, PNG, WEBP, HEIC."
             ),
         )
+    if file.size and file.size > MAX_IMG_BYTES:
+        raise HTTPException(status_code=413, detail="Archivo supera los 5MB")
     content = await file.read()
     if len(content) > MAX_IMG_BYTES:
         raise HTTPException(status_code=413, detail="Archivo supera los 5MB")
@@ -1099,13 +1101,19 @@ async def serve_event_asset(asset_id: str):
         )
     if not _asset_row:
         raise HTTPException(status_code=404, detail="Asset not found")
-    abs_path = ASSETS_DIR / _asset_row.file_path
+    abs_path = (ASSETS_DIR / _asset_row.file_path).resolve()
+    if not str(abs_path).startswith(str(ASSETS_DIR.resolve())):
+        raise HTTPException(status_code=403, detail="Forbidden")
     if not abs_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
     return FileResponse(
         abs_path,
         media_type=_asset_row.mime_type or "application/octet-stream",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Content-Disposition": "attachment",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -1188,7 +1196,7 @@ async def get_public_event(
 class SeatHoldsBody(BaseModel):
     seat_ids: List[str]
     session_token: str = Field(min_length=8, max_length=80)
-    buyer_email: Optional[str] = Field(default=None, max_length=140)
+    buyer_email: Optional[EmailStr] = Field(default=None, max_length=140)
     function_id: Optional[str] = None
 
 
