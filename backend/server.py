@@ -109,12 +109,19 @@ app.include_router(guest_lists_router.public_router)
 
 # CORS — must NOT use "*" with allow_credentials=True per browser spec.
 # We accept any *.preview.emergentagent.com custom domain (current + future previews)
-# plus localhost:3000 (dev). Specific FRONTEND_URL is also added as a literal allow.
+# plus localhost:3000 (dev), the bare public domain, and any FRONTEND_URL from env.
 frontend_url = os.environ.get("FRONTEND_URL", "")
-explicit_allowed = [o for o in (frontend_url, "http://localhost:3000") if o]
 public_domain = os.environ["PUBLIC_DOMAIN"]
+explicit_allowed = [
+    o for o in (
+        frontend_url,
+        "http://localhost:3000",
+        f"http://{public_domain}:3000",
+        f"https://{public_domain}:3000",
+    ) if o
+]
 cors_regex = (
-    r"^https?://[a-zA-Z0-9-]+\.(preview\.emergentagent\.com|"
+    r"^https?://([a-zA-Z0-9-]+\.)?(preview\.emergentagent\.com|"
     + re.escape(public_domain)
     + r")(:\d+)?$"
 )
