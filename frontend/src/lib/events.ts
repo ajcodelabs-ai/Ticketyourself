@@ -4,6 +4,8 @@
  */
 import { previewMicrositePath } from "@/lib/config";
 
+const DEFAULT_TZ = import.meta.env.VITE_DEFAULT_TIMEZONE || "America/Guayaquil";
+
 export const EVENT_CATEGORIES = [
     { code: "music", label: "Música y Conciertos" },
     { code: "theater", label: "Teatro y Artes Escénicas" },
@@ -61,7 +63,7 @@ export function formatPriceLabel(event) {
     return `$${(event.base_price_cents / 100).toFixed(2)} ${event.currency || "USD"}`;
 }
 
-export function formatEventDate(iso, timezone = "America/Guayaquil") {
+export function formatEventDate(iso, timezone = DEFAULT_TZ) {
     if (!iso) return "—";
     try {
         return new Intl.DateTimeFormat("es-EC", {
@@ -96,14 +98,44 @@ export function googleMapsUrl(event) {
 }
 
 // Convert ISO datetime → "YYYY-MM-DDTHH:mm" for <input type="datetime-local">.
-export function isoToLocalInput(iso) {
+// Uses the event's timezone so the wall-clock time is correct regardless of browser tz.
+export function isoToLocalInput(iso, timezone = DEFAULT_TZ) {
     if (!iso) return "";
     const d = new Date(iso);
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    }).formatToParts(d);
+    const get = (type) => parts.find((p) => p.type === type)?.value.padStart(2, "0") || "00";
+    return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
 }
 
-export function localInputToIso(local) {
+// Convert "YYYY-MM-DDTHH:mm" (from datetime-local) → ISO UTC string.
+// Interprets the wall-clock time in the event's timezone, not the browser's.
+export function localInputToIso(local, timezone = DEFAULT_TZ) {
     if (!local) return null;
-    return new Date(local).toISOString();
+    const [datePart, timePart] = local.split("T");
+    const [y, m, d] = datePart.split("-").map(Number);
+    const [hh, mm] = timePart.split(":").map(Number);
+    // First approx: treat as UTC
+    const utcDate = new Date(Date.UTC(y, m - 1, d, hh, mm));
+    // Get the UTC offset for the target timezone at this instant
+    const tzParts = new Intl.DateTimeFormat("en", {
+        timeZone: timezone,
+        timeZoneName: "longOffset",
+    }).formatToParts(utcDate);
+    const tzStr = tzParts.find((p) => p.type === "timeZoneName")?.value || "";
+    let offsetMinutes = 0;
+    const match = tzStr.match(/GMT([+-])(\d{2}):(\d{2})/);
+    if (match) {
+        offsetMinutes = parseInt(match[2]) * 60 + parseInt(match[3]);
+        if (match[1] === "-") offsetMinutes = -offsetMinutes;
+    }
+    // local = UTC + offset  →  UTC = local - offset
+    return new Date(utcDate.getTime() - offsetMinutes * 60000).toISOString();
 }

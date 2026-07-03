@@ -129,6 +129,8 @@ export default function EditorCanvas({
     const stageRef = useRef<Konva.Stage>(null);
     const transformerRef = useRef<Konva.Transformer>(null);
     const elementRefs = useRef<Record<string, Konva.Group>>({});
+    const elementsRef = useRef(elements);
+    useEffect(() => { elementsRef.current = elements; }, [elements]);
 
     const [containerSize, setContainerSize] = useState({ width: 800, height });
     const [zoom, setZoom] = useState(1);
@@ -333,7 +335,8 @@ export default function EditorCanvas({
         const anchorWorldX = anchorEl.x + dx;
         const anchorWorldY = anchorEl.y + dy;
         const myBox = elementBBox({ ...anchorEl, x: anchorWorldX, y: anchorWorldY });
-        const targets = elements.filter((o) => !selection.includes(o.id) && o.id !== el.id);
+        const currentElements = elementsRef.current;
+        const targets = currentElements.filter((o) => !selection.includes(o.id) && o.id !== el.id);
         for (const o of targets) {
             const ob = elementBBox(o);
             const lines = [
@@ -413,9 +416,9 @@ export default function EditorCanvas({
                     y: snapVal(info.startY + dy),
                 });
             });
-            onUpdate(el.id, { x, y });
+            onUpdate(el.id, { x: snapVal(x), y: snapVal(y) });
         } else {
-            onUpdate(el.id, { x, y });
+            onUpdate(el.id, { x: snapVal(x), y: snapVal(y) });
         }
 
         dragSnapshot.current = null;

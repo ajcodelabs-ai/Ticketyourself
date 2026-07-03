@@ -1,3 +1,4 @@
+import DOMPurify from "dompurify";
 import {
     Accordion,
     AccordionContent,
@@ -61,7 +62,7 @@ export default function EventContentDisplay({ content }) {
                     </h2>
                     <div
                         className="prose prose-sm max-w-none text-muted-foreground"
-                        dangerouslySetInnerHTML={{ __html: policies_html }}
+                        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(policies_html) }}
                     />
                 </section>
             )}
@@ -82,7 +83,7 @@ export default function EventContentDisplay({ content }) {
                                             <div
                                                 className="prose prose-sm max-w-none text-muted-foreground"
                                                 dangerouslySetInnerHTML={{
-                                                    __html: item.answer_html || "",
+                                                    __html: DOMPurify.sanitize(item.answer_html || ""),
                                                 }}
                                             />
                                         </AccordionContent>

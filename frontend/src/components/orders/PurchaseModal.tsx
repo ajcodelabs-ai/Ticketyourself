@@ -170,6 +170,13 @@ export default function PurchaseModal({
         amount_cents: number;
     } | null>(null);
     const [applyingPromo, setApplyingPromo] = useState(false);
+    // Backend preview response with correct fee/total post-discount
+    const [previewTotals, setPreviewTotals] = useState<{
+        subtotal_cents: number;
+        fees_cents: number;
+        total_cents: number;
+        discount_total_cents: number;
+    } | null>(null);
 
     // ── Fase 9: access gate (lista verificada / código de acceso) ──────────────
     const accessType = event?.access_params?.access_type || "open";
@@ -301,6 +308,7 @@ export default function PurchaseModal({
             setPaymentMethod(activeMethods[0] || "stripe");
             setPromoCodeInput("");
             setAppliedPromo(null);
+            setPreviewTotals(null);
             setAccessVerified(false);
             setAccessCode("");
             setCheckEmail("");
@@ -371,7 +379,8 @@ export default function PurchaseModal({
             base = { subtotal: 0, fees: 0, total: 0 };
         } else if (pricingType === "donation") {
             const cents = Math.round(parseFloat(donation || "0") * 100);
-            base = { subtotal: cents, fees: 0, total: cents };
+            const fees = cents > 0 ? Math.round((cents * FEE_PERCENT) / 100) : 0;
+            base = { subtotal: cents, fees, total: cents + fees };
         } else {
             const unit = event.base_price_cents || 0;
             const subtotal = unit * quantity;
@@ -379,6 +388,14 @@ export default function PurchaseModal({
             base = { subtotal, fees, total: subtotal + fees };
         }
 
+        if (appliedPromo && previewTotals) {
+            return {
+                subtotal: previewTotals.subtotal_cents,
+                fees: previewTotals.fees_cents,
+                total: previewTotals.total_cents,
+                discount: previewTotals.discount_total_cents,
+            };
+        }
         if (appliedPromo) {
             const discount = appliedPromo.amount_cents || 0;
             const subtotalAfterDiscount = Math.max(0, base.subtotal - discount);
@@ -390,7 +407,7 @@ export default function PurchaseModal({
         return { ...base, discount: 0 };
     }, [
         event, pricingType, quantity, donation, isSeatNumbered, seatHoldsInfo,
-        appliedPromo, hasTypes, typeSelections, ticketTypes,
+        appliedPromo, previewTotals, hasTypes, typeSelections, ticketTypes,
     ]);
 
     const effectiveQty = isSeatNumbered
@@ -421,6 +438,12 @@ export default function PurchaseModal({
                 return;
             }
             setAppliedPromo({ code, name: applied.name, amount_cents: applied.amount_cents });
+            setPreviewTotals({
+                subtotal_cents: data.subtotal_cents,
+                fees_cents: data.fees_cents,
+                total_cents: data.total_cents,
+                discount_total_cents: data.discount_total_cents,
+            });
             toast.success(`Descuento "${applied.name}" aplicado`);
         } catch (e: any) {
             toast.error(formatApiError(e?.response?.data?.detail) || "No se pudo validar el código.");
@@ -432,6 +455,7 @@ export default function PurchaseModal({
     const removePromo = () => {
         setAppliedPromo(null);
         setPromoCodeInput("");
+        setPreviewTotals(null);
     };
 
     const validate = () => {

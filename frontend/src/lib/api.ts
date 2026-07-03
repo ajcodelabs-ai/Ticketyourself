@@ -50,12 +50,35 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
-// Global 401 handler — let the AuthContext clear session via custom event.
+// Global auth handler — silent refresh on 401, then fallback to session clear.
 api.interceptors.response.use(
     (response) => response,
-    (error) => {
+    async (error) => {
+        const originalRequest = error.config;
         const status = error?.response?.status;
-        if (status === 401) {
+
+        if (status === 401 && !originalRequest._retry) {
+            originalRequest._retry = true;
+            const refreshToken = tokenStore.refresh;
+            if (refreshToken) {
+                try {
+                    const { data } = await axios.post(
+                        `${API_BASE}/auth/refresh`,
+                        {},
+                        { headers: { Authorization: `Bearer ${refreshToken}` } },
+                    );
+                    if (data.access_token) {
+                        tokenStore.set({
+                            access_token: data.access_token,
+                            refresh_token: data.refresh_token,
+                        });
+                        originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
+                        return api(originalRequest);
+                    }
+                } catch {
+                    // refresh failed — fall through to unauthorized
+                }
+            }
             window.dispatchEvent(new CustomEvent("tys:unauthorized"));
         } else if (status === 403) {
             window.dispatchEvent(new CustomEvent("tys:forbidden"));

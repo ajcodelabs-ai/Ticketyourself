@@ -33,6 +33,7 @@ interface SeasonPass {
 interface Props {
     eventId: string | null;
     hasVenue?: boolean;
+    timezone?: string;
 }
 
 const BLANK = {
@@ -49,7 +50,7 @@ function priceDollars(cents: number): string {
     return (cents / 100).toFixed(2);
 }
 
-export default function SeasonPassPanel({ eventId, hasVenue = false }: Props) {
+export default function SeasonPassPanel({ eventId, hasVenue = false, timezone = "America/Guayaquil" }: Props) {
     const [passes, setPasses] = useState<SeasonPass[]>([]);
     const [loading, setLoading] = useState(false);
     const [open, setOpen] = useState(false);
@@ -89,8 +90,8 @@ export default function SeasonPassPanel({ eventId, hasVenue = false }: Props) {
             price_dollars: priceDollars(p.price_cents),
             credits_total: String(p.credits_total),
             max_passes: p.max_passes ?? "",
-            redemption_starts_at: p.redemption_starts_at ? isoToLocalInput(p.redemption_starts_at) : "",
-            redemption_ends_at: p.redemption_ends_at ? isoToLocalInput(p.redemption_ends_at) : "",
+            redemption_starts_at: p.redemption_starts_at ? isoToLocalInput(p.redemption_starts_at, timezone) : "",
+            redemption_ends_at: p.redemption_ends_at ? isoToLocalInput(p.redemption_ends_at, timezone) : "",
         });
         setOpen(true);
     };
@@ -115,9 +116,9 @@ export default function SeasonPassPanel({ eventId, hasVenue = false }: Props) {
             credits_total: parseInt(form.credits_total, 10),
             max_passes: form.max_passes !== "" ? Number(form.max_passes) : null,
             redemption_starts_at: form.redemption_starts_at
-                ? localInputToIso(form.redemption_starts_at as string) : null,
+                ? localInputToIso(form.redemption_starts_at as string, timezone) : null,
             redemption_ends_at: form.redemption_ends_at
-                ? localInputToIso(form.redemption_ends_at as string) : null,
+                ? localInputToIso(form.redemption_ends_at as string, timezone) : null,
         };
         try {
             if (editing) {

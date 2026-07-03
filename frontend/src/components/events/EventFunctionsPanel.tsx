@@ -73,6 +73,7 @@ interface Props {
     eventId: string | null;
     localities?: Locality[];
     mode?: "function" | "subevent";
+    timezone?: string;
 }
 
 type OverrideRow = { price: string; capacity: string; active: boolean };
@@ -185,7 +186,7 @@ function sameVenue(aVenueName: string, bVenueName: string): boolean {
     return (aVenueName || "").trim().toLowerCase() === (bVenueName || "").trim().toLowerCase();
 }
 
-export default function EventFunctionsPanel({ eventId, localities = [], mode = "function" }: Props) {
+export default function EventFunctionsPanel({ eventId, localities = [], mode = "function", timezone = "America/Guayaquil" }: Props) {
     const L = MODE_LABELS[mode] || MODE_LABELS.function;
     const [functions, setFunctions] = useState<EventFunction[]>([]);
     const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
@@ -241,8 +242,8 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
         setForm({
             name: fn.name,
             description: fn.description || "",
-            starts_at: fn.starts_at ? isoToLocalInput(fn.starts_at) : "",
-            ends_at: fn.ends_at ? isoToLocalInput(fn.ends_at) : "",
+            starts_at: fn.starts_at ? isoToLocalInput(fn.starts_at, timezone) : "",
+            ends_at: fn.ends_at ? isoToLocalInput(fn.ends_at, timezone) : "",
             venue_name: fn.venue_name || "",
             venue_address: fn.venue_address || "",
             venue_city: fn.venue_city || "",
@@ -296,8 +297,8 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
             toast.error(L.nameRequired);
             return;
         }
-        const starts_at = form.starts_at ? localInputToIso(form.starts_at as string) : null;
-        const ends_at = form.ends_at ? localInputToIso(form.ends_at as string) : null;
+        const starts_at = form.starts_at ? localInputToIso(form.starts_at as string, timezone) : null;
+        const ends_at = form.ends_at ? localInputToIso(form.ends_at as string, timezone) : null;
         const conflict = findScheduleConflict(starts_at, ends_at);
         if (conflict) {
             toast.error(
