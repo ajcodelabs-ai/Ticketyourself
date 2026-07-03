@@ -387,6 +387,24 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         form.sales_end_custom,
     ]);
 
+    // When a venue is selected, the public checkout uses the seat map
+    // (seat_ids + locality_pricing) — ticket types are never shown to buyers.
+    // Hiding the tab avoids the duplicate data-entry that confused organizers.
+    const hasVenueSelected = !!(form.venue_id || currentEvent?.venue_id);
+
+    // If the organizer selects a venue while on the tipos_ticket tab, move them.
+    useEffect(() => {
+        if (hasVenueSelected && activeStep === "tipos_ticket") {
+            handleTabChange("venue_localidades");
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [hasVenueSelected]);
+
+    const visibleSteps = useMemo(
+        () => hasVenueSelected ? STEPS.filter((s) => s.id !== "tipos_ticket") : STEPS,
+        [hasVenueSelected],
+    );
+
     const stepStatus = useMemo(
         () => evalStepStatus(form, poster, currentEvent),
         [form, poster, currentEvent],
@@ -559,9 +577,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         params.set("tab", next);
         setSearchParams(params, { replace: true });
     };
-    const idx = STEPS.findIndex((s) => s.id === activeStep);
-    const goPrev = () => handleTabChange(STEPS[Math.max(0, idx - 1)].id);
-    const goNext = () => handleTabChange(STEPS[Math.min(STEPS.length - 1, idx + 1)].id);
+    const idx = visibleSteps.findIndex((s) => s.id === activeStep);
+    const goPrev = () => handleTabChange(visibleSteps[Math.max(0, idx - 1)].id);
+    const goNext = () => handleTabChange(visibleSteps[Math.min(visibleSteps.length - 1, idx + 1)].id);
 
     return (
         <div className="space-y-5" data-testid="event-wizard">
@@ -570,7 +588,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     className="w-full overflow-x-auto justify-start gap-1 h-auto p-1 flex-wrap sm:flex-nowrap"
                     data-testid="wizard-tabs"
                 >
-                    {STEPS.map((s, i) => {
+                    {visibleSteps.map((s, i) => {
                         const st = stepStatus[s.id];
                         return (
                             <TabsTrigger
@@ -684,7 +702,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         )}
                         Guardar borrador
                     </Button>
-                    {idx < STEPS.length - 1 ? (
+                    {idx < visibleSteps.length - 1 ? (
                         <Button onClick={goNext} data-testid="wizard-next">
                             Siguiente
                             <ChevronRight className="h-4 w-4 ml-1.5" />
@@ -1511,6 +1529,18 @@ function SectionVenueLocalidades({
                     )}
                 </div>
             </div>
+
+            {hasVenue && (
+                <div className="rounded-xl border-l-4 border-l-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4">
+                    <p className="text-sm font-medium flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+                        <Info className="h-4 w-4 shrink-0" />
+                        Las localidades definen los tickets del comprador
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        El precio y aforo de cada localidad aparecen directamente en el checkout del comprador. No necesitás configurar tipos de ticket adicionales.
+                    </p>
+                </div>
+            )}
 
             {isGeneralMode && (
                 <>
