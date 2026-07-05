@@ -165,6 +165,7 @@ async def create_ticket_type(
         **body.model_dump(),
     )
     session.add(tt)
+    await session.flush()
     await session.refresh(tt)
     return _type_out(tt)
 
@@ -205,7 +206,6 @@ async def update_ticket_type(
     for field, val in body.model_dump(exclude_none=True).items():
         setattr(tt, field, val)
 
-    await session.refresh(tt)
     return _type_out(tt)
 
 
@@ -530,8 +530,6 @@ async def update_function(
 
     if overrides is not None:
         await _upsert_overrides(function_id, overrides, session)
-
-    await session.refresh(func)
 
     result_ov = await session.execute(
         select(FunctionTicketType).where(FunctionTicketType.function_id == function_id)

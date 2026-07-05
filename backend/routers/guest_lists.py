@@ -102,6 +102,7 @@ async def add_guest_list_entry(
         notes=(body.notes or "").strip() or None,
     )
     session.add(entry)
+    await session.flush()
     await session.refresh(entry)
     return row_to_dict(entry)
 
@@ -267,6 +268,7 @@ async def create_access_code(
         active=body.active,
     )
     session.add(row)
+    await session.flush()
     await session.refresh(row)
     return row_to_dict(row)
 
@@ -308,7 +310,6 @@ async def update_access_code(
     for field, val in body.model_dump(exclude_none=True).items():
         setattr(row, field, val)
     row.updated_at = datetime.now(timezone.utc)
-    await session.refresh(row)
     return row_to_dict(row)
 
 

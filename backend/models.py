@@ -131,7 +131,7 @@ class PlanCreate(BaseModel):
 class PlanUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=80)
     description: Optional[str] = Field(default=None, min_length=2, max_length=500)
-    price_cents: Optional[int] = Field(default=None, ge=0, le=100_000_00)
+    price_cents: Optional[int] = Field(default=None, ge=0, le=10_000_000)
     currency: Optional[str] = None
     billing_period: Optional[BillingPeriod] = None
     features: Optional[List[str]] = None

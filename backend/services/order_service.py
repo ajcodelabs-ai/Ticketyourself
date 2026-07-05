@@ -729,10 +729,13 @@ async def refund_order(*, order: dict, reason: str | None = None) -> dict:
         raise HTTPException(422, "Sólo órdenes pagadas pueden reembolsarse")
 
     if order.get("stripe_session_id"):
-        stripe_sesh = stripe.checkout.Session.retrieve(order["stripe_session_id"])
-        pi = stripe_sesh.payment_intent
-        if pi:
-            stripe.Refund.create(payment_intent=pi, reason="requested_by_customer")
+        try:
+            stripe_sesh = stripe.checkout.Session.retrieve(order["stripe_session_id"])
+            pi = stripe_sesh.payment_intent
+            if pi:
+                stripe.Refund.create(payment_intent=pi, reason="requested_by_customer")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Stripe refund failed for %s: %s", order["order_number"], e)
 
     now = _now()
     async with AsyncSessionLocal() as session:
@@ -757,21 +760,21 @@ async def refund_order(*, order: dict, reason: str | None = None) -> dict:
         )
         if event_row is None:
             raise HTTPException(404, "Evento no encontrado")
+        qty = order["quantity_total"]
         stmt = (
             _sa_update(_Event)
-            .where(_Event.id == order["event_id"])
+            .where(
+                _Event.id == order["event_id"],
+                _Event.tickets_sold >= qty,
+            )
             .values(
-                tickets_sold=_Event.tickets_sold + order["quantity_total"],
+                tickets_sold=_Event.tickets_sold - qty,
                 updated_at=now,
             )
         )
-        if event_row.capacity is not None:
-            stmt = stmt.where(
-                _Event.tickets_sold + order["quantity_total"] <= _Event.capacity
-            )
         result = await _pg.execute(stmt)
         if result.rowcount == 0:
-            raise HTTPException(409, "El evento ya no tiene capacidad disponible")
+            raise HTTPException(409, "No se pudo ajustar el inventario del evento")
         await _pg.commit()
     await _adjust_function_counters(order, -1)
 

@@ -24,6 +24,7 @@ from orm_models import (
     TicketOrder, TicketScan,
 )
 from security import get_current_user, require_role
+from services.path_safety import resolve_path_under
 from services.plan_features import assert_feature
 from slugs import normalize_slug
 
@@ -1101,8 +1102,8 @@ async def serve_event_asset(asset_id: str):
         )
     if not _asset_row:
         raise HTTPException(status_code=404, detail="Asset not found")
-    abs_path = (ASSETS_DIR / _asset_row.file_path).resolve()
-    if not str(abs_path).startswith(str(ASSETS_DIR.resolve())):
+    abs_path = resolve_path_under(ASSETS_DIR, _asset_row.file_path)
+    if abs_path is None:
         raise HTTPException(status_code=403, detail="Forbidden")
     if not abs_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")

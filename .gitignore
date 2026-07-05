@@ -117,6 +117,7 @@ frontend/node_modules/.cache/default-development/0.pack
 
 # Agent / AI
 AGENTS.md
+.claude/
 
 # Local documentation / review files
 review.md

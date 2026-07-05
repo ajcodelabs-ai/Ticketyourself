@@ -413,10 +413,12 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     // If the organizer selects a venue while on a tab that's hidden for venue events, move them.
     useEffect(() => {
         if (hasVenueSelected && (activeStep === "tipos_ticket" || activeStep === "abono")) {
-            handleTabChange("venue_localidades");
+            setActiveStep("venue_localidades");
+            const params = new URLSearchParams(searchParams);
+            params.set("tab", "venue_localidades");
+            setSearchParams(params, { replace: true });
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [hasVenueSelected]);
+    }, [hasVenueSelected, activeStep, searchParams, setSearchParams]);
 
     const visibleSteps = useMemo(
         () => hasVenueSelected

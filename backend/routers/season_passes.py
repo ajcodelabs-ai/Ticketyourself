@@ -129,6 +129,7 @@ async def create_season_pass(
         redemption_ends_at=body.redemption_ends_at,
     )
     session.add(pass_row)
+    await session.flush()
     await session.refresh(pass_row)
     return row_to_dict(pass_row)
 
@@ -170,7 +171,6 @@ async def update_season_pass(
 
     for field, val in body.model_dump(exclude_none=True).items():
         setattr(pass_row, field, val)
-    await session.refresh(pass_row)
     return row_to_dict(pass_row)
 
 

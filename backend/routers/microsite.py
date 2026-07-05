@@ -19,6 +19,7 @@ from db_helpers import get_organizer_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import Microsite, MicrositeAsset, Organizer, Tenant
 from security import get_current_user
 from services.microsite_factory import default_microsite, FONTS, TEMPLATES
+from services.path_safety import resolve_path_under
 
 logger = logging.getLogger("tys.microsite")
 
@@ -366,7 +367,9 @@ async def delete_asset(asset_id: str, user=Depends(get_current_user)):
         )
         if not asset_row:
             raise HTTPException(status_code=404, detail="Asset not found")
-        abs_path = ASSETS_DIR / asset_row.file_path
+        abs_path = resolve_path_under(ASSETS_DIR, asset_row.file_path)
+        if abs_path is None:
+            raise HTTPException(status_code=403, detail="Forbidden")
         try:
             if abs_path.exists():
                 abs_path.unlink()
@@ -405,8 +408,8 @@ async def serve_asset(asset_id: str):
         )
     if not asset_row:
         raise HTTPException(status_code=404, detail="Asset not found")
-    abs_path = (ASSETS_DIR / asset_row.file_path).resolve()
-    if not str(abs_path).startswith(str(ASSETS_DIR.resolve())):
+    abs_path = resolve_path_under(ASSETS_DIR, asset_row.file_path)
+    if abs_path is None:
         raise HTTPException(status_code=403, detail="Forbidden")
     if not abs_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")

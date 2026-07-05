@@ -255,6 +255,7 @@ async def refresh_token(
     if payload.get("ver", 0) != token_version:
         raise HTTPException(status_code=401, detail="Refresh token revoked")
     user_row.token_version = token_version + 1
+    await session.flush()
     access = create_access_token(user_row.id, user_row.email, user_row.role)
     new_refresh = create_refresh_token(user_row.id, user_row.token_version)
     set_auth_cookies(response, access, new_refresh)
