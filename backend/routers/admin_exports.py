@@ -4,6 +4,12 @@ Phase 5.5 — CSV exports for super-admin.
 UTF-8 with BOM for Excel compatibility. All endpoints require super_admin role.
 Filter support mirrors the listing endpoints. Streamed via StreamingResponse to
 avoid memory pressure on large datasets.
+
+Pagination: all row-level exports accept an optional `limit` and `offset` query
+parameter so callers can page through large result sets. When `limit` is supplied
+and the returned row count equals it (meaning there may be more rows), the
+response includes `X-TYS-Export-Truncated: true`. The actual row count is always
+returned in `X-TYS-Row-Count`.
 """
 
 import csv
@@ -14,7 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -32,7 +38,11 @@ router = APIRouter(
 
 # ── CSV helpers ─────────────────────────────────────────────────────────────
 def _make_csv_response(
-    filename: str, headers: List[str], rows: List[List[Any]]
+    filename: str,
+    headers: List[str],
+    rows: List[List[Any]],
+    *,
+    limit: Optional[int] = None,
 ) -> StreamingResponse:
     buf = io.StringIO()
     buf.write("﻿")  # BOM for Excel UTF-8
@@ -41,10 +51,21 @@ def _make_csv_response(
     for r in rows:
         writer.writerow(["" if v is None else v for v in r])
     buf.seek(0)
+
+    row_count = len(rows)
+    truncated = limit is not None and row_count == limit
+
+    extra_headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-TYS-Row-Count": str(row_count),
+    }
+    if truncated:
+        extra_headers["X-TYS-Export-Truncated"] = "true"
+
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=extra_headers,
     )
 
 
@@ -57,6 +78,8 @@ def _ts() -> str:
 async def export_organizers(
     status: Optional[str] = Query(default=None),
     plan_code: Optional[str] = Query(default=None),
+    limit: Optional[int] = Query(default=None, ge=1, description="Max rows to return. Omit for all rows."),
+    offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
 ):
     plans_result = await session.execute(
@@ -66,12 +89,16 @@ async def export_organizers(
     plan_by_id = {p["id"]: p for p in plans}
     plan_id_by_code = {p["code"]: p["id"] for p in plans}
 
-    stmt = select(Organizer).limit(10_000)
+    stmt = select(Organizer)
     if status:
         stmt = stmt.where(Organizer.status == status)
     if plan_code:
         target_plan_id = plan_id_by_code.get(plan_code, "__none__")
         stmt = stmt.where(Organizer.plan_id == target_plan_id)
+    if offset:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
 
     orgs_result = await session.execute(stmt)
     organizers = [row_to_dict(r) for r in orgs_result.scalars().all()]
@@ -137,7 +164,7 @@ async def export_organizers(
             ]
         )
 
-    return _make_csv_response(f"organizers_{_ts()}.csv", headers, rows)
+    return _make_csv_response(f"organizers_{_ts()}.csv", headers, rows, limit=limit)
 
 
 # ── /admin/export/events.csv ────────────────────────────────────────────────
@@ -145,6 +172,8 @@ async def export_organizers(
 async def export_events(
     status: Optional[str] = Query(default=None),
     category: Optional[str] = Query(default=None),
+    limit: Optional[int] = Query(default=None, ge=1, description="Max rows to return. Omit for all rows."),
+    offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
 ):
     stmt = select(Event)
@@ -152,7 +181,12 @@ async def export_events(
         stmt = stmt.where(Event.status == status)
     if category:
         stmt = stmt.where(Event.category == category)
-    result = await session.execute(stmt.limit(10_000))
+    if offset:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
+    result = await session.execute(stmt)
     events = [row_to_dict(r) for r in result.scalars().all()]
 
     org_ids = list({e["organizer_id"] for e in events})
@@ -170,7 +204,6 @@ async def export_events(
                 "slug": row.slug,
             }
 
-    # Per-event GMV + fees
     evt_ids = [e["id"] for e in events]
     sales_map: Dict[str, dict] = {}
     if evt_ids:
@@ -223,7 +256,7 @@ async def export_events(
                 f"{(e.get('base_price_cents', 0) or 0) / 100:.2f}",
             ]
         )
-    return _make_csv_response(f"events_{_ts()}.csv", headers, rows)
+    return _make_csv_response(f"events_{_ts()}.csv", headers, rows, limit=limit)
 
 
 # ── /admin/export/orders.csv ────────────────────────────────────────────────
@@ -232,15 +265,22 @@ async def export_orders(
     status: Optional[str] = Query(default=None),
     payment_method: Optional[str] = Query(default=None),
     organizer_id: Optional[str] = Query(default=None),
+    limit: Optional[int] = Query(default=None, ge=1, description="Max rows to return. Omit for all rows."),
+    offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
 ):
-    stmt = select(TicketOrder).order_by(TicketOrder.created_at.desc()).limit(10_000)
+    stmt = select(TicketOrder).order_by(TicketOrder.created_at.desc())
     if status:
         stmt = stmt.where(TicketOrder.status == status)
     if payment_method:
         stmt = stmt.where(TicketOrder.payment_method == payment_method)
     if organizer_id:
         stmt = stmt.where(TicketOrder.organizer_id == organizer_id)
+    if offset:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
     orders_result = await session.execute(stmt)
     orders = [row_to_dict(r) for r in orders_result.scalars().all()]
 
@@ -306,7 +346,7 @@ async def export_orders(
                 _dt(o.get("paid_at")),
             ]
         )
-    return _make_csv_response(f"orders_{_ts()}.csv", headers, rows)
+    return _make_csv_response(f"orders_{_ts()}.csv", headers, rows, limit=limit)
 
 
 # ── /admin/export/audit-log.csv ─────────────────────────────────────────────
@@ -314,15 +354,22 @@ async def export_orders(
 async def export_audit_log(
     action: Optional[str] = Query(default=None),
     target_type: Optional[str] = Query(default=None),
+    limit: Optional[int] = Query(default=None, ge=1, description="Max rows to return. Omit for all rows."),
+    offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
 ):
     import json as _json
 
-    stmt = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(10_000)
+    stmt = select(AuditLog).order_by(AuditLog.created_at.desc())
     if action:
         stmt = stmt.where(AuditLog.action.ilike(f"%{action}%"))
     if target_type:
         stmt = stmt.where(AuditLog.target_type == target_type)
+    if offset:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
     result = await session.execute(stmt)
     entries = [row_to_dict(r) for r in result.scalars().all()]
 
@@ -358,7 +405,7 @@ async def export_audit_log(
                 meta,
             ]
         )
-    return _make_csv_response(f"audit_log_{_ts()}.csv", headers, rows)
+    return _make_csv_response(f"audit_log_{_ts()}.csv", headers, rows, limit=limit)
 
 
 # ── /admin/export/monthly-report.csv ────────────────────────────────────────
