@@ -8,6 +8,7 @@ from typing import Optional
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -105,58 +106,58 @@ async def register(payload: RegisterRequest, session: AsyncSession = Depends(get
     user_id = str(uuid.uuid4())
     organizer_id = str(uuid.uuid4())
 
-    # User → PostgreSQL
-    user_row = User(
-        id=user_id,
-        email=email,
-        password_hash=hash_password(payload.password),
-        role="organizer",
-        organizer_id=organizer_id,
-        created_at=now,
-        last_login=None,
-    )
-    session.add(user_row)
+    try:
+        # User → PostgreSQL
+        user_row = User(
+            id=user_id,
+            email=email,
+            password_hash=hash_password(payload.password),
+            role="organizer",
+            organizer_id=organizer_id,
+            created_at=now,
+            last_login=None,
+        )
+        session.add(user_row)
 
-    # Tenant → PostgreSQL
-    tenant_result = await session.execute(select(Tenant).where(Tenant.slug == slug))
-    tenant_row = tenant_result.scalar_one_or_none()
-    if tenant_row:
-        tenant_row.name = payload.company_name.strip()
-        tenant_row.status = "inactive"
-    else:
-        session.add(Tenant(slug=slug, name=payload.company_name.strip(), status="inactive", created_at=now))
+        # Tenant → PostgreSQL
+        tenant_result = await session.execute(select(Tenant).where(Tenant.slug == slug))
+        tenant_row = tenant_result.scalar_one_or_none()
+        if tenant_row:
+            tenant_row.name = payload.company_name.strip()
+            tenant_row.status = "inactive"
+        else:
+            session.add(Tenant(slug=slug, name=payload.company_name.strip(), status="inactive", created_at=now))
 
-    # Flush so the tenant row exists before the organizer FK insert below.
-    # SQLAlchemy's unit-of-work only orders inserts via relationship(), and
-    # Organizer/Tenant aren't linked by one — without this, it can emit the
-    # organizers INSERT before the tenants INSERT in the same flush.
-    await session.flush()
+        await session.flush()
 
-    # Organizer → PostgreSQL
-    org_row = Organizer(
-        id=organizer_id,
-        user_id=user_id,
-        company_name=payload.company_name.strip(),
-        legal_id=payload.legal_id.strip(),
-        org_type=payload.org_type,
-        email=email,
-        phone=payload.phone.strip(),
-        country=payload.country.strip(),
-        slug=slug,
-        status="pending",
-        rejection_reason=None,
-        plan_id=None,
-        plan_code=None,
-        subscription_status="none",
-        stripe_customer_id=None,
-        stripe_subscription_id=None,
-        current_period_end=None,
-        created_at=now,
-        approved_at=None,
-        approved_by=None,
-    )
-    session.add(org_row)
-    await session.flush()
+        # Organizer → PostgreSQL
+        org_row = Organizer(
+            id=organizer_id,
+            user_id=user_id,
+            company_name=payload.company_name.strip(),
+            legal_id=payload.legal_id.strip(),
+            org_type=payload.org_type,
+            email=email,
+            phone=payload.phone.strip(),
+            country=payload.country.strip(),
+            slug=slug,
+            status="pending",
+            rejection_reason=None,
+            plan_id=None,
+            plan_code=None,
+            subscription_status="none",
+            stripe_customer_id=None,
+            stripe_subscription_id=None,
+            current_period_end=None,
+            created_at=now,
+            approved_at=None,
+            approved_by=None,
+        )
+        session.add(org_row)
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Slug already taken, try another")
 
     logger.info("Registered organizer slug=%s email=%s", slug, email)
 
@@ -205,7 +206,7 @@ async def login(
         raise HTTPException(status_code=401, detail="Email o contraseña incorrectos")
 
     access = create_access_token(user_row.id, user_row.email, user_row.role)
-    refresh = create_refresh_token(user_row.id)
+    refresh = create_refresh_token(user_row.id, user_row.token_version or 0)
     set_auth_cookies(response, access, refresh)
 
     user_row.last_login = datetime.now(timezone.utc)
@@ -250,8 +251,13 @@ async def refresh_token(
     user_row = result.scalar_one_or_none()
     if not user_row:
         raise HTTPException(status_code=401, detail="User not found")
+    token_version = user_row.token_version or 0
+    if payload.get("ver", 0) != token_version:
+        raise HTTPException(status_code=401, detail="Refresh token revoked")
+    user_row.token_version = token_version + 1
+    await session.flush()
     access = create_access_token(user_row.id, user_row.email, user_row.role)
-    new_refresh = create_refresh_token(user_row.id)
+    new_refresh = create_refresh_token(user_row.id, user_row.token_version)
     set_auth_cookies(response, access, new_refresh)
     return {"ok": True, "access_token": access, "refresh_token": new_refresh}
 

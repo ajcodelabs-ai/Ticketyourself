@@ -16,7 +16,7 @@ async def open_event_asset(url: str) -> io.BytesIO | None:
     asset_id = (url or "").rstrip("/").rsplit("/", 1)[-1]
     if not asset_id:
         return None
-    from database import AsyncSessionLocal
+    from services.path_safety import resolve_path_under
     from orm_models import EventAsset
     from sqlalchemy import select
 
@@ -24,7 +24,7 @@ async def open_event_asset(url: str) -> io.BytesIO | None:
         row = await session.scalar(select(EventAsset).where(EventAsset.id == asset_id))
     if not row:
         return None
-    abs_path = ASSETS_DIR / row.file_path
-    if not abs_path.exists():
+    abs_path = resolve_path_under(ASSETS_DIR, row.file_path)
+    if abs_path is None or not abs_path.exists():
         return None
     return io.BytesIO(abs_path.read_bytes())

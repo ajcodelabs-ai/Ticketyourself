@@ -5,6 +5,7 @@ Mode-agnostic: works for free events (instant paid), Stripe checkout, and the
 DEV simulator. The webhook handler delegates the "mark paid + emit tickets"
 step to `finalize_paid_order` so the path is single-sourced.
 """
+
 import logging
 import os
 import re
@@ -12,6 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 import stripe
 
 from database import AsyncSessionLocal
@@ -36,6 +38,7 @@ def _now() -> datetime:
 async def _next_order_number() -> str:
     """Atomic sequential order number via PostgreSQL SEQUENCE (nextval)."""
     from sqlalchemy import text
+
     async with AsyncSessionLocal() as session:
         result = await session.execute(text("SELECT nextval('ticket_order_seq')"))
         seq = result.scalar()
@@ -58,9 +61,14 @@ async def _active_reservation_qty(event_id: str, function_id: str | None = None)
     if function_id is not None:
         conditions.append(EventCapacityReservation.function_id == function_id)
     async with AsyncSessionLocal() as session:
-        total = await session.scalar(
-            select(func.coalesce(func.sum(EventCapacityReservation.quantity), 0)).where(*conditions)
-        ) or 0
+        total = (
+            await session.scalar(
+                select(
+                    func.coalesce(func.sum(EventCapacityReservation.quantity), 0)
+                ).where(*conditions)
+            )
+            or 0
+        )
     return total
 
 
@@ -74,9 +82,16 @@ async def compute_availability(event: dict, function: dict | None = None) -> dic
     if function and function.get("capacity") is not None:
         capacity = function["capacity"]
         sold = function.get("tickets_sold") or 0
-        reserved = await _active_reservation_qty(event["id"], function_id=function["id"])
+        reserved = await _active_reservation_qty(
+            event["id"], function_id=function["id"]
+        )
         available = max(0, capacity - sold - reserved)
-        return {"capacity": capacity, "sold": sold, "reserved": reserved, "available": available}
+        return {
+            "capacity": capacity,
+            "sold": sold,
+            "reserved": reserved,
+            "available": available,
+        }
 
     capacity = event.get("capacity")
     sold = event.get("tickets_sold") or 0
@@ -84,32 +99,71 @@ async def compute_availability(event: dict, function: dict | None = None) -> dic
         return {"capacity": None, "sold": sold, "reserved": 0, "available": None}
     reserved = await _active_reservation_qty(event["id"])
     available = max(0, capacity - sold - reserved)
-    return {"capacity": capacity, "sold": sold, "reserved": reserved, "available": available}
+    return {
+        "capacity": capacity,
+        "sold": sold,
+        "reserved": reserved,
+        "available": available,
+    }
 
 
 async def reserve_capacity(
     *,
-    event_id: str,
+    event: dict,
     order_id: str,
     quantity: int,
     ttl_minutes: int | None = None,
     function_id: str | None = None,
+    session: AsyncSession | None = None,
 ) -> None:
-    from database import AsyncSessionLocal
-    from orm_models import EventCapacityReservation
+    from orm_models import Event as _Event, EventCapacityReservation
+    from sqlalchemy import func, select
 
     minutes = ttl_minutes if ttl_minutes is not None else RESERVATION_TTL_MIN
     now = _now()
-    async with AsyncSessionLocal() as session:
-        session.add(EventCapacityReservation(
-            event_id=event_id,
-            order_id=order_id,
-            quantity=quantity,
-            function_id=function_id,
-            expires_at=now + timedelta(minutes=minutes),
-            created_at=now,
-        ))
-        await session.commit()
+
+    async def _do(s: AsyncSession) -> None:
+        event_row = await s.scalar(
+            select(_Event).where(_Event.id == event["id"]).with_for_update()
+        )
+        if event_row is None:
+            raise HTTPException(404, "Evento no encontrado")
+
+        cap = event_row.capacity
+        if cap is not None:
+            sold = event_row.tickets_sold or 0
+            reserved_result = await s.scalar(
+                select(
+                    func.coalesce(func.sum(EventCapacityReservation.quantity), 0)
+                ).where(
+                    EventCapacityReservation.event_id == event["id"],
+                    EventCapacityReservation.expires_at > now,
+                    EventCapacityReservation.order_id != order_id,
+                )
+            )
+            already_reserved = reserved_result or 0
+            if sold + already_reserved + quantity > cap:
+                raise HTTPException(
+                    409, "No hay suficiente capacidad disponible en este momento"
+                )
+
+        s.add(
+            EventCapacityReservation(
+                event_id=event["id"],
+                order_id=order_id,
+                quantity=quantity,
+                function_id=function_id,
+                expires_at=now + timedelta(minutes=minutes),
+                created_at=now,
+            )
+        )
+
+    if session is not None:
+        await _do(session)
+    else:
+        async with AsyncSessionLocal() as s:
+            await _do(s)
+            await s.commit()
 
 
 async def release_reservation(order_id: str) -> None:
@@ -150,7 +204,9 @@ def validate_buyer(buyer: dict) -> dict:
 
 
 # ── Totals ──────────────────────────────────────────────────────────────────
-def compute_totals(*, event: dict, quantity: int, donation_amount_cents: int = 0) -> dict:
+def compute_totals(
+    *, event: dict, quantity: int, donation_amount_cents: int = 0
+) -> dict:
     pricing = event.get("pricing_type", "free")
     if pricing == "free":
         return {
@@ -184,7 +240,10 @@ def compute_totals(*, event: dict, quantity: int, donation_amount_cents: int = 0
 
 
 def compute_totals_with_seats(
-    *, event: dict, venue: dict, seat_ids: list[str],
+    *,
+    event: dict,
+    venue: dict,
+    seat_ids: list[str],
 ) -> dict:
     """Per-locality pricing for seat-numbered events."""
     from services.seats import seats_by_id
@@ -268,12 +327,18 @@ async def create_order_skeleton(
     order_token = str(uuid.uuid4())  # Guest access token — unguessable UUID v4
     now = _now()
 
-    order_items = items_override if items_override else [{
-        "ticket_type": "general",
-        "quantity": quantity,
-        "unit_price_cents": totals["unit_price_cents"],
-        "subtotal_cents": totals["subtotal_cents"],
-    }]
+    order_items = (
+        items_override
+        if items_override
+        else [
+            {
+                "ticket_type": "general",
+                "quantity": quantity,
+                "unit_price_cents": totals["unit_price_cents"],
+                "subtotal_cents": totals["subtotal_cents"],
+            }
+        ]
+    )
 
     row = TicketOrder(
         id=order_id,
@@ -307,7 +372,8 @@ async def create_order_skeleton(
                 "confirmed_at": None,
                 "organizer_notes": None,
             }
-            if is_manual else None
+            if is_manual
+            else None
         ),
         metadata_={
             "source": "web",
@@ -327,9 +393,13 @@ async def create_order_skeleton(
 
     if seat_ids and seat_holds_session_token:
         from services.seats import consume_holds_for_order
+
         await consume_holds_for_order(
-            event_id=event["id"], session_token=seat_holds_session_token,
-            seat_ids=seat_ids, order_id=order_id, function_id=function_id or "",
+            event_id=event["id"],
+            session_token=seat_holds_session_token,
+            seat_ids=seat_ids,
+            order_id=order_id,
+            function_id=function_id or "",
         )
     return order
 
@@ -342,9 +412,14 @@ async def issue_tickets_for_order(order: dict) -> list[dict]:
     from sqlalchemy import select, func
 
     async with AsyncSessionLocal() as session:
-        existing_count = await session.scalar(
-            select(func.count(TicketModel.id)).where(TicketModel.order_id == order["id"])
-        ) or 0
+        existing_count = (
+            await session.scalar(
+                select(func.count(TicketModel.id)).where(
+                    TicketModel.order_id == order["id"]
+                )
+            )
+            or 0
+        )
         if existing_count:
             result = await session.execute(
                 select(TicketModel).where(TicketModel.order_id == order["id"])
@@ -352,18 +427,22 @@ async def issue_tickets_for_order(order: dict) -> list[dict]:
             return [row_to_dict(r) for r in result.scalars().all()]
 
     from db_helpers import get_event_by_id
+
     event = await get_event_by_id(order["event_id"])
     if not event:
         raise HTTPException(404, "Event vanished")
 
     holder_base = order.get("buyer") or {}
     now = _now()
-    raffle_enabled = event.get("pricing_type") == "donation" and event.get("raffle_enabled")
+    raffle_enabled = event.get("pricing_type") == "donation" and event.get(
+        "raffle_enabled"
+    )
 
     async with AsyncSessionLocal() as session:
         next_raffle_number = None
         if raffle_enabled:
             from orm_models import Event as _EventModel
+
             ev_row = await session.scalar(
                 select(_EventModel)
                 .where(_EventModel.id == order["event_id"])
@@ -384,27 +463,29 @@ async def issue_tickets_for_order(order: dict) -> list[dict]:
             if raffle_enabled:
                 next_raffle_number += 1
                 raffle_number = f"{next_raffle_number:06d}"
-            session.add(TicketModel(
-                id=ticket_id,
-                order_id=order["id"],
-                event_id=order["event_id"],
-                organizer_id=order["organizer_id"],
-                tenant_slug=order.get("tenant_slug"),
-                order_number=order["order_number"],
-                holder={
-                    "name": holder_base.get("name"),
-                    "email": holder_base.get("email"),
-                    "phone": holder_base.get("phone"),
-                    "document_id": holder_base.get("document_id"),
-                },
-                holder_name=holder_base.get("name") or "",
-                holder_email=holder_base.get("email") or "",
-                qr_token=token,
-                status="issued",
-                issued_at=now,
-                created_at=now,
-                raffle_number=raffle_number,
-            ))
+            session.add(
+                TicketModel(
+                    id=ticket_id,
+                    order_id=order["id"],
+                    event_id=order["event_id"],
+                    organizer_id=order["organizer_id"],
+                    tenant_slug=order.get("tenant_slug"),
+                    order_number=order["order_number"],
+                    holder={
+                        "name": holder_base.get("name"),
+                        "email": holder_base.get("email"),
+                        "phone": holder_base.get("phone"),
+                        "document_id": holder_base.get("document_id"),
+                    },
+                    holder_name=holder_base.get("name") or "",
+                    holder_email=holder_base.get("email") or "",
+                    qr_token=token,
+                    status="issued",
+                    issued_at=now,
+                    created_at=now,
+                    raffle_number=raffle_number,
+                )
+            )
         if raffle_enabled:
             ev_row.raffle_numbers_issued = next_raffle_number
         await session.commit()
@@ -419,6 +500,7 @@ async def _assign_seats_if_needed(order: dict, tickets: list[dict]) -> None:
     if not order.get("seat_ids"):
         return
     from db_helpers import get_event_by_id, get_venue_by_id
+
     event_doc = await get_event_by_id(order["event_id"])
     if not event_doc or not event_doc.get("venue_id"):
         return
@@ -426,8 +508,12 @@ async def _assign_seats_if_needed(order: dict, tickets: list[dict]) -> None:
     if not venue_doc:
         return
     from services.seats import assign_seats_to_tickets
+
     await assign_seats_to_tickets(
-        event_id=event_doc["id"], venue=venue_doc, order=order, tickets=tickets,
+        event_id=event_doc["id"],
+        venue=venue_doc,
+        order=order,
+        tickets=tickets,
     )
 
 
@@ -447,7 +533,10 @@ async def _adjust_function_counters(order: dict, delta: int) -> None:
         await session.execute(
             _sa_update(EventFunction)
             .where(EventFunction.id == function_id)
-            .values(tickets_sold=EventFunction.tickets_sold + delta * order["quantity_total"])
+            .values(
+                tickets_sold=EventFunction.tickets_sold
+                + delta * order["quantity_total"]
+            )
         )
         for item in order.get("items") or []:
             ticket_type_id = item.get("ticket_type_id")
@@ -459,7 +548,10 @@ async def _adjust_function_counters(order: dict, delta: int) -> None:
                     FunctionTicketType.function_id == function_id,
                     FunctionTicketType.ticket_type_id == ticket_type_id,
                 )
-                .values(tickets_sold=FunctionTicketType.tickets_sold + delta * item.get("quantity", 0))
+                .values(
+                    tickets_sold=FunctionTicketType.tickets_sold
+                    + delta * item.get("quantity", 0)
+                )
             )
         await session.commit()
 
@@ -475,31 +567,46 @@ async def _consume_purchase_side_effects(order: dict) -> None:
             continue
         try:
             from services.discount_service import consume_promo_code
+
             await consume_promo_code(order["event_id"], applied["rule_id"])
         except Exception:  # noqa: BLE001
             logger.exception(
-                "Failed to bump uses_count for promo code rule %s", applied.get("rule_id")
+                "Failed to bump uses_count for promo code rule %s",
+                applied.get("rule_id"),
             )
 
     access_code_id = (order.get("metadata") or {}).get("access_code_id")
     if access_code_id:
         try:
             from services.access_control import consume_access_code
+
             await consume_access_code(access_code_id)
         except Exception:  # noqa: BLE001
-            logger.exception("Failed to bump uses_count for access code %s", access_code_id)
+            logger.exception(
+                "Failed to bump uses_count for access code %s", access_code_id
+            )
     else:
         try:
             from db_helpers import get_event_by_id
+
             ev = await get_event_by_id(order["event_id"])
-            if ev and (ev.get("access_params") or {}).get("access_type") == "verified_list":
+            if (
+                ev
+                and (ev.get("access_params") or {}).get("access_type")
+                == "verified_list"
+            ):
                 from services.access_control import mark_guest_list_used
+
                 buyer = order.get("buyer") or {}
                 await mark_guest_list_used(
-                    order["event_id"], buyer.get("email"), buyer.get("document_id"),
+                    order["event_id"],
+                    buyer.get("email"),
+                    buyer.get("document_id"),
                 )
         except Exception:  # noqa: BLE001
-            logger.exception("Failed to mark guest-list entry used for order %s", order["id"])
+            logger.exception(
+                "Failed to mark guest-list entry used for order %s", order["id"]
+            )
 
 
 # ── Mark paid + emit ────────────────────────────────────────────────────────
@@ -511,15 +618,23 @@ async def finalize_paid_order(
     release reservation.
     """
     from database import AsyncSessionLocal
-    from orm_models import TicketOrder as TOModel, Ticket as TicketModel, Event as _Event
+    from orm_models import (
+        TicketOrder as TOModel,
+        Ticket as TicketModel,
+        Event as _Event,
+    )
     from sqlalchemy import select, update as _sa_update
 
-    if order["status"] == "paid":
+    async with AsyncSessionLocal() as _re_read:
+        fresh = await _re_read.scalar(select(TOModel).where(TOModel.id == order["id"]))
+    if fresh is None:
+        raise HTTPException(404, "Orden no encontrada")
+    if fresh.status == "paid":
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(TicketModel).where(TicketModel.order_id == order["id"])
             )
-            return order, [row_to_dict(r) for r in result.scalars().all()]
+            return row_to_dict(fresh), [row_to_dict(r) for r in result.scalars().all()]
 
     now = _now()
     async with AsyncSessionLocal() as session:
@@ -538,7 +653,10 @@ async def finalize_paid_order(
         await _pg.execute(
             _sa_update(_Event)
             .where(_Event.id == order["event_id"])
-            .values(tickets_sold=_Event.tickets_sold + order["quantity_total"], updated_at=now)
+            .values(
+                tickets_sold=_Event.tickets_sold + order["quantity_total"],
+                updated_at=now,
+            )
         )
         await _pg.commit()
     await _adjust_function_counters(order, +1)
@@ -551,8 +669,10 @@ async def finalize_paid_order(
 
     logger.info(
         "Order paid: %s event=%s qty=%d total=%d",
-        refreshed["order_number"], refreshed["event_id"],
-        refreshed["quantity_total"], refreshed["total_cents"],
+        refreshed["order_number"],
+        refreshed["event_id"],
+        refreshed["quantity_total"],
+        refreshed["total_cents"],
     )
     return refreshed, tickets
 
@@ -598,7 +718,11 @@ def create_ticket_checkout_session(
 # ── Refund ──────────────────────────────────────────────────────────────────
 async def refund_order(*, order: dict, reason: str | None = None) -> dict:
     from database import AsyncSessionLocal
-    from orm_models import TicketOrder as TOModel, Ticket as TicketModel, Event as _Event
+    from orm_models import (
+        TicketOrder as TOModel,
+        Ticket as TicketModel,
+        Event as _Event,
+    )
     from sqlalchemy import select, update as _sa_update
 
     if order["status"] != "paid":
@@ -606,8 +730,8 @@ async def refund_order(*, order: dict, reason: str | None = None) -> dict:
 
     if order.get("stripe_session_id"):
         try:
-            session = stripe.checkout.Session.retrieve(order["stripe_session_id"])
-            pi = session.get("payment_intent")
+            stripe_sesh = stripe.checkout.Session.retrieve(order["stripe_session_id"])
+            pi = stripe_sesh.payment_intent
             if pi:
                 stripe.Refund.create(payment_intent=pi, reason="requested_by_customer")
         except Exception as e:  # noqa: BLE001
@@ -631,11 +755,26 @@ async def refund_order(*, order: dict, reason: str | None = None) -> dict:
         refreshed = row_to_dict(row)
 
     async with AsyncSessionLocal() as _pg:
-        await _pg.execute(
-            _sa_update(_Event)
-            .where(_Event.id == order["event_id"])
-            .values(tickets_sold=_Event.tickets_sold - order["quantity_total"])
+        event_row = await _pg.scalar(
+            select(_Event).where(_Event.id == order["event_id"]).with_for_update()
         )
+        if event_row is None:
+            raise HTTPException(404, "Evento no encontrado")
+        qty = order["quantity_total"]
+        stmt = (
+            _sa_update(_Event)
+            .where(
+                _Event.id == order["event_id"],
+                _Event.tickets_sold >= qty,
+            )
+            .values(
+                tickets_sold=_Event.tickets_sold - qty,
+                updated_at=now,
+            )
+        )
+        result = await _pg.execute(stmt)
+        if result.rowcount == 0:
+            raise HTTPException(409, "No se pudo ajustar el inventario del evento")
         await _pg.commit()
     await _adjust_function_counters(order, -1)
 
@@ -652,7 +791,11 @@ async def confirm_manual_payment(
 ) -> tuple[dict, list[dict]]:
     """Idempotent — already-paid orders return tickets without side effects."""
     from database import AsyncSessionLocal
-    from orm_models import TicketOrder as TOModel, Ticket as TicketModel, Event as _Event
+    from orm_models import (
+        TicketOrder as TOModel,
+        Ticket as TicketModel,
+        Event as _Event,
+    )
     from sqlalchemy import select, update as _sa_update
     from sqlalchemy.orm.attributes import flag_modified
 
@@ -671,13 +814,15 @@ async def confirm_manual_payment(
 
     now = _now()
     info = dict(order.get("manual_payment_info") or {})
-    info.update({
-        "confirmed_by": confirmer_user_id,
-        "confirmed_at": now.isoformat(),
-        "paid_at": now.isoformat(),
-        "organizer_notes": (notes or "")[:500],
-        "reference": (reference or "")[:120] or info.get("reference"),
-    })
+    info.update(
+        {
+            "confirmed_by": confirmer_user_id,
+            "confirmed_at": now.isoformat(),
+            "paid_at": now.isoformat(),
+            "organizer_notes": (notes or "")[:500],
+            "reference": (reference or "")[:120] or info.get("reference"),
+        }
+    )
 
     async with AsyncSessionLocal() as session:
         row = await session.scalar(select(TOModel).where(TOModel.id == order["id"]))
@@ -692,11 +837,26 @@ async def confirm_manual_payment(
     await _assign_seats_if_needed(order, tickets)
 
     async with AsyncSessionLocal() as _pg:
-        await _pg.execute(
+        event_row = await _pg.scalar(
+            select(_Event).where(_Event.id == order["event_id"]).with_for_update()
+        )
+        if event_row is None:
+            raise HTTPException(404, "Evento no encontrado")
+        stmt = (
             _sa_update(_Event)
             .where(_Event.id == order["event_id"])
-            .values(tickets_sold=_Event.tickets_sold + order["quantity_total"], updated_at=now)
+            .values(
+                tickets_sold=_Event.tickets_sold + order["quantity_total"],
+                updated_at=now,
+            )
         )
+        if event_row.capacity is not None:
+            stmt = stmt.where(
+                _Event.tickets_sold + order["quantity_total"] <= _Event.capacity
+            )
+        result = await _pg.execute(stmt)
+        if result.rowcount == 0:
+            raise HTTPException(409, "El evento ya no tiene capacidad disponible")
         await _pg.commit()
     await _adjust_function_counters(order, +1)
     await release_reservation(order["id"])
@@ -708,8 +868,10 @@ async def confirm_manual_payment(
 
     logger.info(
         "Order manual-confirmed: %s by=%s qty=%d total=%d",
-        refreshed["order_number"], confirmer_user_id,
-        refreshed["quantity_total"], refreshed["total_cents"],
+        refreshed["order_number"],
+        confirmer_user_id,
+        refreshed["quantity_total"],
+        refreshed["total_cents"],
     )
     return refreshed, tickets
 
@@ -733,11 +895,13 @@ async def reject_manual_payment(
 
     now = _now()
     info = dict(order.get("manual_payment_info") or {})
-    info.update({
-        "confirmed_by": rejecter_user_id,
-        "confirmed_at": now.isoformat(),
-        "organizer_notes": (reason or "")[:500],
-    })
+    info.update(
+        {
+            "confirmed_by": rejecter_user_id,
+            "confirmed_at": now.isoformat(),
+            "organizer_notes": (reason or "")[:500],
+        }
+    )
 
     async with AsyncSessionLocal() as session:
         row = await session.scalar(select(TOModel).where(TOModel.id == order["id"]))

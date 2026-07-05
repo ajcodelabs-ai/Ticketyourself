@@ -988,7 +988,7 @@ async def _seed_demo_manual_orders() -> None:
                 payment_method=spec["payment_method"],
             )
             await order_service.reserve_capacity(
-                event_id=event["id"],
+                event=event,
                 order_id=order["id"],
                 quantity=spec["quantity"],
                 ttl_minutes=order_service.MANUAL_RESERVATION_TTL_HOURS * 60,

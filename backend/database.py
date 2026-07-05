@@ -41,6 +41,11 @@ class Base(DeclarativeBase):
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Yield a request-scoped session; commits on success, rolls back on error.
+
+    Routers should NOT call ``session.commit()`` — flush only when an immediate
+    SQL round-trip is needed (e.g. before ``refresh`` or to read server defaults).
+    """
     async with AsyncSessionLocal() as session:
         try:
             yield session

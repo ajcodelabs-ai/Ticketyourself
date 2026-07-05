@@ -16,14 +16,19 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "required_document_sets",
-        sa.Column("org_type", sa.String(length=20), nullable=False),
-        sa.Column("doc_types", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_by", sa.String(length=36), nullable=True),
-        sa.PrimaryKeyConstraint("org_type"),
-    )
+    from sqlalchemy import inspect
+
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    if "required_document_sets" not in inspector.get_table_names():
+        op.create_table(
+            "required_document_sets",
+            sa.Column("org_type", sa.String(length=20), nullable=False),
+            sa.Column("doc_types", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_by", sa.String(length=36), nullable=True),
+            sa.PrimaryKeyConstraint("org_type"),
+        )
 
 
 def downgrade() -> None:

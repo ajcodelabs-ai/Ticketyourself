@@ -1,4 +1,5 @@
 """Microsite endpoints (organizer-owned editor + public read-only views)."""
+
 import logging
 import mimetypes
 import re
@@ -9,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -18,6 +19,7 @@ from db_helpers import get_organizer_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import Microsite, MicrositeAsset, Organizer, Tenant
 from security import get_current_user
 from services.microsite_factory import default_microsite, FONTS, TEMPLATES
+from services.path_safety import resolve_path_under
 
 logger = logging.getLogger("tys.microsite")
 
@@ -52,7 +54,7 @@ class ContentIn(BaseModel):
     hero_cta_text: Optional[str] = Field(default=None, max_length=30)
     about_title: Optional[str] = Field(default=None, max_length=80)
     about_body: Optional[str] = Field(default=None, max_length=1000)
-    contact_email: Optional[str] = Field(default=None, max_length=120)
+    contact_email: Optional[EmailStr] = Field(default=None, max_length=120)
     contact_phone: Optional[str] = Field(default=None, max_length=40)
     address: Optional[str] = Field(default=None, max_length=200)
 
@@ -158,15 +160,23 @@ async def _get_or_create_microsite(organizer: dict) -> dict:
 
 def _validate_partial(update: MicrositeUpdate) -> None:
     if update.template and update.template not in TEMPLATES:
-        raise HTTPException(status_code=422, detail=f"Invalid template. Options: {TEMPLATES}")
+        raise HTTPException(
+            status_code=422, detail=f"Invalid template. Options: {TEMPLATES}"
+        )
     if update.branding:
         b = update.branding
         if b.primary_color and not HEX_COLOR.match(b.primary_color):
-            raise HTTPException(status_code=422, detail="primary_color must be hex #RRGGBB")
+            raise HTTPException(
+                status_code=422, detail="primary_color must be hex #RRGGBB"
+            )
         if b.secondary_color and not HEX_COLOR.match(b.secondary_color):
-            raise HTTPException(status_code=422, detail="secondary_color must be hex #RRGGBB")
+            raise HTTPException(
+                status_code=422, detail="secondary_color must be hex #RRGGBB"
+            )
         if b.font_family and b.font_family not in FONTS:
-            raise HTTPException(status_code=422, detail=f"font_family must be one of {FONTS}")
+            raise HTTPException(
+                status_code=422, detail=f"font_family must be one of {FONTS}"
+            )
 
 
 # ── Organizer endpoints ─────────────────────────────────────────────────────
@@ -194,11 +204,17 @@ async def update_my_microsite(payload: MicrositeUpdate, user=Depends(get_current
             )
             now = _now()
             row = Microsite(
-                id=doc["id"], organizer_id=organizer["id"], slug=organizer["slug"],
-                template=doc.get("template"), branding=doc.get("branding", {}),
-                content=doc.get("content", {}), social_links=doc.get("social_links", {}),
+                id=doc["id"],
+                organizer_id=organizer["id"],
+                slug=organizer["slug"],
+                template=doc.get("template"),
+                branding=doc.get("branding", {}),
+                content=doc.get("content", {}),
+                social_links=doc.get("social_links", {}),
                 sections_enabled=doc.get("sections_enabled", {}),
-                published=False, created_at=now, updated_at=now,
+                published=False,
+                created_at=now,
+                updated_at=now,
             )
             session.add(row)
 
@@ -277,7 +293,9 @@ async def upload_asset(
 ):
     organizer = await _require_approved_organizer(user)
     if asset_type not in ("logo", "banner", "gallery"):
-        raise HTTPException(status_code=422, detail="asset_type must be logo|banner|gallery")
+        raise HTTPException(
+            status_code=422, detail="asset_type must be logo|banner|gallery"
+        )
     if file.content_type not in ALLOWED_MIME:
         raise HTTPException(status_code=415, detail="Only JPEG/PNG/WEBP allowed")
 
@@ -297,16 +315,18 @@ async def upload_asset(
     now = _now()
 
     async with AsyncSessionLocal() as session:
-        session.add(MicrositeAsset(
-            id=asset_id,
-            organizer_id=organizer["id"],
-            asset_type=asset_type,
-            file_path=str(rel_path),
-            original_filename=safe_name,
-            mime_type=file.content_type,
-            size_bytes=len(content),
-            uploaded_at=now,
-        ))
+        session.add(
+            MicrositeAsset(
+                id=asset_id,
+                organizer_id=organizer["id"],
+                asset_type=asset_type,
+                file_path=str(rel_path),
+                original_filename=safe_name,
+                mime_type=file.content_type,
+                size_bytes=len(content),
+                uploaded_at=now,
+            )
+        )
 
         # Update branding shortcut for logo / banner
         ms_row = await session.scalar(
@@ -347,7 +367,9 @@ async def delete_asset(asset_id: str, user=Depends(get_current_user)):
         )
         if not asset_row:
             raise HTTPException(status_code=404, detail="Asset not found")
-        abs_path = ASSETS_DIR / asset_row.file_path
+        abs_path = resolve_path_under(ASSETS_DIR, asset_row.file_path)
+        if abs_path is None:
+            raise HTTPException(status_code=403, detail="Forbidden")
         try:
             if abs_path.exists():
                 abs_path.unlink()
@@ -386,13 +408,19 @@ async def serve_asset(asset_id: str):
         )
     if not asset_row:
         raise HTTPException(status_code=404, detail="Asset not found")
-    abs_path = ASSETS_DIR / asset_row.file_path
+    abs_path = resolve_path_under(ASSETS_DIR, asset_row.file_path)
+    if abs_path is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
     if not abs_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
     return FileResponse(
         abs_path,
         media_type=asset_row.mime_type or "application/octet-stream",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Content-Disposition": "attachment",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -403,7 +431,9 @@ async def public_microsite(slug: str):
     if not organizer:
         raise HTTPException(status_code=404, detail="Not found")
     async with AsyncSessionLocal() as pg:
-        tenant_result = await pg.execute(select(Tenant.status).where(Tenant.slug == slug))
+        tenant_result = await pg.execute(
+            select(Tenant.status).where(Tenant.slug == slug)
+        )
         tenant_row = tenant_result.first()
         if not tenant_row or tenant_row[0] != "active":
             raise HTTPException(status_code=404, detail="Not available")

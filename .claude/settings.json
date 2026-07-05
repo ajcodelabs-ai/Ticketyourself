@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ' *)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/api/plans)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" --max-time 5 http://localhost:8000/api/plans)",
+      "Bash(node verify3.js)",
+      "Bash(cd /Users/juanpa/ajcodelabs/Ticketyourself *)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('routers/events.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(open -a Docker)",
+      "Bash(break)",
+      "Bash(make up *)",
+      "Bash(curl -s \"http://localhost:8000/api/public/events?tenant=demo-org&tenant_slug=demo-org\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/)",
+      "Bash(npx --version)",
+      "Bash(node -e \"console.log\\(require\\('playwright'\\).chromium\\)\")",
+      "Bash(python3 -c \"import uuid; print\\(uuid.uuid4\\(\\).hex[:12]\\)\")",
+      "Bash(curl -s http://localhost:8000/api/events/me -H 'Authorization: Bearer __CMDSUB_OUTPUT__')",
+      "Bash(curl -s -w '\\\\nHTTP %{http_code}\\\\n' -X POST http://localhost:8000/api/events/me/__TRACKED_VAR__/guest-list -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json' -d '{\"email\":\"juan@example.com\",\"name\":\"Juan Perez\"}')",
+      "Bash(curl -s -w '\\\\nHTTP %{http_code}\\\\n' -X PUT http://localhost:8000/api/events/me/__TRACKED_VAR__ -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json' -d '{\"access_params\":{\"visibility\":\"private\",\"access_type\":\"verified_list\",\"max_per_purchase\":10,\"refund_window_hours\":24,\"show_buyer_name_on_ticket\":true}}')",
+      "Bash(curl -s -X POST http://localhost:8000/api/public/orders -H 'Content-Type: application/json' -d '{ *)",
+      "Bash(curl -s -X PUT http://localhost:8000/api/events/me/__TRACKED_VAR__ -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json' -d '{ *)",
+      "Bash(python3 -c \"import sys,json; print\\(json.load\\(sys.stdin\\)['access_params']\\)\")",
+      "Bash(grep -rln \"events/me/.*orders\\\\b\\\\|/orders\\\\`\" src/)",
+      "Bash(python3 -c \"import sys,json; print\\(json.dumps\\(json.load\\(sys.stdin\\)['custom_questions'], indent=2\\)\\)\")",
+      "Bash(curl -s http://localhost:8000/api/events/me/__TRACKED_VAR__/orders?limit=5 -H 'Authorization: Bearer __CMDSUB_OUTPUT__')",
+      "Bash(node fase6_verify.js)",
+      "Bash(npm install *)",
+      "Bash(npx playwright *)",
+      "Bash(python3 -c \"import sys,json; print\\(json.load\\(sys.stdin\\)['custom_questions']\\)\")",
+      "Bash(curl -s -X PUT http://localhost:8000/api/venues/me/__TRACKED_VAR__ -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json' --data-binary @/private/tmp/claude-501/-Users-juanpa-ajcodelabs-Ticketyourself/6d318003-ae4f-4fca-a4a8-c7227abcc44e/scratchpad/venue_reverted.json)",
+      "Bash(SCRATCH=/private/tmp/claude-501/-Users-juanpa-ajcodelabs-Ticketyourself/6d318003-ae4f-4fca-a4a8-c7227abcc44e/scratchpad *)",
+      "Bash(awk '/^function SectionMedia/{print NR\": \"$0} /^function Section/{print NR\": \"$0}' /Users/juanpa/ajcodelabs/Ticketyourself/frontend/src/components/events/EventWizard.tsx)",
+      "Bash(grep -n \"^    Info,$\" /Users/juanpa/ajcodelabs/Ticketyourself/frontend/src/components/events/EventWizard.tsx)"
+    ],
+    "additionalDirectories": [
+      "/tmp",
+      "/private/tmp/claude-501/-Users-juanpa-ajcodelabs-Ticketyourself/6d318003-ae4f-4fca-a4a8-c7227abcc44e/scratchpad"
+    ]
+  }
+}

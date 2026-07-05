@@ -23,7 +23,7 @@
  *  • Media tab now has inline SVG mockups above each dropzone so the organizer
  *    sees exactly where each image surfaces.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import EventVenueSection from "@/components/events/EventVenueSection";
@@ -107,8 +107,10 @@ import {
     localInputToIso,
 } from "@/lib/events";
 
+const DEFAULT_TZ = import.meta.env.VITE_DEFAULT_TIMEZONE || "America/Guayaquil";
+
 const TIMEZONES = [
-    "America/Guayaquil",
+    DEFAULT_TZ,
     "America/Bogota",
     "America/Lima",
     "America/Mexico_City",
@@ -183,7 +185,7 @@ function makeInitial(d) {
             starts_at: "",
             // ends_at is now computed from starts_at + duration_preset on submit
             ends_at: "",
-            timezone: "America/Guayaquil",
+            timezone: DEFAULT_TZ,
             // Sales-window stored as ISO when "custom"; otherwise derived from presets.
             sales_start_custom: "",
             sales_end_custom: "",
@@ -227,11 +229,11 @@ function makeInitial(d) {
         venue_address: d.venue_address || "",
         venue_city: d.venue_city || "Quito",
         venue_country: d.venue_country || "Ecuador",
-        starts_at: isoToLocalInput(d.starts_at),
-        ends_at: isoToLocalInput(d.ends_at),
-        timezone: d.timezone || "America/Guayaquil",
-        sales_start_custom: d.sales_start ? isoToLocalInput(d.sales_start) : "",
-        sales_end_custom: d.sales_end ? isoToLocalInput(d.sales_end) : "",
+        starts_at: isoToLocalInput(d.starts_at, d.timezone),
+        ends_at: isoToLocalInput(d.ends_at, d.timezone),
+            timezone: d.timezone || DEFAULT_TZ,
+        sales_start_custom: d.sales_start ? isoToLocalInput(d.sales_start, d.timezone) : "",
+        sales_end_custom: d.sales_end ? isoToLocalInput(d.sales_end, d.timezone) : "",
         duration_preset: d.duration_preset || durInfer.preset,
         duration_minutes_custom: durInfer.minutes,
         sales_window_preset_start:
@@ -260,7 +262,7 @@ function makeInitial(d) {
         content: normalizeEventContent(d.content),
         ticket_delivery_mode: d.ticket_delivery_mode || "al_momento",
         ticket_delivery_hours: d.ticket_delivery_hours != null ? String(d.ticket_delivery_hours) : "",
-        ticket_delivery_at: d.ticket_delivery_at ? isoToLocalInput(d.ticket_delivery_at) : "",
+        ticket_delivery_at: d.ticket_delivery_at ? isoToLocalInput(d.ticket_delivery_at, d.timezone) : "",
         multi_function_mode: d.multi_function_mode || "function",
     };
 }
@@ -269,6 +271,8 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const [form, setForm] = useState(() => makeInitial(initial));
+    const formRef = useRef(form);
+    useEffect(() => { formRef.current = form; }, [form]);
     // `currentEvent` is the live event document mirrored from the backend after
     // each save / venue link. It feeds the venue picker + the pricing panel.
     const [currentEvent, setCurrentEvent] = useState(initial || null);
@@ -314,11 +318,17 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         .filter((l) => elementsLocs.has(l.id))
                         .map((l) => {
                             const lp = pricingByLocality[l.id];
+                            let capacity = 0;
+                            try {
+                                capacity = capacityByLocality(elements, l.id);
+                            } catch {
+                                capacity = 0;
+                            }
                             return {
                                 ...l,
                                 price_cents: lp?.price_cents ?? l.default_price_cents ?? 0,
                                 max_tickets_per_purchase: lp?.max_tickets_per_purchase ?? null,
-                                capacity: capacityByLocality(elements, l.id),
+                                capacity,
                             };
                         }),
                 );
@@ -336,6 +346,14 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         update("venue_name", currentEvent.venue_name || "");
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentEvent?.venue_name, currentEvent?.venue_id]);
+
+    // When building payload, use the latest form state via ref to avoid stale
+    // closures in callbacks passed to child components (ensureEventId, etc.).
+    const ensureEventId = async () => {
+        if (eventId) return eventId;
+        const r = await persist(false);
+        return r?.id || null;
+    };
 
     // Deep-linking: ?tab=info|venue_localidades|... wins over default.
     const initialStep =
@@ -366,17 +384,17 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     // state, same as buildPayload() does, so "Tipos de ticket" reflects
     // whatever is set in "Información general" even before the first save.
     const liveSaleWindow = useMemo(() => {
-        const startsIso = form.starts_at ? localInputToIso(form.starts_at) : null;
+        const startsIso = form.starts_at ? localInputToIso(form.starts_at, form.timezone) : null;
         return {
             sale_start: computeSalesStart(
                 startsIso,
                 form.sales_window_preset_start,
-                form.sales_start_custom ? localInputToIso(form.sales_start_custom) : null,
+                form.sales_start_custom ? localInputToIso(form.sales_start_custom, form.timezone) : null,
             ),
             sale_end: computeSalesEnd(
                 startsIso,
                 form.sales_window_preset_end,
-                form.sales_end_custom ? localInputToIso(form.sales_end_custom) : null,
+                form.sales_end_custom ? localInputToIso(form.sales_end_custom, form.timezone) : null,
             ),
         };
     }, [
@@ -386,6 +404,28 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         form.sales_start_custom,
         form.sales_end_custom,
     ]);
+
+    // When a venue is selected, the public checkout uses the seat map
+    // (seat_ids + locality_pricing) — ticket types are never shown to buyers.
+    // Hiding the tab avoids the duplicate data-entry that confused organizers.
+    const hasVenueSelected = !!(form.venue_id || currentEvent?.venue_id);
+
+    // If the organizer selects a venue while on a tab that's hidden for venue events, move them.
+    useEffect(() => {
+        if (hasVenueSelected && (activeStep === "tipos_ticket" || activeStep === "abono")) {
+            setActiveStep("venue_localidades");
+            const params = new URLSearchParams(searchParams);
+            params.set("tab", "venue_localidades");
+            setSearchParams(params, { replace: true });
+        }
+    }, [hasVenueSelected, activeStep, searchParams, setSearchParams]);
+
+    const visibleSteps = useMemo(
+        () => hasVenueSelected
+            ? STEPS.filter((s) => s.id !== "tipos_ticket" && s.id !== "abono")
+            : STEPS,
+        [hasVenueSelected],
+    );
 
     const stepStatus = useMemo(
         () => evalStepStatus(form, poster, currentEvent),
@@ -412,7 +452,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             toast.error("Hay secciones incompletas. Revisá los iconos rojos.");
             return null;
         }
-        const payload = buildPayload(form);
+        const payload = buildPayload(formRef.current);
         if (!payload.starts_at) {
             toast.error("Definí la fecha y hora de inicio.");
             return null;
@@ -460,12 +500,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             setSaving(false);
             setPublishing(false);
         }
-    };
-
-    const ensureEventId = async () => {
-        if (eventId) return eventId;
-        const r = await persist(false);
-        return r?.id || null;
     };
 
     const uploadImage = async (file, kind) => {
@@ -559,109 +593,170 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         params.set("tab", next);
         setSearchParams(params, { replace: true });
     };
-    const idx = STEPS.findIndex((s) => s.id === activeStep);
-    const goPrev = () => handleTabChange(STEPS[Math.max(0, idx - 1)].id);
-    const goNext = () => handleTabChange(STEPS[Math.min(STEPS.length - 1, idx + 1)].id);
+    const idx = visibleSteps.findIndex((s) => s.id === activeStep);
+    const goPrev = () => handleTabChange(visibleSteps[Math.max(0, idx - 1)].id);
+    const goNext = () => handleTabChange(visibleSteps[Math.min(visibleSteps.length - 1, idx + 1)].id);
 
     return (
-        <div className="space-y-5" data-testid="event-wizard">
+        <div className="space-y-4" data-testid="event-wizard">
             <Tabs value={activeStep} onValueChange={handleTabChange}>
-                <TabsList
-                    className="w-full overflow-x-auto justify-start gap-1 h-auto p-1 flex-wrap sm:flex-nowrap"
-                    data-testid="wizard-tabs"
-                >
-                    {STEPS.map((s, i) => {
-                        const st = stepStatus[s.id];
-                        return (
-                            <TabsTrigger
+                {/* Mobile: compact progress bar (hidden on lg+) */}
+                <div className="lg:hidden flex items-center gap-3 rounded-xl border bg-card px-4 py-2.5">
+                    <StepIcon status={stepStatus[activeStep]} size="md" />
+                    <span className="text-xs text-muted-foreground shrink-0">
+                        {idx + 1}/{visibleSteps.length}
+                    </span>
+                    <span className="font-medium text-sm truncate">
+                        {visibleSteps[idx]?.label}
+                    </span>
+                    <div className="ml-auto flex gap-0.5">
+                        {visibleSteps.map((s) => (
+                            <button
                                 key={s.id}
-                                value={s.id}
-                                className="gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-                                data-testid={`tab-${s.id}`}
-                            >
-                                <StepIcon status={st} />
-                                <span className="text-xs">{i + 1}.</span>
-                                {s.label}
-                            </TabsTrigger>
-                        );
-                    })}
-                </TabsList>
+                                onClick={() => handleTabChange(s.id)}
+                                aria-label={s.label}
+                                className={`h-1.5 rounded-full transition-all ${
+                                    s.id === activeStep
+                                        ? "w-4 bg-primary"
+                                        : stepStatus[s.id] === "ok"
+                                        ? "w-1.5 bg-emerald-500"
+                                        : stepStatus[s.id] === "warn"
+                                        ? "w-1.5 bg-amber-400"
+                                        : stepStatus[s.id] === "error"
+                                        ? "w-1.5 bg-red-500"
+                                        : "w-1.5 bg-muted-foreground/30"
+                                }`}
+                            />
+                        ))}
+                    </div>
+                </div>
 
-                <TabsContent value="info" className="mt-4">
-                    <SectionInfo
-                        form={form}
-                        update={update}
-                        disabled={lockCritical}
-                        venues={venuesList}
-                        currentEvent={currentEvent}
-                        onEventUpdated={setCurrentEvent}
-                        ensureEventId={ensureEventId}
-                        onJumpToFunctions={() => handleTabChange("funciones")}
-                    />
-                </TabsContent>
-                <TabsContent value="media" className="mt-4">
-                    <SectionMedia
-                        poster={poster}
-                        banner={banner}
-                        gallery={gallery}
-                        uploadingKind={uploadingKind}
-                        onUpload={uploadImages}
-                        onDeleteGallery={deleteGalleryAt}
-                        onReorderGallery={reorderGallery}
-                        eventId={eventId}
-                    />
-                </TabsContent>
-                <TabsContent value="content" className="mt-4">
-                    <EventContentPanel
-                        content={form.content}
-                        update={update}
-                        disabled={lockCritical}
-                    />
-                </TabsContent>
-                <TabsContent value="venue_localidades" className="mt-4">
-                    <SectionVenueLocalidades
-                        form={form}
-                        update={update}
-                        disabled={lockCritical}
-                        event={currentEvent}
-                        onEventUpdated={setCurrentEvent}
-                        onJumpToInfo={() => handleTabChange("info")}
-                    />
-                </TabsContent>
-                <TabsContent value="tipos_ticket" className="mt-4">
-                    <TicketTypesPanel
-                        eventId={eventId}
-                        localities={venueLocalities}
-                        eventSaleWindow={liveSaleWindow}
-                    />
-                </TabsContent>
-                <TabsContent value="funciones" className="mt-4">
-                    <EventFunctionsPanel
-                        eventId={eventId}
-                        localities={venueLocalities}
-                        mode={form.multi_function_mode}
-                    />
-                </TabsContent>
-                <TabsContent value="abono" className="mt-4">
-                    <SeasonPassPanel eventId={eventId} hasVenue={!!(form.venue_id || currentEvent?.venue_id)} />
-                </TabsContent>
-                <TabsContent value="ticket_design" className="mt-4">
-                    <SectionTicketDesign form={form} update={update} eventId={eventId} />
-                </TabsContent>
-                <TabsContent value="payments" className="mt-4">
-                    <SectionPayments form={form} update={update} />
-                </TabsContent>
-                <TabsContent value="discounts" className="mt-4">
-                    <SectionDiscounts
-                        form={form}
-                        update={update}
-                        venueLocalities={venueLocalities}
-                        eventId={eventId}
-                    />
-                </TabsContent>
-                <TabsContent value="access" className="mt-4">
-                    <SectionAccess form={form} update={update} eventId={eventId} />
-                </TabsContent>
+                {/* Desktop: sidebar layout */}
+                <div className="lg:flex lg:gap-5 lg:items-start">
+                    {/* ── Content area ── */}
+                    <div className="flex-1 min-w-0">
+                        <TabsContent value="info">
+                            <SectionInfo
+                                form={form}
+                                update={update}
+                                disabled={lockCritical}
+                                venues={venuesList}
+                                currentEvent={currentEvent}
+                                onEventUpdated={setCurrentEvent}
+                                ensureEventId={ensureEventId}
+                                onJumpToFunctions={() => handleTabChange("funciones")}
+                            />
+                        </TabsContent>
+                        <TabsContent value="media">
+                            <SectionMedia
+                                poster={poster}
+                                banner={banner}
+                                gallery={gallery}
+                                uploadingKind={uploadingKind}
+                                onUpload={uploadImages}
+                                onDeleteGallery={deleteGalleryAt}
+                                onReorderGallery={reorderGallery}
+                                eventId={eventId}
+                            />
+                        </TabsContent>
+                        <TabsContent value="content">
+                            <EventContentPanel
+                                content={form.content}
+                                update={update}
+                                disabled={lockCritical}
+                            />
+                        </TabsContent>
+                        <TabsContent value="venue_localidades">
+                            <SectionVenueLocalidades
+                                form={form}
+                                update={update}
+                                disabled={lockCritical}
+                                event={currentEvent}
+                                onEventUpdated={setCurrentEvent}
+                                onJumpToInfo={() => handleTabChange("info")}
+                            />
+                        </TabsContent>
+                        <TabsContent value="tipos_ticket">
+                            <TicketTypesPanel
+                                eventId={eventId}
+                                localities={venueLocalities}
+                                eventSaleWindow={liveSaleWindow}
+                                timezone={form.timezone}
+                            />
+                        </TabsContent>
+                        <TabsContent value="funciones">
+                            <EventFunctionsPanel
+                                eventId={eventId}
+                                localities={venueLocalities}
+                                mode={form.multi_function_mode}
+                                timezone={form.timezone}
+                            />
+                        </TabsContent>
+                        <TabsContent value="abono">
+                            <SeasonPassPanel eventId={eventId} hasVenue={!!(form.venue_id || currentEvent?.venue_id)} timezone={form.timezone} />
+                        </TabsContent>
+                        <TabsContent value="ticket_design">
+                            <SectionTicketDesign form={form} update={update} eventId={eventId} />
+                        </TabsContent>
+                        <TabsContent value="payments">
+                            <SectionPayments form={form} update={update} />
+                        </TabsContent>
+                        <TabsContent value="discounts">
+                            <SectionDiscounts
+                                form={form}
+                                update={update}
+                                venueLocalities={venueLocalities}
+                                eventId={eventId}
+                            />
+                        </TabsContent>
+                        <TabsContent value="access">
+                            <SectionAccess form={form} update={update} eventId={eventId} />
+                        </TabsContent>
+                    </div>
+
+                    {/* ── Right sidebar — step navigator (desktop only) ── */}
+                    <div className="hidden lg:block w-52 shrink-0 sticky top-20 self-start">
+                        <TabsList
+                            className="flex-col h-auto w-full p-1.5 gap-0.5 bg-card border rounded-xl shadow-sm"
+                            data-testid="wizard-tabs"
+                        >
+                            {visibleSteps.map((s, i) => {
+                                const st = stepStatus[s.id];
+                                const isActive = s.id === activeStep;
+                                const rowBg = isActive ? "" : (
+                                    st === "ok"    ? "bg-emerald-50 dark:bg-emerald-950/25 hover:bg-emerald-100 dark:hover:bg-emerald-950/40" :
+                                    st === "warn"  ? "bg-amber-50 dark:bg-amber-950/25 hover:bg-amber-100 dark:hover:bg-amber-950/40" :
+                                    st === "error" ? "bg-red-50 dark:bg-red-950/25 hover:bg-red-100 dark:hover:bg-red-950/40" :
+                                    ""
+                                );
+                                const numColor = isActive ? "text-primary-foreground/70" : (
+                                    st === "ok"    ? "text-emerald-600 dark:text-emerald-400" :
+                                    st === "warn"  ? "text-amber-600 dark:text-amber-400" :
+                                    st === "error" ? "text-red-600 dark:text-red-400" :
+                                    "text-muted-foreground"
+                                );
+                                return (
+                                    <TabsTrigger
+                                        key={s.id}
+                                        value={s.id}
+                                        className={`w-full justify-start gap-2 px-2.5 py-2 text-left rounded-lg
+                                                   data-[state=active]:bg-primary data-[state=active]:text-primary-foreground
+                                                   ${rowBg}`}
+                                        data-testid={`tab-${s.id}`}
+                                    >
+                                        <StepIcon status={st} size="md" />
+                                        <span className={`text-[11px] shrink-0 ${numColor}`}>
+                                            {i + 1}.
+                                        </span>
+                                        <span className="text-xs leading-tight">
+                                            {s.label}
+                                        </span>
+                                    </TabsTrigger>
+                                );
+                            })}
+                        </TabsList>
+                    </div>
+                </div>
             </Tabs>
 
             {/* Footer ─────────────────────────────────────── */}
@@ -684,7 +779,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         )}
                         Guardar borrador
                     </Button>
-                    {idx < STEPS.length - 1 ? (
+                    {idx < visibleSteps.length - 1 ? (
                         <Button onClick={goNext} data-testid="wizard-next">
                             Siguiente
                             <ChevronRight className="h-4 w-4 ml-1.5" />
@@ -712,42 +807,67 @@ export default function EventWizard({ initial = null, mode = "create" }) {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function evalStepStatus(form, poster, currentEvent) {
-    const s: Record<string, string> = {};
+    const s: Record<string, string | undefined> = {};
+
     const titleOk = form.title?.length >= 2;
     const startsOk = !!form.starts_at;
-    // Duration is "ok" if a preset other than custom is picked, or custom with positive minutes.
     const durationOk = form.duration_preset && form.duration_preset !== "custom"
         ? true
         : Number(form.duration_minutes_custom || 0) > 0;
-    // Venue picked OR general mode with required fields.
     const whereOk = form.no_seating_mode
         ? !!form.venue_name
         : !!(form.venue_id || currentEvent?.venue_id);
     s.info = titleOk && startsOk && durationOk && whereOk ? "ok" : titleOk ? "warn" : "error";
-    s.content = "ok";
+
+    // Media: warn until there's a poster (poster is strongly recommended but not required)
     s.media = poster ? "ok" : "warn";
+
+    // Content: ok once the organizer has written something; neutral otherwise
+    s.content = form.description?.trim() ? "ok" : undefined;
+
     s.venue_localidades = form.no_seating_mode
-        ? form.pricing_type === "free" || form.base_price_dollars
+        ? form.pricing_type === "free" || (form.pricing_type === "paid" && Number(form.base_price_dollars) > 0) || form.pricing_type === "donation"
             ? "ok"
+            : form.pricing_type === "paid" && !Number(form.base_price_dollars)
+            ? "error"
             : "warn"
         : form.venue_id || currentEvent?.venue_id
         ? "ok"
         : "warn";
-    // Optional sections with sensible defaults — same convention as
-    // content/payments/discounts below: "ok" means "nothing blocking here",
-    // not "configured by the organizer".
-    s.tipos_ticket = "ok";
-    s.funciones = "ok";
-    s.abono = "ok";
-    s.ticket_design = "ok";
-    s.payments = "ok";
-    s.discounts = "ok";
-    s.access = form.access_params.max_per_purchase > 0 ? "ok" : "warn";
+
+    // Async sections (ticket types, functions, season passes) — we cannot
+    // verify their content here without extra API calls, so stay neutral
+    // until the organizer visits and saves data in those tabs.
+    s.tipos_ticket = undefined;
+    s.funciones   = undefined;
+    s.abono       = undefined;
+
+    // Ticket design: ok if a custom design has been saved to the event
+    s.ticket_design = currentEvent?.ticket_design?.elements?.length > 0
+        ? "ok"
+        : undefined;
+
+    // Payments: ok while at least one method is active (stripe is always on by default)
+    const anyPaymentOn = form.payment_methods?.stripe?.enabled !== false
+        || form.payment_methods?.transfer?.enabled
+        || form.payment_methods?.cash?.enabled;
+    s.payments = anyPaymentOn ? "ok" : "warn";
+
+    // Discounts: ok only once the organizer has configured at least one rule
+    const hasDiscount = form.discounts?.disability_law?.enabled
+        || form.discounts?.presale?.enabled
+        || (form.discounts?.rules?.length > 0);
+    s.discounts = hasDiscount ? "ok" : undefined;
+
+    // Access: valid defaults work out of the box, so ok; warn if broken
+    s.access = (form.access_params?.max_per_purchase ?? 0) > 0 ? "ok" : "warn";
+
     return s;
 }
 
 function buildPayload(form) {
-    const startsIso = form.starts_at ? localInputToIso(form.starts_at) : null;
+    const tz = form.timezone || DEFAULT_TZ;
+    const startsIso = form.starts_at ? localInputToIso(form.starts_at, tz) : null;
     const endsIso = startsIso
         ? computeEndsAt(
               startsIso,
@@ -758,12 +878,12 @@ function buildPayload(form) {
     const salesStart = computeSalesStart(
         startsIso,
         form.sales_window_preset_start,
-        form.sales_start_custom ? localInputToIso(form.sales_start_custom) : null,
+        form.sales_start_custom ? localInputToIso(form.sales_start_custom, tz) : null,
     );
     const salesEnd = computeSalesEnd(
         startsIso,
         form.sales_window_preset_end,
-        form.sales_end_custom ? localInputToIso(form.sales_end_custom) : null,
+        form.sales_end_custom ? localInputToIso(form.sales_end_custom, tz) : null,
     );
     return {
         title: form.title,
@@ -808,20 +928,21 @@ function buildPayload(form) {
                 : null,
         ticket_delivery_at:
             form.ticket_delivery_mode === "fecha_especifica" && form.ticket_delivery_at
-                ? localInputToIso(form.ticket_delivery_at)
+                ? localInputToIso(form.ticket_delivery_at, tz)
                 : null,
         multi_function_mode: form.multi_function_mode || "function",
     };
 }
 
-function StepIcon({ status }) {
+function StepIcon({ status, size = "sm" }: { status: string; size?: "sm" | "md" }) {
+    const cls = size === "md" ? "h-4 w-4 shrink-0" : "h-3.5 w-3.5 shrink-0";
     if (status === "ok")
-        return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />;
+        return <CheckCircle2 className={`${cls} text-emerald-500`} />;
     if (status === "warn")
-        return <Circle className="h-3.5 w-3.5 text-amber-500 fill-amber-500/30" />;
+        return <Circle className={`${cls} text-amber-500 fill-amber-500/30`} />;
     if (status === "error")
-        return <AlertTriangle className="h-3.5 w-3.5 text-red-500" />;
-    return <Circle className="h-3.5 w-3.5 text-muted-foreground" />;
+        return <AlertTriangle className={`${cls} text-red-500`} />;
+    return <Circle className={`${cls} text-muted-foreground/40`} />;
 }
 
 // ── Section: Info (datos + cuándo + dónde) ──────────────────────────────────
@@ -1512,6 +1633,18 @@ function SectionVenueLocalidades({
                 </div>
             </div>
 
+            {hasVenue && (
+                <div className="rounded-xl border-l-4 border-l-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4">
+                    <p className="text-sm font-medium flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+                        <Info className="h-4 w-4 shrink-0" />
+                        Las localidades definen los tickets del comprador
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        El precio y aforo de cada localidad aparecen directamente en el checkout del comprador. No necesitás configurar tipos de ticket adicionales.
+                    </p>
+                </div>
+            )}
+
             {isGeneralMode && (
                 <>
                     <div className="rounded-xl border-l-4 border-l-primary bg-secondary/30 p-4">
@@ -2033,13 +2166,13 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                                 type="datetime-local"
                                 value={
                                     d.presale.ends_at
-                                        ? isoToLocalInput(d.presale.ends_at)
+                                        ? isoToLocalInput(d.presale.ends_at, form.timezone)
                                         : ""
                                 }
                                 onChange={(e) =>
                                     update(
                                         "discounts.presale.ends_at",
-                                        e.target.value ? localInputToIso(e.target.value) : null,
+                                        e.target.value ? localInputToIso(e.target.value, form.timezone) : null,
                                     )
                                 }
                                 data-testid="disc-presale-ends"

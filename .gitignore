@@ -51,6 +51,10 @@ __pycache__/
 *pyc*
 venv/
 .venv/
+.pytest_cache/
+
+# Backend dev artifacts
+backend/email_log/
 
 # Development tools
 chainlit.md
@@ -110,3 +114,25 @@ credentials.json
 *.key
 .credentials
 frontend/node_modules/.cache/default-development/0.pack
+
+# Agent / AI
+AGENTS.md
+.claude/
+
+# Local documentation / review files
+review.md
+explanation.md
+
+# Mermaid diagrams
+*.mmd
+backend/models_diagram.mmd
+
+# Local Python version files
+.tool-versions
+backend/.python-version
+
+# UV lock file (project uses pip)
+backend/uv.lock
+
+# Scratch files
+backend/main.py
