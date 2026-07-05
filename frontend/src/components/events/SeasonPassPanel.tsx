@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Ticket, Loader2, AlertCircle } from "lucide-react";
+import { Plus, Pencil, Trash2, Ticket, Loader2, AlertCircle, CreditCard, CalendarCheck, Users, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -169,39 +169,113 @@ export default function SeasonPassPanel({ eventId, hasVenue = false, timezone = 
 
     return (
         <div className="space-y-4" data-testid="section-season-passes">
-            <div className="flex items-center justify-between">
+
+            {/* ── Explainer card ────────────────────────────────────────────── */}
+            <div className="rounded-xl border bg-card p-5 space-y-4">
                 <div>
-                    <h3 className="font-semibold">Abono de Temporada</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                        El comprador paga una vez por varios créditos y elige más adelante a
-                        cuáles funciones de este evento asistir — no bloquea aforo hasta que
-                        redime cada crédito.
+                    <h3 className="font-semibold text-base">¿Qué es un Abono de Temporada?</h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                        El comprador paga una sola vez y recibe un paquete de <strong>créditos</strong>.
+                        Cada crédito le da acceso a <strong>una función</strong> del evento que él mismo elige
+                        después, dentro del período de redención que vos definís.
                     </p>
                 </div>
+
+                {/* Cómo funciona — flujo de 3 pasos */}
+                <div className="flex flex-col sm:flex-row gap-2 items-stretch">
+                    <div className="flex-1 rounded-lg bg-primary/5 border p-3 space-y-1.5 text-center">
+                        <CreditCard className="h-5 w-5 mx-auto text-primary" />
+                        <p className="text-xs font-semibold">1. Compra el abono</p>
+                        <p className="text-xs text-muted-foreground">
+                            Paga una vez y recibe N créditos (ej. 5 créditos = 5 funciones).
+                        </p>
+                    </div>
+                    <div className="flex items-center justify-center shrink-0">
+                        <ChevronRight className="h-4 w-4 text-muted-foreground rotate-90 sm:rotate-0" />
+                    </div>
+                    <div className="flex-1 rounded-lg bg-primary/5 border p-3 space-y-1.5 text-center">
+                        <CalendarCheck className="h-5 w-5 mx-auto text-primary" />
+                        <p className="text-xs font-semibold">2. Elige la función</p>
+                        <p className="text-xs text-muted-foreground">
+                            Desde su cuenta canjea cada crédito por la fecha que prefiera.
+                        </p>
+                    </div>
+                    <div className="flex items-center justify-center shrink-0">
+                        <ChevronRight className="h-4 w-4 text-muted-foreground rotate-90 sm:rotate-0" />
+                    </div>
+                    <div className="flex-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 p-3 space-y-1.5 text-center">
+                        <Users className="h-5 w-5 mx-auto text-emerald-600" />
+                        <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">3. Entra al evento</p>
+                        <p className="text-xs text-muted-foreground">
+                            Recibe un ticket válido generado para esa función específica.
+                        </p>
+                    </div>
+                </div>
+
+                {/* Casos de uso */}
+                <div className="space-y-1.5">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">¿Cuándo tiene sentido usarlo?</p>
+                    <div className="grid sm:grid-cols-2 gap-2 text-xs text-muted-foreground">
+                        {[
+                            "🎭  Temporadas de teatro con varias obras",
+                            "🎵  Ciclos de conciertos o festivales por fechas",
+                            "📚  Series de talleres o cursos con múltiples sesiones",
+                            "🎬  Ciclos de cine o proyecciones temáticas",
+                            "🏋️  Clases grupales (pilates, yoga, baile) con cupo limitado",
+                            "🎤  Stand-up con múltiples shows del mismo comediante",
+                        ].map((item) => (
+                            <div key={item} className="flex items-start gap-1.5">
+                                <span>{item}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="rounded-lg border-l-4 border-l-primary bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                    <strong className="text-foreground">Ventaja clave:</strong> Recaudás el dinero antes de que el comprador
+                    elija funciones — y él tiene la flexibilidad de decidir cuándo ir.
+                    El aforo de cada función se reserva recién cuando canjea el crédito.
+                </div>
+            </div>
+
+            {hasVenue && (
+                <div className="flex items-start gap-2 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>
+                        <strong>Disponible solo para eventos sin venue numerado.</strong>{" "}
+                        El abono de temporada requiere que las funciones sean de admisión general
+                        (sin selección de asiento específico). Desvinculá el venue para habilitarlo.
+                    </span>
+                </div>
+            )}
+
+            {/* ── Header de sección + botón ─────────────────────────────── */}
+            <div className="flex items-center justify-between pt-1">
+                <h4 className="font-semibold text-sm">
+                    Abonos configurados
+                    {passes.length > 0 && (
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">
+                            ({passes.length})
+                        </span>
+                    )}
+                </h4>
                 <Button size="sm" onClick={openCreate} data-testid="add-season-pass" disabled={hasVenue}>
                     <Plus className="h-4 w-4 mr-1.5" />
                     Agregar abono
                 </Button>
             </div>
 
-            {hasVenue && (
-                <div className="flex items-center gap-2 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs">
-                    <AlertCircle className="h-4 w-4 shrink-0" />
-                    El abono de temporada solo está disponible para eventos de admisión
-                    general (sin venue con asientos numerados).
-                </div>
-            )}
-
             {loading ? (
                 <div className="flex justify-center py-8">
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
             ) : passes.length === 0 ? (
-                <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
-                    <Ticket className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                    <p className="text-sm">Aún no hay abonos configurados.</p>
+                <div className="rounded-xl border border-dashed p-6 text-center text-muted-foreground">
+                    <Ticket className="h-7 w-7 mx-auto mb-2 opacity-40" />
+                    <p className="text-sm font-medium">Sin abonos configurados</p>
                     <p className="text-xs mt-1">
-                        Creá uno si querés ofrecer un paquete de créditos para varias funciones.
+                        Si tu evento tiene varias funciones y querés ofrecer un paquete de
+                        accesos con descuento, creá tu primer abono arriba.
                     </p>
                 </div>
             ) : (
