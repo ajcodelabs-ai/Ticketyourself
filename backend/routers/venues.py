@@ -186,12 +186,18 @@ def _compute_capacity(elements: List[Dict[str, Any]]) -> int:
 
 
 def _clamp_elements(elements: List[Dict[str, Any]], canvas: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Force x, y inside canvas bounds (top-left). No bounds for w/h — UI handles."""
-    w = canvas.get("width", 1200)
-    h = canvas.get("height", 800)
+    """Force x, y, width, height inside canvas bounds."""
+    w = float(canvas.get("width", 1200))
+    h = float(canvas.get("height", 800))
     for e in elements:
-        e["x"] = max(0, min(float(e.get("x", 0)), float(w)))
-        e["y"] = max(0, min(float(e.get("y", 0)), float(h)))
+        e["x"] = max(0, min(float(e.get("x", 0)), w))
+        e["y"] = max(0, min(float(e.get("y", 0)), h))
+        ew = float(e.get("width") or 0)
+        eh = float(e.get("height") or 0)
+        if ew > 0:
+            e["width"] = min(ew, w - e["x"])
+        if eh > 0:
+            e["height"] = min(eh, h - e["y"])
     return elements
 
 

@@ -130,7 +130,6 @@ async def staff_login(
         raise HTTPException(status_code=403, detail="Cuenta desactivada")
 
     staff.last_login = datetime.now(timezone.utc)
-    await session.commit()
 
     # Fetch assigned events for event selector screen
     result = await session.execute(
@@ -235,7 +234,6 @@ async def create_staff(
             organizer_id=org.id,
         ))
 
-    await session.commit()
     result = await session.execute(
         select(StaffEventAssignment).where(StaffEventAssignment.staff_id == staff.id)
     )
@@ -328,7 +326,6 @@ async def update_staff(
                 organizer_id=org.id,
             ))
 
-    await session.commit()
     assigns = await session.execute(
         select(StaffEventAssignment).where(StaffEventAssignment.staff_id == staff_id)
     )
@@ -352,4 +349,4 @@ async def delete_staff(
     if not staff:
         raise HTTPException(status_code=404, detail="Staff not found")
     await session.delete(staff)
-    await session.commit()
+    return Response(status_code=204)

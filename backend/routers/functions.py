@@ -32,7 +32,9 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
+import sqlalchemy as sa
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -163,7 +165,6 @@ async def create_ticket_type(
         **body.model_dump(),
     )
     session.add(tt)
-    await session.commit()
     await session.refresh(tt)
     return _type_out(tt)
 
@@ -204,7 +205,6 @@ async def update_ticket_type(
     for field, val in body.model_dump(exclude_none=True).items():
         setattr(tt, field, val)
 
-    await session.commit()
     await session.refresh(tt)
     return _type_out(tt)
 
@@ -230,7 +230,6 @@ async def delete_ticket_type(
             detail="Cannot delete a ticket type that already has sales. Deactivate it instead.",
         )
     await session.delete(tt)
-    await session.commit()
 
 
 @public_router.get("/api/public/events/{event_id}/ticket-types")
@@ -454,7 +453,6 @@ async def create_function(
     if not event.is_multi_function:
         event.is_multi_function = True
 
-    await session.commit()
     await session.refresh(func)
 
     overrides = await session.execute(
@@ -524,12 +522,15 @@ async def update_function(
     update_data = body.model_dump(exclude_none=True, exclude={"ticket_type_overrides"})
     for field, val in update_data.items():
         setattr(func, field, val)
+    jsonb_cols = {c.name for c in EventFunction.__table__.columns if isinstance(c.type, sa.JSON)}
+    for f in update_data:
+        if f in jsonb_cols:
+            flag_modified(func, f)
     func.updated_at = datetime.now(timezone.utc)
 
     if overrides is not None:
         await _upsert_overrides(function_id, overrides, session)
 
-    await session.commit()
     await session.refresh(func)
 
     result_ov = await session.execute(
@@ -563,7 +564,6 @@ async def delete_function(
             detail="Cannot delete a function that already has ticket sales.",
         )
     await session.delete(func)
-    await session.commit()
 
 
 # ── Public function endpoints ─────────────────────────────────────────────────

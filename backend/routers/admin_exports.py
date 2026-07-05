@@ -5,6 +5,7 @@ UTF-8 with BOM for Excel compatibility. All endpoints require super_admin role.
 Filter support mirrors the listing endpoints. Streamed via StreamingResponse to
 avoid memory pressure on large datasets.
 """
+
 import csv
 import io
 import logging
@@ -30,7 +31,9 @@ router = APIRouter(
 
 
 # ── CSV helpers ─────────────────────────────────────────────────────────────
-def _make_csv_response(filename: str, headers: List[str], rows: List[List[Any]]) -> StreamingResponse:
+def _make_csv_response(
+    filename: str, headers: List[str], rows: List[List[Any]]
+) -> StreamingResponse:
     buf = io.StringIO()
     buf.write("﻿")  # BOM for Excel UTF-8
     writer = csv.writer(buf, dialect="excel")
@@ -63,7 +66,7 @@ async def export_organizers(
     plan_by_id = {p["id"]: p for p in plans}
     plan_id_by_code = {p["code"]: p["id"] for p in plans}
 
-    stmt = select(Organizer)
+    stmt = select(Organizer).limit(10_000)
     if status:
         stmt = stmt.where(Organizer.status == status)
     if plan_code:
@@ -85,7 +88,10 @@ async def export_organizers(
             .where(TicketOrder.organizer_id.in_(org_ids), TicketOrder.status == "paid")
             .group_by(TicketOrder.organizer_id)
         )
-        rev_map = {r.organizer_id: {"revenue": r.revenue, "tickets": r.tickets} for r in rev_result.all()}
+        rev_map = {
+            r.organizer_id: {"revenue": r.revenue, "tickets": r.tickets}
+            for r in rev_result.all()
+        }
 
     evt_map: Dict[str, int] = {}
     if org_ids:
@@ -97,23 +103,39 @@ async def export_organizers(
         evt_map = {r.organizer_id: r.n for r in evt_result.all()}
 
     headers = [
-        "ID", "Slug", "Empresa", "Email", "RUC/Cédula", "Estado",
-        "Suscripción", "Plan", "Eventos publicados", "Tickets emitidos",
-        "Ingresos USD", "Registrado",
+        "ID",
+        "Slug",
+        "Empresa",
+        "Email",
+        "RUC/Cédula",
+        "Estado",
+        "Suscripción",
+        "Plan",
+        "Eventos publicados",
+        "Tickets emitidos",
+        "Ingresos USD",
+        "Registrado",
     ]
     rows: List[List[Any]] = []
     for o in organizers:
         plan = plan_by_id.get(o.get("plan_id"))
         rev = rev_map.get(o["id"], {})
-        rows.append([
-            o["id"], o["slug"], o.get("company_name"), o.get("email"),
-            o.get("legal_id"), o.get("status"), o.get("subscription_status"),
-            plan["name"] if plan else "",
-            evt_map.get(o["id"], 0),
-            rev.get("tickets", 0),
-            f"{(rev.get('revenue', 0) or 0) / 100:.2f}",
-            (str(o.get("created_at") or ""))[:19],
-        ])
+        rows.append(
+            [
+                o["id"],
+                o["slug"],
+                o.get("company_name"),
+                o.get("email"),
+                o.get("legal_id"),
+                o.get("status"),
+                o.get("subscription_status"),
+                plan["name"] if plan else "",
+                evt_map.get(o["id"], 0),
+                rev.get("tickets", 0),
+                f"{(rev.get('revenue', 0) or 0) / 100:.2f}",
+                (str(o.get("created_at") or ""))[:19],
+            ]
+        )
 
     return _make_csv_response(f"organizers_{_ts()}.csv", headers, rows)
 
@@ -137,11 +159,16 @@ async def export_events(
     org_map: Dict[str, dict] = {}
     if org_ids:
         orgs_result = await session.execute(
-            select(Organizer.id, Organizer.company_name, Organizer.slug)
-            .where(Organizer.id.in_(org_ids))
+            select(Organizer.id, Organizer.company_name, Organizer.slug).where(
+                Organizer.id.in_(org_ids)
+            )
         )
         for row in orgs_result.all():
-            org_map[row.id] = {"id": row.id, "company_name": row.company_name, "slug": row.slug}
+            org_map[row.id] = {
+                "id": row.id,
+                "company_name": row.company_name,
+                "slug": row.slug,
+            }
 
     # Per-event GMV + fees
     evt_ids = [e["id"] for e in events]
@@ -161,25 +188,41 @@ async def export_events(
             sales_map[r.event_id] = {"gmv": r.gmv, "fees": r.fees, "tickets": r.tickets}
 
     headers = [
-        "ID", "Slug", "Título", "Organizer", "Categoría", "Estado",
-        "Fecha inicio", "Capacidad", "Vendidos", "GMV USD",
-        "Comisiones USD", "Tipo de precio", "Precio base USD",
+        "ID",
+        "Slug",
+        "Título",
+        "Organizer",
+        "Categoría",
+        "Estado",
+        "Fecha inicio",
+        "Capacidad",
+        "Vendidos",
+        "GMV USD",
+        "Comisiones USD",
+        "Tipo de precio",
+        "Precio base USD",
     ]
     rows = []
     for e in events:
         org = org_map.get(e["organizer_id"], {})
         s = sales_map.get(e["id"], {})
-        rows.append([
-            e["id"], e["slug"], e.get("title"), org.get("company_name"),
-            e.get("category"), e.get("status"),
-            (e.get("starts_at") or "")[:19],
-            e.get("capacity") if e.get("capacity") is not None else "ilimitada",
-            e.get("tickets_sold", 0),
-            f"{(s.get('gmv', 0) or 0) / 100:.2f}",
-            f"{(s.get('fees', 0) or 0) / 100:.2f}",
-            e.get("pricing_type"),
-            f"{(e.get('base_price_cents', 0) or 0) / 100:.2f}",
-        ])
+        rows.append(
+            [
+                e["id"],
+                e["slug"],
+                e.get("title"),
+                org.get("company_name"),
+                e.get("category"),
+                e.get("status"),
+                (e.get("starts_at") or "")[:19],
+                e.get("capacity") if e.get("capacity") is not None else "ilimitada",
+                e.get("tickets_sold", 0),
+                f"{(s.get('gmv', 0) or 0) / 100:.2f}",
+                f"{(s.get('fees', 0) or 0) / 100:.2f}",
+                e.get("pricing_type"),
+                f"{(e.get('base_price_cents', 0) or 0) / 100:.2f}",
+            ]
+        )
     return _make_csv_response(f"events_{_ts()}.csv", headers, rows)
 
 
@@ -207,7 +250,9 @@ async def export_orders(
     evt_map: Dict[str, str] = {}
     if org_ids:
         orgs_result = await session.execute(
-            select(Organizer.id, Organizer.company_name).where(Organizer.id.in_(org_ids))
+            select(Organizer.id, Organizer.company_name).where(
+                Organizer.id.in_(org_ids)
+            )
         )
         for row in orgs_result.all():
             org_map[row.id] = row.company_name
@@ -219,10 +264,22 @@ async def export_orders(
             evt_map[r.id] = r.title
 
     headers = [
-        "Orden", "Estado", "Método", "Evento", "Organizer",
-        "Comprador", "Email", "Cantidad", "Subtotal USD", "Fees USD",
-        "Total USD", "Moneda", "Creado", "Pagado",
+        "Orden",
+        "Estado",
+        "Método",
+        "Evento",
+        "Organizer",
+        "Comprador",
+        "Email",
+        "Cantidad",
+        "Subtotal USD",
+        "Fees USD",
+        "Total USD",
+        "Moneda",
+        "Creado",
+        "Pagado",
     ]
+
     def _dt(v) -> str:
         if v is None:
             return ""
@@ -231,18 +288,24 @@ async def export_orders(
     rows = []
     for o in orders:
         buyer = o.get("buyer") or {}
-        rows.append([
-            o["order_number"], o["status"], o.get("payment_method"),
-            evt_map.get(o["event_id"], ""), org_map.get(o["organizer_id"], ""),
-            buyer.get("name"), buyer.get("email"),
-            o["quantity_total"],
-            f"{(o.get('subtotal_cents') or 0) / 100:.2f}",
-            f"{(o.get('fees_cents') or 0) / 100:.2f}",
-            f"{(o.get('total_cents') or 0) / 100:.2f}",
-            o.get("currency", "USD"),
-            _dt(o.get("created_at")),
-            _dt(o.get("paid_at")),
-        ])
+        rows.append(
+            [
+                o["order_number"],
+                o["status"],
+                o.get("payment_method"),
+                evt_map.get(o["event_id"], ""),
+                org_map.get(o["organizer_id"], ""),
+                buyer.get("name"),
+                buyer.get("email"),
+                o["quantity_total"],
+                f"{(o.get('subtotal_cents') or 0) / 100:.2f}",
+                f"{(o.get('fees_cents') or 0) / 100:.2f}",
+                f"{(o.get('total_cents') or 0) / 100:.2f}",
+                o.get("currency", "USD"),
+                _dt(o.get("created_at")),
+                _dt(o.get("paid_at")),
+            ]
+        )
     return _make_csv_response(f"orders_{_ts()}.csv", headers, rows)
 
 
@@ -263,7 +326,9 @@ async def export_audit_log(
     result = await session.execute(stmt)
     entries = [row_to_dict(r) for r in result.scalars().all()]
 
-    actor_ids = list({e.get("actor_user_id") for e in entries if e.get("actor_user_id")})
+    actor_ids = list(
+        {e.get("actor_user_id") for e in entries if e.get("actor_user_id")}
+    )
     actor_email_map: Dict[str, str] = {}
     if actor_ids:
         users_result = await session.execute(
@@ -277,11 +342,22 @@ async def export_audit_log(
     for e in entries:
         meta = _json.dumps(e.get("metadata") or {}, ensure_ascii=False)[:500]
         created = e.get("created_at")
-        rows.append([
-            (created.isoformat() if hasattr(created, "isoformat") else str(created or ""))[:19],
-            actor_email_map.get(e.get("actor_user_id"), e.get("actor_user_id") or "sistema"),
-            e["action"], e["target_type"], e["target_id"], meta,
-        ])
+        rows.append(
+            [
+                (
+                    created.isoformat()
+                    if hasattr(created, "isoformat")
+                    else str(created or "")
+                )[:19],
+                actor_email_map.get(
+                    e.get("actor_user_id"), e.get("actor_user_id") or "sistema"
+                ),
+                e["action"],
+                e["target_type"],
+                e["target_id"],
+                meta,
+            ]
+        )
     return _make_csv_response(f"audit_log_{_ts()}.csv", headers, rows)
 
 
@@ -295,7 +371,11 @@ async def export_monthly_report(
     if year < 2020 or year > 2100:
         raise HTTPException(422, "Año inválido")
     start = datetime(year, month, 1, tzinfo=timezone.utc)
-    end = datetime(year + 1, 1, 1, tzinfo=timezone.utc) if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    end = (
+        datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        if month == 12
+        else datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    )
 
     agg_result = await session.execute(
         select(
@@ -313,7 +393,13 @@ async def export_monthly_report(
         .group_by(TicketOrder.organizer_id)
     )
     agg = [
-        {"org_id": r.organizer_id, "gmv": r.gmv, "fees": r.fees, "tickets": r.tickets, "orders": r.orders}
+        {
+            "org_id": r.organizer_id,
+            "gmv": r.gmv,
+            "fees": r.fees,
+            "tickets": r.tickets,
+            "orders": r.orders,
+        }
         for r in agg_result.all()
     ]
 
@@ -321,35 +407,56 @@ async def export_monthly_report(
     org_map: Dict[str, dict] = {}
     if org_ids:
         orgs_result = await session.execute(
-            select(Organizer.id, Organizer.company_name, Organizer.slug, Organizer.legal_id)
-            .where(Organizer.id.in_(org_ids))
+            select(
+                Organizer.id, Organizer.company_name, Organizer.slug, Organizer.legal_id
+            ).where(Organizer.id.in_(org_ids))
         )
         for row in orgs_result.all():
-            org_map[row.id] = {"company_name": row.company_name, "slug": row.slug, "legal_id": row.legal_id}
+            org_map[row.id] = {
+                "company_name": row.company_name,
+                "slug": row.slug,
+                "legal_id": row.legal_id,
+            }
 
     total_gmv = sum(a["gmv"] for a in agg)
     total_fees = sum(a["fees"] for a in agg)
     total_tickets = sum(a["tickets"] for a in agg)
 
     headers = [
-        "Organizer", "Slug", "RUC/Cédula", "Órdenes pagadas", "Tickets",
-        "GMV USD", "Comisiones USD", "Neto organizer USD",
+        "Organizer",
+        "Slug",
+        "RUC/Cédula",
+        "Órdenes pagadas",
+        "Tickets",
+        "GMV USD",
+        "Comisiones USD",
+        "Neto organizer USD",
     ]
     rows = []
     for a in sorted(agg, key=lambda r: -r["gmv"]):
         org = org_map.get(a["org_id"], {})
-        rows.append([
-            org.get("company_name", ""), org.get("slug", ""), org.get("legal_id", ""),
-            a["orders"], a["tickets"],
-            f"{a['gmv'] / 100:.2f}",
-            f"{a['fees'] / 100:.2f}",
-            f"{(a['gmv'] - a['fees']) / 100:.2f}",
-        ])
-    rows.append([
-        "TOTAL", "", "",
-        sum(a["orders"] for a in agg), total_tickets,
-        f"{total_gmv / 100:.2f}",
-        f"{total_fees / 100:.2f}",
-        f"{(total_gmv - total_fees) / 100:.2f}",
-    ])
+        rows.append(
+            [
+                org.get("company_name", ""),
+                org.get("slug", ""),
+                org.get("legal_id", ""),
+                a["orders"],
+                a["tickets"],
+                f"{a['gmv'] / 100:.2f}",
+                f"{a['fees'] / 100:.2f}",
+                f"{(a['gmv'] - a['fees']) / 100:.2f}",
+            ]
+        )
+    rows.append(
+        [
+            "TOTAL",
+            "",
+            "",
+            sum(a["orders"] for a in agg),
+            total_tickets,
+            f"{total_gmv / 100:.2f}",
+            f"{total_fees / 100:.2f}",
+            f"{(total_gmv - total_fees) / 100:.2f}",
+        ]
+    )
     return _make_csv_response(f"monthly_report_{year}_{month:02d}.csv", headers, rows)

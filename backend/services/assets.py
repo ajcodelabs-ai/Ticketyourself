@@ -24,7 +24,7 @@ async def open_event_asset(url: str) -> io.BytesIO | None:
         row = await session.scalar(select(EventAsset).where(EventAsset.id == asset_id))
     if not row:
         return None
-    abs_path = ASSETS_DIR / row.file_path
-    if not abs_path.exists():
+    abs_path = (ASSETS_DIR / row.file_path).resolve()
+    if not abs_path.exists() or not str(abs_path).startswith(str(ASSETS_DIR.resolve())):
         return None
     return io.BytesIO(abs_path.read_bytes())

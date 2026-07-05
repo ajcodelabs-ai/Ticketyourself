@@ -520,7 +520,7 @@ export default function VenueEditor() {
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    });
+    }, []);
 
     // ── Context menu actions ───────────────────────────────────────────
     const handleContextAction = (action) => {

@@ -23,7 +23,7 @@
  *  • Media tab now has inline SVG mockups above each dropzone so the organizer
  *    sees exactly where each image surfaces.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import EventVenueSection from "@/components/events/EventVenueSection";
@@ -107,8 +107,10 @@ import {
     localInputToIso,
 } from "@/lib/events";
 
+const DEFAULT_TZ = import.meta.env.VITE_DEFAULT_TIMEZONE || "America/Guayaquil";
+
 const TIMEZONES = [
-    "America/Guayaquil",
+    DEFAULT_TZ,
     "America/Bogota",
     "America/Lima",
     "America/Mexico_City",
@@ -183,7 +185,7 @@ function makeInitial(d) {
             starts_at: "",
             // ends_at is now computed from starts_at + duration_preset on submit
             ends_at: "",
-            timezone: "America/Guayaquil",
+            timezone: DEFAULT_TZ,
             // Sales-window stored as ISO when "custom"; otherwise derived from presets.
             sales_start_custom: "",
             sales_end_custom: "",
@@ -227,11 +229,11 @@ function makeInitial(d) {
         venue_address: d.venue_address || "",
         venue_city: d.venue_city || "Quito",
         venue_country: d.venue_country || "Ecuador",
-        starts_at: isoToLocalInput(d.starts_at),
-        ends_at: isoToLocalInput(d.ends_at),
-        timezone: d.timezone || "America/Guayaquil",
-        sales_start_custom: d.sales_start ? isoToLocalInput(d.sales_start) : "",
-        sales_end_custom: d.sales_end ? isoToLocalInput(d.sales_end) : "",
+        starts_at: isoToLocalInput(d.starts_at, d.timezone),
+        ends_at: isoToLocalInput(d.ends_at, d.timezone),
+            timezone: d.timezone || DEFAULT_TZ,
+        sales_start_custom: d.sales_start ? isoToLocalInput(d.sales_start, d.timezone) : "",
+        sales_end_custom: d.sales_end ? isoToLocalInput(d.sales_end, d.timezone) : "",
         duration_preset: d.duration_preset || durInfer.preset,
         duration_minutes_custom: durInfer.minutes,
         sales_window_preset_start:
@@ -260,7 +262,7 @@ function makeInitial(d) {
         content: normalizeEventContent(d.content),
         ticket_delivery_mode: d.ticket_delivery_mode || "al_momento",
         ticket_delivery_hours: d.ticket_delivery_hours != null ? String(d.ticket_delivery_hours) : "",
-        ticket_delivery_at: d.ticket_delivery_at ? isoToLocalInput(d.ticket_delivery_at) : "",
+        ticket_delivery_at: d.ticket_delivery_at ? isoToLocalInput(d.ticket_delivery_at, d.timezone) : "",
         multi_function_mode: d.multi_function_mode || "function",
     };
 }
@@ -269,6 +271,8 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const [form, setForm] = useState(() => makeInitial(initial));
+    const formRef = useRef(form);
+    useEffect(() => { formRef.current = form; }, [form]);
     // `currentEvent` is the live event document mirrored from the backend after
     // each save / venue link. It feeds the venue picker + the pricing panel.
     const [currentEvent, setCurrentEvent] = useState(initial || null);
@@ -314,11 +318,17 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         .filter((l) => elementsLocs.has(l.id))
                         .map((l) => {
                             const lp = pricingByLocality[l.id];
+                            let capacity = 0;
+                            try {
+                                capacity = capacityByLocality(elements, l.id);
+                            } catch {
+                                capacity = 0;
+                            }
                             return {
                                 ...l,
                                 price_cents: lp?.price_cents ?? l.default_price_cents ?? 0,
                                 max_tickets_per_purchase: lp?.max_tickets_per_purchase ?? null,
-                                capacity: capacityByLocality(elements, l.id),
+                                capacity,
                             };
                         }),
                 );
@@ -336,6 +346,14 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         update("venue_name", currentEvent.venue_name || "");
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentEvent?.venue_name, currentEvent?.venue_id]);
+
+    // When building payload, use the latest form state via ref to avoid stale
+    // closures in callbacks passed to child components (ensureEventId, etc.).
+    const ensureEventId = async () => {
+        if (eventId) return eventId;
+        const r = await persist(false);
+        return r?.id || null;
+    };
 
     // Deep-linking: ?tab=info|venue_localidades|... wins over default.
     const initialStep =
@@ -366,17 +384,17 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     // state, same as buildPayload() does, so "Tipos de ticket" reflects
     // whatever is set in "Información general" even before the first save.
     const liveSaleWindow = useMemo(() => {
-        const startsIso = form.starts_at ? localInputToIso(form.starts_at) : null;
+        const startsIso = form.starts_at ? localInputToIso(form.starts_at, form.timezone) : null;
         return {
             sale_start: computeSalesStart(
                 startsIso,
                 form.sales_window_preset_start,
-                form.sales_start_custom ? localInputToIso(form.sales_start_custom) : null,
+                form.sales_start_custom ? localInputToIso(form.sales_start_custom, form.timezone) : null,
             ),
             sale_end: computeSalesEnd(
                 startsIso,
                 form.sales_window_preset_end,
-                form.sales_end_custom ? localInputToIso(form.sales_end_custom) : null,
+                form.sales_end_custom ? localInputToIso(form.sales_end_custom, form.timezone) : null,
             ),
         };
     }, [
@@ -430,7 +448,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             toast.error("Hay secciones incompletas. Revisá los iconos rojos.");
             return null;
         }
-        const payload = buildPayload(form);
+        const payload = buildPayload(formRef.current);
         if (!payload.starts_at) {
             toast.error("Definí la fecha y hora de inicio.");
             return null;
@@ -478,12 +496,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             setSaving(false);
             setPublishing(false);
         }
-    };
-
-    const ensureEventId = async () => {
-        if (eventId) return eventId;
-        const r = await persist(false);
-        return r?.id || null;
     };
 
     const uploadImage = async (file, kind) => {
@@ -651,6 +663,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         eventId={eventId}
                         localities={venueLocalities}
                         eventSaleWindow={liveSaleWindow}
+                        timezone={form.timezone}
                     />
                 </TabsContent>
                 <TabsContent value="funciones" className="mt-4">
@@ -658,10 +671,11 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         eventId={eventId}
                         localities={venueLocalities}
                         mode={form.multi_function_mode}
+                        timezone={form.timezone}
                     />
                 </TabsContent>
                 <TabsContent value="abono" className="mt-4">
-                    <SeasonPassPanel eventId={eventId} hasVenue={!!(form.venue_id || currentEvent?.venue_id)} />
+                    <SeasonPassPanel eventId={eventId} hasVenue={!!(form.venue_id || currentEvent?.venue_id)} timezone={form.timezone} />
                 </TabsContent>
                 <TabsContent value="ticket_design" className="mt-4">
                     <SectionTicketDesign form={form} update={update} eventId={eventId} />
@@ -745,8 +759,10 @@ function evalStepStatus(form, poster, currentEvent) {
     s.content = "ok";
     s.media = poster ? "ok" : "warn";
     s.venue_localidades = form.no_seating_mode
-        ? form.pricing_type === "free" || form.base_price_dollars
+        ? form.pricing_type === "free" || (form.pricing_type === "paid" && Number(form.base_price_dollars) > 0) || form.pricing_type === "donation"
             ? "ok"
+            : form.pricing_type === "paid" && !Number(form.base_price_dollars)
+            ? "error"
             : "warn"
         : form.venue_id || currentEvent?.venue_id
         ? "ok"
@@ -765,7 +781,8 @@ function evalStepStatus(form, poster, currentEvent) {
 }
 
 function buildPayload(form) {
-    const startsIso = form.starts_at ? localInputToIso(form.starts_at) : null;
+    const tz = form.timezone || DEFAULT_TZ;
+    const startsIso = form.starts_at ? localInputToIso(form.starts_at, tz) : null;
     const endsIso = startsIso
         ? computeEndsAt(
               startsIso,
@@ -776,12 +793,12 @@ function buildPayload(form) {
     const salesStart = computeSalesStart(
         startsIso,
         form.sales_window_preset_start,
-        form.sales_start_custom ? localInputToIso(form.sales_start_custom) : null,
+        form.sales_start_custom ? localInputToIso(form.sales_start_custom, tz) : null,
     );
     const salesEnd = computeSalesEnd(
         startsIso,
         form.sales_window_preset_end,
-        form.sales_end_custom ? localInputToIso(form.sales_end_custom) : null,
+        form.sales_end_custom ? localInputToIso(form.sales_end_custom, tz) : null,
     );
     return {
         title: form.title,
@@ -826,7 +843,7 @@ function buildPayload(form) {
                 : null,
         ticket_delivery_at:
             form.ticket_delivery_mode === "fecha_especifica" && form.ticket_delivery_at
-                ? localInputToIso(form.ticket_delivery_at)
+                ? localInputToIso(form.ticket_delivery_at, tz)
                 : null,
         multi_function_mode: form.multi_function_mode || "function",
     };
@@ -2063,13 +2080,13 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                                 type="datetime-local"
                                 value={
                                     d.presale.ends_at
-                                        ? isoToLocalInput(d.presale.ends_at)
+                                        ? isoToLocalInput(d.presale.ends_at, form.timezone)
                                         : ""
                                 }
                                 onChange={(e) =>
                                     update(
                                         "discounts.presale.ends_at",
-                                        e.target.value ? localInputToIso(e.target.value) : null,
+                                        e.target.value ? localInputToIso(e.target.value, form.timezone) : null,
                                     )
                                 }
                                 data-testid="disc-presale-ends"

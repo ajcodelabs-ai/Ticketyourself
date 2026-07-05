@@ -191,7 +191,6 @@ export default function EventValidation() {
     };
     const stopScanner = async () => {
         const inst = html5QrRef.current;
-        html5QrRef.current = null; // null first so in-flight callbacks don't fire after unmount
         if (inst) {
             try {
                 await inst.stop();
@@ -201,6 +200,7 @@ export default function EventValidation() {
                 console.debug("[validation] stopScanner cleanup:", (e as any)?.message || e);
             }
         }
+        html5QrRef.current = null; // null after stop so startScanner doesn't race
         setScanning(false);
     };
     useEffect(() => () => { void stopScanner(); }, []);

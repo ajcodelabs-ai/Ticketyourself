@@ -64,6 +64,7 @@ interface Props {
     eventId: string | null;
     localities?: Locality[];
     eventSaleWindow?: { sale_start: string | null; sale_end: string | null };
+    timezone?: string;
 }
 
 const COLORS = [
@@ -117,6 +118,7 @@ export default function TicketTypesPanel({
     eventId,
     localities = [],
     eventSaleWindow,
+    timezone = "America/Guayaquil",
 }: Props) {
     const [types, setTypes] = useState<TicketType[]>([]);
     const [loading, setLoading] = useState(false);
@@ -481,11 +483,11 @@ export default function TicketTypesPanel({
                                     <span className="text-xs text-muted-foreground">Inicio</span>
                                     <Input
                                         type="datetime-local"
-                                        value={form.sale_start ? isoToLocalInput(form.sale_start) : ""}
+                                        value={form.sale_start ? isoToLocalInput(form.sale_start, timezone) : ""}
                                         onChange={(e) =>
                                             upd(
                                                 "sale_start",
-                                                e.target.value ? localInputToIso(e.target.value) : undefined,
+                                                e.target.value ? localInputToIso(e.target.value, timezone) : undefined,
                                             )
                                         }
                                     />
@@ -494,11 +496,11 @@ export default function TicketTypesPanel({
                                     <span className="text-xs text-muted-foreground">Fin</span>
                                     <Input
                                         type="datetime-local"
-                                        value={form.sale_end ? isoToLocalInput(form.sale_end) : ""}
+                                        value={form.sale_end ? isoToLocalInput(form.sale_end, timezone) : ""}
                                         onChange={(e) =>
                                             upd(
                                                 "sale_end",
-                                                e.target.value ? localInputToIso(e.target.value) : undefined,
+                                                e.target.value ? localInputToIso(e.target.value, timezone) : undefined,
                                             )
                                         }
                                     />
@@ -617,14 +619,14 @@ export default function TicketTypesPanel({
                                         type="datetime-local"
                                         value={
                                             form.early_bird_closes_at
-                                                ? isoToLocalInput(form.early_bird_closes_at)
+                                                ? isoToLocalInput(form.early_bird_closes_at, timezone)
                                                 : ""
                                         }
                                         onChange={(e) =>
                                             upd(
                                                 "early_bird_closes_at",
                                                 e.target.value
-                                                    ? localInputToIso(e.target.value)
+                                                    ? localInputToIso(e.target.value, timezone)
                                                     : undefined,
                                             )
                                         }

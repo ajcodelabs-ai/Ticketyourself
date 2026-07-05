@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 import stripe
 
 from database import AsyncSessionLocal
@@ -41,7 +41,7 @@ def _frontend_base(payload_origin: Optional[str]) -> str:
 # ── Schemas ──────────────────────────────────────────────────────────────────
 class BuyerIn(BaseModel):
     name: str = Field(min_length=2, max_length=140)
-    email: str = Field(max_length=140)
+    email: EmailStr = Field(max_length=140)
     phone: Optional[str] = Field(default=None, max_length=40)
     document_id: Optional[str] = Field(default=None, max_length=40)
     document_type: Optional[str] = Field(default=None, max_length=20)
@@ -378,7 +378,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
     # ── Manual payment (transfer / cash) — no Stripe, 48h reservation ─────
     if effective_method in ("transfer", "cash"):
         await order_service.reserve_capacity(
-            event_id=event["id"],
+            event=event,
             order_id=order["id"],
             quantity=quantity,
             ttl_minutes=order_service.MANUAL_RESERVATION_TTL_HOURS * 60,
@@ -421,7 +421,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         _row.stripe_session_id = session["id"]
         await _pg.commit()
     await order_service.reserve_capacity(
-        event_id=event["id"], order_id=order["id"], quantity=quantity,
+        event=event, order_id=order["id"], quantity=quantity,
         function_id=function["id"] if function else None,
     )
     return {
@@ -474,7 +474,8 @@ async def get_order(order_number: str, background_tasks: BackgroundTasks, sessio
     organizer = await get_organizer_by_id(order["organizer_id"])
     microsite = await get_microsite_by_organizer(order["organizer_id"])
     return {
-        "order": order,
+        "order": {k: v for k, v in order.items()
+                   if k not in ("order_token", "stripe_session_id", "stripe_payment_intent_id", "metadata")},
         "tickets": tickets,
         "event": event,
         "organizer": {
@@ -507,7 +508,8 @@ async def get_payment_instructions(order_number: str):
         event=event or {}, payment_method=method
     )
     return {
-        "order": order,
+        "order": {k: v for k, v in order.items()
+                   if k not in ("order_token", "stripe_session_id", "stripe_payment_intent_id", "metadata")},
         "event": event,
         "organizer": {
             "slug": organizer["slug"] if organizer else None,
