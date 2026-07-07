@@ -5,11 +5,11 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-tys}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?must be set}
-      POSTGRES_DB: ${POSTGRES_DB:-tys_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-tys_production}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tys} -d ${POSTGRES_DB:-tys_dev}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tys} -d ${POSTGRES_DB:-tys_production}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -23,7 +23,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tys}:${POSTGRES_PASSWORD:-tys_dev}@postgres:5432/${POSTGRES_DB:-tys_dev}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tys}:${POSTGRES_PASSWORD:?must be set}@postgres:5432/${POSTGRES_DB:-tys_production}
       JWT_SECRET: ${JWT_SECRET:?must be set}
       ENV: ${ENV:-production}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}

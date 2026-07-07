@@ -3,6 +3,7 @@ from aws_cdk import (
     RemovalPolicy,
     Duration,
     CfnOutput,
+    Fn,
     aws_ec2 as ec2,
     aws_ecs as ecs,
     aws_ecr as ecr,
@@ -46,6 +47,8 @@ class TysStack(Stack):
         sg = ec2.SecurityGroup(self, "Sg", vpc=vpc, allow_all_outbound=True)
         sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP")
         sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")
+        sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(3000), "Frontend")
+        sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(8000), "Backend")
 
         role = iam.Role(
             self,
@@ -82,7 +85,7 @@ class TysStack(Stack):
 
         eip = ec2.CfnEIP(self, "Eip", domain="vpc")
         ec2.CfnEIPAssociation(
-            self, "EipAssoc", eip=eip.ref, instance_id=instance.instance_id
+            self, "EipAssoc", allocation_id=eip.attr_allocation_id, instance_id=instance.instance_id
         )
 
         CfnOutput(self, "Url", value=f"http://{eip.ref}")
@@ -186,8 +189,23 @@ class TysStack(Stack):
             multi_az=True,
         )
 
-        db_url = secretsmanager.Secret(
-            self, "DbUrl", secret_name="tys-prod-database-url"
+        db_url = secretsmanager.CfnSecret(
+            self, "DbUrl",
+            name="tys-prod-database-url",
+            secret_string=Fn.join("", [
+                "postgresql+asyncpg://",
+                db_password.secret_value_from_json("username").unsafe_unwrap(),
+                ":",
+                db_password.secret_value_from_json("password").unsafe_unwrap(),
+                "@",
+                db.db_instance_endpoint_address,
+                ":",
+                db.db_instance_endpoint_port,
+                "/tys_production"
+            ])
+        )
+        db_url_l2 = secretsmanager.Secret.from_secret_attributes(
+            self, "DbUrlL2", secret_complete_arn=db_url.ref
         )
 
         # ── ECS ────────────────────────────────────────────────────────
@@ -198,7 +216,7 @@ class TysStack(Stack):
             "TaskRole",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
         )
-        for secret in [jwt_secret, db_url, stripe_key, stripe_webhook, resend_key, admin_password]:
+        for secret in [jwt_secret, db_url_l2, stripe_key, stripe_webhook, resend_key, admin_password]:
             secret.grant_read(task_role)
 
         cert = acm.Certificate.from_certificate_arn(
@@ -225,7 +243,7 @@ class TysStack(Stack):
                     "ADMIN_EMAIL": "admin@ticketyourself.com",
                 },
                 secrets={
-                    "DATABASE_URL": ecs.Secret.from_secrets_manager(db_url),
+                    "DATABASE_URL": ecs.Secret.from_secrets_manager(db_url_l2),
                     "JWT_SECRET": ecs.Secret.from_secrets_manager(jwt_secret),
                     "STRIPE_API_KEY": ecs.Secret.from_secrets_manager(stripe_key),
                     "STRIPE_WEBHOOK_SECRET": ecs.Secret.from_secrets_manager(
@@ -300,7 +318,10 @@ class TysStack(Stack):
             ),
             additional_behaviors={
                 "/api/*": cloudfront.BehaviorOptions(
-                    origin=origins.LoadBalancerV2Origin(fargate.load_balancer),
+                    origin=origins.LoadBalancerV2Origin(
+                        fargate.load_balancer,
+                        protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+                    ),
                     viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
                     cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,

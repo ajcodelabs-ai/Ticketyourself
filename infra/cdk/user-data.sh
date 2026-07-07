@@ -7,6 +7,10 @@ if ! command -v docker &>/dev/null; then
   usermod -aG docker ec2-user
 fi
 
+if ! command -v git &>/dev/null; then
+  dnf install -y git
+fi
+
 # ponytail: docker compose v2 comes bundled with `dnf install docker` on AL2023
 
 cd /home/ec2-user
