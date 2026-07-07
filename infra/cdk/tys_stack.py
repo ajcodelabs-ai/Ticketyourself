@@ -88,7 +88,7 @@ class TysStack(Stack):
             self, "EipAssoc", allocation_id=eip.attr_allocation_id, instance_id=instance.instance_id
         )
 
-        CfnOutput(self, "Url", value=f"http://{eip.ref}")
+        CfnOutput(self, "Url", value=f"http://{eip.attr_public_ip}")
         CfnOutput(self, "Ssm", value=f"aws ssm start-session --target {instance.instance_id}")
 
     # ═══════════════════════════════════════════════════════════════════
