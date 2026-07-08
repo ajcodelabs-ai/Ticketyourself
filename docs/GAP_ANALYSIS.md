@@ -32,11 +32,11 @@
 | Editar eventos | ✅ | Wizard 6 tabs completo |
 | Publicar o despublicar eventos | ✅ | Con guard para organizers pending |
 | Configurar información del evento | ✅ | Nombre, desc, categoría, fechas, ubicación, imágenes |
-| Administrar entradas | ⚠️ | Solo 1 tipo de entrada por evento (Fase 8 agrega multi-tipos) |
+| Administrar entradas | ✅ | Múltiples tipos por evento (VIP/General/Early Bird) vía `routers/functions.py` + `TicketTypesPanel.tsx` — verificado 2026-07-08 |
 | Visualizar estadísticas de ventas | ✅ | Dashboard con KPIs + tabla de órdenes |
 | Gestionar asistentes | ⚠️ | Solo vista de lista en validación; sin gestión completa de asistentes |
 | Configurar página pública de cada evento | ✅ | Microsite + página de evento configurable |
-| Gestionar personal de acceso al evento | ❌ | No existe sistema de usuarios colaboradores/staff |
+| Gestionar personal de acceso al evento | ✅ | Rol `org_staff` con login propio y eventos asignados vía `routers/staff.py` — verificado 2026-07-08 |
 
 ### 2.3 Cliente / Asistente
 | Requerimiento FRD | Estado | Notas |
@@ -73,7 +73,7 @@
 | CRUD planes + activar/desactivar | ✅ | Completo |
 | Configurar límites por plan (max eventos, tickets) | ✅ | `max_events`, `max_tickets_per_event`, `includes_numbered` |
 | Límite: número de asistentes | ❌ | No implementado como límite de plan |
-| Límite: número de usuarios administradores/staff | ❌ | No hay usuarios staff todavía |
+| Límite: número de usuarios administradores/staff | ❌ | El rol staff ya existe (`routers/staff.py`), pero no hay límite de cantidad por plan en `plan_features.py` |
 | Límite: capacidad de almacenamiento | ❌ | Sin control de storage |
 | Funcionalidades premium por plan | ✅ | `plan_features.py` con feature flags |
 | Gestión de métodos de pago (crear, activar, credenciales, comisiones) | ❌ | No existe. Stripe hardcodeado |
@@ -99,7 +99,7 @@
 ### Gestión de Entradas
 | Requerimiento FRD | Estado | Notas |
 |---|---|---|
-| Crear tipos de entrada (múltiples) | ⚠️ | Solo 1 tipo por evento. Multi-tipos es Fase 8 |
+| Crear tipos de entrada (múltiples) | ✅ | Multi-tipos (Fase 8) implementado y verificado 2026-07-08 |
 | Configurar precios y stock | ✅ | |
 | Configurar fechas de venta (ventana) | ✅ | `sales_start` / `sales_end` |
 | Generar códigos únicos | ✅ | JWT firmado con UUID |
@@ -188,24 +188,26 @@ Estas funcionalidades fueron construidas pero no estaban especificadas en el doc
 | **Feature flags por plan** | `plan_features.py` controla qué features activa cada plan (numbered seats, AI design, custom domain, max events/tickets) |
 | **Funnel de activación admin** | Gráficas de conversión del funnel de onboarding de nuevos organizadores |
 | **Exports CSV multi-dimensionales** | 5 tipos de export desde super admin: organizadores, eventos, órdenes, auditoría, reporte mensual ejecutivo |
-| **App mobile (Expo)** | Scanner QR nativo para validación en puerta (mencionado como "futuro" en FRD) |
+| **Scanner QR web para validación en puerta** | `frontend/src/pages/organizer/EventValidation.tsx` y `frontend/src/pages/staff/StaffScanner.tsx` (basados en `html5-qrcode`, cámara del navegador) — mencionado como "futuro" en FRD. Corrección 2026-07-08: la app `mobile/` (Expo) sigue siendo scaffolding sin cámara ni lógica de escaneo; no existe scanner QR nativo, solo el scanner web |
 
 ---
 
 ## Resumen de Brechas Críticas
 
+> Actualizado 2026-07-08 tras auditoría completa del código (ver `docs/TYS_Backlog_Monday_Revision.csv`). Los ítems "Gestión de personal/staff", "Multi ticket types" y "Multi-función" de la revisión anterior de este documento ya están implementados y se retiraron de esta lista.
+
 ### Prioridad Alta (bloquean uso real en producción)
-1. **Gestión de personal/staff** — sin poder crear usuarios validadores, el organizador debe darle su propia cuenta a cada persona de puerta
-2. **Multi ticket types** — sin esto, eventos con VIP/General/Early Bird no son viables
-3. **Búsqueda manual de asistentes** — por nombre/email, no solo por token
+1. **Login/registro y modo invitado en checkout** — el checkout es 100% anónimo hoy; sin OAuth ni opción de iniciar sesión durante la compra
+2. **Pasarelas de pago locales (Nuvei, Kushki, PayPhone, Datafast)** — solo Stripe está integrado
+3. **Búsqueda manual de asistentes** — por nombre/email, no solo por token/QR
 4. **Portal del asistente** — historial de compras, re-descarga de tickets
 
 ### Prioridad Media (UX incompleta)
 5. **Agenda del evento** — campo básico que los asistentes esperan
 6. **FAQ en landing y evento** — contenido de conversión y soporte
 7. **Reglas y políticas del evento** — requerido legalmente para muchos eventos
-8. **Multi-función (múltiples fechas)** — eventos de varios días/horarios
-9. **Control de reingreso** — escenarios de conciertos y festivales
+8. **Control de reingreso y prefiltros** — escenarios de conciertos y festivales; hoy el QR es de lectura única exclusivamente
+9. **Cuota de promo code por comprador** — `TicketType.max_per_buyer` existe pero no se aplica (`assert_buyer_allowed` sin invocar)
 
 ### Prioridad Baja (valor futuro)
 10. **Escenarios predefinidos desde super admin** — templates reutilizables
@@ -213,3 +215,4 @@ Estas funcionalidades fueron construidas pero no estaban especificadas en el doc
 12. **Monitoreo tiempo real en puerta** — capacidad ocupada por zona en vivo
 13. **Gestión de métodos de pago desde admin** — agregar Kushki, PayPal, etc.
 14. **Operación offline** — para eventos en lugares sin conectividad
+15. **App móvil nativa con cámara** — `mobile/` (Expo) sigue siendo scaffolding sin lógica de escaneo real

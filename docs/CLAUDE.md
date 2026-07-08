@@ -15,7 +15,7 @@ Preview URL: `https://ticket-poc.preview.emergentagent.com`
 ```
 backend/    FastAPI app (Python)
 frontend/   React SPA (CRA + craco)
-mobile/     Expo React Native app (QR scanner / door validation)
+mobile/     Expo React Native app (scaffolding only — see "Mobile Architecture" below; door validation actually happens via the web scanners in frontend/)
 docs/       Project notes (PRD, STATUS, CLAUDE.md, auth_testing.md)
 ```
 
@@ -117,7 +117,7 @@ yarn lint
 
 ## Mobile Architecture
 
-Expo Router (file-based routing under `mobile/app/`). Currently minimal — primarily a QR scanner wrapper (`html5-qrcode`) for door validation, wrapping backend `/api/tickets/validate`.
+Expo Router (file-based routing under `mobile/app/`). **Correction 2026-07-08 (verified by reading `mobile/app/index.tsx`):** this is unbuilt scaffolding — a single static screen rendering one image, no camera, no QR/barcode library, no navigation, no call to `/api/tickets/validate`. It does not wrap `html5-qrcode` or perform any scanning; that library is only used by the *web* scanners at `frontend/src/pages/organizer/EventValidation.tsx` and `frontend/src/pages/staff/StaffScanner.tsx`, which are what actually handle door validation today.
 
 ## Database (PostgreSQL)
 
@@ -189,4 +189,6 @@ EXPO_PUBLIC_BACKEND_URL=http://localhost:8000   # use LAN IP for physical device
 
 ## Roadmap Status
 
-15 of 17 phases complete. Pending: **Phase 8** (multi ticket types, multi-function events, advanced promo codes) and **Phase 10** (historical MRR/churn/cohort snapshots). All other features including numbered seating, Stripe checkout, manual payments, QR validation, and super-admin panel are fully implemented.
+> Verificado contra código el 2026-07-08 (ver `docs/TYS_Backlog_Monday_Revision.csv` para el detalle ticket a ticket).
+
+16 of 17 phases complete. **Phase 8** (multi ticket types via `TicketType`/`routers/functions.py`, multi-function events via `EventFunction`/season passes, staff/`org_staff` role via `routers/staff.py`, and advanced promo codes via `discount_service.py`) is implemented and covered by integration tests — this corrects an earlier version of this doc that listed it as pending. Two known gaps inside that phase's broader scope remain open: guest/anonymous checkout mode and door-side attendee search by name/email are not built. Pending: **Phase 10** (historical MRR/churn/cohort snapshots). All other features including numbered seating, Stripe checkout, manual payments, QR validation, and super-admin panel are fully implemented.

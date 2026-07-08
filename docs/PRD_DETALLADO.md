@@ -35,7 +35,7 @@ TYS es una plataforma SaaS multi-tenant que permite a organizaciones crear y mon
 | Comprar tickets | ❌ | ❌ | ❌ | ✅ |
 | Ver historial de compras | ❌ | ❌ | ❌ | ✅ |
 
-> ⚠️ = según permisos asignados por el Org Owner. **Rol `org_staff` no está implementado aún** (Fase 8+).
+> ⚠️ = según permisos asignados por el Org Owner. **Rol `org_staff` implementado** (`backend/routers/staff.py` — login propio y eventos asignados) — verificado 2026-07-08, corrige nota anterior de este documento. La granularidad de permisos por fila de esta tabla no fue verificada celda por celda en esa fecha.
 
 ### 2.2 Definición de roles
 
@@ -187,11 +187,11 @@ Los límites se validan en backend antes de cada operación (crear evento, publi
 | EVT-04 | Organizador | Agregar reglas y políticas del evento | Informar condiciones de asistencia y reembolso | ❌ Fase 8 |
 | EVT-05 | Organizador | Agregar preguntas frecuentes específicas del evento | Reducir consultas repetitivas al organizador | ❌ Fase 11 |
 | EVT-06 | Organizador | Publicar o despublicar el evento con un click | Controlar la visibilidad pública | ✅ |
-| EVT-07 | Organizador | Crear un evento con múltiples fechas/funciones | Gestionar una obra de teatro, tour o ciclo de conferencias | ❌ Fase 8 |
+| EVT-07 | Organizador | Crear un evento con múltiples fechas/funciones | Gestionar una obra de teatro, tour o ciclo de conferencias | ✅ (verificado 2026-07-08) |
 | EVT-08 | Visitante | Ver la página pública del evento con toda la información | Decidir si asistir y comprar el ticket | ✅ |
 | EVT-09 | Organizador | Duplicar un evento existente | Ahorrar tiempo al crear eventos recurrentes similares | ❌ Fase 8 |
 
-**Brechas:** EVT-03 (agenda), EVT-04 (reglas), EVT-07 (multi-función), EVT-09 (duplicar evento) — todas Fase 8. EVT-05 (FAQ evento) — Fase 11.
+**Brechas:** EVT-03 (agenda), EVT-04 (reglas), EVT-09 (duplicar evento) — Fase 8. EVT-05 (FAQ evento) — Fase 11. EVT-07 (multi-función) se verificó implementado el 2026-07-08 (`orm_models.py::EventFunction`, `routers/functions.py`, `EventFunctionsPanel.tsx`) y se retira de esta lista — corrige una versión anterior de este documento. Nota: `routers/venues.py::duplicate_venue` sí permite duplicar venues; el equivalente para eventos (EVT-09) sigue sin existir.
 
 ---
 
@@ -216,20 +216,20 @@ Los límites se validan en backend antes de cada operación (crear evento, publi
 
 ### Módulo 7 — Gestión de Entradas (Ticket Types)
 
-**Estado actual:** ⚠️ solo 1 tipo por evento. Promo codes y descuentos automáticos implementados. Multi-tipos es Fase 8.
+**Estado actual (verificado 2026-07-08):** ✅ multi-tipos implementado vía `orm_models.py::TicketType` + `routers/functions.py` (CRUD) + `frontend/src/components/events/TicketTypesPanel.tsx`. Corrige una versión anterior de este documento que lo listaba como "solo 1 tipo por evento, Fase 8".
 
 #### Historias de usuario
 
 | ID | Como... | Quiero... | Para... | Estado |
 |---|---|---|---|---|
-| TKT-01 | Organizador | Crear múltiples tipos de entrada para un evento (VIP, General, Early Bird) | Segmentar la audiencia y el precio | ❌ Fase 8 |
-| TKT-02 | Organizador | Definir stock, precio y ventana de venta por tipo | Controlar disponibilidad de cada categoría | ❌ Fase 8 |
-| TKT-03 | Organizador | Crear tipos de entrada gratuitos (lista de invitados) | Gestionar accesos sin cobro | ❌ Fase 8 |
-| TKT-04 | Organizador | Configurar un máximo de tickets por comprador por tipo | Evitar la reventa o acaparamiento | ❌ Fase 8 |
+| TKT-01 | Organizador | Crear múltiples tipos de entrada para un evento (VIP, General, Early Bird) | Segmentar la audiencia y el precio | ✅ |
+| TKT-02 | Organizador | Definir stock, precio y ventana de venta por tipo | Controlar disponibilidad de cada categoría | ✅ `capacity`, `price_cents`, `sale_start`/`sale_end` por tipo |
+| TKT-03 | Organizador | Crear tipos de entrada gratuitos (lista de invitados) | Gestionar accesos sin cobro | ⚠️ `price_cents=0` soportado por el modelo; no se verificó una integración específica con lista de invitados |
+| TKT-04 | Organizador | Configurar un máximo de tickets por comprador por tipo | Evitar la reventa o acaparamiento | ⚠️ `TicketType.max_per_buyer` existe en el esquema pero no se aplica en el checkout (`discount_service.py::assert_buyer_allowed` está definida pero nunca se invoca) |
 | TKT-05 | Organizador | Crear códigos de descuento (promo codes) y descuentos automáticos por cantidad | Ofrecer descuentos segmentados | ✅ |
-| TKT-06 | Asistente | Ver todos los tipos disponibles y sus precios antes de comprar | Elegir el que más me conviene | ⚠️ Solo 1 tipo hoy |
+| TKT-06 | Asistente | Ver todos los tipos disponibles y sus precios antes de comprar | Elegir el que más me conviene | ✅ `public_list_ticket_types` en `routers/functions.py` |
 
-**Brecha:** TKT-01 a TKT-04 (multi-tipos, Fase 8).
+**Brecha residual:** TKT-04 (límite por comprador definido pero no aplicado). TKT-03 (vínculo con lista de invitados) no verificado a fondo.
 
 ---
 
@@ -486,7 +486,7 @@ El esquema lo gestiona Alembic. Los modelos ORM viven en `backend/orm_models.py`
 
 ### 5.5 Mobile (Expo React Native)
 
-Principalmente para escaneo QR en puerta. Usa Expo Router con file-based routing. Se comunica con el mismo backend via `EXPO_PUBLIC_BACKEND_URL`.
+Intención original: escaneo QR en puerta. Usa Expo Router con file-based routing y se comunica con el mismo backend vía `EXPO_PUBLIC_BACKEND_URL`. **Corrección 2026-07-08:** `mobile/app/index.tsx` es hoy solo scaffolding — una pantalla estática con una imagen, sin cámara, sin librería de QR y sin llamada a `/api/tickets/validate`. El escaneo QR en puerta funciona actualmente solo vía navegador web (`html5-qrcode`) en `EventValidation.tsx` y `StaffScanner.tsx`.
 
 En el futuro podría expandirse a: app del asistente, app del organizador mobile.
 
@@ -648,6 +648,14 @@ El comprador NO necesita crear cuenta para acceder a su orden. El sistema genera
 ### Fase 8 — Multi-tickets, Multi-función, Staff, Guest Mode (P1)
 
 > Desbloquea casos de uso críticos que hoy bloquean ventas reales.
+
+> **Estado de implementación (verificado por código el 2026-07-08 — ver `docs/TYS_Backlog_Monday_Revision.csv`):** las secciones de esta fase tienen estados muy distintos entre sí y no deben tratarse como un bloque único.
+> - **8A Guest Mode** — ⚠️ parcial. El checkout siempre identifica al comprador por nombre+email sin cuenta y genera un `order_token` (UUID v4) como link de orden, tal como especifica esta sección. Pero no existe una alternativa de cuenta/login (ver Fase 11 más abajo) — hoy es la única vía, no un "modo" opcional — y el email de confirmación sí incluye el eTicket/QR de inmediato en todos los casos (no "solo resumen + link", como pide la última fila de la tabla 8A).
+> - **8B eTicket Delivery Mode** — ⚠️ parcial. Los campos `ticket_delivery_mode`, `ticket_delivery_hours` y `ticket_delivery_at` existen en `orm_models.py::Event` y son configurables vía API, pero ningún job/scheduler los lee ni los aplica — es configuración inerte. El QR se envía siempre de inmediato junto con la confirmación de compra, sin importar el modo configurado.
+> - **8C Multi Ticket Types** — ✅ implementado (`orm_models.py::TicketType`, `routers/functions.py`, `TicketTypesPanel.tsx`). El límite máximo por comprador (`max_per_buyer`) existe en el esquema pero no se aplica en el checkout.
+> - **8D Multi-función** — ✅ implementado (`orm_models.py::EventFunction`/`FunctionTicketType`, `routers/functions.py`, `EventFunctionsPanel.tsx` con pestaña "Funciones" en el wizard).
+> - **8E Gestión de Staff** — ✅ implementado a nivel de rol y asignación a eventos (`routers/staff.py`, rol `org_staff`). No se verificó en detalle la granularidad de sub-roles (`scanner`/`cajero`/`admin_evento`) descrita en la tabla de esta sección.
+> - **8F Otras features** — siguen pendientes: duplicar evento, agenda del evento, reglas y políticas, búsqueda en puerta, y el límite de promo code por comprador (definido en el esquema, no aplicado). El "retry de pago fallido" se apoya en la página hospedada de Stripe Checkout (reintento nativo), no en una pantalla propia de TYS.
 
 #### 8A — Guest Mode (comprador identificado sin cuenta)
 
@@ -857,7 +865,7 @@ El QR siempre es accesible desde el link de la orden, independientemente del mod
 | **Concurrencia** | Reserva de asientos con transacciones atómicas (TTL 15min) | ✅ |
 | **Idempotencia** | Finalización de pago idempotente (no duplica tickets) | ✅ |
 | **Offline (futuro)** | Service Worker para validación QR sin internet | ❌ Fase 12 |
-| **Mobile** | Responsive web + app Expo para validación | ✅ básico |
+| **Mobile** | Responsive web para validación | ⚠️ web sí, app Expo es solo scaffolding sin cámara (verificado 2026-07-08) |
 
 ---
 

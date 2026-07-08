@@ -22,7 +22,7 @@ URL preview: `https://ticket-poc.preview.emergentagent.com`
 - **Fase 9** — **QR Scanner & Door validation** ✅ (Feb 24, 2026)
 - **Fase 9.5** — **UX refinement & flow fixes (feedback usuario)** ✅ CERRADA (Feb 25, 2026)
 - **Fase 9.6** — **UX iteración: presets + venue picker en Info + media mockups + preview grande** ✅ CERRADA (Feb 25, 2026)
-- **Fase 8** (P1) — Multi ticket types, multi-función, promo codes, descuentos avanzados
+- **Fase 8** (P1) — Multi ticket types, multi-función, staff, promo codes, descuentos avanzados ✅ (verificado por código 2026-07-08; ver `docs/TYS_Backlog_Monday_Revision.csv`). Guest mode como alternativa a login y búsqueda de asistente en puerta siguen pendientes — ver detalle en `docs/PRD_DETALLADO.md` sección Fase 8.
 - **Fase 10** (P2) — Snapshots históricos de MRR (delta real mes a mes), churn, cohorts
 
 ## Fase 9.5 — UX refinement (feedback usuario, Feb 25 2026)
