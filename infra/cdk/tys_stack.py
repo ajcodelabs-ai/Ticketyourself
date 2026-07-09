@@ -44,6 +44,9 @@ class TysStack(Stack):
 
     def _build_staging(self):
         vpc = ec2.Vpc(self, "Vpc", max_azs=1, nat_gateways=0)
+        # Staging exposes the backend/frontend ports directly on the EC2
+        # instance (no ALB/TLS in front) to keep single-instance cost/setup
+        # minimal; this is intentional for a non-production environment.
         sg = ec2.SecurityGroup(self, "Sg", vpc=vpc, allow_all_outbound=True)
         sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP")
         sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")
@@ -156,15 +159,6 @@ class TysStack(Stack):
             "PostgreSQL",
         )
 
-        db_password = secretsmanager.Secret(
-            self,
-            "RdsPassword",
-            secret_name="tys-prod-rds-master",
-            generate_secret_string=secretsmanager.SecretStringGenerator(
-                exclude_punctuation=True, password_length=24
-            ),
-        )
-
         db = rds.DatabaseInstance(
             self,
             "Rds",
@@ -180,7 +174,9 @@ class TysStack(Stack):
             ),
             security_groups=[db_sg],
             database_name="tys_production",
-            credentials=rds.Credentials.from_secret(db_password),
+            credentials=rds.Credentials.from_generated_secret(
+                "tys_admin", secret_name="tys-prod-rds-master"
+            ),
             allocated_storage=50,
             storage_type=rds.StorageType.GP3,
             backup_retention=Duration.days(30),
@@ -194,9 +190,9 @@ class TysStack(Stack):
             name="tys-prod-database-url",
             secret_string=Fn.join("", [
                 "postgresql+asyncpg://",
-                db_password.secret_value_from_json("username").unsafe_unwrap(),
+                db.secret.secret_value_from_json("username").unsafe_unwrap(),
                 ":",
-                db_password.secret_value_from_json("password").unsafe_unwrap(),
+                db.secret.secret_value_from_json("password").unsafe_unwrap(),
                 "@",
                 db.db_instance_endpoint_address,
                 ":",
@@ -231,10 +227,11 @@ class TysStack(Stack):
             memory_limit_mib=2048,
             desired_count=1,
             certificate=cert,
-            redirect_http=True,
+            redirect_http=bool(cert),
             task_image_options=ecs_patterns.ApplicationLoadBalancedTaskImageOptions(
                 image=ecs.ContainerImage.from_ecr_repository(repo),
                 container_port=8000,
+                task_role=task_role,
                 environment={
                     "ENV": "production",
                     "TYS_FEE_PERCENT": "5",
@@ -320,7 +317,11 @@ class TysStack(Stack):
                 "/api/*": cloudfront.BehaviorOptions(
                     origin=origins.LoadBalancerV2Origin(
                         fargate.load_balancer,
-                        protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+                        protocol_policy=(
+                            cloudfront.OriginProtocolPolicy.HTTPS_ONLY
+                            if cert_arn
+                            else cloudfront.OriginProtocolPolicy.HTTP_ONLY
+                        ),
                     ),
                     viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,

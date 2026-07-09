@@ -5,6 +5,10 @@ from tys_stack import TysStack
 app = cdk.App()
 
 env_name = app.node.try_get_context("env") or "staging"
+if env_name not in ("staging", "production"):
+    raise ValueError(
+        f"Invalid --context env={env_name!r}; must be 'staging' or 'production'"
+    )
 domain_name = app.node.try_get_context("domain")
 cert_arn = app.node.try_get_context("cert_arn")
 
