@@ -134,5 +134,9 @@ backend/.python-version
 # UV lock file (project uses pip)
 backend/uv.lock
 
+# CDK
+cdk.out/
+infra/cdk/.venv/
+
 # Scratch files
 backend/main.py
