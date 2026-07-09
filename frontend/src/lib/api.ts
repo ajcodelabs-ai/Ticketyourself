@@ -6,20 +6,33 @@ export const API_BASE = `${BACKEND_URL}/api`;
 const ACCESS_KEY = "tys_access_token";
 const REFRESH_KEY = "tys_refresh_token";
 
+// Refresh tokens stay in memory only — not in localStorage — to reduce XSS exposure.
+let refreshInMemory: string | null = null;
+
 export const tokenStore = {
     get access() {
         return localStorage.getItem(ACCESS_KEY);
     },
     get refresh() {
-        return localStorage.getItem(REFRESH_KEY);
+        if (refreshInMemory) return refreshInMemory;
+        const legacy = localStorage.getItem(REFRESH_KEY);
+        if (legacy) {
+            refreshInMemory = legacy;
+            localStorage.removeItem(REFRESH_KEY);
+        }
+        return refreshInMemory;
     },
     set({ access_token, refresh_token }) {
         if (access_token) localStorage.setItem(ACCESS_KEY, access_token);
-        if (refresh_token) localStorage.setItem(REFRESH_KEY, refresh_token);
+        if (refresh_token) {
+            refreshInMemory = refresh_token;
+            localStorage.removeItem(REFRESH_KEY);
+        }
     },
     clear() {
         localStorage.removeItem(ACCESS_KEY);
         localStorage.removeItem(REFRESH_KEY);
+        refreshInMemory = null;
     },
 };
 
@@ -130,7 +143,7 @@ function translateValidationError(entry) {
             break;
         case "literal_error":
         case "enum":
-            msg = "Elegí una de las opciones disponibles.";
+            msg = "Elige una de las opciones disponibles.";
             break;
         default:
             break;
@@ -140,7 +153,7 @@ function translateValidationError(entry) {
 }
 
 export function formatApiError(detail) {
-    if (detail == null) return "Algo salió mal. Intentalo de nuevo.";
+    if (detail == null) return "Algo salió mal. Inténtalo de nuevo.";
     if (typeof detail === "string") return detail;
     if (Array.isArray(detail))
         return detail
