@@ -62,6 +62,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       ENV: ${ENV:-development_local}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-localhost}
       TYS_FEE_PERCENT: ${TYS_FEE_PERCENT:-5}
       STRIPE_API_KEY: ${STRIPE_API_KEY:-}
       STRIPE_API_BASE: ${STRIPE_API_BASE:-https://api.stripe.com}

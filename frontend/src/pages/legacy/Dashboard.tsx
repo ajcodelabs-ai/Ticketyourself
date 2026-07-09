@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import ShareModal from "@/components/microsite/ShareModal";
 import { useAuth } from "@/contexts/AuthContext";
-import { PUBLIC_DOMAIN, publicMicrositeHost, previewMicrositePath } from "@/lib/config";
+import { PUBLIC_DOMAIN, publicMicrositeHost, previewMicrositePath, publicMicrositeUrl, isOnPublicDomain } from "@/lib/config";
 import {
     AlertTriangle,
     CheckCircle2,
@@ -43,7 +43,7 @@ export default function Dashboard() {
 
     const micrositePublicUrl = useMemo(() => {
         if (!organizer?.slug) return "";
-        return `${window.location.origin}${previewMicrositePath(organizer.slug)}`;
+        return publicMicrositeUrl(organizer.slug);
     }, [organizer?.slug]);
 
     if (!organizer) {
@@ -108,7 +108,7 @@ export default function Dashboard() {
                             </code>
                             <span className="ml-2 text-xs">
                                 <Badge variant="outline" className="text-xs">
-                                    Próximamente en producción
+                                    {isOnPublicDomain() ? "En vivo" : "Próximamente en producción"}
                                 </Badge>
                             </span>
                         </CardDescription>
@@ -137,10 +137,10 @@ export default function Dashboard() {
                             asChild
                             data-testid="dash-microsite-view-btn"
                         >
-                            <Link to={previewMicrositePath(organizer.slug)} target="_blank">
+                            <a href={publicMicrositeUrl(organizer.slug)} target="_blank" rel="noopener noreferrer">
                                 <ExternalLink className="h-4 w-4 mr-1.5" />
                                 Ver público
-                            </Link>
+                            </a>
                         </Button>
                     </CardContent>
                 </Card>
@@ -233,15 +233,33 @@ function StatusCard({ organizer }) {
                             </code>
                         </CardDescription>
                         <p className="text-xs text-emerald-700/80">
-                            Próximamente disponible en producción. Mientras tanto, accedé desde el preview en{" "}
-                            <Link
-                                to={previewMicrositePath(organizer.slug)}
-                                className="underline font-medium"
-                                data-testid="approved-preview-link"
-                            >
-                                /o/{organizer.slug}
-                            </Link>
-                            .
+                            {isOnPublicDomain() ? (
+                                <>
+                                    Ya disponible en{" "}
+                                    <a
+                                        href={publicMicrositeUrl(organizer.slug)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="underline font-medium"
+                                        data-testid="approved-preview-link"
+                                    >
+                                        {publicMicrositeHost(organizer.slug)}
+                                    </a>
+                                    .
+                                </>
+                            ) : (
+                                <>
+                                    Próximamente disponible en producción. Mientras tanto, accedé desde la vista previa en{" "}
+                                    <Link
+                                        to={previewMicrositePath(organizer.slug)}
+                                        className="underline font-medium"
+                                        data-testid="approved-preview-link"
+                                    >
+                                        /o/{organizer.slug}
+                                    </Link>
+                                    .
+                                </>
+                            )}
                         </p>
                     </div>
                 </CardHeader>
