@@ -249,7 +249,7 @@ function StatusCard({ organizer }) {
                                 </>
                             ) : (
                                 <>
-                                    Próximamente disponible en producción. Mientras tanto, accedé desde el preview en{" "}
+                                    Próximamente disponible en producción. Mientras tanto, accedé desde la vista previa en{" "}
                                     <Link
                                         to={previewMicrositePath(organizer.slug)}
                                         className="underline font-medium"

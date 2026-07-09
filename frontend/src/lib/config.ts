@@ -41,6 +41,7 @@ export function previewMicrositePath(slug) {
 export function isOnPublicDomain() {
     if (typeof window === "undefined") return false;
     const h = window.location.hostname;
+    if (h === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(h)) return false;
     return h === PUBLIC_DOMAIN || h.endsWith(`.${PUBLIC_DOMAIN}`);
 }
 

@@ -450,7 +450,7 @@ export default function MicrositeEditor() {
                                             </p>
                                         ) : (
                                             <p className="text-xs text-muted-foreground">
-                                                Próximamente con DNS de producción. En preview:{" "}
+                                                Próximamente con DNS de producción. En vista previa:{" "}
                                                 <Link
                                                     to={previewMicrositePath(organizer.slug)}
                                                     className="underline"
