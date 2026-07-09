@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import PasswordInput from "@/components/ui/password-input";
 import PhoneInput from "@/components/ui/phone-input";
+import { isValidPhoneNumber } from "react-phone-number-input";
 import PlansShowcase, { PlanCard } from "@/components/PlansShowcase";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
@@ -132,21 +133,42 @@ export default function Register() {
 
     const update = (key) => (e) => {
         const val = e?.target?.value ?? e;
-        setForm((f) => ({ ...f, [key]: val }));
+        setForm((f) => ({ ...f, [key]: val ?? "" }));
     };
 
     const submit = async (e) => {
         e.preventDefault();
         if (!selectedPlan) {
-            toast.error("Elegí un plan antes de crear tu cuenta");
+            toast.error("Elige un plan antes de crear tu cuenta");
+            return;
+        }
+        if (!form.email.trim()) {
+            toast.error("Ingresa tu email");
+            return;
+        }
+        const phone = (form.phone ?? "").trim();
+        if (!phone) {
+            toast.error("Ingresa tu número de teléfono");
+            return;
+        }
+        if (!isValidPhoneNumber(phone)) {
+            toast.error("El número de teléfono no es válido. Revisa el código de país y los dígitos.");
+            return;
+        }
+        if (form.password.length < 8) {
+            toast.error("La contraseña debe tener al menos 8 caracteres");
             return;
         }
         if (form.password !== form.confirmPassword) {
             toast.error("Las contraseñas no coinciden");
             return;
         }
-        if (form.password.length < 8) {
-            toast.error("La contraseña debe tener al menos 8 caracteres");
+        if (!form.company_name.trim()) {
+            toast.error(form.org_type === "company" ? "Ingresa el nombre comercial" : "Ingresa tu nombre completo");
+            return;
+        }
+        if (!form.legal_id.trim()) {
+            toast.error(form.org_type === "company" ? "Ingresa el RUC" : "Ingresa tu cédula");
             return;
         }
         if (!form.slug || !slugCheck.available) {
@@ -161,13 +183,13 @@ export default function Register() {
                 company_name: form.company_name.trim(),
                 legal_id: form.legal_id.trim(),
                 org_type: form.org_type,
-                phone: form.phone.trim(),
+                phone,
                 country: form.country.trim(),
                 slug: form.slug,
             });
             localStorage.setItem(SIGNUP_PLAN_KEY, selectedPlan.code);
-            toast.success("Cuenta creada — ahora iniciá sesión para subir tus documentos");
-            navigate("/login", { replace: true, state: { from: { pathname: "/onboarding" } } });
+            toast.success("Cuenta creada — ¡bienvenido a TYS!");
+            navigate("/onboarding", { replace: true });
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
         } finally {
@@ -180,11 +202,11 @@ export default function Register() {
             <div data-testid="register-page" className="mx-auto max-w-6xl px-5 sm:px-8 py-12 space-y-8">
                 <div className="text-center space-y-2 max-w-2xl mx-auto">
                     <h1 className="text-3xl font-semibold tracking-tight">
-                        Elegí un plan para empezar
+                        Elige un plan para empezar
                     </h1>
                     <p className="text-muted-foreground text-sm">
-                        No hay registro gratuito: primero elegís cómo querés vender (evento único o
-                        suscripción mensual) y después completás tus datos.
+                        No hay registro gratuito: primero eliges cómo quieres vender (evento único o
+                        suscripción mensual) y después completas tus datos.
                     </p>
                 </div>
                 {loadingPlans ? (
@@ -193,7 +215,7 @@ export default function Register() {
                     <PlansShowcase onSelect={pickPlan} ctaLabel="Continuar con este plan" columns={4} />
                 )}
                 <p className="text-sm text-muted-foreground text-center">
-                    ¿Ya tenés cuenta?{" "}
+                    ¿Ya tienes cuenta?{" "}
                     <Link to="/login" className="text-primary hover:underline">
                         Iniciar sesión
                     </Link>
@@ -232,7 +254,7 @@ export default function Register() {
                     <CardTitle className="text-2xl">Datos de tu organización</CardTitle>
                     <CardDescription>
                         Plan elegido: <strong className="text-foreground">{selectedPlan.name}</strong>{" "}
-                        ({formatPlanPrice(selectedPlan)}). Después del registro subís tus documentos
+                        ({formatPlanPrice(selectedPlan)}). Después del registro subes tus documentos
                         para revisión; el pago se habilita una vez que el equipo TYS apruebe tu cuenta.
                     </CardDescription>
                 </CardHeader>
@@ -261,7 +283,11 @@ export default function Register() {
                                     value={form.phone}
                                     onChange={update("phone")}
                                     placeholder="99 123 4567"
+                                    required
                                 />
+                                <p className="text-xs text-muted-foreground">
+                                    Incluye el código de país (ej: Ecuador +593).
+                                </p>
                             </div>
                         </div>
 
@@ -434,7 +460,7 @@ export default function Register() {
                         </Button>
 
                         <p className="text-sm text-muted-foreground text-center">
-                            ¿Ya tenés cuenta?{" "}
+                            ¿Ya tienes cuenta?{" "}
                             <Link to="/login" className="text-primary hover:underline">
                                 Iniciar sesión
                             </Link>

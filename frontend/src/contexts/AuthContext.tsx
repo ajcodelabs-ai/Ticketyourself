@@ -47,7 +47,7 @@ export function AuthProvider({ children }) {
     // Re-sync when another tab changes tokens (login/logout there).
     useEffect(() => {
         const onStorage = (e) => {
-            if (e.key === "tys_access_token" || e.key === "tys_refresh_token") {
+            if (e.key === "tys_access_token") {
                 checkSession();
             }
         };
@@ -96,10 +96,20 @@ export function AuthProvider({ children }) {
         [setSession],
     );
 
-    const register = useCallback(async (payload) => {
-        const { data } = await api.post("/auth/register", payload);
-        return data;
-    }, []);
+    const register = useCallback(
+        async (payload) => {
+            const { data } = await api.post("/auth/register", payload);
+            if (data.access_token) {
+                tokenStore.set({
+                    access_token: data.access_token,
+                    refresh_token: data.refresh_token,
+                });
+            }
+            setSession(data);
+            return data;
+        },
+        [setSession],
+    );
 
     const logout = useCallback(async () => {
         try {
