@@ -82,7 +82,11 @@ async def check_slug(
 # ── Register ──────────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=AuthMeResponse)
-async def register(payload: RegisterRequest, session: AsyncSession = Depends(get_db)):
+async def register(
+    payload: RegisterRequest,
+    response: Response,
+    session: AsyncSession = Depends(get_db),
+):
     email = payload.email.lower().strip()
 
     existing = await session.execute(select(User).where(User.email == email))
@@ -184,9 +188,16 @@ async def register(payload: RegisterRequest, session: AsyncSession = Depends(get
 
     # Reload with relationships for response
     await session.refresh(org_row, ["admin_comments"])
+
+    access = create_access_token(user_row.id, user_row.email, user_row.role)
+    refresh = create_refresh_token(user_row.id, user_row.token_version or 0)
+    set_auth_cookies(response, access, refresh)
+
     return AuthMeResponse(
         user=_user_row_to_out(user_row),
         organizer=_org_row_to_out(org_row),
+        access_token=access,
+        refresh_token=refresh,
     )
 
 

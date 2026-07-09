@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import PasswordInput from "@/components/ui/password-input";
 import PhoneInput from "@/components/ui/phone-input";
+import { isValidPhoneNumber } from "react-phone-number-input";
 import PlansShowcase, { PlanCard } from "@/components/PlansShowcase";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
@@ -141,12 +142,32 @@ export default function Register() {
             toast.error("Elegí un plan antes de crear tu cuenta");
             return;
         }
-        if (form.password !== form.confirmPassword) {
-            toast.error("Las contraseñas no coinciden");
+        if (!form.email.trim()) {
+            toast.error("Ingresá tu email");
+            return;
+        }
+        if (!form.phone.trim()) {
+            toast.error("Ingresá tu número de teléfono");
+            return;
+        }
+        if (!isValidPhoneNumber(form.phone.trim())) {
+            toast.error("El número de teléfono no es válido. Revisá el código de país y los dígitos.");
             return;
         }
         if (form.password.length < 8) {
             toast.error("La contraseña debe tener al menos 8 caracteres");
+            return;
+        }
+        if (form.password !== form.confirmPassword) {
+            toast.error("Las contraseñas no coinciden");
+            return;
+        }
+        if (!form.company_name.trim()) {
+            toast.error(form.org_type === "company" ? "Ingresá el nombre comercial" : "Ingresá tu nombre completo");
+            return;
+        }
+        if (!form.legal_id.trim()) {
+            toast.error(form.org_type === "company" ? "Ingresá el RUC" : "Ingresá tu cédula");
             return;
         }
         if (!form.slug || !slugCheck.available) {
@@ -166,8 +187,8 @@ export default function Register() {
                 slug: form.slug,
             });
             localStorage.setItem(SIGNUP_PLAN_KEY, selectedPlan.code);
-            toast.success("Cuenta creada — ahora iniciá sesión para subir tus documentos");
-            navigate("/login", { replace: true, state: { from: { pathname: "/onboarding" } } });
+            toast.success("Cuenta creada — ¡bienvenido a TYS!");
+            navigate("/onboarding", { replace: true });
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
         } finally {
@@ -261,7 +282,11 @@ export default function Register() {
                                     value={form.phone}
                                     onChange={update("phone")}
                                     placeholder="99 123 4567"
+                                    required
                                 />
+                                <p className="text-xs text-muted-foreground">
+                                    Incluí el código de país (ej: Ecuador +593).
+                                </p>
                             </div>
                         </div>
 
