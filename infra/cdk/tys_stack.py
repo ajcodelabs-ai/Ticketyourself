@@ -234,6 +234,7 @@ class TysStack(Stack):
                 task_role=task_role,
                 environment={
                     "ENV": "production",
+                    "PUBLIC_DOMAIN": domain_name or "ajcodelabs.ai",
                     "TYS_FEE_PERCENT": "5",
                     "STRIPE_API_BASE": "https://api.stripe.com",
                     "EMAIL_FROM": "noreply@ticketyourself.com",

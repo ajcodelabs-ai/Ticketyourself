@@ -36,7 +36,7 @@ import PublishPendingDialog from "@/components/PublishPendingDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
 import { TEMPLATE_OPTIONS, FONT_OPTIONS, assetUrl } from "@/lib/microsite";
-import { PUBLIC_DOMAIN, previewMicrositePath } from "@/lib/config";
+import { PUBLIC_DOMAIN, previewMicrositePath, publicMicrositeUrl, publicMicrositeHost, isOnPublicDomain } from "@/lib/config";
 import {
     ExternalLink,
     Monitor,
@@ -174,8 +174,7 @@ export default function MicrositeEditor() {
 
     const publicUrl = useMemo(() => {
         if (!organizer?.slug) return "";
-        const origin = window.location.origin;
-        return `${origin}${previewMicrositePath(organizer.slug)}`;
+        return publicMicrositeUrl(organizer.slug);
     }, [organizer?.slug]);
 
     if (loading) {
@@ -223,10 +222,10 @@ export default function MicrositeEditor() {
                         asChild
                         data-testid="editor-open-public"
                     >
-                        <Link to={previewMicrositePath(organizer.slug)} target="_blank">
+                        <a href={publicMicrositeUrl(organizer.slug)} target="_blank" rel="noopener noreferrer">
                             <ExternalLink className="h-4 w-4 mr-2" />
                             Ver público
-                        </Link>
+                        </a>
                     </Button>
                     <Button
                         variant="outline"
@@ -437,15 +436,29 @@ export default function MicrositeEditor() {
                                         <code className="block text-sm bg-background px-2 py-1.5 rounded border">
                                             {organizer.slug}.{PUBLIC_DOMAIN}
                                         </code>
-                                        <p className="text-xs text-muted-foreground">
-                                            Próximamente con DNS de producción. En preview:{" "}
-                                            <Link
-                                                to={previewMicrositePath(organizer.slug)}
-                                                className="underline"
-                                            >
-                                                /o/{organizer.slug}
-                                            </Link>
-                                        </p>
+                                        {isOnPublicDomain() ? (
+                                            <p className="text-xs text-muted-foreground">
+                                                Ya disponible en{" "}
+                                                <a
+                                                    href={publicUrl}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="underline"
+                                                >
+                                                    {publicMicrositeHost(organizer.slug)}
+                                                </a>
+                                            </p>
+                                        ) : (
+                                            <p className="text-xs text-muted-foreground">
+                                                Próximamente con DNS de producción. En preview:{" "}
+                                                <Link
+                                                    to={previewMicrositePath(organizer.slug)}
+                                                    className="underline"
+                                                >
+                                                    /o/{organizer.slug}
+                                                </Link>
+                                            </p>
+                                        )}
                                         <Button
                                             onClick={() => setShareOpen(true)}
                                             variant="outline"

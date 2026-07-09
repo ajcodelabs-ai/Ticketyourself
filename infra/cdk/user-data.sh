@@ -25,6 +25,7 @@ if [ ! -f "$ENV_FILE" ]; then
   cat > "$ENV_FILE" <<-EOF
 ENV=staging
 FRONTEND_URL=
+PUBLIC_DOMAIN=ajcodelabs.ai
 TYS_FEE_PERCENT=5
 STRIPE_API_BASE=https://api.stripe.com
 STRIPE_API_KEY=

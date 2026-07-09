@@ -3,6 +3,10 @@ import re
 import unicodedata
 from typing import Optional
 
+# Subdomains reserved for infra/product surfaces — never allocatable as an
+# organizer slug, since <slug>.<PUBLIC_DOMAIN> is the tenant resolution path.
+RESERVED_SUBDOMAINS = {"www", "api", "admin", "app", "static", "assets", "staging"}
+
 
 def normalize_slug(value: str) -> str:
     """Lower, strip accents, replace non-alnum with `-`, collapse dashes."""
@@ -36,7 +40,7 @@ async def find_unique_slug(base: str, collection, *, exclude_id: Optional[str] =
         if exclude_id:
             query["id"] = {"$ne": exclude_id}
         existing = await collection.find_one(query, {"_id": 0, "id": 1})
-        if not existing:
+        if not existing and candidate not in RESERVED_SUBDOMAINS:
             return candidate
         suffix += 1
         candidate = f"{normalize_slug(base)}-{suffix}"
@@ -60,7 +64,7 @@ async def find_unique_slug_pg(
         if exclude_id:
             stmt = stmt.where(model.id != exclude_id)
         existing = await session.scalar(stmt)
-        if not existing:
+        if not existing and candidate not in RESERVED_SUBDOMAINS:
             return candidate
         suffix += 1
         candidate = f"{normalize_slug(base)}-{suffix}"

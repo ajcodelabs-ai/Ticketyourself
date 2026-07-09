@@ -15,7 +15,7 @@ export function publicMicrositeHost(slug) {
     return `${slug}.${PUBLIC_DOMAIN}`;
 }
 
-const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "app", "static", "assets"]);
+const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "app", "static", "assets", "staging"]);
 
 export function extractSubdomainFromHostname(hostname?: string): string | null {
     const h = hostname ?? (typeof window !== "undefined" ? window.location.hostname : "");
@@ -32,4 +32,29 @@ export function previewMicrositePath(slug) {
     if (!slug) return "/";
     if (extractSubdomainFromHostname() === slug) return "/";
     return `/o/${slug}`;
+}
+
+// True when the current page is actually served from PUBLIC_DOMAIN (or a subdomain
+// of it) — i.e. wildcard DNS is confirmed live for this environment. False on
+// localhost, IPs, and the Emergent preview domain, where subdomain links wouldn't
+// resolve and we must fall back to `/o/<slug>` paths.
+export function isOnPublicDomain() {
+    if (typeof window === "undefined") return false;
+    const h = window.location.hostname;
+    return h === PUBLIC_DOMAIN || h.endsWith(`.${PUBLIC_DOMAIN}`);
+}
+
+// Full, shareable URL to an organizer's microsite — for copy/QR/share UI, not for
+// in-app <Link> navigation (use previewMicrositePath for that). Uses the real
+// `<scheme>://<slug>.<PUBLIC_DOMAIN>` subdomain when wildcard DNS is live (keeping
+// the current page's protocol/port, so this also works over plain http on a local
+// wildcard host like lvh.me), otherwise falls back to a same-origin `/o/<slug>` path.
+export function publicMicrositeUrl(slug) {
+    if (typeof window === "undefined") return "";
+    if (!slug) return window.location.origin;
+    if (isOnPublicDomain()) {
+        const { protocol, port } = window.location;
+        return `${protocol}//${publicMicrositeHost(slug)}${port ? `:${port}` : ""}`;
+    }
+    return `${window.location.origin}${previewMicrositePath(slug)}`;
 }
