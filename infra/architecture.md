@@ -2,9 +2,19 @@
 
 > Target: 1–20 tasks ECS · Multi-AZ · Alta concurrencia en flash sales
 
+## Ambientes
+
+| Aspecto | Staging (activo) | Production (futuro) |
+|---------|------------------|---------------------|
+| **Propósito** | Tests, QA, validación segura | Tráfico real de usuarios |
+| **Infra** | 1 EC2 t4g.small + Docker Compose | VPC + ECS Fargate + RDS + S3/CloudFront |
+| **CDK** | `cdk deploy TysStaging --context env=staging` | `cdk deploy TysProduction --context env=production` |
+| **Costo** | ~$15/mes | ~$200–300/mes |
+| **Stack** | `infra/cdk/tys_stack.py` | `infra/cdk/tys_stack.py` |
+
 ## Estado actual (hoy)
 
-Hoy la app corre en Docker Compose. El código ya soporta varios patrones de escalabilidad aunque la infraestructura cloud aún no existe.
+Hoy la app corre en Docker Compose. El código ya soporta varios patrones de escalabilidad. La infraestructura cloud se define con CDK Python en `infra/cdk/`.
 
 ```mermaid
 flowchart LR
@@ -24,10 +34,15 @@ flowchart LR
 | **PgBouncer compat** | `database.py` detecta `PGBOUNCER=true`, desactiva statement cache | ✅ Listo. Ya corre en dev compose |
 | **Seat holds** | `orm_models.SeatHold` + `services/seats.py` (create/release/consume/assign) | ✅ Listo. Cleanup periódico pendiente |
 | **JWT stateless** | `security.py` — HS256, Bearer token | ✅ Listo. Escala horizontal sin cambios |
-| **Health check** | `GET /api/health` | ✅ Listo. Para ALB target group |
 | **Stripe webhooks** | Flujo completo de confirmación de pago síncrono | ✅ Listo. |
 | **Email async** | `BackgroundTasks` + `asyncio.create_task` vía Resend | ⚠️ Fire-and-forget. Sin cola persistente. Suficiente hoy |
-| **8 workers** | `Dockerfile` CMD sin `--workers` | ❌ Pendiente. Hoy corre 1 worker |
+| **CDK IaC (Python)** | `infra/cdk/tys_stack.py` — staging (EC2) + production (VPC/ECS/RDS/CF) | ✅ Listo. Despliegue con `cdk deploy --context env=` |
+| **Health check** | `fargate.target_group.configure_health_check(path="/api/health")` | ✅ Listo. ALB target group verifica cada 30s |
+| **HTTPS** | `certificate=` + `redirect_http=True` en el constructor de FargateService | ✅ Listo. Sin listener adicional |
+| **Deployment circuit breaker** | `cfn_service.deployment_configuration` con rollback | ✅ Listo. Rollback automático en ECS |
+| **ECR lifecycle** | `repo.add_lifecycle_rule(max_image_count=20)` | ✅ Listo. Sin acumulación de imágenes |
+| **Log retention** | CloudWatch Logs con `THREE_MONTHS` | ✅ Listo. |
+| **RDS backups** | `backup_retention=Duration.days(30)` + `multi_az=True` | ✅ Listo. |
 | **Cleanup seat holds** | No existe | ❌ Pendiente. `DELETE WHERE expires_at < NOW()` |
 
 ### Target AWS
@@ -125,6 +140,56 @@ sequenceDiagram
     API-->>U: 200 OK {order, tickets}
 ```
 
+## Deploy
+
+### Staging
+
+```bash
+# 1. Bootstrap CDK (una vez por cuenta/región)
+cd infra/cdk
+npx cdk bootstrap aws://<account>/us-east-1
+
+# 2. Deploy
+npx cdk deploy TysStaging --context env=staging
+
+# 3. SSM secrets + levantar app
+aws ssm start-session --target <instance-id>
+sudo -u ec2-user vim /home/ec2-user/Ticketyourself/.env.prod
+docker compose -f /home/ec2-user/Ticketyourself/docker-compose.prod.yml up -d
+```
+
+### Production
+
+```bash
+cd infra/cdk
+
+# Build y push backend
+docker build -t tys-backend:latest -f production/Dockerfile.aws ../backend
+aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.us-east-1.amazonaws.com
+docker tag tys-backend:latest <account>.dkr.ecr.us-east-1.amazonaws.com/tys-prod-backend:latest
+docker push ...
+
+# Frontend a S3
+cd ../frontend && yarn install && yarn build
+aws s3 sync dist/ s3://tys-prod-frontend/ --delete
+
+# Deploy infra
+cd ../infra/cdk
+npx cdk deploy TysProduction --context env=production \
+  --context domain=ticketyourself.com --context cert_arn=arn:aws:acm:...
+```
+
+## Código reutilizable en AWS
+
+| Artefacto | Uso en AWS | Cambios necesarios |
+|-----------|------------|-------------------|
+| `frontend/Dockerfile` | Build multi-stage → deploy a S3 | Script de deploy a S3 |
+| `docker-compose.yml` | Config PgBouncer como sidecar | Ninguno |
+| `backend/database.py` | SQLAlchemy async + asyncpg → RDS | Ninguno, ya soporta PgBouncer |
+| `backend/security.py` | JWT HS256 — auth stateless | Ninguno, escala horizontal |
+| `backend/services/seats.py` | Seat holds en RDS | Agregar cleanup periódico (`DELETE WHERE expires_at < NOW()`) |
+| `infra/cdk/tys_stack.py` | CDK Python — IaC completo | Variables vía `--context`. Secrets en AWS Secrets Manager |
+
 ## Decisiones
 
 | Excluido | Por qué |
@@ -137,18 +202,13 @@ sequenceDiagram
 | **SQS** | No implementado. Emisión síncrona (INSERT + QR + email en el mismo request). SQS agrega complejidad sin beneficio demostrado. Se agrega si hay pérdida de emails o backpressure |
 | **Lambda** | FastAPI mantiene pool stateful (PgBouncer, asyncpg). Refactor innecesario |
 | **Redis / Valkey / Dragonfly** | PG cubre seat holds y rate limiting. `functools.lru_cache` para data cuasi-estática. Cero infraestructura extra |
-| **Auto-scaling** | 1 task fijo hoy. Escalar manual a 2-3 antes de alarmas |
-| **Multi-AZ RDS** | Single-AZ hoy. Multi-AZ cuando haya datos que justifiquen el doble de costo |
-| **CloudFront** | Hoy sirve nginx Docker. Migrar a S3 + CF cuando haya tráfico global |
-| **CDK / IaC** | Se escribe cuando se despliegue. Hoy no hay infra que versionar |
-
-## Código reutilizable en AWS
-
-| Artefacto | Uso en AWS | Cambios necesarios |
-|-----------|------------|-------------------|
-| `backend/Dockerfile` | Imagen ECS | `--workers 8` sin `--reload` |
-| `frontend/Dockerfile` | Build multi-stage → deploy a S3 | Script de deploy a S3 |
-| `docker-compose.yml` | Config PgBouncer como sidecar | Ninguno |
-| `backend/database.py` | SQLAlchemy async + asyncpg → RDS | Ninguno, ya soporta PgBouncer |
-| `backend/security.py` | JWT HS256 — auth stateless | Ninguno, escala horizontal |
-| `backend/services/seats.py` | Seat holds en RDS | Agregar cleanup periódico (`DELETE WHERE expires_at < NOW()`) |
+| **Auto-scaling** | Configurado (min=1, max=10, CPU 70% / mem 80%). 1 task mientras no haya carga |
+| **Multi-AZ RDS** | Habilitado desde el inicio. Datos de pago justifican el costo |
+| **CloudFront** | Ya incluido en el stack production. Sirve frontend desde S3 |
+| **Health check** | ALB target group verifica `GET /api/health` cada 30s. Threshold 2 saludables, 3 no saludables |
+| **HTTPS** | Configurado vía `certificate=` + `redirect_http=True` en el constructor. Sin listener adicional |
+| **Deployment circuit breaker** | Habilitado con rollback automático. Si un deploy falla, ECS vuelve a la versión anterior |
+| **ECR lifecycle** | Máx. 20 imágenes por repo. Las más antiguas se eliminan automáticamente |
+| **Log retention** | CloudWatch Logs con 3 meses de retención |
+| **RDS backups** | 30 días de retención. Multi-AZ para failover automático |
+| **Terraform** | Migrado a CDK Python. Mismas capacidades, testing nativo con Assertions |
