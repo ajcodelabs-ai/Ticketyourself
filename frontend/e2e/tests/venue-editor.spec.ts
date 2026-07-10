@@ -1,15 +1,17 @@
 import { test, expect, type Page } from "@playwright/test";
 
+const BACKEND_URL = process.env.VITE_BACKEND_URL || "http://localhost:8000";
+
 // The demo organizer has a per-plan venue quota — archive whatever a test
 // creates so repeated runs don't exhaust it and starve later tests.
 async function archiveVenue(page: Page, venueId: string) {
-  await page.evaluate(async (id) => {
+  await page.evaluate(async ({ id, baseUrl }) => {
     const token = localStorage.getItem("tys_access_token");
-    await fetch(`http://localhost:8000/api/venues/me/${id}/archive`, {
+    await fetch(`${baseUrl}/api/venues/me/${id}/archive`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     });
-  }, venueId);
+  }, { id: venueId, baseUrl: BACKEND_URL });
 }
 
 test.describe("Venue editor", () => {

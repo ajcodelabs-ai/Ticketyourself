@@ -1,8 +1,8 @@
-import { Component } from "react";
+import { Component, type ReactNode } from "react";
 
 interface Props {
-    children: React.ReactNode;
-    fallback?: React.ReactNode;
+    children: ReactNode;
+    fallback?: ReactNode;
 }
 
 interface State {

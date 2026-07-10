@@ -257,9 +257,9 @@ function makeInitial(d) {
             ? !d.venue_id // legacy events with venue_name but no venue_id default to general
             : false,
         venue_id: d.venue_id || null,
-        payment_methods: d.payment_methods || defaultPayments(),
-        discounts: d.discounts || defaultDiscounts(),
-        access_params: d.access_params || defaultAccessParams(),
+        payment_methods: { ...defaultPayments(), ...(d.payment_methods || {}) },
+        discounts: { ...defaultDiscounts(), ...(d.discounts || {}) },
+        access_params: { ...defaultAccessParams(), ...(d.access_params || {}) },
         content: normalizeEventContent(d.content),
         ticket_delivery_mode: d.ticket_delivery_mode || "al_momento",
         ticket_delivery_hours: d.ticket_delivery_hours != null ? String(d.ticket_delivery_hours) : "",
