@@ -48,8 +48,36 @@ export default function VenueTemplatePicker({
                 ser diseñador.
             </p>
 
-            {templates.length > 0 ? (
+            {templates.length > 0 || (showBlankOption && onStartBlank) ? (
                 <div className={`grid gap-3 ${compact ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
+                    {showBlankOption && onStartBlank && (
+                        <Card className="border-dashed border-border hover:bg-secondary/40 transition-colors">
+                            <CardContent className={`${compact ? "pt-3 pb-3" : "pt-4"} space-y-2`}>
+                                <div className="flex items-start gap-3">
+                                    <div className="h-9 w-9 rounded-lg bg-secondary text-foreground grid place-items-center shrink-0">
+                                        <PenLine className="h-4 w-4" />
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <h4 className="font-medium text-sm leading-tight">Empezar en blanco</h4>
+                                        <p className="text-xs text-muted-foreground mt-0.5">
+                                            Canvas vacío para diseñar tu propio venue
+                                        </p>
+                                    </div>
+                                </div>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="w-full"
+                                    disabled={disabled}
+                                    onClick={onStartBlank}
+                                    data-testid="venue-start-blank"
+                                >
+                                    Empezar en blanco
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    )}
                     {templates.map((tpl) => (
                         <Card
                             key={tpl.id}
@@ -87,26 +115,8 @@ export default function VenueTemplatePicker({
                 </div>
             ) : (
                 <p className="text-sm text-muted-foreground rounded-lg border border-dashed p-4 text-center">
-                    No hay plantillas disponibles todavía. Podés empezar en blanco o pedirle al admin que
-                    cargue layouts base.
+                    No hay plantillas disponibles todavía. Pedile al admin que cargue layouts base.
                 </p>
-            )}
-
-            {showBlankOption && onStartBlank && (
-                <div className="pt-2 border-t">
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-muted-foreground"
-                        disabled={disabled}
-                        onClick={onStartBlank}
-                        data-testid="venue-start-blank"
-                    >
-                        <PenLine className="h-4 w-4 mr-1.5" />
-                        Empezar en blanco (modo avanzado)
-                    </Button>
-                </div>
             )}
         </div>
     );

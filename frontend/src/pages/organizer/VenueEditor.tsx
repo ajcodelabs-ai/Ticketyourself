@@ -78,6 +78,7 @@ export default function VenueEditor() {
     const [pendingTable, setPendingTable] = useState(null); // {kind, x, y}
     const [contextMenu, setContextMenu] = useState(null);
     const [publishPendingOpen, setPublishPendingOpen] = useState(false);
+    const [emptyOverlayDismissed, setEmptyOverlayDismissed] = useState(false);
     const clipboardRef = useRef([]);
 
     const dirtyRef = useRef(false);
@@ -89,7 +90,12 @@ export default function VenueEditor() {
         (async () => {
             try {
                 const v = await venueApi.get(id);
-                if (mounted) setVenue(v);
+                if (mounted) {
+                    setVenue(v);
+                    // The venue list already asked "plantilla o en blanco?" before
+                    // creating this venue — don't ask again here.
+                    setEmptyOverlayDismissed(searchParams.get("blank") === "1");
+                }
             } catch (e) {
                 toast.error(isAdminTemplate ? "No pudimos cargar la plantilla." : "No pudimos cargar el venue.");
                 navigate(listPath);
@@ -660,10 +666,11 @@ export default function VenueEditor() {
                             readOnly={locked}
                             height={600}
                         />
-                        {!isAdminTemplate && elements.length === 0 && !locked && (
+                        {!isAdminTemplate && elements.length === 0 && !locked && !emptyOverlayDismissed && (
                             <VenueEmptyCanvasOverlay
                                 disabled={saving}
                                 onApplied={applyTemplateLayout}
+                                onDismiss={() => setEmptyOverlayDismissed(true)}
                             />
                         )}
                     </div>

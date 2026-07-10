@@ -91,9 +91,12 @@ export default function Venues() {
 
     const canCreate = maxV === -1 || activeCount < maxV;
 
-    const editorUrl = (venueId) => {
+    const editorUrl = (venueId, extraParams = {}) => {
         const base = `/app/venues/${venueId}/editor`;
-        return returnTo ? `${base}?return_to=${encodeURIComponent(returnTo)}` : base;
+        const params = new URLSearchParams(extraParams);
+        if (returnTo) params.set("return_to", returnTo);
+        const qs = params.toString();
+        return qs ? `${base}?${qs}` : base;
     };
 
     const handleCreate = async () => {
@@ -101,7 +104,9 @@ export default function Venues() {
         try {
             const v = await venuesApi.create({ name: newName, type: newType });
             toast.success("Venue creado");
-            navigate(editorUrl(v.id));
+            // The organizer already chose "empezar en blanco" here — don't ask
+            // again in the editor with the template overlay.
+            navigate(editorUrl(v.id, { blank: "1" }));
         } catch (e) {
             toast.error(e?.response?.data?.detail || "Error al crear venue");
         }

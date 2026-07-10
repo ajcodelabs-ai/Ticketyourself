@@ -34,7 +34,7 @@ export default function GuestListPanel({ eventId }: Props) {
         setLoading(true);
         try {
             const r = await api.get(`/events/me/${eventId}/guest-list`);
-            setEntries(r.data || []);
+            setEntries(r.data?.items || []);
         } catch {
             toast.error("No se pudo cargar la lista de invitados");
         } finally {
