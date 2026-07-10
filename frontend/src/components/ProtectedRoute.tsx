@@ -16,7 +16,8 @@ export default function ProtectedRoute({ children, role }) {
         );
     }
     if (!isAuthenticated) {
-        return <Navigate to="/login" state={{ from: location }} replace />;
+        const loginPath = role === "super_admin" ? "/admin/login" : "/login";
+        return <Navigate to={loginPath} state={{ from: location }} replace />;
     }
     if (role && user?.role !== role) {
         if (role === "super_admin" && user?.role === "organizer") {

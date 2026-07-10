@@ -5,7 +5,7 @@
  * Mobile (<lg): sidebar collapses behind a drawer (Sheet).
  */
 import { useState } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import {
     LayoutDashboard,
     MapPin,
@@ -72,11 +72,11 @@ const NAV_ITEMS = [
 export default function OrganizerLayout({ children }) {
     const { user, organizer, logout } = useAuth();
     const [mobileOpen, setMobileOpen] = useState(false);
-    const navigate = useNavigate();
 
+    // logout() already navigates to the right entry point for the user's
+    // role — a hardcoded navigate("/login") afterwards would be redundant.
     const handleLogout = async () => {
         await logout?.();
-        navigate("/login", { replace: true });
     };
 
     return (
