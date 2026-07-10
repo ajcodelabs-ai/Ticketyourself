@@ -37,7 +37,7 @@ import {
 } from "@/components/ui/table";
 import ShareModal from "@/components/microsite/ShareModal";
 import { useDashboard } from "@/hooks/queries/useDashboard";
-import { previewMicrositePath, publicMicrositeHost } from "@/lib/config";
+import { publicMicrositeHost, publicMicrositeUrl } from "@/lib/config";
 import { formatEventDate, EVENT_STATUS_META } from "@/lib/events";
 import { formatCents } from "@/lib/orders";
 
@@ -72,7 +72,7 @@ export default function DashboardHome() {
 
     const { organizer, plan, stats, next_event, upcoming_events, microsite, funnel } = data;
     const subMeta = SUB_STATUS_META[organizer.subscription_status] || SUB_STATUS_META.none;
-    const publicUrl = `${window.location.origin}${previewMicrositePath(organizer.slug)}`;
+    const publicUrl = publicMicrositeUrl(organizer.slug);
 
     return (
         <div className="space-y-6" data-testid="dashboard-home">
@@ -299,10 +299,10 @@ export default function DashboardHome() {
                             Compartir
                         </Button>
                         <Button variant="outline" asChild data-testid="ms-view-btn">
-                            <Link to={previewMicrositePath(organizer.slug)} target="_blank">
+                            <a href={publicMicrositeUrl(organizer.slug)} target="_blank" rel="noopener noreferrer">
                                 <ExternalLink className="h-4 w-4 mr-1.5" />
                                 Ver público
-                            </Link>
+                            </a>
                         </Button>
                     </CardContent>
                 </Card>

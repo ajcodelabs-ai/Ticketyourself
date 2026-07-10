@@ -19,7 +19,7 @@ import {
     EVENT_STATUS_META,
     formatEventDate,
     formatPriceLabel,
-    eventPublicPath,
+    eventPublicUrl,
 } from "@/lib/events";
 import { Plus, Search, Calendar, Edit3, ExternalLink, Loader2 } from "lucide-react";
 
@@ -176,12 +176,13 @@ export default function EventsList() {
                                                 size="sm"
                                                 asChild
                                             >
-                                                <Link
-                                                    to={eventPublicPath(e.tenant_slug, e.slug)}
+                                                <a
+                                                    href={eventPublicUrl(e.tenant_slug, e.slug)}
                                                     target="_blank"
+                                                    rel="noopener noreferrer"
                                                 >
                                                     <ExternalLink className="h-3.5 w-3.5" />
-                                                </Link>
+                                                </a>
                                             </Button>
                                         )}
                                     </div>

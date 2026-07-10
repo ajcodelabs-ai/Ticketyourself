@@ -2,7 +2,7 @@
  * Event helpers — categories, status meta, formatting, public URL builder.
  * Single source of truth so the editor + listing + microsite renderer stay in sync.
  */
-import { previewMicrositePath } from "@/lib/config";
+import { previewMicrositePath, publicMicrositeUrl } from "@/lib/config";
 
 const DEFAULT_TZ = import.meta.env.VITE_DEFAULT_TIMEZONE || "America/Guayaquil";
 
@@ -85,8 +85,10 @@ export function eventPublicPath(tenantSlug, eventSlug) {
 }
 
 export function eventPublicUrl(tenantSlug, eventSlug) {
-    if (typeof window === "undefined") return "";
-    return `${window.location.origin}${eventPublicPath(tenantSlug, eventSlug)}`;
+    if (!tenantSlug || !eventSlug) return "";
+    const base = publicMicrositeUrl(tenantSlug);
+    if (!base) return "";
+    return `${base.replace(/\/+$/, "")}/e/${eventSlug}`;
 }
 
 export function googleMapsUrl(event) {

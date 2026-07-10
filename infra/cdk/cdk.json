@@ -1,0 +1,12 @@
+{
+  "app": ".venv/bin/python app.py",
+  "watch": {
+    "include": ["**"]
+  },
+  "context": {
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/core:target-partitions": ["aws", "aws-cn"],
+    "@aws-cdk-containers/ecs-service-extensions:enableDefaultLogDriver": true
+  }
+}

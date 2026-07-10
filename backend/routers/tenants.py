@@ -9,8 +9,7 @@ from database import get_db
 from db_helpers import row_to_dict
 from models import ResolveResponse, TenantOut
 from orm_models import Tenant
-
-RESERVED_SUBDOMAINS = {"www", "api", "admin", "app", "static", "assets"}
+from slugs import RESERVED_SUBDOMAINS
 
 router = APIRouter(prefix="/api/tenants", tags=["tenants"])
 

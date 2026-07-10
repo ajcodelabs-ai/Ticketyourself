@@ -30,7 +30,6 @@ import {
     EVENT_STATUS_META,
     formatEventDate,
     formatPriceLabel,
-    eventPublicPath,
     eventPublicUrl,
 } from "@/lib/events";
 
@@ -175,13 +174,14 @@ export default function EventDetail() {
                                 asChild
                                 data-testid="event-public-link"
                             >
-                                <Link
-                                    to={eventPublicPath(event.tenant_slug, event.slug)}
+                                <a
+                                    href={eventPublicUrl(event.tenant_slug, event.slug)}
                                     target="_blank"
+                                    rel="noopener noreferrer"
                                 >
                                     <ExternalLink className="h-4 w-4 mr-1.5" />
                                     Ver público
-                                </Link>
+                                </a>
                             </Button>
                         )}
                         {event.status === "published" && (
