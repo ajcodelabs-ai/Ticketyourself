@@ -544,7 +544,7 @@ function DocumentsUploader({
 }
 
 function DemoShortcut({ onActivated }) {
-    const { refreshOrganizer, checkSession } = useAuth();
+    const { refreshOrganizer } = useAuth();
     const [enabled, setEnabled] = useState(false);
     const [busy, setBusy] = useState(false);
 
@@ -564,9 +564,16 @@ function DemoShortcut({ onActivated }) {
         setBusy(true);
         try {
             await api.post("/_dev/demo-activate", { plan_code: "profesional" });
-            // Refresh AuthContext so the dashboard sees status=approved.
-            await checkSession();
-            await refreshOrganizer();
+            // Must await, and must throw on failure: RequireActiveOrganizer
+            // (routes/layouts.tsx) reads organizer.subscription_status
+            // straight from AuthContext on the very next render. If this
+            // silently swallowed a transient failure (its default behavior),
+            // we'd show a success toast and navigate anyway while the guard
+            // still sees the stale "none" and bounces back here — the exact
+            // "shows success but never advances" bug this shortcut exists to
+            // avoid, just triggered by a flaky refresh instead of a missing
+            // backend commit.
+            await refreshOrganizer({ throwOnError: true });
             toast.success(
                 "Cuenta activada en modo demo · plan Profesional · sin pago real",
             );
