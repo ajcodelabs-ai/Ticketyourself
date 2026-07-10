@@ -486,7 +486,7 @@ function DocumentsUploader({
                         <Upload className="h-5 w-5 text-primary" />
                         <span className="text-sm">
                             <strong className="text-primary">
-                                Hacé click para elegir un archivo
+                                Haz clic para elegir un archivo
                             </strong>{" "}
                             <span className="text-muted-foreground">
                                 — PDF, JPG, PNG, WEBP o HEIC (máx 10MB)

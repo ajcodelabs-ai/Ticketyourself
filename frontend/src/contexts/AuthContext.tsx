@@ -47,7 +47,7 @@ export function AuthProvider({ children }) {
     // Re-sync when another tab changes tokens (login/logout there).
     useEffect(() => {
         const onStorage = (e) => {
-            if (e.key === "tys_access_token") {
+            if (e.key === "tys_access_token" || e.key === "tys_refresh_token") {
                 checkSession();
             }
         };

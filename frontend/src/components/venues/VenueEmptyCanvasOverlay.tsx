@@ -66,7 +66,7 @@ export default function VenueEmptyCanvasOverlay({
                 )}
                 <div className="flex items-center gap-2">
                     <LayoutTemplate className="h-5 w-5 text-indigo-600" />
-                    <h3 className="font-semibold">Empezá con una plantilla (opcional)</h3>
+                    <h3 className="font-semibold">Empieza con una plantilla (opcional)</h3>
                 </div>
                 <VenueTemplatePicker
                     templates={templates}

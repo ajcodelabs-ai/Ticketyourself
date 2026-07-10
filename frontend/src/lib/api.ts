@@ -6,33 +6,20 @@ export const API_BASE = `${BACKEND_URL}/api`;
 const ACCESS_KEY = "tys_access_token";
 const REFRESH_KEY = "tys_refresh_token";
 
-// Refresh tokens stay in memory only — not in localStorage — to reduce XSS exposure.
-let refreshInMemory: string | null = null;
-
 export const tokenStore = {
     get access() {
         return localStorage.getItem(ACCESS_KEY);
     },
     get refresh() {
-        if (refreshInMemory) return refreshInMemory;
-        const legacy = localStorage.getItem(REFRESH_KEY);
-        if (legacy) {
-            refreshInMemory = legacy;
-            localStorage.removeItem(REFRESH_KEY);
-        }
-        return refreshInMemory;
+        return localStorage.getItem(REFRESH_KEY);
     },
     set({ access_token, refresh_token }) {
         if (access_token) localStorage.setItem(ACCESS_KEY, access_token);
-        if (refresh_token) {
-            refreshInMemory = refresh_token;
-            localStorage.removeItem(REFRESH_KEY);
-        }
+        if (refresh_token) localStorage.setItem(REFRESH_KEY, refresh_token);
     },
     clear() {
         localStorage.removeItem(ACCESS_KEY);
         localStorage.removeItem(REFRESH_KEY);
-        refreshInMemory = null;
     },
 };
 
@@ -63,6 +50,37 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
+// Refresh tokens are single-use server-side (each /auth/refresh call rotates
+// them). If two requests 401 at nearly the same time — e.g. the mount and
+// focus checkSession() calls firing together right after a reload — they
+// must not each spend the same refresh token: the loser would get "revoked"
+// and clear out the winner's freshly-set session. Sharing one in-flight
+// promise coalesces concurrent 401s into a single refresh call.
+let refreshPromise: Promise<string> | null = null;
+
+function doRefresh(refreshToken: string): Promise<string> {
+    if (!refreshPromise) {
+        refreshPromise = axios
+            .post(
+                `${API_BASE}/auth/refresh`,
+                {},
+                { headers: { Authorization: `Bearer ${refreshToken}` } },
+            )
+            .then(({ data }) => {
+                if (!data.access_token) throw new Error("Refresh response missing access_token");
+                tokenStore.set({
+                    access_token: data.access_token,
+                    refresh_token: data.refresh_token,
+                });
+                return data.access_token;
+            })
+            .finally(() => {
+                refreshPromise = null;
+            });
+    }
+    return refreshPromise;
+}
+
 // Global auth handler — silent refresh on 401, then fallback to session clear.
 api.interceptors.response.use(
     (response) => response,
@@ -75,19 +93,9 @@ api.interceptors.response.use(
             const refreshToken = tokenStore.refresh;
             if (refreshToken) {
                 try {
-                    const { data } = await axios.post(
-                        `${API_BASE}/auth/refresh`,
-                        {},
-                        { headers: { Authorization: `Bearer ${refreshToken}` } },
-                    );
-                    if (data.access_token) {
-                        tokenStore.set({
-                            access_token: data.access_token,
-                            refresh_token: data.refresh_token,
-                        });
-                        originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
-                        return api(originalRequest);
-                    }
+                    const newAccessToken = await doRefresh(refreshToken);
+                    originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+                    return api(originalRequest);
                 } catch {
                     // refresh failed — fall through to unauthorized
                 }

@@ -44,7 +44,7 @@ export default function VenueTemplatePicker({
     return (
         <div className="space-y-4" data-testid="venue-template-picker">
             <p className="text-sm text-muted-foreground">
-                Elegí un layout listo para usar. Después podés ajustar precios y publicar — no hace falta
+                Elige un layout listo para usar. Después puedes ajustar precios y publicar — no hace falta
                 ser diseñador.
             </p>
 
@@ -115,7 +115,7 @@ export default function VenueTemplatePicker({
                 </div>
             ) : (
                 <p className="text-sm text-muted-foreground rounded-lg border border-dashed p-4 text-center">
-                    No hay plantillas disponibles todavía. Pedile al admin que cargue layouts base.
+                    No hay plantillas disponibles todavía. Pídele al admin que cargue layouts base.
                 </p>
             )}
         </div>
