@@ -150,10 +150,24 @@ async def demo_activate(payload: DemoActivateBody, user=Depends(get_current_user
         await session.flush()
         await session.refresh(org_row, ["admin_comments"])
         organizer = organizer_row_to_dict(org_row)
+        # This handler opens its own session instead of using the Depends(get_db)
+        # dependency (deliberately: microsite creation and funnel logging below
+        # are best-effort side effects that must NOT roll back this approval if
+        # they fail, which Depends(get_db)'s single commit-at-the-end would do)
+        # — so nothing commits it automatically. Without this explicit commit,
+        # the approved/active status is only visible within this transaction and
+        # is discarded when the session closes, making the change invisible to
+        # every subsequent request (the "shows success but never advances" bug).
+        await session.commit()
 
-    # Microsite — create default if missing.
-    from routers.microsite import _get_or_create_microsite_row
-    await _get_or_create_microsite_row(organizer)
+    # Microsite — best-effort, same reasoning as the funnel events below: the
+    # approval above is already committed, so a failure here shouldn't turn a
+    # successful activation into a 500.
+    try:
+        from routers.microsite import _get_or_create_microsite_row
+        await _get_or_create_microsite_row(organizer)
+    except Exception:  # noqa: BLE001
+        logger.exception("Demo shortcut: microsite creation failed organizer=%s", organizer_id)
 
     # Funnel — best-effort.
     try:
