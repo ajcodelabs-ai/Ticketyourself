@@ -3,6 +3,7 @@
  * Phase 6b: added curved row, individual seat, round/rect tables.
  */
 import api from "@/lib/api";
+import { uuid } from "@/lib/utils";
 
 export const GRID = 20;
 export const VENUE_TYPES = [
@@ -30,7 +31,7 @@ export function snap(v) {
 }
 
 export function newId() {
-    return crypto.randomUUID();
+    return uuid();
 }
 
 // ── Element factories ─────────────────────────────────────────────────────

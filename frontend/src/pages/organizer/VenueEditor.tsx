@@ -125,6 +125,20 @@ export default function VenueEditor() {
     const locked = venue?.lock_status?.locked || false;
     const activeEvents = venue?.lock_status?.active_events || [];
 
+    // When the canvas is blank and the overlay is gone, default to a drawing
+    // tool so the user can start creating immediately (not "select" which
+    // does nothing on an empty canvas). Depends on `!!venue` (a stable
+    // boolean), not `venue` itself — venue gets a new object reference on
+    // every field edit (e.g. typing the venue name), and depending on the
+    // object would re-fire this on each keystroke, silently overriding
+    // whatever tool the user picked in the meantime.
+    const hasVenue = !!venue;
+    useEffect(() => {
+        if (hasVenue && elements.length === 0 && emptyOverlayDismissed) {
+            setTool("zone");
+        }
+    }, [hasVenue, elements.length, emptyOverlayDismissed]);
+
     const markDirty = () => {
         dirtyRef.current = true;
         setDirty(true);

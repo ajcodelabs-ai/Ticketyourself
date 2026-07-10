@@ -5,13 +5,14 @@
  * resolution. Only used in read/select flows; the editor still relies on the
  * legacy ElementShape.
  */
+import { uuid } from "@/lib/utils";
 
 export const SEAT_HOLD_TOKEN_KEY = "tys.seat_holds.session_token";
 
 export function getOrCreateSessionToken() {
     let token = localStorage.getItem(SEAT_HOLD_TOKEN_KEY);
     if (!token) {
-        token = crypto.randomUUID();
+        token = uuid();
         localStorage.setItem(SEAT_HOLD_TOKEN_KEY, token);
     }
     return token;

@@ -39,6 +39,7 @@ export const EventValidation = lazy(() => import("@/pages/organizer/EventValidat
 export const StaffPage = lazy(() => import("@/pages/organizer/Staff"));
 
 // ── Super admin (/admin/*) ─────────────────────────────────────────────────
+export const AdminLogin = lazy(() => import("@/pages/admin/AdminLogin"));
 export const AdminDashboard = lazy(() => import("@/pages/admin/AdminDashboard"));
 export const AdminOrganizers = lazy(() => import("@/pages/admin/AdminOrganizers"));
 export const AdminOrganizerDetail = lazy(() => import("@/pages/admin/AdminOrganizerDetail"));

@@ -6,7 +6,7 @@
  * on mobile, avatar dropdown.
  */
 import { useState } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import {
     LayoutDashboard,
     Users,
@@ -52,11 +52,12 @@ const NAV_ITEMS = [
 export default function AdminLayout({ children }) {
     const { user, logout } = useAuth();
     const [mobileOpen, setMobileOpen] = useState(false);
-    const navigate = useNavigate();
 
+    // logout() already navigates to the right entry point for the user's
+    // role (/admin/login here) — a hardcoded navigate("/login") afterwards
+    // would override that with the wrong destination.
     const handleLogout = async () => {
         await logout?.();
-        navigate("/login", { replace: true });
     };
 
     return (
