@@ -2275,7 +2275,7 @@ function DiscountsReportPanel({ eventId }) {
 
 // ── Section: Access ─────────────────────────────────────────────────────────
 function SectionAccess({ form, update, eventId }) {
-    const ap = form.access_params || defaultAccessParams();
+    const ap = { ...defaultAccessParams(), ...(form.access_params || {}) };
     const deliveryMode = form.ticket_delivery_mode || "al_momento";
     return (
         <div className="space-y-5" data-testid="section-access">
