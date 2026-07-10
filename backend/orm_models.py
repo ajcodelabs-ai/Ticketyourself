@@ -553,12 +553,24 @@ class Microsite(Base):
     content = Column(JSONB, nullable=False, default=dict)
     social_links = Column(JSONB, nullable=False, default=dict)
     sections_enabled = Column(JSONB, nullable=False, default=dict)
+    blocks = Column(JSONB, nullable=False, default=list)
+    seo = Column(JSONB, nullable=False, default=dict)
     published = Column(Boolean, nullable=False, default=False)
     published_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(
         DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
     )
+
+
+class MicrositeRevision(Base):
+    __tablename__ = "microsite_revisions"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    microsite_id = Column(String(36), ForeignKey("microsites.id"), nullable=False, index=True)
+    label = Column(String(120), nullable=True)
+    snapshot = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

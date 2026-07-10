@@ -57,6 +57,7 @@ PLAN_OVERRIDES: Dict[str, Dict[str, Any]] = {
         "max_tickets_per_event": -1,
         "max_venues": 5,
         "max_gallery_images": 20,
+        "microsite_custom_css": True,
     },
     # Enterprise.
     "enterprise": {
@@ -66,8 +67,9 @@ PLAN_OVERRIDES: Dict[str, Dict[str, Any]] = {
         "promo_codes": True,
         "verified_lists": True,
         "access_codes": True,
-        "custom_domain": True,
-        "ai_ticket_design": True,
+    "custom_domain": True,
+    "ai_ticket_design": True,
+    "microsite_custom_css": True,
         "max_events": -1,
         "max_tickets_per_event": -1,
         "max_venues": -1,

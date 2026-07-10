@@ -1,59 +1,61 @@
 /**
- * MicrositeEditor: 40/60 split layout — config panel on the left, live preview on the right.
- * Mobile: panel becomes a stacked accordion-ish flow above the preview.
- *
- * Every form change is debounced 300ms then persisted via PUT /api/microsite/me.
- * Optimistic local state ensures the preview updates instantly.
+ * MicrositeEditor v2 — page builder estilo Shopify/WordPress.
+ * Panel izquierdo: lista de bloques (drag & drop).
+ * Centro: preview en vivo con click-to-select.
+ * Panel derecho: propiedades del bloque seleccionado o tema global.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
 import {
     Dialog,
     DialogContent,
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
 
+import HeroLayerRibbon from "@/components/microsite/editor/HeroLayerRibbon";
 import MicrositeRenderer from "@/components/microsite/MicrositeRenderer";
+import BlockListPanel from "@/components/microsite/editor/BlockListPanel";
+import {
+    BlockPropertiesPanel,
+    ThemePanel,
+    PublishPanel,
+} from "@/components/microsite/editor/BlockPropertiesPanel";
+import { SeoPanel, RevisionsPanel } from "@/components/microsite/editor/SeoAndHistoryPanel";
+import MicrositeHead from "@/components/microsite/MicrositeHead";
 import ShareModal from "@/components/microsite/ShareModal";
 import PublishPendingDialog from "@/components/PublishPendingDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
-import { TEMPLATE_OPTIONS, FONT_OPTIONS, assetUrl } from "@/lib/microsite";
-import { PUBLIC_DOMAIN, previewMicrositePath, publicMicrositeUrl, publicMicrositeHost, isOnPublicDomain } from "@/lib/config";
+import { publicMicrositeUrl, PUBLIC_DOMAIN } from "@/lib/config";
+import {
+    createBlock,
+    resolveBlocks,
+    sectionsFromBlocks,
+    blocksForTemplate,
+    type BlockType,
+    type MicrositeBlock,
+} from "@/lib/micrositeBlocks";
 import {
     ExternalLink,
     Monitor,
     Smartphone,
     Share2,
-    Upload,
     Loader2,
     Maximize2,
+    Palette,
+    Settings2,
+    Globe,
+    Search,
+    History,
+    Grid3x3,
 } from "lucide-react";
 
-const TEXT_LIMITS = {
-    hero_title: 80,
-    hero_subtitle: 200,
-    hero_cta_text: 30,
-    about_title: 80,
-    about_body: 1000,
-};
+type SidePanel = "blocks" | "theme" | "seo" | "history" | "publish";
 
 export default function MicrositeEditor() {
     const { organizer } = useAuth();
@@ -67,11 +69,13 @@ export default function MicrositeEditor() {
     const [publishPendingOpen, setPublishPendingOpen] = useState(false);
     const [previewWidth, setPreviewWidth] = useState(0);
     const [fullscreenOpen, setFullscreenOpen] = useState(false);
+    const [selectedBlockId, setSelectedBlockId] = useState(null);
+    const [selectedLayerId, setSelectedLayerId] = useState(null);
+    const [showGrid, setShowGrid] = useState(true);
+    const [sidePanel, setSidePanel] = useState("blocks");
     const previewRef = useRef(null);
     const saveTimer = useRef(null);
 
-    // Live-track the preview frame width so the organizer sees how wide their
-    // microsite is being rendered right now (Phase 9.6 — Item 5).
     useEffect(() => {
         if (!previewRef.current || typeof ResizeObserver === "undefined") return;
         const el = previewRef.current;
@@ -86,16 +90,20 @@ export default function MicrositeEditor() {
         };
     }, [microsite, previewMode]);
 
-    // Initial load
     useEffect(() => {
         let active = true;
         api.get("/microsite/me")
-            .then((r) => active && setMicrosite(r.data))
+            .then((r) => {
+                if (!active) return;
+                const data = r.data;
+                if (!data.blocks?.length) {
+                    data.blocks = resolveBlocks(data);
+                }
+                setMicrosite(data);
+            })
             .catch((e) => {
                 if (e?.response?.status === 403) {
-                    toast.error(
-                        "Tu cuenta debe estar aprobada para editar el microsite.",
-                    );
+                    toast.error("Tu cuenta debe estar aprobada para editar el microsite.");
                     navigate("/app/dashboard", { replace: true });
                     return;
                 }
@@ -108,13 +116,23 @@ export default function MicrositeEditor() {
     }, [navigate]);
 
     const pushUpdate = (partial) => {
-        // Optimistic local update + debounced PUT.
-        setMicrosite((prev) => deepMerge(prev, partial));
+        setMicrosite((prev) => {
+            const merged = deepMerge(prev, partial);
+            if (partial.blocks) {
+                merged.sections_enabled = sectionsFromBlocks(partial.blocks);
+            }
+            return merged;
+        });
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(async () => {
             try {
                 setSaving(true);
-                const { data } = await api.put("/microsite/me", partial);
+                const payload = { ...partial };
+                if (partial.blocks) {
+                    payload.sections_enabled = sectionsFromBlocks(partial.blocks);
+                }
+                const { data } = await api.put("/microsite/me", payload);
+                if (!data.blocks?.length) data.blocks = resolveBlocks(data);
                 setMicrosite(data);
             } catch (e) {
                 toast.error(formatApiError(e?.response?.data?.detail) || e.message);
@@ -124,6 +142,42 @@ export default function MicrositeEditor() {
         }, 300);
     };
 
+    const blocks: MicrositeBlock[] = useMemo(
+        () => (microsite ? resolveBlocks(microsite) : []),
+        [microsite],
+    );
+
+    const selectedBlock = blocks.find((b) => b.id === selectedBlockId) || null;
+
+    const updateBlocks = (nextBlocks: MicrositeBlock[]) => {
+        pushUpdate({ blocks: nextBlocks });
+    };
+
+    const updateBlock = (id: string, patch: Partial<MicrositeBlock>) => {
+        updateBlocks(
+            blocks.map((b) => (b.id === id ? { ...b, ...patch, props: { ...b.props, ...(patch.props || {}) } } : b)),
+        );
+    };
+
+    const removeBlock = (id: string) => {
+        updateBlocks(blocks.filter((b) => b.id !== id));
+        if (selectedBlockId === id) setSelectedBlockId(null);
+    };
+
+    const addBlock = (type: BlockType) => {
+        const next = [...blocks, createBlock(type)];
+        updateBlocks(next);
+        setSelectedBlockId(next[next.length - 1].id);
+        setSidePanel("blocks");
+    };
+
+    const applyTemplate = (code: string) => {
+        const nextBlocks = blocksForTemplate(code, microsite?.sections_enabled || {});
+        pushUpdate({ template: code, blocks: nextBlocks });
+        setSelectedBlockId(null);
+        toast.success("Plantilla aplicada");
+    };
+
     const uploadAsset = async (file, asset_type) => {
         if (!file) return;
         setUploadingAsset(asset_type);
@@ -131,17 +185,34 @@ export default function MicrositeEditor() {
             const fd = new FormData();
             fd.append("asset_type", asset_type);
             fd.append("file", file);
-            const { data } = await api.post("/microsite/me/assets", fd);
-            // Refresh microsite (server set logo_url / banner_url on us)
+            await api.post("/microsite/me/assets", fd);
             const fresh = await api.get("/microsite/me");
-            setMicrosite(fresh.data);
+            const data = fresh.data;
+            if (!data.blocks?.length) data.blocks = resolveBlocks(data);
+            setMicrosite(data);
             toast.success(
                 asset_type === "logo" ? "Logo subido" : asset_type === "banner" ? "Banner subido" : "Imagen subida",
             );
         } catch (e) {
-            const status = e?.response?.status;
-            const msg = formatApiError(e?.response?.data?.detail) || e.message;
-            toast.error(status ? `Error ${status}: ${msg}` : msg);
+            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
+        } finally {
+            setUploadingAsset(null);
+        }
+    };
+
+    const uploadGalleryAsset = async (file: File): Promise<string | null> => {
+        if (!file) return null;
+        setUploadingAsset("gallery");
+        try {
+            const fd = new FormData();
+            fd.append("asset_type", "gallery");
+            fd.append("file", file);
+            const { data } = await api.post("/microsite/me/assets", fd);
+            toast.success("Imagen subida");
+            return data.url as string;
+        } catch (e) {
+            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
+            return null;
         } finally {
             setUploadingAsset(null);
         }
@@ -149,7 +220,6 @@ export default function MicrositeEditor() {
 
     const togglePublish = async () => {
         if (!microsite) return;
-        // Pre-check: pending orgs can't publish; show explanatory dialog instead.
         if (!microsite.published && organizer?.status === "pending") {
             setPublishPendingOpen(true);
             return;
@@ -158,11 +228,11 @@ export default function MicrositeEditor() {
         try {
             await api.post(endpoint);
             const fresh = await api.get("/microsite/me");
-            setMicrosite(fresh.data);
-            toast.success(fresh.data.published ? "Microsite publicado" : "Microsite despublicado");
+            const data = fresh.data;
+            if (!data.blocks?.length) data.blocks = resolveBlocks(data);
+            setMicrosite(data);
+            toast.success(data.published ? "Microsite publicado" : "Microsite despublicado");
         } catch (e) {
-            // Fallback: backend may also reject on race (subscription just expired
-            // while org was on screen). Surface the same dialog UX.
             const code = e?.response?.data?.detail?.error;
             if (code === "organizer_pending_review") {
                 setPublishPendingOpen(true);
@@ -176,6 +246,16 @@ export default function MicrositeEditor() {
         if (!organizer?.slug) return "";
         return publicMicrositeUrl(organizer.slug);
     }, [organizer?.slug]);
+
+    const handleSelectBlock = (id: string | null) => {
+        setSelectedBlockId(id);
+        setSelectedLayerId(null);
+        if (id) setSidePanel("blocks");
+    };
+
+    const handleUpdateBlockProps = (blockId: string, props: Record<string, unknown>) => {
+        updateBlock(blockId, { props });
+    };
 
     if (loading) {
         return (
@@ -193,10 +273,11 @@ export default function MicrositeEditor() {
     }
 
     return (
-        <div className="space-y-4" data-testid="microsite-editor">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 min-h-[calc(100vh-7rem)]" data-testid="microsite-editor">
+            {/* Header compacto */}
+            <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
                 <div>
-                    <h1 className="text-2xl font-semibold">Microsite</h1>
+                    <h1 className="text-xl sm:text-2xl font-semibold">Diseñador de microsite</h1>
                     <p className="text-sm text-muted-foreground">
                         {microsite.published ? (
                             <>
@@ -206,7 +287,7 @@ export default function MicrositeEditor() {
                                 </code>
                             </>
                         ) : (
-                            "Aún no publicado."
+                            "Borrador — hacé click en una sección del preview para editarla."
                         )}
                         {saving && (
                             <span className="ml-2 text-xs text-muted-foreground inline-flex items-center gap-1">
@@ -217,21 +298,13 @@ export default function MicrositeEditor() {
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                    <Button
-                        variant="outline"
-                        asChild
-                        data-testid="editor-open-public"
-                    >
+                    <Button variant="outline" asChild data-testid="editor-open-public">
                         <a href={publicMicrositeUrl(organizer.slug)} target="_blank" rel="noopener noreferrer">
                             <ExternalLink className="h-4 w-4 mr-2" />
                             Ver público
                         </a>
                     </Button>
-                    <Button
-                        variant="outline"
-                        onClick={() => setShareOpen(true)}
-                        data-testid="editor-share-btn"
-                    >
+                    <Button variant="outline" onClick={() => setShareOpen(true)} data-testid="editor-share-btn">
                         <Share2 className="h-4 w-4 mr-2" />
                         Compartir
                     </Button>
@@ -245,252 +318,111 @@ export default function MicrositeEditor() {
                 </div>
             </div>
 
-            <div className="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,9fr)] gap-4">
-                {/* PANEL LEFT */}
-                <Card className="lg:max-h-[calc(100vh-180px)] lg:overflow-y-auto">
-                    <CardContent className="pt-6">
-                        <Tabs defaultValue="template" className="w-full">
-                            <TabsList
-                                className="grid grid-cols-3 gap-1 mb-4 w-full h-auto p-1"
-                                data-testid="editor-tabs"
-                            >
-                                <TabsTrigger value="template" data-testid="tab-template" className="text-xs">Plantilla</TabsTrigger>
-                                <TabsTrigger value="branding" data-testid="tab-branding" className="text-xs">Branding</TabsTrigger>
-                                <TabsTrigger value="content" data-testid="tab-content" className="text-xs">Contenido</TabsTrigger>
-                                <TabsTrigger value="social" data-testid="tab-social" className="text-xs">Redes</TabsTrigger>
-                                <TabsTrigger value="sections" data-testid="tab-sections" className="text-xs">Secciones</TabsTrigger>
-                                <TabsTrigger value="publish" data-testid="tab-publish" className="text-xs">Publicar</TabsTrigger>
-                            </TabsList>
+            {/* Builder a ancho completo: secciones | preview | propiedades */}
+            <div className="grid flex-1 min-h-0 gap-3 lg:grid-cols-[minmax(220px,260px)_minmax(0,1fr)_minmax(260px,300px)] lg:grid-rows-1">
+                {/* LEFT — block list + nav */}
+                <Card className="flex flex-col min-h-0 lg:max-h-[calc(100vh-9.5rem)] lg:overflow-hidden">
+                    <CardContent className="pt-4 space-y-4 flex-1 overflow-y-auto">
+                        <div className="flex gap-1 border rounded-lg p-1 bg-secondary/40 flex-wrap">
+                            {(
+                                [
+                                    ["blocks", Settings2, "Secciones"],
+                                    ["theme", Palette, "Tema"],
+                                    ["seo", Search, "SEO"],
+                                    ["history", History, "Historial"],
+                                    ["publish", Globe, "Publicar"],
+                                ] as const
+                            ).map(([key, Icon, label]) => (
+                                <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() => setSidePanel(key)}
+                                    className={`flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-md text-[10px] font-medium transition ${
+                                        sidePanel === key ? "bg-background shadow text-foreground" : "text-muted-foreground"
+                                    }`}
+                                    data-testid={`side-panel-${key}`}
+                                >
+                                    <Icon className="h-3.5 w-3.5" />
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
 
-                            <TabsContent value="template" className="space-y-3">
-                                {TEMPLATE_OPTIONS.map((t) => {
-                                    const active = microsite.template === t.code;
-                                    return (
-                                        <button
-                                            key={t.code}
-                                            type="button"
-                                            onClick={() => pushUpdate({ template: t.code })}
-                                            className={`w-full text-left p-4 rounded-xl border transition ${
-                                                active
-                                                    ? "border-primary ring-2 ring-primary/30 bg-primary/5"
-                                                    : "border-border hover:border-primary/50"
-                                            }`}
-                                            data-testid={`template-${t.code}`}
-                                        >
-                                            <div className="font-semibold">{t.name}</div>
-                                            <div className="text-sm text-muted-foreground">
-                                                {t.description}
-                                            </div>
-                                        </button>
-                                    );
-                                })}
-                            </TabsContent>
-
-                            <TabsContent value="branding" className="space-y-4">
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div className="space-y-2">
-                                        <Label>Color primario</Label>
-                                        <input
-                                            type="color"
-                                            value={microsite.branding.primary_color}
-                                            onChange={(e) =>
-                                                pushUpdate({
-                                                    branding: { primary_color: e.target.value },
-                                                })
-                                            }
-                                            className="h-10 w-full rounded border"
-                                            data-testid="color-primary"
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label>Color secundario</Label>
-                                        <input
-                                            type="color"
-                                            value={microsite.branding.secondary_color}
-                                            onChange={(e) =>
-                                                pushUpdate({
-                                                    branding: { secondary_color: e.target.value },
-                                                })
-                                            }
-                                            className="h-10 w-full rounded border"
-                                            data-testid="color-secondary"
-                                        />
-                                    </div>
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Tipografía</Label>
-                                    <Select
-                                        value={microsite.branding.font_family}
-                                        onValueChange={(v) =>
-                                            pushUpdate({ branding: { font_family: v } })
-                                        }
-                                    >
-                                        <SelectTrigger data-testid="font-select">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {FONT_OPTIONS.map((f) => (
-                                                <SelectItem
-                                                    key={f.value}
-                                                    value={f.value}
-                                                    data-testid={`font-opt-${f.value}`}
-                                                >
-                                                    {f.label}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <AssetField
-                                    label="Logo"
-                                    currentUrl={assetUrl(microsite.branding.logo_url)}
-                                    onUpload={(f) => uploadAsset(f, "logo")}
-                                    uploading={uploadingAsset === "logo"}
-                                    shape="circle"
-                                    testid="upload-logo"
-                                />
-                                <AssetField
-                                    label="Banner del hero"
-                                    currentUrl={assetUrl(microsite.branding.banner_url)}
-                                    onUpload={(f) => uploadAsset(f, "banner")}
-                                    uploading={uploadingAsset === "banner"}
-                                    shape="rect"
-                                    testid="upload-banner"
-                                />
-                            </TabsContent>
-
-                            <TabsContent value="content" className="space-y-4">
-                                {(
-                                    [
-                                    ["hero_title", "Título del hero"],
-                                    ["hero_subtitle", "Subtítulo del hero", true],
-                                    ["hero_cta_text", "Texto del botón principal"],
-                                    ["about_title", "Título 'Sobre nosotros'"],
-                                    ["about_body", "Cuerpo 'Sobre nosotros'", true],
-                                    ["contact_email", "Email de contacto"],
-                                    ["contact_phone", "Teléfono de contacto"],
-                                    ["address", "Dirección"],
-                                ] as [string, string, boolean?][]
-                                ).map(([key, label, textarea]) => (
-                                    <ContentField
-                                        key={key}
-                                        label={label}
-                                        value={microsite.content[key] || ""}
-                                        textarea={textarea}
-                                        maxLength={TEXT_LIMITS[key]}
-                                        onChange={(v) => pushUpdate({ content: { [key]: v } })}
-                                        testid={`content-${key}`}
-                                    />
-                                ))}
-                            </TabsContent>
-
-                            <TabsContent value="social" className="space-y-3">
-                                {Object.entries(microsite.social_links).map(([k, rawValue]) => (
-                                    <div key={k} className="space-y-2">
-                                        <Label className="capitalize">{k}</Label>
-                                        <Input
-                                            value={typeof rawValue === "string" ? rawValue : ""}
-                                            placeholder={k === "whatsapp" ? "+593..." : "https://..."}
-                                            onChange={(e) =>
-                                                pushUpdate({ social_links: { [k]: e.target.value } })
-                                            }
-                                            data-testid={`social-${k}`}
-                                        />
-                                    </div>
-                                ))}
-                            </TabsContent>
-
-                            <TabsContent value="sections" className="space-y-3">
-                                {Object.entries(microsite.sections_enabled).map(([k, enabled]) => (
-                                    <div
-                                        key={k}
-                                        className="flex items-center justify-between rounded-lg border p-3"
-                                    >
-                                        <Label className="capitalize cursor-pointer">{k}</Label>
-                                        <Switch
-                                            checked={Boolean(enabled)}
-                                            onCheckedChange={(c) =>
-                                                pushUpdate({ sections_enabled: { [k]: c } })
-                                            }
-                                            data-testid={`section-${k}`}
-                                        />
-                                    </div>
-                                ))}
-                            </TabsContent>
-
-                            <TabsContent value="publish" className="space-y-4">
-                                <div className="flex items-center justify-between rounded-lg border p-3">
-                                    <Label htmlFor="published-switch">
-                                        Microsite publicado
-                                    </Label>
-                                    <Switch
-                                        id="published-switch"
-                                        checked={microsite.published}
-                                        onCheckedChange={togglePublish}
-                                        data-testid="publish-switch"
-                                    />
-                                </div>
-                                {microsite.published && organizer?.slug && (
-                                    <div className="rounded-lg border bg-secondary/30 p-4 space-y-2">
-                                        <p className="text-sm">URL pública:</p>
-                                        <code className="block text-sm bg-background px-2 py-1.5 rounded border">
-                                            {organizer.slug}.{PUBLIC_DOMAIN}
-                                        </code>
-                                        {isOnPublicDomain() ? (
-                                            <p className="text-xs text-muted-foreground">
-                                                Ya disponible en{" "}
-                                                <a
-                                                    href={publicUrl}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="underline"
-                                                >
-                                                    {publicMicrositeHost(organizer.slug)}
-                                                </a>
-                                            </p>
-                                        ) : (
-                                            <p className="text-xs text-muted-foreground">
-                                                Próximamente con DNS de producción. En vista previa:{" "}
-                                                <Link
-                                                    to={previewMicrositePath(organizer.slug)}
-                                                    className="underline"
-                                                >
-                                                    /o/{organizer.slug}
-                                                </Link>
-                                            </p>
-                                        )}
-                                        <Button
-                                            onClick={() => setShareOpen(true)}
-                                            variant="outline"
-                                            size="sm"
-                                            data-testid="publish-share-btn"
-                                        >
-                                            <Share2 className="h-3.5 w-3.5 mr-1.5" />
-                                            Compartir link + QR
-                                        </Button>
-                                    </div>
-                                )}
-                            </TabsContent>
-                        </Tabs>
+                        {sidePanel === "blocks" && (
+                            <BlockListPanel
+                                blocks={blocks}
+                                selectedBlockId={selectedBlockId}
+                                onSelectBlock={handleSelectBlock}
+                                onReorder={updateBlocks}
+                                onUpdateBlock={updateBlock}
+                                onRemoveBlock={removeBlock}
+                                onAddBlock={addBlock}
+                            />
+                        )}
+                        {sidePanel === "theme" && (
+                            <ThemePanel
+                                microsite={microsite}
+                                onApplyTemplate={applyTemplate}
+                                onUpdateBranding={(patch) => pushUpdate({ branding: patch })}
+                                uploadAsset={uploadAsset}
+                                uploadingAsset={uploadingAsset}
+                            />
+                        )}
+                        {sidePanel === "seo" && (
+                            <SeoPanel
+                                microsite={microsite}
+                                onUpdateSeo={(patch) => pushUpdate({ seo: patch })}
+                                onUpdateBranding={(patch) => pushUpdate({ branding: patch })}
+                                uploadGalleryAsset={uploadGalleryAsset}
+                                uploadingGallery={uploadingAsset === "gallery"}
+                                planCode={organizer?.plan_code}
+                            />
+                        )}
+                        {sidePanel === "history" && (
+                            <RevisionsPanel
+                                onRestored={(data) => {
+                                    const next = { ...data };
+                                    if (!Array.isArray(next.blocks) || !next.blocks.length) {
+                                        next.blocks = resolveBlocks(next);
+                                    }
+                                    setMicrosite(next);
+                                    setSelectedBlockId(null);
+                                }}
+                            />
+                        )}
+                        {sidePanel === "publish" && (
+                            <PublishPanel
+                                microsite={microsite}
+                                organizer={organizer}
+                                onTogglePublish={togglePublish}
+                            />
+                        )}
                     </CardContent>
                 </Card>
 
-                {/* PREVIEW RIGHT */}
-                <div className="flex flex-col gap-3">
+                {/* CENTER — live preview */}
+                <div className="flex flex-col gap-2 min-w-0 min-h-0">
                     <div className="flex items-center justify-between flex-wrap gap-2">
                         <div className="flex items-center gap-3">
-                            <p className="text-sm font-medium text-muted-foreground">
-                                Vista previa en vivo
-                            </p>
+                            <p className="text-sm font-medium text-muted-foreground">Vista previa</p>
                             <span
                                 className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 text-muted-foreground tabular-nums"
                                 data-testid="preview-width-indicator"
-                                aria-live="polite"
                             >
                                 {previewWidth ? `${previewWidth}px` : "—"}
                             </span>
                         </div>
                         <div className="flex items-center gap-2">
+                            <Button
+                                variant={showGrid ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => setShowGrid((v) => !v)}
+                                data-testid="toggle-grid-btn"
+                                title="Cuadrícula 12 columnas"
+                            >
+                                <Grid3x3 className="h-3.5 w-3.5 mr-1.5" />
+                                Cuadrícula
+                            </Button>
                             <div className="flex gap-1 border rounded-full p-1 bg-secondary/40">
                                 <button
                                     onClick={() => setPreviewMode("desktop")}
@@ -522,19 +454,106 @@ export default function MicrositeEditor() {
                             </Button>
                         </div>
                     </div>
+
+                    {selectedBlock?.type === "hero" && microsite && (
+                        <HeroLayerRibbon
+                            block={selectedBlock}
+                            microsite={microsite}
+                            selectedLayerId={selectedLayerId}
+                            onSelectLayer={setSelectedLayerId}
+                            onUpdateLayers={(layers) =>
+                                updateBlock(selectedBlock.id, {
+                                    props: { ...selectedBlock.props, layers },
+                                })
+                            }
+                            onUpdateContent={(patch) => pushUpdate({ content: patch })}
+                            onUploadGallery={uploadGalleryAsset}
+                            uploadingGallery={uploadingAsset === "gallery"}
+                        />
+                    )}
+
                     <div
                         ref={previewRef}
-                        className={`rounded-2xl border bg-background overflow-hidden shadow-sm transition-all mx-auto ${
-                            previewMode === "mobile" ? "w-[380px]" : "w-full"
+                        className={`rounded-xl border bg-background overflow-hidden shadow-sm transition-all flex-1 min-h-0 flex flex-col ${
+                            previewMode === "mobile" ? "w-[380px] mx-auto" : "w-full"
                         }`}
                         data-testid="preview-frame"
                     >
-                        <div className="lg:max-h-[calc(100vh-200px)] overflow-y-auto">
-                            <MicrositeRenderer microsite={microsite} />
+                        <MicrositeHead
+                            microsite={{ ...microsite, company_name: organizer?.company_name }}
+                            publicUrl={publicUrl}
+                        />
+                        <div className="flex-1 min-h-0 overflow-y-auto lg:max-h-[calc(100vh-13rem)]">
+                            <MicrositeRenderer
+                                microsite={microsite}
+                                editorMode
+                                showGrid={showGrid}
+                                selectedBlockId={selectedBlockId}
+                                selectedLayerId={selectedLayerId}
+                                onSelectBlock={handleSelectBlock}
+                                onSelectLayer={setSelectedLayerId}
+                                onUpdateContent={(patch) => pushUpdate({ content: patch })}
+                                onUpdateBlockProps={handleUpdateBlockProps}
+                                onUploadGallery={uploadGalleryAsset}
+                                uploadingGallery={uploadingAsset === "gallery"}
+                            />
                         </div>
                     </div>
                 </div>
+
+                {/* RIGHT — properties */}
+                <Card className="hidden lg:flex flex-col min-h-0 lg:max-h-[calc(100vh-9.5rem)] lg:overflow-hidden">
+                    <CardContent className="pt-4 flex-1 overflow-y-auto">
+                        {selectedBlock ? (
+                            <BlockPropertiesPanel
+                                block={selectedBlock}
+                                microsite={microsite}
+                                onUpdateProps={(props) =>
+                                    updateBlock(selectedBlock.id, { props: { ...selectedBlock.props, ...props } })
+                                }
+                                onUpdateContent={(patch) => pushUpdate({ content: patch })}
+                                onUpdateSocial={(patch) => pushUpdate({ social_links: patch })}
+                                onUploadGallery={uploadGalleryAsset}
+                                uploadingGallery={uploadingAsset === "gallery"}
+                                selectedLayerId={selectedLayerId}
+                                onSelectLayer={setSelectedLayerId}
+                            />
+                        ) : (
+                            <div className="text-center py-8 text-muted-foreground space-y-2">
+                                <Settings2 className="h-8 w-8 mx-auto opacity-40" />
+                                <p className="text-sm">
+                                    Seleccioná una sección en el preview o en la lista para editar sus propiedades.
+                                </p>
+                                <Button variant="outline" size="sm" onClick={() => setSidePanel("theme")}>
+                                    <Palette className="h-3.5 w-3.5 mr-1.5" />
+                                    Editar tema global
+                                </Button>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
             </div>
+
+            {/* Mobile/tablet: properties below when block selected */}
+            {selectedBlock && (
+                <Card className="lg:hidden shrink-0">
+                    <CardContent className="pt-4">
+                        <BlockPropertiesPanel
+                            block={selectedBlock}
+                            microsite={microsite}
+                            onUpdateProps={(props) =>
+                                updateBlock(selectedBlock.id, { props: { ...selectedBlock.props, ...props } })
+                            }
+                            onUpdateContent={(patch) => pushUpdate({ content: patch })}
+                            onUpdateSocial={(patch) => pushUpdate({ social_links: patch })}
+                            onUploadGallery={uploadGalleryAsset}
+                            uploadingGallery={uploadingAsset === "gallery"}
+                            selectedLayerId={selectedLayerId}
+                            onSelectLayer={setSelectedLayerId}
+                        />
+                    </CardContent>
+                </Card>
+            )}
 
             <Dialog open={fullscreenOpen} onOpenChange={setFullscreenOpen}>
                 <DialogContent
@@ -545,16 +564,12 @@ export default function MicrositeEditor() {
                         <DialogTitle className="text-base flex items-center gap-2">
                             <Maximize2 className="h-4 w-4 text-primary" />
                             Vista grande del microsite
-                            <span className="text-xs font-normal text-muted-foreground ml-auto">
-                                Resolución desktop · {organizer?.slug}.{PUBLIC_DOMAIN}
-                            </span>
                         </DialogTitle>
                     </DialogHeader>
                     <div className="flex-1 bg-secondary/30 overflow-auto p-4">
                         <div
                             className="mx-auto bg-background rounded-xl border shadow-sm overflow-hidden"
                             style={{ maxWidth: "1200px" }}
-                            data-testid="preview-fullscreen-content"
                         >
                             <MicrositeRenderer microsite={microsite} />
                         </div>
@@ -578,88 +593,14 @@ export default function MicrositeEditor() {
     );
 }
 
-function ContentField({ label, value, textarea, maxLength, onChange, testid }) {
-    const len = (value || "").length;
-    const Component = textarea ? Textarea : Input;
-    return (
-        <div className="space-y-1.5">
-            <div className="flex justify-between">
-                <Label>{label}</Label>
-                {maxLength && (
-                    <span
-                        className={`text-xs ${len > maxLength * 0.9 ? "text-amber-600" : "text-muted-foreground"}`}
-                    >
-                        {len}/{maxLength}
-                    </span>
-                )}
-            </div>
-            <Component
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-                maxLength={maxLength}
-                rows={textarea ? 4 : undefined}
-                data-testid={testid}
-            />
-        </div>
-    );
-}
-
-function AssetField({ label, currentUrl, onUpload, uploading, shape, testid }) {
-    return (
-        <div className="space-y-2">
-            <Label>{label}</Label>
-            <div className="flex items-center gap-3">
-                {currentUrl ? (
-                    <img
-                        src={currentUrl}
-                        alt={label}
-                        className={`object-cover ring-2 ring-border ${
-                            shape === "circle" ? "h-14 w-14 rounded-full" : "h-14 w-24 rounded-md"
-                        }`}
-                    />
-                ) : (
-                    <div
-                        className={`bg-secondary border ${
-                            shape === "circle" ? "h-14 w-14 rounded-full" : "h-14 w-24 rounded-md"
-                        } grid place-items-center text-xs text-muted-foreground`}
-                    >
-                        sin
-                    </div>
-                )}
-                <label className="cursor-pointer">
-                    <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        className="hidden"
-                        data-testid={testid}
-                        onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) onUpload(f);
-                            e.target.value = ""; // allow same file re-upload
-                        }}
-                    />
-                    <Button asChild variant="outline" size="sm" disabled={uploading}>
-                        <span>
-                            {uploading ? (
-                                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                            ) : (
-                                <Upload className="h-3.5 w-3.5 mr-1.5" />
-                            )}
-                            Subir
-                        </span>
-                    </Button>
-                </label>
-            </div>
-        </div>
-    );
-}
-
 function deepMerge(target, patch) {
     if (!patch || typeof patch !== "object") return patch;
     const out = { ...(target || {}) };
     for (const k of Object.keys(patch)) {
         const v = patch[k];
-        if (v && typeof v === "object" && !Array.isArray(v)) {
+        if (Array.isArray(v)) {
+            out[k] = v;
+        } else if (v && typeof v === "object") {
             out[k] = deepMerge(target?.[k], v);
         } else {
             out[k] = v;

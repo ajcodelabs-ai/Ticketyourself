@@ -715,6 +715,8 @@ async def _seed_demo_microsites() -> None:
                 content=doc.get("content", {}),
                 social_links=doc.get("social_links", {}),
                 sections_enabled=doc.get("sections_enabled", {}),
+                blocks=doc.get("blocks", []),
+                seo=doc.get("seo", {}),
                 published=doc.get("published", False),
                 created_at=now_dt,
                 updated_at=now_dt,
