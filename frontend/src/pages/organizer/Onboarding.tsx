@@ -41,6 +41,7 @@ export default function Onboarding() {
     const [loading, setLoading] = useState(true);
     const [docType, setDocType] = useState("");
     const [uploading, setUploading] = useState(false);
+    const [pendingFile, setPendingFile] = useState(null);
     const [resubmitting, setResubmitting] = useState(false);
     const [signupPlanCode, setSignupPlanCode] = useState(null);
 
@@ -104,8 +105,7 @@ export default function Onboarding() {
         }
     }, [organizer, navigate]);
 
-    const uploadDoc = async (file) => {
-        if (!file) return;
+    const validateFile = (file) => {
         const okTypes = [
             "application/pdf",
             "image/jpeg",
@@ -118,21 +118,40 @@ export default function Onboarding() {
             toast.error(
                 `Formato no soportado: ${file.type}. Aceptados: PDF, JPEG, PNG, WEBP, HEIC.`,
             );
-            return;
+            return false;
         }
         if (file.size > 10 * 1024 * 1024) {
             toast.error("El archivo supera los 10MB.");
-            return;
+            return false;
         }
+        return true;
+    };
+
+    // Selecting a file only stages it — the actual upload happens when the
+    // organizer confirms with the "Enviar" button, so nothing goes to
+    // review by accident.
+    const onFileChange = (e) => {
+        const file = e.target.files?.[0];
+        // Reset input so selecting the same file twice still triggers onChange.
+        e.target.value = "";
+        if (!file || !validateFile(file)) return;
+        setPendingFile(file);
+    };
+
+    const cancelPendingFile = () => setPendingFile(null);
+
+    const confirmUpload = async () => {
+        if (!pendingFile) return;
         setUploading(true);
         try {
             const fd = new FormData();
             fd.append("doc_type", docType);
-            fd.append("file", file);
+            fd.append("file", pendingFile);
             // Do NOT set Content-Type manually — axios auto-generates it with the
             // multipart boundary. The interceptor strips any stale Content-Type.
             await api.post("/organizers/me/documents", fd, { timeout: 60000 });
-            toast.success("Documento subido correctamente");
+            toast.success("Documento enviado a revisión");
+            setPendingFile(null);
             await fetchAll();
         } catch (err) {
             const status = err?.response?.status;
@@ -144,13 +163,6 @@ export default function Onboarding() {
         } finally {
             setUploading(false);
         }
-    };
-
-    const onFileChange = (e) => {
-        const file = e.target.files?.[0];
-        // Reset input so selecting the same file twice still triggers onChange.
-        e.target.value = "";
-        uploadDoc(file);
     };
 
     const deleteDoc = async (id) => {
@@ -248,7 +260,10 @@ export default function Onboarding() {
                             docType={docType}
                             setDocType={setDocType}
                             uploading={uploading}
+                            pendingFile={pendingFile}
                             onFileChange={onFileChange}
+                            onConfirm={confirmUpload}
+                            onCancel={cancelPendingFile}
                             docs={docs}
                             onDelete={deleteDoc}
                         />
@@ -263,8 +278,17 @@ export default function Onboarding() {
                             <Clock className="h-5 w-5" /> En revisión por el equipo TYS
                         </CardTitle>
                         <CardDescription>
-                            Recibimos tus documentos. Te avisamos por correo en cuanto aprobemos tu
-                            cuenta para que puedas pagar el plan elegido.
+                            Recibimos tus documentos. Serán revisados y aprobados dentro de las
+                            próximas 48 horas laborables; te avisamos por correo en cuanto
+                            aprobemos tu cuenta para que puedas pagar el plan elegido. Si tenés
+                            alguna pregunta, no dudes en escribirnos a{" "}
+                            <a
+                                href="mailto:soporte@ticketyourself.com"
+                                className="text-primary underline underline-offset-2"
+                            >
+                                soporte@ticketyourself.com
+                            </a>
+                            .
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -273,7 +297,10 @@ export default function Onboarding() {
                             docType={docType}
                             setDocType={setDocType}
                             uploading={uploading}
+                            pendingFile={pendingFile}
                             onFileChange={onFileChange}
+                            onConfirm={confirmUpload}
+                            onCancel={cancelPendingFile}
                             docs={docs}
                             onDelete={deleteDoc}
                         />
@@ -300,7 +327,10 @@ export default function Onboarding() {
                             docType={docType}
                             setDocType={setDocType}
                             uploading={uploading}
+                            pendingFile={pendingFile}
                             onFileChange={onFileChange}
+                            onConfirm={confirmUpload}
+                            onCancel={cancelPendingFile}
                             docs={docs}
                             onDelete={deleteDoc}
                         />
@@ -375,13 +405,24 @@ export default function Onboarding() {
     );
 }
 
-function DocumentsUploader({ docTypes, docType, setDocType, uploading, onFileChange, docs, onDelete }) {
+function DocumentsUploader({
+    docTypes,
+    docType,
+    setDocType,
+    uploading,
+    pendingFile,
+    onFileChange,
+    onConfirm,
+    onCancel,
+    docs,
+    onDelete,
+}) {
     return (
         <div className="space-y-5">
             <div className="grid sm:grid-cols-[1fr_2fr] gap-3 items-end">
                 <div className="space-y-1">
                     <Label htmlFor="doc-type">Tipo de documento</Label>
-                    <Select value={docType} onValueChange={setDocType}>
+                    <Select value={docType} onValueChange={setDocType} disabled={!!pendingFile}>
                         <SelectTrigger id="doc-type" data-testid="doc-type-select">
                             <SelectValue />
                         </SelectTrigger>
@@ -398,47 +439,70 @@ function DocumentsUploader({ docTypes, docType, setDocType, uploading, onFileCha
                         </SelectContent>
                     </Select>
                 </div>
-                <label
-                    htmlFor="file-input"
-                    data-testid="doc-dropzone"
-                    aria-disabled={uploading}
-                    className={`flex items-center justify-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 cursor-pointer transition-colors text-center ${
-                        uploading
-                            ? "border-primary bg-primary/5 cursor-wait"
-                            : "border-border/70 hover:border-primary hover:bg-primary/5"
-                    }`}
-                >
-                    {uploading ? (
-                        <>
-                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                            <span className="text-sm font-medium text-primary">
-                                Subiendo documento…
+                {pendingFile ? (
+                    <div
+                        data-testid="doc-pending-file"
+                        className="flex items-center justify-between gap-3 rounded-xl border-2 border-primary/50 bg-primary/5 px-4 py-4"
+                    >
+                        <div className="flex items-center gap-3 min-w-0">
+                            <FileText className="h-5 w-5 text-primary shrink-0" />
+                            <div className="min-w-0">
+                                <div className="text-sm font-medium truncate">{pendingFile.name}</div>
+                                <div className="text-xs text-muted-foreground">
+                                    {(pendingFile.size / 1024).toFixed(1)} KB
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={onCancel}
+                                disabled={uploading}
+                                data-testid="doc-cancel-btn"
+                            >
+                                Cancelar
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                onClick={onConfirm}
+                                disabled={uploading}
+                                data-testid="doc-submit-btn"
+                                className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                            >
+                                {uploading && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+                                Enviar
+                            </Button>
+                        </div>
+                    </div>
+                ) : (
+                    <label
+                        htmlFor="file-input"
+                        data-testid="doc-dropzone"
+                        className="flex items-center justify-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 cursor-pointer transition-colors text-center border-border/70 hover:border-primary hover:bg-primary/5"
+                    >
+                        <Upload className="h-5 w-5 text-primary" />
+                        <span className="text-sm">
+                            <strong className="text-primary">
+                                Haz clic para elegir un archivo
+                            </strong>{" "}
+                            <span className="text-muted-foreground">
+                                — PDF, JPG, PNG, WEBP o HEIC (máx 10MB)
                             </span>
-                        </>
-                    ) : (
-                        <>
-                            <Upload className="h-5 w-5 text-primary" />
-                            <span className="text-sm">
-                                <strong className="text-primary">
-                                    Hacé click para subir
-                                </strong>{" "}
-                                <span className="text-muted-foreground">
-                                    — PDF, JPG, PNG, WEBP o HEIC (máx 10MB)
-                                </span>
-                            </span>
-                        </>
-                    )}
-                    <input
-                        id="file-input"
-                        name="file"
-                        type="file"
-                        accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/*"
-                        onChange={onFileChange}
-                        disabled={uploading}
-                        data-testid="doc-file-input"
-                        className="sr-only"
-                    />
-                </label>
+                        </span>
+                        <input
+                            id="file-input"
+                            name="file"
+                            type="file"
+                            accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/*"
+                            onChange={onFileChange}
+                            data-testid="doc-file-input"
+                            className="sr-only"
+                        />
+                    </label>
+                )}
             </div>
 
             <div data-testid="docs-list" className="space-y-2">

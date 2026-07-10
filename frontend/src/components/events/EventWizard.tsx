@@ -2280,6 +2280,11 @@ function SectionAccess({ form, update, eventId }) {
         <div className="space-y-5" data-testid="section-access">
             <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="access-control-block">
                 <SubHeader icon="🔒" title="Control de acceso" />
+                <p className="text-xs text-muted-foreground -mt-2">
+                    Esto define quién puede ver y comprar en la <strong>página del evento</strong>{" "}
+                    (tu microsite) — no es el control de acceso físico al evento el día de la función,
+                    que se valida con el ticket/QR en la puerta.
+                </p>
                 <Field label="Visibilidad">
                     <Select
                         value={form.visibility}

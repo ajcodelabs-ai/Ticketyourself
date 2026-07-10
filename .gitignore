@@ -134,6 +134,12 @@ backend/.python-version
 # UV lock file (project uses pip)
 backend/uv.lock
 
+# Playwright test artifacts
+frontend/playwright-report/
+frontend/test-results/
+
+# CDK infra (build output, venv, caches)
+/infra/cdk/
 # CDK
 cdk.out/
 infra/cdk/.venv/
