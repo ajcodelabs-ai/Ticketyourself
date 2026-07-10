@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig, configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -15,5 +15,7 @@ export default defineConfig({
     test: {
         environment: "jsdom",
         globals: true,
+        // e2e/ holds Playwright specs, run separately via `yarn test:e2e`.
+        exclude: [...configDefaults.exclude, "e2e/**"],
     },
 });
