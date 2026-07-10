@@ -32,6 +32,7 @@ import EventContentPanel from "@/components/events/EventContentPanel";
 import TicketTypesPanel from "@/components/events/TicketTypesPanel";
 import EventFunctionsPanel from "@/components/events/EventFunctionsPanel";
 import SeasonPassPanel from "@/components/events/SeasonPassPanel";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import GuestListPanel from "@/components/events/GuestListPanel";
 import TicketDesignPanel from "@/components/events/TicketDesignPanel";
 import AccessCodesPanel from "@/components/events/AccessCodesPanel";
@@ -1149,8 +1150,8 @@ function CuandoBlock({ form, update, disabled, onJumpToFunctions }) {
                     Ventana de venta
                 </div>
                 <p className="text-xs text-muted-foreground">
-                    Cuándo se habilita y se cierra la compra de tickets. Las opciones se
-                    calculan desde tu fecha de inicio.
+                    Cuándo se habilita y se cierra la compra (o reserva si es gratuito) de
+                    tickets. Las opciones se calculan desde tu fecha de inicio.
                 </p>
 
                 <div className="grid sm:grid-cols-2 gap-3">
@@ -2274,7 +2275,7 @@ function DiscountsReportPanel({ eventId }) {
 
 // ── Section: Access ─────────────────────────────────────────────────────────
 function SectionAccess({ form, update, eventId }) {
-    const ap = form.access_params;
+    const ap = form.access_params || defaultAccessParams();
     const deliveryMode = form.ticket_delivery_mode || "al_momento";
     return (
         <div className="space-y-5" data-testid="section-access">
@@ -2323,8 +2324,15 @@ function SectionAccess({ form, update, eventId }) {
                     </Select>
                 </Field>
 
-                {ap.access_type === "verified_list" && <GuestListPanel eventId={eventId} />}
-                {ap.access_type === "access_code" && <AccessCodesPanel eventId={eventId} />}
+                {/* `key` remounts the boundary (resetting hasError) whenever the
+                    access type changes, instead of leaving a transient crash
+                    permanently stuck behind the fallback for the rest of the wizard. */}
+                <ErrorBoundary key={`guest-list-${ap.access_type}`} fallback={<p className="text-xs text-muted-foreground p-3">Error al cargar el panel. Reintenta más tarde.</p>}>
+                    {ap.access_type === "verified_list" && <GuestListPanel eventId={eventId} />}
+                </ErrorBoundary>
+                <ErrorBoundary key={`access-codes-${ap.access_type}`} fallback={<p className="text-xs text-muted-foreground p-3">Error al cargar el panel. Reintenta más tarde.</p>}>
+                    {ap.access_type === "access_code" && <AccessCodesPanel eventId={eventId} />}
+                </ErrorBoundary>
             </div>
 
             <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="access-purchase-block">
