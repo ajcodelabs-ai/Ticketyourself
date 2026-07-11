@@ -191,7 +191,7 @@ export function AboutBlockView({
     return (
         <section
             id={blockId ? `block-${blockId}` : undefined}
-            className="py-16 md:py-20"
+            className="py-[var(--ms-space-section)]"
             data-testid="ms-about"
         >
             <div
@@ -265,7 +265,7 @@ export function EventsBlockView({
 
     if (events === null) {
         return (
-            <section className="py-16 md:py-20 bg-secondary/40">
+            <section className="py-[var(--ms-space-section)] bg-secondary/40">
                 <div className="max-w-5xl mx-auto px-6 text-center text-muted-foreground">
                     Cargando eventos…
                 </div>
@@ -276,7 +276,7 @@ export function EventsBlockView({
         return (
             <section
                 id={blockId ? `block-${blockId}` : "events"}
-                className="py-16 md:py-20 bg-secondary/40"
+                className="py-[var(--ms-space-section)] bg-secondary/40"
                 data-testid="ms-events-empty"
             >
                 <div className="max-w-5xl mx-auto px-6 sm:px-10 text-center">
@@ -304,7 +304,7 @@ export function EventsBlockView({
     return (
         <section
             id={blockId ? `block-${blockId}` : "events"}
-            className="py-16 md:py-20"
+            className="py-[var(--ms-space-section)]"
             data-testid="ms-events-section"
         >
             <div className="max-w-6xl mx-auto px-6 sm:px-10 space-y-12">
@@ -350,7 +350,7 @@ export function EventsBlockView({
 function FeaturedEventView({ tenantSlug, blockId, events }) {
     if (events === null) {
         return (
-            <section className="py-16 md:py-20 bg-secondary/40">
+            <section className="py-[var(--ms-space-section)] bg-secondary/40">
                 <div className="max-w-5xl mx-auto px-6 text-center text-muted-foreground">
                     Cargando eventos…
                 </div>
@@ -369,8 +369,8 @@ function FeaturedEventView({ tenantSlug, blockId, events }) {
     }).format(new Date(event.starts_at));
 
     return (
-        <section id={blockId ? `block-${blockId}` : "events"} className="py-16 md:py-20 px-6">
-            <div className="max-w-3xl mx-auto rounded-3xl border bg-card overflow-hidden shadow-xl">
+        <section id={blockId ? `block-${blockId}` : "events"} className="py-[var(--ms-space-section)] px-6">
+            <div className="max-w-3xl mx-auto rounded-[var(--ms-radius)] border bg-card overflow-hidden shadow-[var(--ms-shadow)]">
                 {event.poster_url && (
                     <img
                         src={
@@ -426,7 +426,7 @@ export function ContactBlockView({
     return (
         <section
             id={blockId ? `block-${blockId}` : "contact"}
-            className="py-14 md:py-16"
+            className="py-[var(--ms-space-section)]"
             data-testid="ms-contact"
         >
             <div className="max-w-3xl mx-auto px-6 sm:px-10">
@@ -530,7 +530,7 @@ export function ImageBlockView({ block, blockId }: { block: MicrositeBlock; bloc
     if (!imageUrl) {
         return (
             <section className="py-12 px-6" data-testid="ms-image-empty">
-                <div className="max-w-4xl mx-auto h-48 rounded-xl border border-dashed grid place-items-center text-muted-foreground text-sm">
+                <div className="max-w-4xl mx-auto h-48 rounded-[var(--ms-radius)] border border-dashed grid place-items-center text-muted-foreground text-sm">
                     Añadí una imagen desde el panel de propiedades
                 </div>
             </section>
@@ -568,7 +568,7 @@ export function GalleryBlockView({ block, blockId }: { block: MicrositeBlock; bl
     if (images.length === 0) {
         return (
             <section className="py-12 px-6" data-testid="ms-gallery-empty">
-                <div className="max-w-5xl mx-auto h-40 rounded-xl border border-dashed grid place-items-center text-muted-foreground text-sm">
+                <div className="max-w-5xl mx-auto h-40 rounded-[var(--ms-radius)] border border-dashed grid place-items-center text-muted-foreground text-sm">
                     Añadí imágenes a la galería
                 </div>
             </section>
@@ -578,12 +578,12 @@ export function GalleryBlockView({ block, blockId }: { block: MicrositeBlock; bl
     return (
         <section
             id={blockId ? `block-${blockId}` : undefined}
-            className="py-16 md:py-20 px-6"
+            className="py-[var(--ms-space-section)] px-6"
             data-testid="ms-gallery"
         >
             <div className={`max-w-6xl mx-auto grid gap-3 ${colClass}`}>
                 {images.map((img) => (
-                    <div key={img.id} className="rounded-xl overflow-hidden border aspect-square">
+                    <div key={img.id} className="rounded-[var(--ms-radius)] overflow-hidden border aspect-square">
                         <img
                             src={assetUrl(img.url) || ""}
                             alt=""
@@ -622,7 +622,7 @@ export function FaqBlockView({
     return (
         <section
             id={blockId ? `block-${blockId}` : undefined}
-            className="py-16 md:py-20 px-6"
+            className="py-[var(--ms-space-section)] px-6"
             data-testid="ms-faq"
         >
             <div className="max-w-2xl mx-auto">
@@ -721,7 +721,7 @@ export function TestimonialsBlockView({
     return (
         <section
             id={blockId ? `block-${blockId}` : undefined}
-            className="py-16 md:py-20 px-6 bg-secondary/30"
+            className="py-[var(--ms-space-section)] px-6 bg-secondary/30"
             data-testid="ms-testimonials"
         >
             <div className="max-w-5xl mx-auto">
@@ -742,7 +742,7 @@ export function TestimonialsBlockView({
                     {items.map((item, i) => (
                         <div
                             key={item.id}
-                            className="rounded-2xl border bg-card p-6 shadow-sm flex flex-col gap-3"
+                            className="rounded-[var(--ms-radius)] border bg-card p-6 shadow-[var(--ms-shadow)] flex flex-col gap-3"
                         >
                             <Quote className="h-6 w-6 text-primary/40" />
                             {editorMode ? (

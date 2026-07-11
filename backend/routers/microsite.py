@@ -18,7 +18,14 @@ from database import AsyncSessionLocal
 from db_helpers import get_organizer_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import Microsite, MicrositeAsset, MicrositeRevision, Organizer, Tenant
 from security import get_current_user
-from services.microsite_factory import default_microsite, FONTS, TEMPLATES
+from services.microsite_factory import (
+    default_microsite,
+    DENSITY_STYLES,
+    FONTS,
+    RADIUS_STYLES,
+    SHADOW_STYLES,
+    TEMPLATES,
+)
 from services.microsite_blocks import (
     blocks_for_template,
     resolve_blocks,
@@ -54,6 +61,9 @@ class BrandingIn(BaseModel):
     logo_url: Optional[str] = None
     banner_url: Optional[str] = None
     font_family: Optional[str] = None
+    radius: Optional[str] = None
+    shadow_style: Optional[str] = None
+    density: Optional[str] = None
     custom_css: Optional[str] = Field(default=None, max_length=8000)
 
 
@@ -219,6 +229,18 @@ def _validate_partial(update: MicrositeUpdate) -> None:
         if b.font_family and b.font_family not in FONTS:
             raise HTTPException(
                 status_code=422, detail=f"font_family must be one of {FONTS}"
+            )
+        if b.radius and b.radius not in RADIUS_STYLES:
+            raise HTTPException(
+                status_code=422, detail=f"radius must be one of {RADIUS_STYLES}"
+            )
+        if b.shadow_style and b.shadow_style not in SHADOW_STYLES:
+            raise HTTPException(
+                status_code=422, detail=f"shadow_style must be one of {SHADOW_STYLES}"
+            )
+        if b.density and b.density not in DENSITY_STYLES:
+            raise HTTPException(
+                status_code=422, detail=f"density must be one of {DENSITY_STYLES}"
             )
         if b.custom_css is not None:
             try:

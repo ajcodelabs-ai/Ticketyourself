@@ -165,6 +165,57 @@ class TestMicrositeMe:
         )
         assert r.status_code == 422
 
+    def test_put_radius_valid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"radius": "pill"}},
+        )
+        assert r.status_code == 200
+        assert r.json()["branding"]["radius"] == "pill"
+
+    def test_put_radius_invalid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"radius": "square"}},
+        )
+        assert r.status_code == 422
+
+    def test_put_shadow_style_valid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"shadow_style": "dramatic"}},
+        )
+        assert r.status_code == 200
+        assert r.json()["branding"]["shadow_style"] == "dramatic"
+
+    def test_put_shadow_style_invalid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"shadow_style": "glow"}},
+        )
+        assert r.status_code == 422
+
+    def test_put_density_valid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"density": "spacious"}},
+        )
+        assert r.status_code == 200
+        assert r.json()["branding"]["density"] == "spacious"
+
+    def test_put_density_invalid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"density": "huge"}},
+        )
+        assert r.status_code == 422
+
     def test_put_blocks_valid(self, demo_token):
         blocks = [
             {

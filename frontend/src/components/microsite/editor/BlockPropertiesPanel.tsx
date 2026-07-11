@@ -23,7 +23,16 @@ import {
     type BlockType,
     type MicrositeBlock,
 } from "@/lib/micrositeBlocks";
-import { FONT_OPTIONS, TEMPLATE_OPTIONS, assetUrl } from "@/lib/microsite";
+import {
+    FONT_OPTIONS,
+    TEMPLATE_OPTIONS,
+    RADIUS_OPTIONS,
+    SHADOW_OPTIONS,
+    DENSITY_OPTIONS,
+    RADIUS_VALUES,
+    SHADOW_VALUES,
+    assetUrl,
+} from "@/lib/microsite";
 import {
     ImageBlockEditor,
     GalleryBlockEditor,
@@ -387,6 +396,46 @@ export function BlockPropertiesPanel({
     );
 }
 
+function ThemeSwatchGroup({
+    label,
+    options,
+    value,
+    onChange,
+    renderSwatch,
+    testidPrefix,
+}: {
+    label: string;
+    options: { value: string; label: string }[];
+    value: string;
+    onChange: (value: string) => void;
+    renderSwatch: (value: string) => any;
+    testidPrefix: string;
+}) {
+    return (
+        <div className="space-y-2">
+            <Label>{label}</Label>
+            <div className="grid grid-cols-3 gap-2">
+                {options.map((opt) => (
+                    <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => onChange(opt.value)}
+                        className={`flex flex-col items-center gap-1.5 p-2 rounded-lg border text-[11px] transition ${
+                            value === opt.value
+                                ? "border-primary ring-1 ring-primary/30 bg-primary/5"
+                                : "border-border hover:border-primary/50"
+                        }`}
+                        data-testid={`${testidPrefix}-${opt.value}`}
+                    >
+                        {renderSwatch(opt.value)}
+                        {opt.label}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 export function ThemePanel({
     microsite,
     onApplyTemplate,
@@ -483,6 +532,57 @@ export function ThemePanel({
                         </SelectContent>
                     </Select>
                 </div>
+                <ThemeSwatchGroup
+                    label="Forma"
+                    options={RADIUS_OPTIONS}
+                    value={branding.radius || "rounded"}
+                    onChange={(v) => onUpdateBranding({ radius: v })}
+                    renderSwatch={(v) => (
+                        <span
+                            className="h-6 w-10 bg-secondary border border-border/60"
+                            style={{ borderRadius: RADIUS_VALUES[v] }}
+                        />
+                    )}
+                    testidPrefix="radius"
+                />
+                <ThemeSwatchGroup
+                    label="Sombra"
+                    options={SHADOW_OPTIONS}
+                    value={branding.shadow_style || "soft"}
+                    onChange={(v) => onUpdateBranding({ shadow_style: v })}
+                    renderSwatch={(v) => (
+                        <span
+                            className="h-6 w-10 rounded-md bg-card border border-border/60"
+                            style={{ boxShadow: SHADOW_VALUES[v] }}
+                        />
+                    )}
+                    testidPrefix="shadow"
+                />
+                <ThemeSwatchGroup
+                    label="Densidad"
+                    options={DENSITY_OPTIONS}
+                    value={branding.density || "cozy"}
+                    onChange={(v) => onUpdateBranding({ density: v })}
+                    renderSwatch={(v) => (
+                        <div className="h-6 w-10 flex flex-col justify-center gap-[3px]">
+                            <span
+                                className="h-[2px] w-full bg-secondary-foreground/40 rounded-full"
+                                style={{
+                                    marginBlock:
+                                        v === "compact" ? "1px" : v === "spacious" ? "5px" : "3px",
+                                }}
+                            />
+                            <span
+                                className="h-[2px] w-full bg-secondary-foreground/40 rounded-full"
+                                style={{
+                                    marginBlock:
+                                        v === "compact" ? "1px" : v === "spacious" ? "5px" : "3px",
+                                }}
+                            />
+                        </div>
+                    )}
+                    testidPrefix="density"
+                />
                 <AssetField
                     label="Logo"
                     currentUrl={assetUrl(branding.logo_url)}

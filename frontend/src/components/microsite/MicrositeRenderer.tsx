@@ -1,7 +1,7 @@
 /**
  * MicrositeRenderer: shared between editor preview and public microsite view.
  */
-import { fontStackFor } from "@/lib/microsite";
+import { fontStackFor, themeVars } from "@/lib/microsite";
 import { resolveBlocks } from "@/lib/micrositeBlocks";
 import { renderBlock, type BlockEditorCtx } from "@/components/microsite/MicrositeBlocks";
 
@@ -53,6 +53,7 @@ export default function MicrositeRenderer({
                     ...({
                         "--ms-primary": branding.primary_color,
                         "--ms-secondary": branding.secondary_color,
+                        ...themeVars(branding),
                     } as Record<string, string>),
                 }}
                 onClick={editorMode ? () => onSelectBlock?.(null) : undefined}

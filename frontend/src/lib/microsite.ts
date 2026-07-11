@@ -64,6 +64,44 @@ export function fontStackFor(family) {
     return opt ? opt.stack : FONT_OPTIONS[0].stack;
 }
 
+export const RADIUS_OPTIONS = [
+    { value: "sharp", label: "Recto" },
+    { value: "rounded", label: "Redondeado" },
+    { value: "pill", label: "Píldora" },
+];
+
+export const SHADOW_OPTIONS = [
+    { value: "flat", label: "Plana" },
+    { value: "soft", label: "Suave" },
+    { value: "dramatic", label: "Dramática" },
+];
+
+export const DENSITY_OPTIONS = [
+    { value: "compact", label: "Compacta" },
+    { value: "cozy", label: "Cómoda" },
+    { value: "spacious", label: "Amplia" },
+];
+
+export const RADIUS_VALUES = { sharp: "0.375rem", rounded: "1rem", pill: "9999px" };
+export const SHADOW_VALUES = {
+    flat: "none",
+    soft: "0 1px 3px rgba(15,15,35,.08), 0 1px 2px rgba(15,15,35,.04)",
+    dramatic: "0 25px 50px -12px rgba(15,15,35,.35)",
+};
+export const DENSITY_VALUES = {
+    compact: "clamp(2rem, 4vw, 2.5rem)",
+    cozy: "clamp(2.5rem, 6vw, 5rem)",
+    spacious: "clamp(3.5rem, 8vw, 7rem)",
+};
+
+export function themeVars(branding) {
+    return {
+        "--ms-radius": RADIUS_VALUES[branding?.radius] || RADIUS_VALUES.rounded,
+        "--ms-shadow": SHADOW_VALUES[branding?.shadow_style] || SHADOW_VALUES.soft,
+        "--ms-space-section": DENSITY_VALUES[branding?.density] || DENSITY_VALUES.cozy,
+    };
+}
+
 export function assetUrl(relativeOrFull) {
     if (!relativeOrFull) return null;
     if (/^https?:\/\//.test(relativeOrFull)) return relativeOrFull;
