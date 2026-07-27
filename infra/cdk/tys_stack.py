@@ -100,40 +100,32 @@ class TysStack(Stack):
         # 08:00-21:00 America/Guayaquil (UTC-5, no DST — fixed offset), daily.
         instance_arn = self.format_arn(service="ec2", resource="instance", resource_name=instance.instance_id)
 
-        start_rule = events.Rule(
-            self,
-            "StartInstanceSchedule",
-            schedule=events.Schedule.cron(minute="0", hour="13"),
-            description="Start TYS staging EC2 daily at 08:00 America/Guayaquil",
-        )
-        start_rule.add_target(
-            events_targets.AwsApi(
-                service="EC2",
-                action="startInstances",
-                parameters={"InstanceIds": [instance.instance_id]},
-                policy_statement=iam.PolicyStatement(
-                    actions=["ec2:StartInstances"],
-                    resources=[instance_arn],
-                ),
+        def schedule_ec2_action(rule_id: str, hour: str, api_action: str, iam_action: str, description: str) -> None:
+            rule = events.Rule(
+                self,
+                rule_id,
+                schedule=events.Schedule.cron(minute="0", hour=hour),
+                description=description,
             )
-        )
+            rule.add_target(
+                events_targets.AwsApi(
+                    service="EC2",
+                    action=api_action,
+                    parameters={"InstanceIds": [instance.instance_id]},
+                    policy_statement=iam.PolicyStatement(
+                        actions=[f"ec2:{iam_action}"],
+                        resources=[instance_arn],
+                    ),
+                )
+            )
 
-        stop_rule = events.Rule(
-            self,
-            "StopInstanceSchedule",
-            schedule=events.Schedule.cron(minute="0", hour="2"),
-            description="Stop TYS staging EC2 daily at 21:00 America/Guayaquil",
+        schedule_ec2_action(
+            "StartInstanceSchedule", "13", "startInstances", "StartInstances",
+            "Start TYS staging EC2 daily at 08:00 America/Guayaquil",
         )
-        stop_rule.add_target(
-            events_targets.AwsApi(
-                service="EC2",
-                action="stopInstances",
-                parameters={"InstanceIds": [instance.instance_id]},
-                policy_statement=iam.PolicyStatement(
-                    actions=["ec2:StopInstances"],
-                    resources=[instance_arn],
-                ),
-            )
+        schedule_ec2_action(
+            "StopInstanceSchedule", "2", "stopInstances", "StopInstances",
+            "Stop TYS staging EC2 daily at 21:00 America/Guayaquil",
         )
 
         # ── GitHub Actions deploy role (OIDC, no static keys) ────────────
@@ -170,7 +162,7 @@ class TysStack(Stack):
         )
         github_deploy_role.add_to_policy(
             iam.PolicyStatement(
-                actions=["ssm:SendCommand"],
+                actions=["ssm:SendCommand", "ec2:StartInstances"],
                 resources=[
                     instance_arn,
                     f"arn:aws:ssm:{self.region}::document/AWS-RunShellScript",
@@ -179,9 +171,14 @@ class TysStack(Stack):
         )
         github_deploy_role.add_to_policy(
             iam.PolicyStatement(
-                # GetCommandInvocation has no resource-level permissions in IAM
-                # (AWS requires "*" here); SendCommand above is what's scoped.
-                actions=["ssm:GetCommandInvocation"],
+                # None of these Describe*/GetCommandInvocation actions support
+                # resource-level permissions in IAM (AWS requires "*" here);
+                # SendCommand/StartInstances above are what's actually scoped.
+                actions=[
+                    "ssm:GetCommandInvocation",
+                    "ssm:DescribeInstanceInformation",
+                    "ec2:DescribeInstances",
+                ],
                 resources=["*"],
             )
         )
