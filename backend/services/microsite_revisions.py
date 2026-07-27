@@ -1,4 +1,5 @@
 """Microsite revision snapshots — save/restore/prune history."""
+
 import uuid
 from datetime import datetime, timezone
 

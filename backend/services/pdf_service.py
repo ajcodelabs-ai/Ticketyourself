@@ -3,6 +3,7 @@ Ticket PDF renderer using reportlab.
 Generates A4 single-page tickets with branding from the organizer's microsite.
 QR code embeds the ticket JWT for offline-friendly validation.
 """
+
 import io
 import logging
 from datetime import datetime
@@ -11,8 +12,8 @@ import qrcode
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 
 logger = logging.getLogger("tys.pdf")
 
@@ -60,19 +61,26 @@ def _wrap(text: str, max_chars: int) -> list[str]:
 # Real output size per format. Elements are stored as fractions [0,1] of the
 # canvas, so the same design renders correctly at any of these sizes.
 FORMAT_PAGE_SIZES = {
-    "digital": (800.0, 360.0),       # wide ticket banner, no print constraint
-    "a4": (A4[0], A4[1]),            # standard printable page
-    "pvc": (85.6 * mm, 54.0 * mm),   # CR80 card (kiosk badge)
+    "digital": (800.0, 360.0),  # wide ticket banner, no print constraint
+    "a4": (A4[0], A4[1]),  # standard printable page
+    "pvc": (85.6 * mm, 54.0 * mm),  # CR80 card (kiosk badge)
 }
 
 
 def _resolve_field_text(
-    field: str, *, event: dict, order: dict, ticket: dict, organizer: dict,
+    field: str,
+    *,
+    event: dict,
+    order: dict,
+    ticket: dict,
+    organizer: dict,
 ) -> str:
     if field == "title":
         return event.get("title") or ""
     if field == "starts_at":
-        return _format_dt(event.get("starts_at"), event.get("timezone", "America/Guayaquil"))
+        return _format_dt(
+            event.get("starts_at"), event.get("timezone", "America/Guayaquil")
+        )
     if field == "venue":
         parts = [event.get("venue_name"), event.get("venue_city")]
         return " · ".join(p for p in parts if p)
@@ -102,7 +110,9 @@ def _resolve_field_text(
     return ""
 
 
-def _draw_text_element(c, el: dict, *, x: float, y: float, w: float, h: float, value: str) -> None:
+def _draw_text_element(
+    c, el: dict, *, x: float, y: float, w: float, h: float, value: str
+) -> None:
     font_size = int(el.get("font_size") or 14)
     c.setFont("Helvetica-Bold" if font_size >= 16 else "Helvetica", font_size)
     c.setFillColor(_hex_to_color(el.get("color") or "#1f1f33"))
@@ -119,7 +129,12 @@ def _draw_text_element(c, el: dict, *, x: float, y: float, w: float, h: float, v
 
 
 async def render_ticket_pdf_from_design(
-    *, design: dict, event: dict, order: dict, ticket: dict, organizer: dict,
+    *,
+    design: dict,
+    event: dict,
+    order: dict,
+    ticket: dict,
+    organizer: dict,
 ) -> bytes:
     """Renders a ticket from an organizer-defined visual design (M4). Element
     coordinates are fractions of the canvas — flip y (PDF origin is bottom-left,
@@ -174,7 +189,9 @@ async def render_ticket_pdf_from_design(
             value = (
                 el.get("text") or ""
                 if field == "custom"
-                else _resolve_field_text(field, event=event, order=order, ticket=ticket, organizer=organizer)
+                else _resolve_field_text(
+                    field, event=event, order=order, ticket=ticket, organizer=organizer
+                )
             )
             _draw_text_element(c, el, x=x, y=y, w=w, h=h, value=value)
 
@@ -197,16 +214,20 @@ async def render_ticket_pdf(
     design = event.get("ticket_design")
     if design and design.get("elements"):
         return await render_ticket_pdf_from_design(
-            design=design, event=event, order=order, ticket=ticket, organizer=organizer,
+            design=design,
+            event=event,
+            order=order,
+            ticket=ticket,
+            organizer=organizer,
         )
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     page_w, page_h = A4
 
-    primary_hex = (
-        (microsite or {}).get("branding", {}).get("primary_color") or "#4f46e5"
-    )
+    primary_hex = (microsite or {}).get("branding", {}).get(
+        "primary_color"
+    ) or "#4f46e5"
     primary = _hex_to_color(primary_hex)
 
     # ── Header band ─────────────────────────────────────────────────────────
@@ -244,9 +265,17 @@ async def render_ticket_pdf(
     c.drawString(info_x, body_top, "FECHA")
     c.setFont("Helvetica", 13)
     c.setFillColor(colors.HexColor("#1f1f33"))
-    c.drawString(info_x, body_top - 18, _format_dt(event.get("starts_at"), event.get("timezone", "America/Guayaquil")))
+    c.drawString(
+        info_x,
+        body_top - 18,
+        _format_dt(event.get("starts_at"), event.get("timezone", "America/Guayaquil")),
+    )
 
-    venue_lines = [event.get("venue_name") or "", event.get("venue_address") or "", event.get("venue_city") or ""]
+    venue_lines = [
+        event.get("venue_name") or "",
+        event.get("venue_address") or "",
+        event.get("venue_city") or "",
+    ]
     venue_lines = [v for v in venue_lines if v]
     c.setFont("Helvetica-Bold", 10)
     c.setFillColor(colors.HexColor("#8c8ca6"))
@@ -327,8 +356,23 @@ async def render_ticket_pdf(
                 poster_y = body_top - poster_size
                 c.saveState()
                 c.setStrokeColor(colors.HexColor("#e6e6f0"))
-                c.roundRect(box_x - 1, poster_y - 1, poster_size + 2, poster_size + 2, 4, fill=0, stroke=1)
-                c.drawImage(ImageReader(poster_img), box_x, poster_y, poster_size, poster_size, mask="auto")
+                c.roundRect(
+                    box_x - 1,
+                    poster_y - 1,
+                    poster_size + 2,
+                    poster_size + 2,
+                    4,
+                    fill=0,
+                    stroke=1,
+                )
+                c.drawImage(
+                    ImageReader(poster_img),
+                    box_x,
+                    poster_y,
+                    poster_size,
+                    poster_size,
+                    mask="auto",
+                )
                 c.restoreState()
                 poster_drawn = True
         except Exception:

@@ -8,3 +8,13 @@ dependencies = []
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+extend-exclude = "alembic/"
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip = [".venv", "alembic", "__pycache__"]

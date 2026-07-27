@@ -8,22 +8,23 @@ reads the feature flags to:
 
 To enforce later: have endpoints call `assert_feature(plan_code, "xxx")`.
 """
-from typing import Dict, Any, Optional
+
+from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
 # Feature shape — kept flat for easy serialisation to the frontend.
 DEFAULT_FEATURES: Dict[str, Any] = {
     # Toggles (boolean)
-    "numbered_seating": False,         # Fase 6 — venue editor + seat map
-    "multi_function_events": False,    # Fase 8 — multiple show dates per event
-    "advanced_discounts": False,       # Fase 3b — NxM, group, time-based
-    "promo_codes": False,              # Fase 3b
-    "verified_lists": False,           # gated guest list with doc upload
-    "access_codes": False,             # entry by code
+    "numbered_seating": False,  # Fase 6 — venue editor + seat map
+    "multi_function_events": False,  # Fase 8 — multiple show dates per event
+    "advanced_discounts": False,  # Fase 3b — NxM, group, time-based
+    "promo_codes": False,  # Fase 3b
+    "verified_lists": False,  # gated guest list with doc upload
+    "access_codes": False,  # entry by code
     "custom_domain": False,
     "ai_ticket_design": False,
-    "manual_payments": True,           # transfer + cash — Phase 5 ✓
+    "manual_payments": True,  # transfer + cash — Phase 5 ✓
     "presale_discount": True,
     "disability_discount": True,
     "gallery_uploads": True,
@@ -50,7 +51,7 @@ PLAN_OVERRIDES: Dict[str, Dict[str, Any]] = {
     },
     # Monthly pro.
     "profesional": {
-        "numbered_seating": True,     # available once Fase 6 ships
+        "numbered_seating": True,  # available once Fase 6 ships
         "advanced_discounts": True,
         "promo_codes": True,
         "max_events": -1,

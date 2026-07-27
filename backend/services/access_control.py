@@ -7,6 +7,7 @@
   - "access_code": buyer must supply an active, not-yet-exhausted code from
     `event_access_codes`.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -49,7 +50,8 @@ async def check_purchase_access(
             conditions.append(EventGuestListEntry.cedula == cedula)
         match = await session.scalar(
             select(EventGuestListEntry).where(
-                EventGuestListEntry.event_id == event["id"], or_(*conditions),
+                EventGuestListEntry.event_id == event["id"],
+                or_(*conditions),
             )
         )
         if not match:
@@ -108,7 +110,14 @@ async def _tickets_bought_by_guest(
     conditions = [
         TicketOrder.event_id == event_id,
         TicketOrder.status.in_(
-            ("pending", "awaiting_transfer", "awaiting_cash", "paid", "fulfilled", "manual_pending")
+            (
+                "pending",
+                "awaiting_transfer",
+                "awaiting_cash",
+                "paid",
+                "fulfilled",
+                "manual_pending",
+            )
         ),
     ]
     identity = []
@@ -116,14 +125,11 @@ async def _tickets_bought_by_guest(
         identity.append(func.lower(TicketOrder.buyer_email) == email)
     if cedula:
         # document_id lives inside the buyer JSONB blob
-        identity.append(
-            TicketOrder.buyer["document_id"].astext == cedula
-        )
+        identity.append(TicketOrder.buyer["document_id"].astext == cedula)
     if not identity:
         return 0
-    q = (
-        select(func.coalesce(func.sum(TicketOrder.quantity_total), 0))
-        .where(*conditions, or_(*identity))
+    q = select(func.coalesce(func.sum(TicketOrder.quantity_total), 0)).where(
+        *conditions, or_(*identity)
     )
     return int(await session.scalar(q) or 0)
 
@@ -165,7 +171,9 @@ async def relock_and_check_guest_cap(
         # purchase through unauthorized.
         raise ValueError("Tu acceso a la lista de invitados ya no está disponible.")
     max_tickets = match.max_tickets if match.max_tickets is not None else 1
-    already = await _tickets_bought_by_guest(session, event_id=event_id, email=email, cedula=cedula)
+    already = await _tickets_bought_by_guest(
+        session, event_id=event_id, email=email, cedula=cedula
+    )
     if already + quantity > max_tickets:
         raise ValueError(
             f"Tu cupo en la lista permite {max_tickets} ticket(s); ya no queda cupo disponible."
@@ -211,7 +219,8 @@ async def mark_guest_list_used(
     async with AsyncSessionLocal() as session:
         match = await session.scalar(
             select(EventGuestListEntry).where(
-                EventGuestListEntry.event_id == event_id, or_(*conditions),
+                EventGuestListEntry.event_id == event_id,
+                or_(*conditions),
             )
         )
         if match and not match.used_at:

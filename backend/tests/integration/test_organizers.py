@@ -8,16 +8,15 @@ import uuid
 
 import pytest
 import requests
-
 from conftest import (
     ADMIN_EMAIL,
     API,
     BASE_URL,
     DEMO_EMAIL,
-    login,
-    new_session,
     PRUEBA_EMAIL,
     RECHAZADO_EMAIL,
+    login,
+    new_session,
 )
 
 DEMOS = {

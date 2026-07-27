@@ -5,6 +5,7 @@ Token = JWT (HS256) with 7-day TTL signed by the same secret as auth.
 Purpose claim distinguishes it from auth tokens. The funnel is stored as
 one row per (organizer_id, event_type) in `activation_events` (PostgreSQL).
 """
+
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -68,7 +69,9 @@ def decode_activation_token(token: str) -> dict:
     return payload
 
 
-async def ensure_activation_record(*, user_id: str, organizer_id: str, token_jti: str) -> None:
+async def ensure_activation_record(
+    *, user_id: str, organizer_id: str, token_jti: str
+) -> None:
     """Idempotent — only creates the email_sent row if missing."""
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as session:
@@ -115,8 +118,9 @@ async def aggregate_funnel() -> dict:
     """
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(ActivationEvent.event_type, func.count(ActivationEvent.id).label("n"))
-            .group_by(ActivationEvent.event_type)
+            select(
+                ActivationEvent.event_type, func.count(ActivationEvent.id).label("n")
+            ).group_by(ActivationEvent.event_type)
         )
         counts_by_type = {r.event_type: r.n for r in result.all()}
 

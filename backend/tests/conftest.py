@@ -1,4 +1,5 @@
 """Shared fixtures for all TYS tests (unit + integration)."""
+
 from __future__ import annotations
 
 import os
@@ -32,7 +33,9 @@ def login(session: requests.Session, email: str, password: str) -> str:
     r.raise_for_status()
     token = r.json()["access_token"]
     session.cookies.clear()
-    session.headers.update({"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    session.headers.update(
+        {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    )
     return token
 
 
@@ -42,6 +45,7 @@ def bearer(token: str) -> dict:
 
 def unique_buyer(label: str = "buyer") -> dict:
     import uuid
+
     uid = uuid.uuid4().hex[:8]
     return {
         "name": f"Test {label}",
@@ -59,6 +63,7 @@ def new_session() -> requests.Session:
 
 
 # ── Function-scoped authenticated sessions ───────────────────────────────────
+
 
 @pytest.fixture
 def admin_client() -> requests.Session:
@@ -89,6 +94,7 @@ def rechazado_client() -> requests.Session:
 
 
 # ── Session-scoped tokens (shared across tests) ──────────────────────────────
+
 
 @pytest.fixture(scope="session")
 def admin_token() -> str:

@@ -3,13 +3,14 @@ Factory + helpers for the Microsite document.
 A microsite is auto-created 1:1 with the organizer on first access to the editor
 (or when the organizer is approved). All defaults live here.
 """
+
 import uuid
 from datetime import datetime, timezone
 
 from services.microsite_blocks import default_blocks
 from services.microsite_seo import default_seo
 
-DEFAULT_PRIMARY = "#4f46e5"   # indigo-600
+DEFAULT_PRIMARY = "#4f46e5"  # indigo-600
 DEFAULT_SECONDARY = "#f1f5f9"  # slate-100
 DEFAULT_FONT = "Inter"
 DEFAULT_RADIUS = "rounded"
@@ -36,7 +37,9 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def default_microsite(*, organizer_id: str, tenant_slug: str, company_name: str) -> dict:
+def default_microsite(
+    *, organizer_id: str, tenant_slug: str, company_name: str
+) -> dict:
     return {
         "id": str(uuid.uuid4()),
         "organizer_id": organizer_id,

@@ -18,14 +18,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
-
-from conftest import (
-    API,
-    DEMO_TENANT,
-    bearer,
-    new_session,
-    unique_buyer,
-)
+from conftest import API, DEMO_TENANT, bearer, new_session, unique_buyer
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 

@@ -10,18 +10,19 @@ Joins:
 
 Single call avoids N+1 from the dashboard page.
 """
+
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import func, select
 
 from database import AsyncSessionLocal
 from db_helpers import get_microsite_by_organizer, get_organizer_by_id, row_to_dict
 from orm_models import Event, SubscriptionPlan, TicketOrder
 from security import get_current_user
 from services.plan_features import get_plan_features
-from sqlalchemy import func, select
 
 logger = logging.getLogger("tys.dashboard")
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -51,7 +52,9 @@ async def my_dashboard(user=Depends(get_current_user)) -> Dict[str, Any]:
     if organizer.get("plan_id"):
         async with AsyncSessionLocal() as pg:
             plan_result = await pg.execute(
-                select(SubscriptionPlan).where(SubscriptionPlan.id == organizer["plan_id"])
+                select(SubscriptionPlan).where(
+                    SubscriptionPlan.id == organizer["plan_id"]
+                )
             )
             plan_row = plan_result.scalar_one_or_none()
         plan = row_to_dict(plan_row) if plan_row else None
@@ -61,48 +64,74 @@ async def my_dashboard(user=Depends(get_current_user)) -> Dict[str, Any]:
 
     # ── Published events count + upcoming + monthly revenue ───────────────
     async with AsyncSessionLocal() as pg:
-        rev_row = (await pg.execute(
-            select(
-                func.coalesce(func.sum(TicketOrder.subtotal_cents), 0).label("revenue"),
-                func.coalesce(func.sum(TicketOrder.fees_cents), 0).label("fees"),
-                func.coalesce(func.sum(TicketOrder.quantity_total), 0).label("tickets"),
-                func.count(TicketOrder.id).label("orders"),
-            ).where(
-                TicketOrder.organizer_id == org_id,
-                TicketOrder.status == "paid",
-                TicketOrder.paid_at >= month_start,
+        rev_row = (
+            await pg.execute(
+                select(
+                    func.coalesce(func.sum(TicketOrder.subtotal_cents), 0).label(
+                        "revenue"
+                    ),
+                    func.coalesce(func.sum(TicketOrder.fees_cents), 0).label("fees"),
+                    func.coalesce(func.sum(TicketOrder.quantity_total), 0).label(
+                        "tickets"
+                    ),
+                    func.count(TicketOrder.id).label("orders"),
+                ).where(
+                    TicketOrder.organizer_id == org_id,
+                    TicketOrder.status == "paid",
+                    TicketOrder.paid_at >= month_start,
+                )
             )
-        )).first()
+        ).first()
         month = {
             "revenue": rev_row.revenue or 0,
             "fees": rev_row.fees or 0,
             "tickets": rev_row.tickets or 0,
             "orders": rev_row.orders or 0,
         }
-        total_orders = await pg.scalar(
-            select(func.count(TicketOrder.id)).where(TicketOrder.organizer_id == org_id)
-        ) or 0
-        paid_orders_total = await pg.scalar(
-            select(func.count(TicketOrder.id)).where(
-                TicketOrder.organizer_id == org_id, TicketOrder.status == "paid"
+        total_orders = (
+            await pg.scalar(
+                select(func.count(TicketOrder.id)).where(
+                    TicketOrder.organizer_id == org_id
+                )
             )
-        ) or 0
-        published_count = await pg.scalar(
-            select(func.count(Event.id)).where(
-                Event.organizer_id == org_id, Event.status == "published"
+            or 0
+        )
+        paid_orders_total = (
+            await pg.scalar(
+                select(func.count(TicketOrder.id)).where(
+                    TicketOrder.organizer_id == org_id, TicketOrder.status == "paid"
+                )
             )
-        ) or 0
-        draft_count = await pg.scalar(
-            select(func.count(Event.id)).where(
-                Event.organizer_id == org_id, Event.status == "draft"
+            or 0
+        )
+        published_count = (
+            await pg.scalar(
+                select(func.count(Event.id)).where(
+                    Event.organizer_id == org_id, Event.status == "published"
+                )
             )
-        ) or 0
+            or 0
+        )
+        draft_count = (
+            await pg.scalar(
+                select(func.count(Event.id)).where(
+                    Event.organizer_id == org_id, Event.status == "draft"
+                )
+            )
+            or 0
+        )
         now_dt = _now()
         upcoming_result = await pg.execute(
             select(
-                Event.id, Event.slug, Event.title, Event.starts_at,
-                Event.venue_name, Event.venue_city, Event.tickets_sold,
-                Event.capacity, Event.status,
+                Event.id,
+                Event.slug,
+                Event.title,
+                Event.starts_at,
+                Event.venue_name,
+                Event.venue_city,
+                Event.tickets_sold,
+                Event.capacity,
+                Event.status,
             )
             .where(
                 Event.organizer_id == org_id,
@@ -114,10 +143,15 @@ async def my_dashboard(user=Depends(get_current_user)) -> Dict[str, Any]:
         )
         upcoming: List[Dict[str, Any]] = [
             {
-                "id": r.id, "slug": r.slug, "title": r.title,
-                "starts_at": r.starts_at, "venue_name": r.venue_name,
-                "venue_city": r.venue_city, "tickets_sold": r.tickets_sold,
-                "capacity": r.capacity, "status": r.status,
+                "id": r.id,
+                "slug": r.slug,
+                "title": r.title,
+                "starts_at": r.starts_at,
+                "venue_name": r.venue_name,
+                "venue_city": r.venue_city,
+                "tickets_sold": r.tickets_sold,
+                "capacity": r.capacity,
+                "status": r.status,
             }
             for r in upcoming_result.all()
         ]

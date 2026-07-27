@@ -1,4 +1,5 @@
 """Utilities shared across the MongoDB→PostgreSQL migration."""
+
 from sqlalchemy import inspect as sa_inspect
 
 
@@ -28,11 +29,14 @@ def organizer_row_to_dict(row) -> dict:
 async def get_organizer_by_id(organizer_id: str) -> dict | None:
     """Quick organizer lookup by id without admin_comments (for secondary reads)."""
     from sqlalchemy import select
+
     from database import AsyncSessionLocal
     from orm_models import Organizer
 
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Organizer).where(Organizer.id == organizer_id))
+        result = await session.execute(
+            select(Organizer).where(Organizer.id == organizer_id)
+        )
         row = result.scalar_one_or_none()
     return row_to_dict(row) if row else None
 
@@ -40,6 +44,7 @@ async def get_organizer_by_id(organizer_id: str) -> dict | None:
 async def get_organizer_by_slug(slug: str) -> dict | None:
     """Quick organizer lookup by slug without admin_comments (for secondary reads)."""
     from sqlalchemy import select
+
     from database import AsyncSessionLocal
     from orm_models import Organizer
 
@@ -52,6 +57,7 @@ async def get_organizer_by_slug(slug: str) -> dict | None:
 async def get_event_by_id(event_id: str) -> dict | None:
     """Quick event lookup by id (for secondary reads in orders/tickets/services)."""
     from sqlalchemy import select
+
     from database import AsyncSessionLocal
     from orm_models import Event
 
@@ -64,6 +70,7 @@ async def get_event_by_id(event_id: str) -> dict | None:
 async def get_microsite_by_organizer(organizer_id: str) -> dict | None:
     """Quick microsite lookup by organizer_id (branding, content, etc.)."""
     from sqlalchemy import select
+
     from database import AsyncSessionLocal
     from orm_models import Microsite
 
@@ -78,6 +85,7 @@ async def get_microsite_by_organizer(organizer_id: str) -> dict | None:
 async def get_venue_by_id(venue_id: str) -> dict | None:
     """Quick venue lookup by id (for secondary reads in orders/tickets)."""
     from sqlalchemy import select
+
     from database import AsyncSessionLocal
     from orm_models import Venue
 

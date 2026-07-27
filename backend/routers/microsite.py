@@ -18,14 +18,6 @@ from database import AsyncSessionLocal
 from db_helpers import get_organizer_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import Microsite, MicrositeAsset, MicrositeRevision, Organizer, Tenant
 from security import get_current_user
-from services.microsite_factory import (
-    default_microsite,
-    DENSITY_STYLES,
-    FONTS,
-    RADIUS_STYLES,
-    SHADOW_STYLES,
-    TEMPLATES,
-)
 from services.microsite_blocks import (
     blocks_for_template,
     resolve_blocks,
@@ -33,6 +25,14 @@ from services.microsite_blocks import (
     sanitize_html,
     sections_from_blocks,
     validate_blocks,
+)
+from services.microsite_factory import (
+    DENSITY_STYLES,
+    FONTS,
+    RADIUS_STYLES,
+    SHADOW_STYLES,
+    TEMPLATES,
+    default_microsite,
 )
 from services.microsite_revisions import apply_snapshot, build_snapshot, create_revision
 from services.microsite_seo import validate_custom_css, validate_seo
@@ -341,9 +341,7 @@ async def update_my_microsite(payload: MicrositeUpdate, user=Depends(get_current
             row.sections_enabled = new_sections
             flag_modified(row, "sections_enabled")
         if payload.blocks is not None:
-            cleaned = validate_blocks(
-                [b.model_dump() for b in payload.blocks]
-            )
+            cleaned = validate_blocks([b.model_dump() for b in payload.blocks])
             row.blocks = cleaned
             row.sections_enabled = sections_from_blocks(cleaned)
             flag_modified(row, "blocks")

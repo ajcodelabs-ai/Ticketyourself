@@ -1,17 +1,18 @@
 """Billing router: Stripe Checkout + Customer Portal — Phase 2: PostgreSQL."""
+
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import stripe_service
 from audit import log_audit
 from database import get_db
 from db_helpers import row_to_dict
 from models import CheckoutRequest, CheckoutResponse, PortalResponse
 from orm_models import BillingIntent, Organizer, SubscriptionPlan
 from security import require_role
-import stripe_service
 
 logger = logging.getLogger("tys.billing")
 
@@ -52,7 +53,9 @@ async def create_checkout_session(
 
     org_dict = row_to_dict(org)
     try:
-        customer_id, created = await stripe_service.get_or_create_customer(org_dict, user["email"])
+        customer_id, created = await stripe_service.get_or_create_customer(
+            org_dict, user["email"]
+        )
     except Exception as e:
         logger.exception("Stripe customer create failed")
         raise HTTPException(502, f"Stripe customer error: {e}")
@@ -85,7 +88,9 @@ async def create_checkout_session(
             )
             mode = "payment"
     except Exception as e:
-        logger.exception("Stripe checkout create failed (mode=%s)", plan["billing_period"])
+        logger.exception(
+            "Stripe checkout create failed (mode=%s)", plan["billing_period"]
+        )
         raise HTTPException(
             502,
             (
@@ -95,14 +100,16 @@ async def create_checkout_session(
             ),
         )
 
-    session.add(BillingIntent(
-        organizer_id=org.id,
-        plan_id=plan["id"],
-        plan_code=plan["code"],
-        session_id=stripe_session["id"],
-        mode=mode,
-        status="pending",
-    ))
+    session.add(
+        BillingIntent(
+            organizer_id=org.id,
+            plan_id=plan["id"],
+            plan_code=plan["code"],
+            session_id=stripe_session["id"],
+            mode=mode,
+            status="pending",
+        )
+    )
     await session.flush()
     await log_audit(
         user["id"],
@@ -113,11 +120,14 @@ async def create_checkout_session(
     )
     try:
         from services.activation import log_funnel_event
+
         await log_funnel_event(organizer_id=org.id, event_name="plan_selected")
         await log_funnel_event(organizer_id=org.id, event_name="checkout_started")
     except Exception:  # noqa: BLE001
         pass
-    return CheckoutResponse(checkout_url=stripe_session["url"], session_id=stripe_session["id"], mode=mode)
+    return CheckoutResponse(
+        checkout_url=stripe_session["url"], session_id=stripe_session["id"], mode=mode
+    )
 
 
 @router.post("/portal-session", response_model=PortalResponse)

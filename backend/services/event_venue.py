@@ -5,6 +5,7 @@ When an event links a master venue, we deep-copy canvas/elements/localities into
 snapshot first so two events can share the same master Teatro without sharing
 edits.
 """
+
 from __future__ import annotations
 
 import copy
@@ -33,7 +34,9 @@ def compute_capacity(elements: List[Dict[str, Any]]) -> int:
             total += int(e.get("chairs_count") or 0)
         elif k == "table_rect":
             cps = e.get("chairs_per_side") or {}
-            total += sum(int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left"))
+            total += sum(
+                int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left")
+            )
     return total
 
 
@@ -106,8 +109,15 @@ def structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> boo
     if set(by_id_old) != set(by_id_new):
         return True
     keys_structural = (
-        "x", "y", "width", "height", "rotation", "kind",
-        "seats_count", "capacity", "locality_id",
+        "x",
+        "y",
+        "width",
+        "height",
+        "rotation",
+        "kind",
+        "seats_count",
+        "capacity",
+        "locality_id",
     )
     for k, a in by_id_old.items():
         b = by_id_new[k]
@@ -117,7 +127,9 @@ def structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> boo
     return False
 
 
-def locality_structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> bool:
+def locality_structural_diff(
+    old: List[Dict[str, Any]], new: List[Dict[str, Any]]
+) -> bool:
     if len(old) != len(new):
         return True
     by_id_old = {it["id"]: it for it in old}
