@@ -24,7 +24,12 @@ jobs:
       # already-cleaned-up commits shouldn't keep failing new PRs).
       # `.gitleaks-baseline.json` holds known/accepted findings (see repo
       # root) so only genuinely new secrets fail the build.
+      # No --redact: gitleaks' baseline match compares the (unredacted)
+      # secret value against what's stored in .gitleaks-baseline.json, so
+      # redacting here makes every known finding look "new" and defeats the
+      # baseline entirely. Confirmed empirically — this is undocumented
+      # gitleaks behavior, not a documented tradeoff.
       - name: Run gitleaks
         run: |
-          gitleaks detect --no-git --source . --redact -v \
+          gitleaks detect --no-git --source . -v \
             --baseline-path "${{ github.workspace }}/.gitleaks-baseline.json"
