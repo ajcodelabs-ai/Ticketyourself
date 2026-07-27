@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import api from "@/lib/api";
 import SeatPickerCanvas from "@/components/venues/SeatPickerCanvas";
 import {
-    getOrCreateSessionToken, selectedSubtotalCents, feesForSubtotal,
+    getOrCreateSessionToken, selectedSeatBreakdown, feesForEntrada,
 } from "@/lib/seats";
 
 const REFRESH_MS = 15_000;
@@ -139,8 +139,9 @@ export default function NumberedSeatSection({
         });
     };
 
-    const subtotal = selectedSubtotalCents(selected, effectiveLocalityPricing);
-    const fees = feesForSubtotal(subtotal);
+    const breakdown = selectedSeatBreakdown(selected, effectiveLocalityPricing);
+    const subtotal = breakdown.subtotal_cents;
+    const fees = feesForEntrada(breakdown.entrada_cents);
     const total = subtotal + fees;
 
     const handleReserveAndContinue = async () => {
@@ -165,6 +166,9 @@ export default function NumberedSeatSection({
                 session_token: sessionToken,
                 expires_at: expiresAt,
                 subtotal_cents: subtotal,
+                entrada_cents: breakdown.entrada_cents,
+                service_fee_cents: breakdown.service_fee_cents,
+                admin_fee_cents: breakdown.admin_fee_cents,
                 fees_cents: fees,
                 total_cents: total,
                 function_id: functionId || undefined,

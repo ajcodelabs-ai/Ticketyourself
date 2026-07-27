@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timedelta, timezone
 
 from database import AsyncSessionLocal, get_db
-from db_helpers import get_event_by_id, get_organizer_by_id, get_venue_by_id, row_to_dict
+from db_helpers import get_event_by_id, get_organizer_by_id, row_to_dict
+from services.event_venue import resolve_event_venue
 from orm_models import Organizer, Ticket, TicketOrder, TicketScan
 from security import get_current_user
 from services import order_service
@@ -597,7 +598,7 @@ async def get_scan_stats(event_id: str, user=Depends(get_current_user)):
 
     localities = []
     if ev.get("venue_id"):
-        venue = await get_venue_by_id(ev["venue_id"])
+        venue = await resolve_event_venue(ev)
         for loc in (venue or {}).get("localities", []) or []:
             lid = loc.get("id")
             localities.append({

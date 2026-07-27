@@ -391,12 +391,12 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
 
     return (
         <div className="space-y-4" data-testid="section-functions">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h3 className="font-semibold">{L.panelTitle}</h3>
+            <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                    <h4 className="font-medium text-sm">{L.panelTitle}</h4>
                     <p className="text-xs text-muted-foreground mt-0.5">{L.panelSubtitle}</p>
                 </div>
-                <Button size="sm" onClick={openCreate} data-testid="add-function">
+                <Button size="sm" onClick={openCreate} data-testid="add-function" className="shrink-0">
                     <Plus className="h-4 w-4 mr-1.5" />
                     {L.addButton}
                 </Button>

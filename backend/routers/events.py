@@ -18,6 +18,13 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from database import AsyncSessionLocal
 from db_helpers import get_venue_by_id, row_to_dict
+from services.event_venue import (
+    resolve_event_venue,
+    snapshot_from_venue,
+    recalc_layout_capacity,
+    structural_diff,
+    locality_structural_diff,
+)
 from orm_models import (
     AuditLog, Event, EventAsset, EventCapacityReservation, EventSeatAssignment,
     Organizer, SeasonPassPurchase, SeatHold, StaffEventAssignment, Tenant, Ticket,
@@ -243,15 +250,19 @@ class TicketDesign(BaseModel):
     background_url: Optional[str] = None
     background_color: str = Field(default="#ffffff", max_length=7)
     elements: List[TicketDesignElement] = Field(default_factory=list)
+    # Optional curated template id from the wizard picker (clasico|noche|minimal|bold).
+    template_id: Optional[str] = Field(default=None, max_length=40)
 
 
 # §4.2.8 — preguntas adicionales al comprador al momento de la compra
 class CustomQuestion(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     label: str = Field(min_length=2, max_length=200)
-    type: Literal["text", "select", "checkbox"] = "text"
+    type: Literal["text", "select", "checkbox", "number"] = "text"
     required: bool = False
     options: Optional[List[str]] = Field(default=None, max_length=20)
+    # Empty/null = applies to all localities; otherwise only when buyer picks these.
+    locality_ids: Optional[List[str]] = Field(default=None, max_length=50)
 
     @model_validator(mode="after")
     def _check_options(self):
@@ -265,6 +276,9 @@ class EventBase(BaseModel):
     description: str = Field(default="", max_length=8000)
     short_description: str = Field(default="", max_length=160)
     category: EventCategory = "other"
+    priority: int = Field(default=0, ge=0, le=9999)
+    video_url: Optional[str] = Field(default=None, max_length=500)
+    keywords: List[str] = Field(default_factory=list, max_length=30)
     venue_name: str = Field(default="", max_length=120)
     venue_address: str = Field(default="", max_length=200)
     venue_city: str = Field(default="", max_length=80)
@@ -309,6 +323,24 @@ class EventBase(BaseModel):
             raise ValueError("ends_at must be after starts_at")
         return v
 
+    @field_validator("keywords")
+    @classmethod
+    def _normalize_keywords(cls, v: List[str]):
+        out = []
+        for kw in v or []:
+            s = (kw or "").strip()[:40]
+            if s and s not in out:
+                out.append(s)
+        return out[:30]
+
+    @field_validator("video_url")
+    @classmethod
+    def _empty_video_to_none(cls, v: Optional[str]):
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
+
 
 class EventCreate(EventBase):
     pass
@@ -319,6 +351,9 @@ class EventUpdate(BaseModel):
     description: Optional[str] = None
     short_description: Optional[str] = None
     category: Optional[EventCategory] = None
+    priority: Optional[int] = Field(default=None, ge=0, le=9999)
+    video_url: Optional[str] = Field(default=None, max_length=500)
+    keywords: Optional[List[str]] = Field(default=None, max_length=30)
     venue_name: Optional[str] = None
     venue_address: Optional[str] = None
     venue_city: Optional[str] = None
@@ -452,6 +487,8 @@ def _publish_validation(doc: dict) -> None:
 class LocalityPriceIn(BaseModel):
     locality_id: str
     price_cents: int = Field(ge=0)
+    service_fee_cents: int = Field(default=0, ge=0)
+    admin_fee_cents: int = Field(default=0, ge=0)
     max_tickets_per_purchase: Optional[int] = Field(default=None, ge=1, le=20)
 
 
@@ -485,7 +522,25 @@ async def link_venue_to_event(
         ):
             raise HTTPException(404, "Venue no encontrado o no publicado")
 
-        needed_loc_ids = set(active_localities(venue))
+        sold = row.tickets_sold or 0
+        if sold > 0 and row.venue_id and row.venue_id != body.venue_id:
+            raise HTTPException(
+                409, f"El evento ya tiene {sold} ticket(s) vendido(s); no se puede cambiar el venue."
+            )
+
+        same_venue = row.venue_id == body.venue_id and bool(row.venue_layout)
+        if same_venue:
+            # Price-only update: keep the event's edited snapshot intact.
+            layout = row.venue_layout
+            venue_capacity = (layout or {}).get("capacity_calculated") or venue.get("capacity_calculated") or 0
+        else:
+            layout = snapshot_from_venue(venue)
+            venue_capacity = layout.get("capacity_calculated") or 0
+            row.source_venue_id = body.venue_id
+            row.venue_layout = layout
+            flag_modified(row, "venue_layout")
+
+        needed_loc_ids = set(active_localities(layout))
         provided_loc_ids = {lp.locality_id for lp in body.locality_pricing}
         if not needed_loc_ids.issubset(provided_loc_ids):
             missing = needed_loc_ids - provided_loc_ids
@@ -494,13 +549,6 @@ async def link_venue_to_event(
                 f"Faltan precios para las localidades: {', '.join(sorted(missing))}",
             )
 
-        sold = row.tickets_sold or 0
-        if sold > 0 and row.venue_id and row.venue_id != body.venue_id:
-            raise HTTPException(
-                409, f"El evento ya tiene {sold} ticket(s) vendido(s); no se puede cambiar el venue."
-            )
-
-        venue_capacity = venue.get("capacity_calculated") or 0
         row.venue_id = body.venue_id
         row.venue_slug = venue.get("slug")
         row.venue_name = venue.get("name") or row.venue_name
@@ -526,11 +574,139 @@ async def unlink_venue_from_event(event_id: str, user=Depends(get_current_user))
             raise HTTPException(409, "El evento ya tiene tickets vendidos; no se puede desvincular.")
         row.venue_id = None
         row.venue_slug = None
+        row.source_venue_id = None
+        row.venue_layout = None
         row.locality_pricing = []
         row.updated_at = _now()
         flag_modified(row, "locality_pricing")
+        flag_modified(row, "venue_layout")
         await session.commit()
     return {"ok": True}
+
+
+class VenueLayoutBody(BaseModel):
+    canvas: Dict[str, Any] = Field(default_factory=dict)
+    elements: List[Dict[str, Any]] = Field(default_factory=list)
+    localities: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+@router.get("/{event_id}/venue-layout")
+async def get_event_venue_layout(event_id: str, user=Depends(get_current_user)):
+    org = await _require_approved_organizer(user)
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(404, "Evento no encontrado")
+        if not row.venue_layout:
+            raise HTTPException(404, "Este evento no tiene mapa vinculado")
+        sold = int(row.tickets_sold or 0)
+        return {
+            "event_id": row.id,
+            "venue_id": row.venue_id,
+            "source_venue_id": row.source_venue_id or row.venue_id,
+            "venue_name": row.venue_name,
+            "venue_slug": row.venue_slug,
+            "canvas": (row.venue_layout or {}).get("canvas") or {},
+            "elements": (row.venue_layout or {}).get("elements") or [],
+            "localities": (row.venue_layout or {}).get("localities") or [],
+            "capacity_calculated": (row.venue_layout or {}).get("capacity_calculated") or 0,
+            "snapshotted_at": (row.venue_layout or {}).get("snapshotted_at"),
+            "lock_status": {
+                "locked": sold > 0,
+                "tickets_sold": sold,
+                "reason": (
+                    f"Hay {sold} ticket(s) vendido(s); no se pueden cambiar elementos estructurales."
+                    if sold > 0
+                    else None
+                ),
+            },
+        }
+
+
+@router.put("/{event_id}/venue-layout")
+async def put_event_venue_layout(
+    event_id: str,
+    body: VenueLayoutBody,
+    user=Depends(get_current_user),
+):
+    """Update the event-scoped venue snapshot. Structural diffs blocked when sold > 0."""
+    org = await _require_approved_organizer(user)
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(404, "Evento no encontrado")
+        if not row.venue_id:
+            raise HTTPException(409, "Vinculá un venue al evento antes de editar el mapa.")
+        old = row.venue_layout or {}
+        if not old:
+            raise HTTPException(404, "Este evento no tiene mapa; vinculá un venue primero.")
+
+        sold = int(row.tickets_sold or 0)
+        if sold > 0:
+            if structural_diff(old.get("elements") or [], body.elements) or locality_structural_diff(
+                old.get("localities") or [], body.localities
+            ):
+                raise HTTPException(
+                    409,
+                    f"Hay {sold} ticket(s) vendido(s); no se pueden cambiar elementos estructurales del mapa.",
+                )
+
+        layout = {
+            **old,
+            "canvas": body.canvas or {},
+            "elements": body.elements or [],
+            "localities": body.localities or [],
+            "source_venue_id": row.source_venue_id or row.venue_id,
+        }
+        capacity = recalc_layout_capacity(layout)
+        row.venue_layout = layout
+        row.capacity = capacity
+        row.updated_at = _now()
+        flag_modified(row, "venue_layout")
+
+        # Keep locality_pricing in sync for new localities (fees 0); drop orphaned.
+        existing_pricing = {
+            lp.get("locality_id"): lp for lp in (row.locality_pricing or []) if lp.get("locality_id")
+        }
+        active_ids = {
+            el.get("locality_id")
+            for el in (body.elements or [])
+            if el.get("locality_id")
+        }
+        new_pricing = []
+        for loc in body.localities or []:
+            lid = loc.get("id")
+            if not lid or lid not in active_ids:
+                continue
+            prev = existing_pricing.get(lid) or {}
+            new_pricing.append({
+                "locality_id": lid,
+                "price_cents": int(prev.get("price_cents") if prev.get("price_cents") is not None else loc.get("default_price_cents") or 0),
+                "service_fee_cents": int(prev.get("service_fee_cents") or 0),
+                "admin_fee_cents": int(prev.get("admin_fee_cents") or 0),
+                "max_tickets_per_purchase": prev.get("max_tickets_per_purchase"),
+            })
+        row.locality_pricing = new_pricing
+        flag_modified(row, "locality_pricing")
+        await session.commit()
+        return {
+            "event_id": row.id,
+            "venue_id": row.venue_id,
+            "source_venue_id": row.source_venue_id or row.venue_id,
+            "canvas": layout.get("canvas") or {},
+            "elements": layout.get("elements") or [],
+            "localities": layout.get("localities") or [],
+            "capacity_calculated": capacity,
+            "locality_pricing": new_pricing,
+            "lock_status": {
+                "locked": sold > 0,
+                "tickets_sold": sold,
+            },
+        }
 
 
 # ── Organizer endpoints ─────────────────────────────────────────────────────
@@ -659,6 +835,9 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             description=payload.description or "",
             short_description=payload.short_description or "",
             category=payload.category,
+            priority=payload.priority,
+            video_url=payload.video_url,
+            keywords=list(payload.keywords or []),
             venue_name=payload.venue_name or "",
             venue_address=payload.venue_address or "",
             venue_city=payload.venue_city or "",
@@ -697,6 +876,7 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             ),
             poster_url=None,
             banner_url=None,
+            small_url=None,
             gallery_urls=[],
             locality_pricing=[],
             status="draft",
@@ -943,6 +1123,27 @@ async def upload_banner(
     return {"banner_url": url}
 
 
+@router.post("/{event_id}/small")
+async def upload_small(
+    event_id: str,
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+):
+    """Pequeña — thumbnail used in compact listings / QR side."""
+    org = await _require_approved_organizer(user)
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        url = await _store_event_image(event_id, org["id"], file, "small")
+        row.small_url = url
+        row.updated_at = _now()
+        await session.commit()
+    return {"small_url": url}
+
+
 # ── M4 — diseñador visual de tickets: assets (fondo / logo) ─────────────────
 @router.post("/{event_id}/ticket-design/asset")
 async def upload_ticket_design_asset(
@@ -1185,7 +1386,7 @@ async def get_public_event(
     }
     if event.get("venue_id"):
         from services.seats import compute_event_seats_status
-        venue = await get_venue_by_id(event["venue_id"])
+        venue = await resolve_event_venue(event)
         if venue:
             event["venue"] = venue
             event["seats_status"] = await compute_event_seats_status(
@@ -1249,7 +1450,7 @@ async def _resolve_public_event(tenant_slug: str, event_slug: str) -> tuple:
     event = row_to_dict(event_row)
     if not event.get("venue_id"):
         raise HTTPException(409, "Este evento no usa asientos numerados.")
-    venue = await get_venue_by_id(event["venue_id"])
+    venue = await resolve_event_venue(event)
     if not venue:
         raise HTTPException(409, "El venue del evento ya no está disponible.")
     return organizer, event, venue
@@ -1267,9 +1468,9 @@ async def public_create_holds(tenant_slug: str, event_slug: str, body: SeatHolds
     function_id = body.function_id or ""
     window = event.get("seat_holds_window_minutes") or 10
     holds = await create_seat_holds(
-        event_id=event["id"], venue_id=venue["id"], seat_ids=body.seat_ids,
+        event_id=event["id"], venue_id=event["venue_id"], seat_ids=body.seat_ids,
         session_token=body.session_token, buyer_email=body.buyer_email,
-        window_minutes=window, function_id=function_id,
+        window_minutes=window, function_id=function_id, venue=venue,
     )
     return {
         "holds": holds,

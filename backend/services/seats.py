@@ -191,6 +191,7 @@ async def create_seat_holds(
     session_token: str, buyer_email: Optional[str] = None,
     window_minutes: int = SEAT_HOLD_WINDOW_MIN_DEFAULT,
     function_id: str = "",
+    venue: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Atomically:
@@ -201,6 +202,9 @@ async def create_seat_holds(
       - (Re-holds for the SAME session_token are allowed — extends the lock.)
       - Insert one seat_holds row per seat with status=held, expires_at=now+window.
     Raises if anything is unavailable.
+
+    Pass `venue` (resolved event snapshot preferred) so full-purchase checks
+    use the event layout; `venue_id` is still stored on hold rows (master FK).
     """
     from fastapi import HTTPException
     from database import AsyncSessionLocal
@@ -218,7 +222,8 @@ async def create_seat_holds(
     # the availability queries below also cover them.
     touched_elements: Dict[str, Dict[str, Any]] = {}
     members_by_element: Dict[str, List[str]] = {}
-    venue = await get_venue_by_id(venue_id)
+    if venue is None:
+        venue = await get_venue_by_id(venue_id)
     if venue:
         flagged = full_purchase_elements(venue)
         if flagged:

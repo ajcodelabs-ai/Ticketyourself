@@ -32,7 +32,7 @@ import PublishPendingDialog from "@/components/PublishPendingDialog";
 import VenueEmptyCanvasOverlay from "@/components/venues/VenueEmptyCanvasOverlay";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-    venuesApi, adminVenueTemplatesApi, makeStage, makeZone, makeRow, makeCurvedRow, makeSeat,
+    venuesApi, adminVenueTemplatesApi, eventVenueLayoutApi, makeStage, makeZone, makeRow, makeCurvedRow, makeSeat,
     makeTableRound, makeTableRect, computeCapacity, newId, bumpLabel,
     elementAcceptsLocality, elementBBox, STATUS_LABEL,
 } from "@/lib/venues";
@@ -53,14 +53,18 @@ function nextRowLabel(elements) {
 }
 
 export default function VenueEditor() {
-    const { id } = useParams();
+    const { id, eventId: eventIdParam } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
     const [searchParams] = useSearchParams();
     const { organizer } = useAuth();
     const isAdminTemplate = location.pathname.startsWith("/admin/venue-templates/");
+    const isEventScope = Boolean(eventIdParam) || /\/app\/eventos\/[^/]+\/mapa/.test(location.pathname);
+    const eventId = eventIdParam || null;
     const venueApi = isAdminTemplate ? adminVenueTemplatesApi : venuesApi;
-    const listPath = isAdminTemplate ? "/admin/venue-templates" : "/app/venues";
+    const listPath = isEventScope
+        ? (searchParams.get("return_to") || (eventId ? `/app/eventos/${eventId}/editar?tab=localidades` : "/app/eventos"))
+        : (isAdminTemplate ? "/admin/venue-templates" : "/app/venues");
     // When the user landed here from the event wizard, the URL carries
     // `?return_to=` and we send them back automatically right after publishing.
     const returnTo = searchParams.get("return_to");
@@ -89,22 +93,44 @@ export default function VenueEditor() {
         let mounted = true;
         (async () => {
             try {
-                const v = await venueApi.get(id);
-                if (mounted) {
-                    setVenue(v);
-                    // The venue list already asked "plantilla o en blanco?" before
-                    // creating this venue — don't ask again here.
-                    setEmptyOverlayDismissed(searchParams.get("blank") === "1");
+                if (isEventScope && eventId) {
+                    const layout = await eventVenueLayoutApi.get(eventId);
+                    if (!mounted) return;
+                    setVenue({
+                        id: layout.venue_id || eventId,
+                        name: layout.venue_name || "Mapa del evento",
+                        slug: layout.venue_slug,
+                        status: "published",
+                        canvas: layout.canvas || { width: 1000, height: 600 },
+                        elements: layout.elements || [],
+                        localities: layout.localities || [],
+                        capacity_calculated: layout.capacity_calculated || 0,
+                        lock_status: layout.lock_status || { locked: false },
+                        is_event_snapshot: true,
+                        source_venue_id: layout.source_venue_id,
+                        source_venue_name: layout.venue_name,
+                    });
+                    setEmptyOverlayDismissed(true);
+                } else {
+                    const v = await venueApi.get(id);
+                    if (mounted) {
+                        setVenue(v);
+                        setEmptyOverlayDismissed(searchParams.get("blank") === "1");
+                    }
                 }
             } catch (e) {
-                toast.error(isAdminTemplate ? "No pudimos cargar la plantilla." : "No pudimos cargar el venue.");
+                toast.error(
+                    isEventScope
+                        ? "No pudimos cargar el mapa del evento."
+                        : (isAdminTemplate ? "No pudimos cargar la plantilla." : "No pudimos cargar el venue."),
+                );
                 navigate(listPath);
             } finally {
                 if (mounted) setLoading(false);
             }
         })();
         return () => { mounted = false; };
-    }, [id, navigate, venueApi, listPath, isAdminTemplate]);
+    }, [id, eventId, isEventScope, navigate, venueApi, listPath, isAdminTemplate]);
 
     useEffect(() => {
         const handler = (e) => {
@@ -369,23 +395,51 @@ export default function VenueEditor() {
         saveLockRef.current = true;
         setSaving(true);
         try {
-            const body = {
-                name: venue.name,
-                type: venue.type,
-                description: venue.description,
-                canvas: venue.canvas,
-                elements: venue.elements,
-                localities: venue.localities || [],
-            };
-            const updated = await venueApi.update(venue.id, body);
-            setVenue(updated);
-            dirtyRef.current = false;
-            setDirty(false);
-            if (!silent) toast.success(isAdminTemplate ? "Plantilla guardada" : "Venue guardado");
+            if (isEventScope && eventId) {
+                const updated = await eventVenueLayoutApi.put(eventId, {
+                    canvas: venue.canvas,
+                    elements: venue.elements,
+                    localities: venue.localities || [],
+                });
+                setVenue((prev) => ({
+                    ...prev,
+                    canvas: updated.canvas,
+                    elements: updated.elements,
+                    localities: updated.localities,
+                    capacity_calculated: updated.capacity_calculated,
+                    lock_status: updated.lock_status || prev.lock_status,
+                }));
+                dirtyRef.current = false;
+                setDirty(false);
+                if (!silent) {
+                    toast.success("Mapa del evento guardado");
+                    if (returnTo) {
+                        navigate(returnTo, { replace: true });
+                    }
+                }
+            } else {
+                const body = {
+                    name: venue.name,
+                    type: venue.type,
+                    description: venue.description,
+                    canvas: venue.canvas,
+                    elements: venue.elements,
+                    localities: venue.localities || [],
+                };
+                const updated = await venueApi.update(venue.id, body);
+                setVenue(updated);
+                dirtyRef.current = false;
+                setDirty(false);
+                if (!silent) toast.success(isAdminTemplate ? "Plantilla guardada" : "Venue guardado");
+            }
         } catch (e) {
             const detail = e?.response?.data?.detail;
             if (e?.response?.status === 409) {
-                toast.error("Venue bloqueado: hay eventos con ventas activas.");
+                toast.error(
+                    isEventScope
+                        ? (typeof detail === "string" ? detail : "Mapa bloqueado: hay tickets vendidos.")
+                        : "Venue bloqueado: hay eventos con ventas activas.",
+                );
             } else if (typeof detail === "string") {
                 toast.error(detail);
             } else {
@@ -567,17 +621,30 @@ export default function VenueEditor() {
                             <ArrowLeft className="h-4 w-4" />
                         </Link>
                     </Button>
-                    <Input
-                        value={venue.name}
-                        onChange={(e) => {
-                            setVenue((v) => ({ ...v, name: e.target.value }));
-                            markDirty();
-                        }}
-                        className="h-9 font-semibold text-lg w-[300px] max-w-full"
-                        data-testid="venue-name-input"
-                    />
+                    {isEventScope ? (
+                        <div className="min-w-0">
+                            <div className="font-semibold text-lg truncate" data-testid="event-map-title">
+                                {venue.name}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                                Copia del evento · origen {venue.source_venue_name || venue.name}
+                            </div>
+                        </div>
+                    ) : (
+                        <Input
+                            value={venue.name}
+                            onChange={(e) => {
+                                setVenue((v) => ({ ...v, name: e.target.value }));
+                                markDirty();
+                            }}
+                            className="h-9 font-semibold text-lg w-[300px] max-w-full"
+                            data-testid="venue-name-input"
+                        />
+                    )}
                     <Badge variant="secondary">
-                        {isAdminTemplate ? "Plantilla" : STATUS_LABEL[venue.status]}
+                        {isEventScope
+                            ? "Mapa del evento"
+                            : (isAdminTemplate ? "Plantilla" : STATUS_LABEL[venue.status])}
                     </Badge>
                     {locked && (
                         <Badge className="bg-amber-100 text-amber-900 border-amber-200">
@@ -594,7 +661,7 @@ export default function VenueEditor() {
                     )}
                 </div>
                 <div className="flex items-center gap-2">
-                    {!isAdminTemplate && venue.status === "published" && (
+                    {!isEventScope && !isAdminTemplate && venue.status === "published" && (
                         <Button asChild variant="outline" size="sm">
                             <a href={`/o/${venue.tenant_slug}/venues/${venue.slug}/preview`} target="_blank"
                                rel="noreferrer" data-testid="venue-preview-link">
@@ -606,21 +673,43 @@ export default function VenueEditor() {
                             disabled={saving} data-testid="venue-save-btn">
                         <Save className="h-3.5 w-3.5 mr-1" /> Guardar
                     </Button>
-                    {!isAdminTemplate && venue.status !== "published" && (
+                    {!isEventScope && !isAdminTemplate && venue.status !== "published" && (
                         <Button size="sm" onClick={publish}
                                 disabled={saving || elements.length === 0}
                                 data-testid="venue-publish-btn">
                             <Send className="h-3.5 w-3.5 mr-1" /> Publicar
                         </Button>
                     )}
+                    {isEventScope && returnTo && (
+                        <Button
+                            size="sm"
+                            onClick={async () => {
+                                if (dirty) await persist({ silent: true });
+                                navigate(returnTo, { replace: true });
+                            }}
+                            disabled={saving}
+                            data-testid="event-map-done-btn"
+                        >
+                            Listo
+                        </Button>
+                    )}
                 </div>
             </header>
 
-            {!isAdminTemplate && returnTo && elements.length > 0 && venue.status !== "published" && (
+            {!isEventScope && !isAdminTemplate && returnTo && elements.length > 0 && venue.status !== "published" && (
                 <Card className="border-indigo-200 bg-indigo-50/60">
                     <CardContent className="py-3 text-sm text-indigo-900">
                         Cuando termines, hacé clic en <strong>Publicar</strong> para volver a tu evento y
                         vincular este venue.
+                    </CardContent>
+                </Card>
+            )}
+
+            {isEventScope && (
+                <Card className="border-sky-200 bg-sky-50/60">
+                    <CardContent className="py-3 text-sm text-sky-950">
+                        Estás editando la <strong>copia del mapa de este evento</strong>. Los cambios
+                        no afectan el venue maestro ni otros eventos que lo usen.
                     </CardContent>
                 </Card>
             )}
@@ -630,9 +719,15 @@ export default function VenueEditor() {
                     <CardContent className="pt-4 flex items-start gap-2 text-sm">
                         <AlertCircle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
                         <div>
-                            <p className="font-medium text-amber-900">Venue bloqueado para cambios estructurales</p>
+                            <p className="font-medium text-amber-900">
+                                {isEventScope
+                                    ? "Mapa bloqueado para cambios estructurales"
+                                    : "Venue bloqueado para cambios estructurales"}
+                            </p>
                             <p className="text-amber-800 text-xs">
-                                {activeEvents.length} evento(s) con ventas activas. Podés editar nombre, descripción y colores.
+                                {isEventScope
+                                    ? "Hay tickets vendidos en este evento. Podés editar colores y etiquetas no estructurales."
+                                    : `${activeEvents.length} evento(s) con ventas activas. Podés editar nombre, descripción y colores.`}
                             </p>
                         </div>
                     </CardContent>
@@ -648,9 +743,9 @@ export default function VenueEditor() {
                 canRedo={future.length > 0}
             />
 
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-3">
-                <div>
-                    <div className="relative">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-3">
+                <div className="min-w-0 max-w-full overflow-hidden">
+                    <div className="relative min-w-0 max-w-full">
                         <EditorCanvas
                             canvas={venue.canvas}
                             elements={elements}
@@ -665,6 +760,7 @@ export default function VenueEditor() {
                             onCanvasClick={handleCanvasClick}
                             readOnly={locked}
                             height={600}
+                            autoFitKey={venue.id}
                         />
                         {!isAdminTemplate && elements.length === 0 && !locked && !emptyOverlayDismissed && (
                             <VenueEmptyCanvasOverlay

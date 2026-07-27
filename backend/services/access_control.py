@@ -15,7 +15,7 @@ from typing import Optional
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orm_models import EventAccessCode, EventGuestListEntry
+from orm_models import EventAccessCode, EventGuestListEntry, TicketOrder
 
 
 async def check_purchase_access(
@@ -25,6 +25,7 @@ async def check_purchase_access(
     buyer_email: Optional[str],
     buyer_document_id: Optional[str],
     access_code: Optional[str],
+    quantity: int = 1,
 ) -> Optional[str]:
     """Raises ValueError(message) when access is denied.
 
@@ -55,6 +56,20 @@ async def check_purchase_access(
             raise ValueError(
                 "No encontramos tu correo o cédula en la lista de invitados de este evento."
             )
+        max_tickets = match.max_tickets if match.max_tickets is not None else 1
+        # Count tickets already purchased by this guest (paid/issued orders).
+        already = await _tickets_bought_by_guest(
+            session,
+            event_id=event["id"],
+            email=email or None,
+            cedula=cedula or None,
+        )
+        if already + quantity > max_tickets:
+            remaining = max(0, max_tickets - already)
+            raise ValueError(
+                f"Tu cupo en la lista permite {max_tickets} ticket(s); "
+                f"te quedan {remaining}."
+            )
         return None
 
     if access_type == "access_code":
@@ -72,9 +87,45 @@ async def check_purchase_access(
             raise ValueError("Código de acceso inválido.")
         if match.max_uses is not None and match.uses_count >= match.max_uses:
             raise ValueError("Este código de acceso ya alcanzó su límite de usos.")
+        cap = match.max_tickets_per_redemption
+        if cap is not None and quantity > cap:
+            raise ValueError(
+                f"Este código permite como máximo {cap} ticket(s) por compra."
+            )
         return match.id
 
     return None
+
+
+async def _tickets_bought_by_guest(
+    session: AsyncSession,
+    *,
+    event_id: str,
+    email: Optional[str],
+    cedula: Optional[str],
+) -> int:
+    """Sum quantity of non-cancelled orders for this guest on the event."""
+    conditions = [
+        TicketOrder.event_id == event_id,
+        TicketOrder.status.in_(
+            ("pending", "awaiting_transfer", "awaiting_cash", "paid", "fulfilled", "manual_pending")
+        ),
+    ]
+    identity = []
+    if email:
+        identity.append(func.lower(TicketOrder.buyer_email) == email)
+    if cedula:
+        # document_id lives inside the buyer JSONB blob
+        identity.append(
+            TicketOrder.buyer["document_id"].astext == cedula
+        )
+    if not identity:
+        return 0
+    q = (
+        select(func.coalesce(func.sum(TicketOrder.quantity_total), 0))
+        .where(*conditions, or_(*identity))
+    )
+    return int(await session.scalar(q) or 0)
 
 
 async def consume_access_code(access_code_id: str) -> bool:

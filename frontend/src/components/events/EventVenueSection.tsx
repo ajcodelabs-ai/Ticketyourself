@@ -1,31 +1,30 @@
 /**
- * EventVenueSection — venue picker grid + interactive readonly canvas + inline
- * locality pricing table for the event wizard's "Venue y localidades" tab.
+ * EventVenueSection — Mapa + precios por localidad (paso Localidades).
  *
- * Replaces the dialog-based `EventVenueLink` for the new combined tab. Handles:
- *  • Empty state with CTA "Crear mi primer venue" deep-linking to /app/venues/nuevo
- *  • Grid of published venue cards with thumbnail + capacity + select button
- *  • Once linked: full-width readonly canvas + pricing table with click-to-highlight
- *  • Locality pricing edit (price + max_tickets_per_purchase) saved on blur
+ * Flujo claro:
+ *  1) Elegir / vincular mapa publicado
+ *  2) Ver plano (copia del evento) + editar en mapa
+ *  3) Definir precios por localidad en tarjetas simples
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
     MapPin,
     Loader2,
-    Eye,
     Unlink,
     PlusCircle,
     Building2,
     ArrowRight,
+    Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import api from "@/lib/api";
 import { venuesApi, computeCapacity } from "@/lib/venues";
 import EditorCanvas from "@/components/venues/EditorCanvas";
+import { useAuth } from "@/contexts/AuthContext";
 
 function activeLocalityIds(venue): Set<string> {
     const out = new Set<string>();
@@ -33,45 +32,99 @@ function activeLocalityIds(venue): Set<string> {
     return out;
 }
 
-function VenueCard({ venue, selected, onSelect }) {
+function dollarsToCents(v: string): number {
+    if (v === "" || v == null) return 0;
+    return Math.max(0, Math.round(parseFloat(v) * 100) || 0);
+}
+
+function centsToInput(cents: number | null | undefined): string {
+    if (cents == null) return "";
+    return (cents / 100).toFixed(2);
+}
+
+function VenueCard({ venue, onSelect }) {
     const localityCount = (venue.localities || []).length;
     return (
         <button
             type="button"
             onClick={() => onSelect(venue.id)}
-            className={`text-left rounded-xl border p-4 transition hover:border-primary hover:bg-primary/5 ${
-                selected ? "border-primary bg-primary/5 ring-2 ring-primary/20" : ""
-            }`}
+            className="text-left rounded-xl border p-4 transition hover:border-foreground/30 hover:bg-secondary/40"
             data-testid={`venue-card-${venue.slug}`}
         >
-            <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="font-medium leading-snug">{venue.name}</div>
-                {selected && (
-                    <Badge className="bg-primary/15 text-primary border-primary/30">
-                        Seleccionado
-                    </Badge>
-                )}
-            </div>
-            <p className="text-xs text-muted-foreground line-clamp-2">
+            <div className="font-medium leading-snug">{venue.name}</div>
+            <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
                 {venue.description || "Sin descripción"}
             </p>
             <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
-                <span>🪑 {venue.capacity_calculated || 0} asientos</span>
-                <span>📍 {localityCount} localidad{localityCount !== 1 ? "es" : ""}</span>
+                <span>{venue.capacity_calculated || 0} asientos</span>
+                <span>{localityCount} localidad{localityCount !== 1 ? "es" : ""}</span>
             </div>
         </button>
     );
 }
 
+function venueCreateHref(eventId: string | null | undefined) {
+    const returnTo = eventId
+        ? encodeURIComponent(`/app/eventos/${eventId}/editar?tab=localidades`)
+        : encodeURIComponent("/app/eventos/nuevo?tab=localidades");
+    return `/app/venues?create=1&return_to=${returnTo}`;
+}
+
+function eventMapHref(eventId: string) {
+    const returnTo = encodeURIComponent(`/app/eventos/${eventId}/editar?tab=localidades`);
+    return `/app/eventos/${eventId}/mapa?return_to=${returnTo}`;
+}
+
+function layoutAsLinkedVenue(event, tenantSlug) {
+    const layout = event?.venue_layout;
+    if (!event?.venue_id || !layout) return null;
+    return {
+        id: event.venue_id,
+        name: event.venue_name || "Mapa del evento",
+        slug: event.venue_slug,
+        tenant_slug: tenantSlug,
+        canvas: layout.canvas || { width: 1000, height: 600 },
+        elements: layout.elements || [],
+        localities: layout.localities || [],
+        capacity_calculated: layout.capacity_calculated || 0,
+        is_event_snapshot: true,
+    };
+}
+
+function MoneyInput({ label, value, onChange, onBlur, disabled, testid, hint = undefined }) {
+    return (
+        <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground font-normal">{label}</Label>
+            <div className="relative">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
+                <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className="pl-6 h-9"
+                    value={centsToInput(value)}
+                    onChange={(e) => onChange(dollarsToCents(e.target.value))}
+                    onBlur={onBlur}
+                    disabled={disabled}
+                    data-testid={testid}
+                />
+            </div>
+            {hint && <p className="text-[10px] text-muted-foreground">{hint}</p>}
+        </div>
+    );
+}
+
 export default function EventVenueSection({ event, disabled, onUpdated, onReturnFromVenueCreate = undefined }) {
+    const { organizer } = useAuth();
+    const tenantSlug = organizer?.slug || event?.tenant_slug;
     const [venues, setVenues] = useState([]);
     const [linkedVenue, setLinkedVenue] = useState(null);
     const [loadingLink, setLoadingLink] = useState(false);
     const [highlightLocality, setHighlightLocality] = useState(null);
-    const [pricing, setPricing] = useState({}); // {locality_id: {price_cents, max_per_purchase}}
+    const [mapOpen, setMapOpen] = useState(true);
+    const [pricing, setPricing] = useState({});
     const initializedRef = useRef(false);
 
-    // Pull published venues list once.
     useEffect(() => {
         let alive = true;
         venuesApi
@@ -84,7 +137,6 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
         return () => { alive = false; };
     }, [onReturnFromVenueCreate]);
 
-    // Fetch the full linked venue (with elements + canvas) when event.venue_id changes.
     useEffect(() => {
         let alive = true;
         if (!event?.venue_id) {
@@ -92,28 +144,35 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
             initializedRef.current = false;
             return undefined;
         }
+        const fromSnapshot = layoutAsLinkedVenue(event, tenantSlug);
+        if (fromSnapshot) {
+            setLinkedVenue(fromSnapshot);
+            return undefined;
+        }
         venuesApi
             .get(event.venue_id)
             .then((v) => { if (alive) setLinkedVenue(v); })
             .catch(() => { if (alive) setLinkedVenue(null); });
         return () => { alive = false; };
-    }, [event?.venue_id]);
+    }, [event?.venue_id, event?.venue_layout, event?.venue_name, event?.venue_slug, tenantSlug]);
 
-    // Seed pricing from event.locality_pricing once we have both event + venue.
     useEffect(() => {
         if (!linkedVenue || initializedRef.current) return;
         const next = {};
         for (const lp of event?.locality_pricing || []) {
             next[lp.locality_id] = {
                 price_cents: lp.price_cents || 0,
+                service_fee_cents: lp.service_fee_cents || 0,
+                admin_fee_cents: lp.admin_fee_cents || 0,
                 max_per_purchase: lp.max_tickets_per_purchase ?? null,
             };
         }
-        // Fill localities missing pricing with the venue's default.
         for (const loc of linkedVenue.localities || []) {
             if (!next[loc.id]) {
                 next[loc.id] = {
                     price_cents: loc.default_price_cents || 0,
+                    service_fee_cents: 0,
+                    admin_fee_cents: 0,
                     max_per_purchase: null,
                 };
             }
@@ -142,9 +201,7 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
 
     const summary = useMemo(() => {
         if (localitiesActive.length === 0) return null;
-        const prices = localitiesActive.map(
-            (l) => pricing[l.id]?.price_cents ?? 0,
-        );
+        const prices = localitiesActive.map((l) => pricing[l.id]?.price_cents ?? 0);
         return {
             capacity: computeCapacity(elements),
             localityCount: localitiesActive.length,
@@ -153,16 +210,15 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
         };
     }, [localitiesActive, pricing, elements]);
 
-    // Persist link + pricing to the backend.
     const persistLink = async (next) => {
         if (!event?.id) return;
         setLoadingLink(true);
         try {
             const r = await api.put(`/events/me/${event.id}/venue`, next);
             onUpdated?.(r.data);
-            toast.success("Venue vinculado y precios guardados");
+            toast.success("Mapa y precios guardados");
         } catch (e) {
-            toast.error(e?.response?.data?.detail || "No se pudo guardar el venue.");
+            toast.error(e?.response?.data?.detail || "No se pudo guardar el mapa.");
         } finally {
             setLoadingLink(false);
         }
@@ -179,6 +235,8 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
                 return {
                     locality_id: id,
                     price_cents: loc?.default_price_cents || 0,
+                    service_fee_cents: 0,
+                    admin_fee_cents: 0,
                     max_tickets_per_purchase: null,
                 };
             }),
@@ -197,15 +255,17 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
             venue_id: linkedVenue.id,
             locality_pricing: Array.from(activeIds).map((id) => {
                 const locId = String(id);
+                const row = pricing[locId] || {};
                 return {
-                locality_id: locId,
-                price_cents: Math.max(0, parseInt(pricing[locId]?.price_cents ?? 0, 10) || 0),
-                max_tickets_per_purchase:
-                    pricing[locId]?.max_per_purchase != null
-                        ? Math.max(1, parseInt(pricing[locId].max_per_purchase, 10) || 0) ||
-                          null
-                        : null,
-            };
+                    locality_id: locId,
+                    price_cents: Math.max(0, parseInt(row.price_cents ?? 0, 10) || 0),
+                    service_fee_cents: Math.max(0, parseInt(row.service_fee_cents ?? 0, 10) || 0),
+                    admin_fee_cents: Math.max(0, parseInt(row.admin_fee_cents ?? 0, 10) || 0),
+                    max_tickets_per_purchase:
+                        row.max_per_purchase != null
+                            ? Math.max(1, parseInt(row.max_per_purchase, 10) || 0) || null
+                            : null,
+                };
             }),
             seat_holds_window_minutes: 10,
         };
@@ -214,18 +274,25 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
 
     const handleUnlink = async () => {
         const ok = window.confirm(
-            "¿Desvincular el venue del evento? Los precios por localidad se perderán.",
+            "¿Desvincular el mapa del evento? Los precios por localidad se perderán.",
         );
         if (!ok) return;
         if ((event?.tickets_sold || 0) > 0) {
-            toast.error("No podés cambiar el venue una vez que hay ventas confirmadas.");
+            toast.error("No podés cambiar el mapa una vez que hay ventas confirmadas.");
             return;
         }
         setLoadingLink(true);
         try {
             await api.delete(`/events/me/${event.id}/venue`);
-            onUpdated?.({ ...event, venue_id: null, venue_slug: null, locality_pricing: [] });
-            toast.success("Venue desvinculado");
+            onUpdated?.({
+                ...event,
+                venue_id: null,
+                venue_slug: null,
+                source_venue_id: null,
+                venue_layout: null,
+                locality_pricing: [],
+            });
+            toast.success("Mapa desvinculado");
             initializedRef.current = false;
         } catch (e) {
             toast.error(e?.response?.data?.detail || "No se pudo desvincular.");
@@ -243,30 +310,22 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
         if (row) row.scrollIntoView({ behavior: "smooth", block: "nearest" });
     };
 
-    // ── Empty state ─────────────────────────────────────────────────────────
     if (venues.length === 0 && !linkedVenue) {
-        const returnTo = event?.id
-            ? encodeURIComponent(`/app/eventos/${event.id}/editar?tab=venue_localidades`)
-            : "";
         return (
             <div className="rounded-xl border-2 border-dashed p-8 bg-card text-center space-y-4" data-testid="venue-empty-state">
-                <div className="mx-auto h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Building2 className="h-7 w-7 text-primary" />
+                <div className="mx-auto h-14 w-14 rounded-full bg-teal-50 flex items-center justify-center">
+                    <Building2 className="h-7 w-7 text-teal-800" />
                 </div>
                 <div className="space-y-1">
-                    <h3 className="font-semibold text-lg">
-                        Todavía no tenés un venue creado
-                    </h3>
+                    <h3 className="font-semibold text-lg">Todavía no tenés un mapa</h3>
                     <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                        Un venue es el mapa de tu lugar (asientos, zonas, palcos). Creá uno
-                        publicado y volvé a este evento para vincularlo y definir los precios
-                        por localidad.
+                        Creá un mapa (podés partir de una plantilla), publicalo y volvé acá para vincularlo.
                     </p>
                 </div>
                 <Button asChild size="lg" data-testid="venue-create-cta">
-                    <a href={`/app/venues/nuevo${returnTo ? `?return_to=${returnTo}` : ""}`}>
+                    <a href={venueCreateHref(event?.id)}>
                         <PlusCircle className="h-5 w-5 mr-2" />
-                        Crear mi primer venue
+                        Crear mapa
                         <ArrowRight className="h-4 w-4 ml-2" />
                     </a>
                 </Button>
@@ -274,86 +333,58 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
         );
     }
 
-    // ── Picker (no linked venue yet) ────────────────────────────────────────
     if (!linkedVenue) {
         return (
-            <div className="space-y-4" data-testid="venue-picker">
-                <div className="flex items-center justify-between">
+            <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="venue-picker">
+                <div className="flex items-center justify-between gap-3">
                     <div>
-                        <h3 className="font-semibold flex items-center gap-2">
-                            <MapPin className="h-4 w-4" />
-                            Elegí el venue para este evento
-                        </h3>
-                        <p className="text-xs text-muted-foreground">
-                            Mostramos solo los venues publicados de tu cuenta.
+                        <h4 className="font-medium">Elegí un mapa publicado</h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Al vincularlo se crea una copia solo para este evento.
                         </p>
                     </div>
                     <Button variant="outline" size="sm" asChild data-testid="venue-create-link">
-                        <a
-                            href={`/app/venues/nuevo${
-                                event?.id
-                                    ? `?return_to=${encodeURIComponent(
-                                          `/app/eventos/${event.id}/editar?tab=venue_localidades`,
-                                      )}`
-                                    : ""
-                            }`}
-                        >
-                            <PlusCircle className="h-4 w-4 mr-1.5" /> Crear nuevo venue
+                        <a href={venueCreateHref(event?.id)}>
+                            <PlusCircle className="h-4 w-4 mr-1.5" /> Nuevo mapa
                         </a>
                     </Button>
                 </div>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {venues.map((v) => (
-                        <VenueCard
-                            key={v.id}
-                            venue={v}
-                            selected={false}
-                            onSelect={selectVenue}
-                        />
+                        <VenueCard key={v.id} venue={v} onSelect={selectVenue} />
                     ))}
                 </div>
                 {loadingLink && (
                     <p className="text-sm text-muted-foreground flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" /> Vinculando venue...
+                        <Loader2 className="h-4 w-4 animate-spin" /> Vinculando mapa…
                     </p>
                 )}
             </div>
         );
     }
 
-    // ── Linked: canvas + pricing table ──────────────────────────────────────
     return (
-        <div className="space-y-4" data-testid="venue-linked">
-            {/* Header with selected venue + actions */}
-            <div className="rounded-xl border p-4 bg-secondary/30 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-lg bg-primary/15 flex items-center justify-center">
-                        <MapPin className="h-5 w-5 text-primary" />
+        <div className="space-y-5" data-testid="venue-linked">
+            {/* Linked map header */}
+            <div className="rounded-xl border p-4 bg-card flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                    <div className="h-10 w-10 rounded-lg bg-teal-50 flex items-center justify-center shrink-0">
+                        <MapPin className="h-5 w-5 text-teal-800" />
                     </div>
-                    <div>
-                        <div className="font-semibold leading-tight">
-                            {linkedVenue.name}
-                        </div>
+                    <div className="min-w-0">
+                        <div className="font-semibold leading-tight truncate">{linkedVenue.name}</div>
                         <div className="text-xs text-muted-foreground">
-                            {linkedVenue.capacity_calculated} asientos · {localitiesActive.length} localidad
-                            {localitiesActive.length !== 1 ? "es" : ""}
+                            {summary?.capacity ?? linkedVenue.capacity_calculated} asientos
+                            {" · "}
+                            {localitiesActive.length} localidad{localitiesActive.length !== 1 ? "es" : ""}
                         </div>
                     </div>
+                    <Badge variant="secondary" className="shrink-0">Copia del evento</Badge>
                 </div>
-                <div className="flex gap-2">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        asChild
-                        data-testid="venue-preview"
-                    >
-                        <a
-                            href={`/o/${linkedVenue.tenant_slug}/venues/${linkedVenue.slug}/preview`}
-                            target="_blank"
-                            rel="noreferrer"
-                        >
-                            <Eye className="h-4 w-4 mr-1.5" />
-                            Vista previa pública
+                <div className="flex flex-wrap gap-2">
+                    <Button variant="default" size="sm" asChild data-testid="venue-assign-map">
+                        <a href={event?.id ? eventMapHref(event.id) : "#"}>
+                            <Pencil className="h-4 w-4 mr-1.5" /> Editar mapa
                         </a>
                     </Button>
                     <Button
@@ -361,131 +392,158 @@ export default function EventVenueSection({ event, disabled, onUpdated, onReturn
                         size="sm"
                         onClick={handleUnlink}
                         disabled={disabled || loadingLink || (event?.tickets_sold || 0) > 0}
-                        className="text-red-600 hover:bg-red-50"
                         data-testid="venue-change"
-                        title={(event?.tickets_sold || 0) > 0
-                            ? "No podés cambiar el venue después de la primera venta."
-                            : undefined}
                     >
-                        <Unlink className="h-4 w-4 mr-1.5" />
-                        Cambiar venue
+                        <Unlink className="h-4 w-4 mr-1.5" /> Cambiar
                     </Button>
                 </div>
             </div>
 
-            {/* Read-only interactive canvas */}
-            <div className="rounded-xl border bg-card overflow-hidden">
-                <div className="px-4 py-2 border-b text-xs text-muted-foreground bg-secondary/30">
-                    Mapa del venue · click en una zona para resaltar su locality abajo
-                </div>
-                <EditorCanvas
-                    canvas={canvas}
-                    elements={elements}
-                    localitiesById={localitiesById}
-                    selection={highlightLocality
-                        ? elements.filter((e) => e.locality_id === highlightLocality).map((e) => e.id)
-                        : []}
-                    onSelect={onCanvasSelect}
-                    onUpdate={() => {}}
-                    onTransform={() => {}}
-                    onContextMenu={() => {}}
-                    onCanvasClick={() => setHighlightLocality(null)}
-                    tool="select"
-                    readOnly
-                    height={420}
-                />
+            {/* Map preview (collapsible) */}
+            <div className="rounded-xl border bg-card overflow-hidden min-w-0 max-w-full">
+                <button
+                    type="button"
+                    className="w-full px-4 py-2.5 border-b text-left text-sm flex items-center justify-between hover:bg-secondary/40"
+                    onClick={() => setMapOpen((v) => !v)}
+                >
+                    <span className="font-medium">Plano del evento</span>
+                    <span className="text-xs text-muted-foreground">
+                        {mapOpen ? "Ocultar" : "Mostrar"} · click en una zona para resaltar precios
+                    </span>
+                </button>
+                {mapOpen && (
+                    <div className="min-w-0 max-w-full">
+                        <EditorCanvas
+                            canvas={canvas}
+                            elements={elements}
+                            localitiesById={localitiesById}
+                            selection={highlightLocality
+                                ? elements.filter((e) => e.locality_id === highlightLocality).map((e) => e.id)
+                                : []}
+                            onSelect={onCanvasSelect}
+                            onUpdate={() => {}}
+                            onTransform={() => {}}
+                            onContextMenu={() => {}}
+                            onCanvasClick={() => setHighlightLocality(null)}
+                            tool="select"
+                            readOnly
+                            height={360}
+                            autoFitKey={event?.id ? `${event.id}:${event.venue_id || ""}` : undefined}
+                        />
+                    </div>
+                )}
             </div>
 
-            {/* Pricing table */}
-            <div className="rounded-xl border bg-card">
-                <div className="px-4 py-3 border-b">
-                    <h4 className="font-semibold">Precios por localidad</h4>
-                    <p className="text-xs text-muted-foreground">
-                        Definí el precio en USD y, opcionalmente, un máximo de tickets por
-                        compra para cada localidad.
-                    </p>
+            {/* Pricing cards */}
+            <div className="space-y-3" data-testid="locality-pricing-table">
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                    <div>
+                        <h4 className="font-semibold">Precios por localidad</h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Entrada + cargos opcionales (USD). Se guardan al salir de cada campo.
+                        </p>
+                    </div>
+                    <Button variant="outline" size="sm" asChild data-testid="venue-add-locality">
+                        <a href={event?.id ? eventMapHref(event.id) : "#"}>
+                            <PlusCircle className="h-4 w-4 mr-1.5" /> Gestionar localidades
+                        </a>
+                    </Button>
                 </div>
-                <div className="divide-y" data-testid="locality-pricing-table">
+
+                <div className="grid gap-3">
                     {localitiesActive.map((loc) => {
                         const p = pricing[loc.id] || {};
                         const highlighted = highlightLocality === loc.id;
+                        const entrada = (p.price_cents || 0) / 100;
+                        const fees = ((p.service_fee_cents || 0) + (p.admin_fee_cents || 0)) / 100;
                         return (
                             <div
                                 key={loc.id}
-                                className={`grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 px-4 py-3 transition ${
-                                    highlighted ? "bg-primary/5" : ""
+                                className={`rounded-xl border bg-card p-4 transition ${
+                                    highlighted ? "ring-2 ring-teal-700/30 border-teal-700/40" : ""
                                 }`}
                                 data-testid={`loc-row-${loc.id}`}
+                                onMouseEnter={() => setHighlightLocality(loc.id)}
                             >
-                                <span
-                                    className="h-3.5 w-3.5 rounded-sm border"
-                                    style={{ background: loc.color }}
-                                />
-                                <div>
-                                    <div className="font-medium text-sm">{loc.name}</div>
-                                    {loc.description && (
-                                        <div className="text-xs text-muted-foreground">
-                                            {loc.description}
-                                        </div>
-                                    )}
+                                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <span
+                                            className="h-3.5 w-3.5 rounded-sm border shrink-0"
+                                            style={{ background: loc.color }}
+                                        />
+                                        <span className="font-medium truncate">{loc.name}</span>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                        Comprador paga{" "}
+                                        <strong className="text-foreground">
+                                            ${(entrada + fees).toFixed(2)}
+                                        </strong>
+                                        {fees > 0 && (
+                                            <span> (entrada ${entrada.toFixed(2)} + cargos)</span>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-1.5">
-                                    <Label className="text-xs text-muted-foreground">USD</Label>
-                                    <Input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        className="h-8 w-24"
-                                        value={p.price_cents != null ? (p.price_cents / 100).toFixed(2) : ""}
-                                        onChange={(e) => {
-                                            const v = e.target.value;
-                                            updatePricing(loc.id, {
-                                                price_cents: v === ""
-                                                    ? 0
-                                                    : Math.round(parseFloat(v) * 100),
-                                            });
-                                        }}
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                                    <MoneyInput
+                                        label="Entrada"
+                                        value={p.price_cents}
+                                        onChange={(cents) => updatePricing(loc.id, { price_cents: cents })}
                                         onBlur={savePricing}
                                         disabled={disabled}
-                                        data-testid={`loc-price-${loc.id}`}
+                                        testid={`loc-price-${loc.id}`}
                                     />
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                    <Label className="text-xs text-muted-foreground">Máx/compra</Label>
-                                    <Input
-                                        type="number"
-                                        min="1"
-                                        className="h-8 w-20"
-                                        placeholder="—"
-                                        value={p.max_per_purchase ?? ""}
-                                        onChange={(e) => {
-                                            const v = e.target.value;
-                                            updatePricing(loc.id, {
-                                                max_per_purchase: v === "" ? null : parseInt(v, 10),
-                                            });
-                                        }}
+                                    <MoneyInput
+                                        label="Cargo servicio"
+                                        value={p.service_fee_cents}
+                                        onChange={(cents) => updatePricing(loc.id, { service_fee_cents: cents })}
                                         onBlur={savePricing}
                                         disabled={disabled}
-                                        data-testid={`loc-max-${loc.id}`}
+                                        testid={`loc-service-${loc.id}`}
                                     />
+                                    <MoneyInput
+                                        label="Cargo admin"
+                                        value={p.admin_fee_cents}
+                                        onChange={(cents) => updatePricing(loc.id, { admin_fee_cents: cents })}
+                                        onBlur={savePricing}
+                                        disabled={disabled}
+                                        testid={`loc-admin-${loc.id}`}
+                                    />
+                                    <div className="space-y-1">
+                                        <Label className="text-[11px] text-muted-foreground font-normal">
+                                            Máx. por compra
+                                        </Label>
+                                        <Input
+                                            type="number"
+                                            min="1"
+                                            className="h-9"
+                                            placeholder="Sin límite"
+                                            value={p.max_per_purchase ?? ""}
+                                            onChange={(e) => {
+                                                const v = e.target.value;
+                                                updatePricing(loc.id, {
+                                                    max_per_purchase: v === "" ? null : parseInt(v, 10),
+                                                });
+                                            }}
+                                            onBlur={savePricing}
+                                            disabled={disabled}
+                                            data-testid={`loc-max-${loc.id}`}
+                                        />
+                                    </div>
                                 </div>
                             </div>
                         );
                     })}
                 </div>
+
                 {summary && (
-                    <div
-                        className="px-4 py-3 border-t text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1"
-                        data-testid="locality-summary"
-                    >
-                        <span>Total capacidad: <strong>{summary.capacity}</strong></span>
-                        <span>Localidades: <strong>{summary.localityCount}</strong></span>
-                        <span>
-                            Precio: <strong>${summary.minPrice.toFixed(2)}</strong>
-                            {summary.minPrice !== summary.maxPrice &&
-                                <> – <strong>${summary.maxPrice.toFixed(2)}</strong></>}
-                        </span>
-                    </div>
+                    <p className="text-xs text-muted-foreground" data-testid="locality-summary">
+                        {summary.localityCount} localidad{summary.localityCount !== 1 ? "es" : ""}
+                        {" · "}
+                        capacidad {summary.capacity}
+                        {" · "}
+                        entradas desde ${summary.minPrice.toFixed(2)}
+                        {summary.minPrice !== summary.maxPrice && ` hasta $${summary.maxPrice.toFixed(2)}`}
+                    </p>
                 )}
             </div>
         </div>

@@ -99,17 +99,41 @@ export function seatRadius(element) {
     return 10;
 }
 
-// Total of selected seats given event.locality_pricing + seats_status entries
+// Totals of selected seats given event.locality_pricing.
+// Buyer pays entrada + c.servicio + c.admin; platform fee applies only to entrada.
+export function selectedSeatBreakdown(selectedSeats, localityPricing) {
+    const byLoc = Object.fromEntries(
+        (localityPricing || []).map((lp) => [lp.locality_id, lp]),
+    );
+    let entrada = 0;
+    let service = 0;
+    let admin = 0;
+    for (const seat of selectedSeats || []) {
+        const lp = byLoc[seat.locality_id] || {};
+        entrada += Number(lp.price_cents || 0);
+        service += Number(lp.service_fee_cents || 0);
+        admin += Number(lp.admin_fee_cents || 0);
+    }
+    return {
+        entrada_cents: entrada,
+        service_fee_cents: service,
+        admin_fee_cents: admin,
+        subtotal_cents: entrada + service + admin,
+    };
+}
+
 export function selectedSubtotalCents(selectedSeats, localityPricing) {
-    const priceByLoc = Object.fromEntries(
-        (localityPricing || []).map((lp) => [lp.locality_id, lp.price_cents]),
-    );
-    return selectedSeats.reduce(
-        (s, seat) => s + (priceByLoc[seat.locality_id] || 0), 0,
-    );
+    return selectedSeatBreakdown(selectedSeats, localityPricing).subtotal_cents;
 }
 
 export const FEE_PERCENT = 5; // mirrors backend DEFAULT_FEE_PERCENT
+
+/** Platform fee on entrada only (not on service/admin cargos). */
+export function feesForEntrada(entradaCents) {
+    return Math.round((entradaCents * FEE_PERCENT) / 100);
+}
+
+/** @deprecated Prefer feesForEntrada — kept for callers that still pass full subtotal. */
 export function feesForSubtotal(subtotal) {
     return Math.round((subtotal * FEE_PERCENT) / 100);
 }

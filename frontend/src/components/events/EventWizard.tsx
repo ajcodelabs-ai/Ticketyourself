@@ -1,27 +1,17 @@
 /**
- * EventWizard — Phase 9.6.
+ * EventWizard — organizer event create/edit.
  *
- * 6 sections (horizontal tabs):
- *  1. Información general — Datos · Cuándo (duration + sales presets) · Dónde (venue selector)
- *  2. Venue y localidades — pricing tables for the linked venue (or hint to pick one)
- *  3. Media — illustrated mockups + uploads (poster · banner · gallery)
- *  4. Formas de pago
- *  5. Descuentos
- *  6. Accesos y parámetros
+ * 8 sections (sidebar stepper):
+ *  1. General — info principal · descripción · keywords · contenido avanzado
+ *  2. Fechas y ventas — Cuándo (duration + sales presets) · Funciones
+ *  3. Media — banner · mediana · pequeña · gallery · Diseño de ticket
+ *  4. Localidades — Dónde · precios/aforo · tipos de ticket · abono (si aplica)
+ *  5. Formas de pago
+ *  6. Descuentos
+ *  7. Accesos — visibilidad · quién puede comprar · lista/códigos
+ *  8. Parámetros — preguntas · límites · envío de eTicket
  *
  * Used in both create (/app/eventos/nuevo) and edit (/app/eventos/:id/editar).
- *
- * Phase 9.6 changes:
- *  • Sales-window presets (start/end) and event duration are picked from dropdowns
- *    rather than raw datetime-local inputs. Internally we still persist
- *    `starts_at`/`ends_at`/`sales_start`/`sales_end`; the preset key is stored
- *    alongside so the form re-opens on the option the organizer chose.
- *  • Venue selection moved from the "Venue y localidades" tab into the "Dónde"
- *    sub-section of Información general. Linked-venue updates from PUT /venue
- *    propagate through `setCurrentEvent`, which fixes the previous bug where
- *    selecting a venue silently failed because `onSaved` was undefined.
- *  • Media tab now has inline SVG mockups above each dropzone so the organizer
- *    sees exactly where each image surfaces.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -59,18 +49,24 @@ import {
     AlertTriangle,
     CheckCircle2,
     Circle,
-    ImageIcon,
     Trash2,
     Info,
-    MapPin,
-    Building2,
-    PlusCircle,
-    LayoutTemplate,
-    ArrowRight,
-    Unlink,
-    Eye,
+    CreditCard,
+    Landmark,
+    Banknote,
+    Percent,
+    Accessibility,
     CalendarClock,
     Plus,
+    X,
+    Globe,
+    Lock,
+    Link2,
+    Users,
+    KeyRound,
+    MessageSquareText,
+    Ticket,
+    Mail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -126,18 +122,26 @@ const ALLOWED_MIME = [
 ];
 
 const STEPS = [
-    { id: "info", label: "Información general" },
+    { id: "general", label: "General" },
+    { id: "fechas", label: "Fechas y ventas" },
     { id: "media", label: "Media" },
-    { id: "content", label: "Contenido" },
-    { id: "venue_localidades", label: "Venue y localidades" },
-    { id: "tipos_ticket", label: "Tipos de ticket" },
-    { id: "funciones", label: "Funciones" },
-    { id: "abono", label: "Abono de Temporada" },
-    { id: "ticket_design", label: "Diseño de ticket" },
+    { id: "localidades", label: "Localidades" },
     { id: "payments", label: "Formas de pago" },
     { id: "discounts", label: "Descuentos" },
-    { id: "access", label: "Accesos y parámetros" },
+    { id: "access", label: "Accesos" },
+    { id: "params", label: "Parámetros" },
 ];
+
+/** Legacy ?tab= values → current step ids (deep-links / bookmarks). */
+const TAB_ALIASES = {
+    info: "general",
+    content: "general",
+    venue_localidades: "localidades",
+    tipos_ticket: "localidades",
+    abono: "localidades",
+    funciones: "fechas",
+    ticket_design: "media",
+};
 
 function defaultPayments() {
     return {
@@ -215,6 +219,9 @@ function makeInitial(d) {
             ticket_delivery_hours: "",
             ticket_delivery_at: "",
             multi_function_mode: "function",
+            priority: 0,
+            video_url: "",
+            keywords: [],
         };
     }
     const startsIso = d.starts_at || null;
@@ -264,6 +271,9 @@ function makeInitial(d) {
         ticket_delivery_hours: d.ticket_delivery_hours != null ? String(d.ticket_delivery_hours) : "",
         ticket_delivery_at: d.ticket_delivery_at ? isoToLocalInput(d.ticket_delivery_at, d.timezone) : "",
         multi_function_mode: d.multi_function_mode || "function",
+        priority: d.priority ?? 0,
+        video_url: d.video_url || "",
+        keywords: d.keywords || [],
     };
 }
 
@@ -355,15 +365,20 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         return r?.id || null;
     };
 
-    // Deep-linking: ?tab=info|venue_localidades|... wins over default.
+    // Deep-linking: ?tab=general|fechas|... (legacy aliases remapped).
+    const rawTab = searchParams.get("tab");
+    const aliased = rawTab ? TAB_ALIASES[rawTab as keyof typeof TAB_ALIASES] : undefined;
     const initialStep =
-        STEPS.find((s) => s.id === searchParams.get("tab"))?.id || "info";
+        STEPS.find((s) => s.id === rawTab)?.id
+        || STEPS.find((s) => s.id === aliased)?.id
+        || "general";
     const [activeStep, setActiveStep] = useState(initialStep);
     const [saving, setSaving] = useState(false);
     const [publishing, setPublishing] = useState(false);
     const [eventId, setEventId] = useState(initial?.id || null);
     const [poster, setPoster] = useState(initial?.poster_url || null);
     const [banner, setBanner] = useState(initial?.banner_url || null);
+    const [small, setSmall] = useState(initial?.small_url || null);
     const [gallery, setGallery] = useState(initial?.gallery_urls || []);
     const [uploadingKind, setUploadingKind] = useState(null);
 
@@ -373,6 +388,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             setCurrentEvent(initial);
             setPoster(initial.poster_url || null);
             setBanner(initial.banner_url || null);
+            setSmall(initial.small_url || null);
             setGallery(initial.gallery_urls || []);
             setEventId(initial.id);
         }
@@ -381,8 +397,8 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     const lockCritical = mode === "edit" && (initial?.tickets_sold || 0) > 0;
 
     // Live sale window — computed straight from the (possibly unsaved) form
-    // state, same as buildPayload() does, so "Tipos de ticket" reflects
-    // whatever is set in "Información general" even before the first save.
+    // state, same as buildPayload() does, so ticket types reflect whatever is
+    // set in "Fechas y ventas" even before the first save.
     const liveSaleWindow = useMemo(() => {
         const startsIso = form.starts_at ? localInputToIso(form.starts_at, form.timezone) : null;
         return {
@@ -405,27 +421,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         form.sales_end_custom,
     ]);
 
-    // When a venue is selected, the public checkout uses the seat map
-    // (seat_ids + locality_pricing) — ticket types are never shown to buyers.
-    // Hiding the tab avoids the duplicate data-entry that confused organizers.
+    // When a venue is selected, checkout uses the seat map — ticket types /
+    // season pass stay hidden inside the Localidades step.
     const hasVenueSelected = !!(form.venue_id || currentEvent?.venue_id);
-
-    // If the organizer selects a venue while on a tab that's hidden for venue events, move them.
-    useEffect(() => {
-        if (hasVenueSelected && (activeStep === "tipos_ticket" || activeStep === "abono")) {
-            setActiveStep("venue_localidades");
-            const params = new URLSearchParams(searchParams);
-            params.set("tab", "venue_localidades");
-            setSearchParams(params, { replace: true });
-        }
-    }, [hasVenueSelected, activeStep, searchParams, setSearchParams]);
-
-    const visibleSteps = useMemo(
-        () => hasVenueSelected
-            ? STEPS.filter((s) => s.id !== "tipos_ticket" && s.id !== "abono")
-            : STEPS,
-        [hasVenueSelected],
-    );
 
     const stepStatus = useMemo(
         () => evalStepStatus(form, poster, currentEvent),
@@ -521,6 +519,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             const { data } = await api.post(`/events/me/${id}/${kind}`, fd);
             if (kind === "poster") setPoster(data.poster_url);
             else if (kind === "banner") setBanner(data.banner_url);
+            else if (kind === "small") setSmall(data.small_url);
             else if (kind === "gallery") setGallery(data.gallery_urls || []);
             return data;
         } catch (e) {
@@ -536,7 +535,15 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         if (list.length === 0) return;
         if (kind !== "gallery") {
             const r = await uploadImage(list[0], kind);
-            if (r) toast.success(kind === "poster" ? "Póster actualizado" : "Banner actualizado");
+            if (r) {
+                const msg =
+                    kind === "poster"
+                        ? "Imagen mediana actualizada"
+                        : kind === "small"
+                        ? "Imagen pequeña actualizada"
+                        : "Banner actualizado";
+                toast.success(msg);
+            }
             return;
         }
         const remaining = Math.max(0, 10 - (gallery?.length || 0));
@@ -593,9 +600,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         params.set("tab", next);
         setSearchParams(params, { replace: true });
     };
-    const idx = visibleSteps.findIndex((s) => s.id === activeStep);
-    const goPrev = () => handleTabChange(visibleSteps[Math.max(0, idx - 1)].id);
-    const goNext = () => handleTabChange(visibleSteps[Math.min(visibleSteps.length - 1, idx + 1)].id);
+    const idx = STEPS.findIndex((s) => s.id === activeStep);
+    const goPrev = () => handleTabChange(STEPS[Math.max(0, idx - 1)].id);
+    const goNext = () => handleTabChange(STEPS[Math.min(STEPS.length - 1, idx + 1)].id);
 
     return (
         <div className="space-y-4" data-testid="event-wizard">
@@ -604,13 +611,13 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                 <div className="lg:hidden flex items-center gap-3 rounded-xl border bg-card px-4 py-2.5">
                     <StepIcon status={stepStatus[activeStep]} size="md" />
                     <span className="text-xs text-muted-foreground shrink-0">
-                        {idx + 1}/{visibleSteps.length}
+                        {idx + 1}/{STEPS.length}
                     </span>
                     <span className="font-medium text-sm truncate">
-                        {visibleSteps[idx]?.label}
+                        {STEPS[idx]?.label}
                     </span>
                     <div className="ml-auto flex gap-0.5">
-                        {visibleSteps.map((s) => (
+                        {STEPS.map((s) => (
                             <button
                                 key={s.id}
                                 onClick={() => handleTabChange(s.id)}
@@ -635,68 +642,71 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                 <div className="lg:flex lg:gap-5 lg:items-start">
                     {/* ── Content area ── */}
                     <div className="flex-1 min-w-0">
-                        <TabsContent value="info">
-                            <SectionInfo
+                        <TabsContent value="general">
+                            <SectionGeneral
                                 form={form}
                                 update={update}
                                 disabled={lockCritical}
-                                venues={venuesList}
-                                currentEvent={currentEvent}
-                                onEventUpdated={setCurrentEvent}
-                                ensureEventId={ensureEventId}
-                                onJumpToFunctions={() => handleTabChange("funciones")}
+                            />
+                        </TabsContent>
+                        <TabsContent value="fechas">
+                            <SectionFechas
+                                form={form}
+                                update={update}
+                                disabled={lockCritical}
+                                eventId={eventId}
+                                localities={venueLocalities}
                             />
                         </TabsContent>
                         <TabsContent value="media">
-                            <SectionMedia
-                                poster={poster}
-                                banner={banner}
-                                gallery={gallery}
-                                uploadingKind={uploadingKind}
-                                onUpload={uploadImages}
-                                onDeleteGallery={deleteGalleryAt}
-                                onReorderGallery={reorderGallery}
-                                eventId={eventId}
-                            />
+                            <div className="space-y-6">
+                                <SectionMedia
+                                    poster={poster}
+                                    banner={banner}
+                                    small={small}
+                                    gallery={gallery}
+                                    uploadingKind={uploadingKind}
+                                    onUpload={uploadImages}
+                                    onDeleteGallery={deleteGalleryAt}
+                                    onReorderGallery={reorderGallery}
+                                    eventId={eventId}
+                                />
+                                <SectionTicketDesign form={form} update={update} eventId={eventId} />
+                            </div>
                         </TabsContent>
-                        <TabsContent value="content">
-                            <EventContentPanel
-                                content={form.content}
-                                update={update}
-                                disabled={lockCritical}
-                            />
-                        </TabsContent>
-                        <TabsContent value="venue_localidades">
-                            <SectionVenueLocalidades
-                                form={form}
-                                update={update}
-                                disabled={lockCritical}
-                                event={currentEvent}
-                                onEventUpdated={setCurrentEvent}
-                                onJumpToInfo={() => handleTabChange("info")}
-                            />
-                        </TabsContent>
-                        <TabsContent value="tipos_ticket">
-                            <TicketTypesPanel
-                                eventId={eventId}
-                                localities={venueLocalities}
-                                eventSaleWindow={liveSaleWindow}
-                                timezone={form.timezone}
-                            />
-                        </TabsContent>
-                        <TabsContent value="funciones">
-                            <EventFunctionsPanel
-                                eventId={eventId}
-                                localities={venueLocalities}
-                                mode={form.multi_function_mode}
-                                timezone={form.timezone}
-                            />
-                        </TabsContent>
-                        <TabsContent value="abono">
-                            <SeasonPassPanel eventId={eventId} hasVenue={!!(form.venue_id || currentEvent?.venue_id)} timezone={form.timezone} />
-                        </TabsContent>
-                        <TabsContent value="ticket_design">
-                            <SectionTicketDesign form={form} update={update} eventId={eventId} />
+                        <TabsContent value="localidades">
+                            <div className="space-y-5">
+                                <DondeBlock
+                                    form={form}
+                                    update={update}
+                                    disabled={lockCritical}
+                                    currentEvent={currentEvent}
+                                />
+                                <SectionVenueLocalidades
+                                    form={form}
+                                    update={update}
+                                    disabled={lockCritical}
+                                    event={currentEvent}
+                                    onEventUpdated={setCurrentEvent}
+                                    onJumpToInfo={() => handleTabChange("general")}
+                                    onReturnFromVenueCreate={venuesList}
+                                />
+                                {!hasVenueSelected && form.no_seating_mode && (
+                                    <div className="space-y-5">
+                                        <TicketTypesPanel
+                                            eventId={eventId}
+                                            localities={venueLocalities}
+                                            eventSaleWindow={liveSaleWindow}
+                                            timezone={form.timezone}
+                                        />
+                                        <SeasonPassPanel
+                                            eventId={eventId}
+                                            hasVenue={false}
+                                            timezone={form.timezone}
+                                        />
+                                    </div>
+                                )}
+                            </div>
                         </TabsContent>
                         <TabsContent value="payments">
                             <SectionPayments form={form} update={update} />
@@ -712,6 +722,13 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         <TabsContent value="access">
                             <SectionAccess form={form} update={update} eventId={eventId} />
                         </TabsContent>
+                        <TabsContent value="params">
+                            <SectionParams
+                                form={form}
+                                update={update}
+                                venueLocalities={venueLocalities}
+                            />
+                        </TabsContent>
                     </div>
 
                     {/* ── Right sidebar — step navigator (desktop only) ── */}
@@ -720,7 +737,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                             className="flex-col h-auto w-full p-1.5 gap-0.5 bg-card border rounded-xl shadow-sm"
                             data-testid="wizard-tabs"
                         >
-                            {visibleSteps.map((s, i) => {
+                            {STEPS.map((s, i) => {
                                 const st = stepStatus[s.id];
                                 const isActive = s.id === activeStep;
                                 const rowBg = isActive ? "" : (
@@ -779,7 +796,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         )}
                         Guardar borrador
                     </Button>
-                    {idx < visibleSteps.length - 1 ? (
+                    {idx < STEPS.length - 1 ? (
                         <Button onClick={goNext} data-testid="wizard-next">
                             Siguiente
                             <ChevronRight className="h-4 w-4 ml-1.5" />
@@ -817,35 +834,35 @@ function evalStepStatus(form, poster, currentEvent) {
     const whereOk = form.no_seating_mode
         ? !!form.venue_name
         : !!(form.venue_id || currentEvent?.venue_id);
-    s.info = titleOk && startsOk && durationOk && whereOk ? "ok" : titleOk ? "warn" : "error";
 
-    // Media: warn until there's a poster (poster is strongly recommended but not required)
-    s.media = poster ? "ok" : "warn";
+    // General: title only; location lives in Localidades (DondeBlock).
+    s.general = titleOk ? "ok" : "error";
 
-    // Content: ok once the organizer has written something; neutral otherwise
-    s.content = form.description?.trim() ? "ok" : undefined;
+    // Fechas y ventas: start + duration required.
+    s.fechas = startsOk && durationOk ? "ok" : startsOk ? "warn" : "error";
 
-    s.venue_localidades = form.no_seating_mode
-        ? form.pricing_type === "free" || (form.pricing_type === "paid" && Number(form.base_price_dollars) > 0) || form.pricing_type === "donation"
+    // Media: warn until there's a poster (strongly recommended but not required).
+    // Custom ticket design bumps it to ok even without poster.
+    s.media = poster || currentEvent?.ticket_design?.elements?.length > 0
+        ? "ok"
+        : "warn";
+
+    // Localidades: seated → venue_id; general → venue_name + pricing rules.
+    const pricingOk =
+        form.pricing_type === "free"
+        || (form.pricing_type === "paid" && Number(form.base_price_dollars) > 0)
+        || form.pricing_type === "donation";
+    s.localidades = form.no_seating_mode
+        ? !whereOk
+            ? "warn"
+            : pricingOk
             ? "ok"
             : form.pricing_type === "paid" && !Number(form.base_price_dollars)
             ? "error"
             : "warn"
-        : form.venue_id || currentEvent?.venue_id
+        : whereOk
         ? "ok"
         : "warn";
-
-    // Async sections (ticket types, functions, season passes) — we cannot
-    // verify their content here without extra API calls, so stay neutral
-    // until the organizer visits and saves data in those tabs.
-    s.tipos_ticket = undefined;
-    s.funciones   = undefined;
-    s.abono       = undefined;
-
-    // Ticket design: ok if a custom design has been saved to the event
-    s.ticket_design = currentEvent?.ticket_design?.elements?.length > 0
-        ? "ok"
-        : undefined;
 
     // Payments: ok while at least one method is active (stripe is always on by default)
     const anyPaymentOn = form.payment_methods?.stripe?.enabled !== false
@@ -859,8 +876,11 @@ function evalStepStatus(form, poster, currentEvent) {
         || (form.discounts?.rules?.length > 0);
     s.discounts = hasDiscount ? "ok" : undefined;
 
-    // Access: valid defaults work out of the box, so ok; warn if broken
-    s.access = (form.access_params?.max_per_purchase ?? 0) > 0 ? "ok" : "warn";
+    // Accesos: visibility / access_type always have defaults
+    s.access = form.visibility && form.access_params?.access_type ? "ok" : "warn";
+
+    // Parámetros: purchase limits + delivery
+    s.params = (form.access_params?.max_per_purchase ?? 0) > 0 ? "ok" : "warn";
 
     return s;
 }
@@ -931,6 +951,9 @@ function buildPayload(form) {
                 ? localInputToIso(form.ticket_delivery_at, tz)
                 : null,
         multi_function_mode: form.multi_function_mode || "function",
+        priority: Number(form.priority) || 0,
+        video_url: form.video_url || null,
+        keywords: Array.isArray(form.keywords) ? form.keywords : [],
     };
 }
 
@@ -945,321 +968,583 @@ function StepIcon({ status, size = "sm" }: { status: string; size?: "sm" | "md" 
     return <Circle className={`${cls} text-muted-foreground/40`} />;
 }
 
-// ── Section: Info (datos + cuándo + dónde) ──────────────────────────────────
-function SectionInfo({
-    form,
-    update,
-    disabled,
-    venues,
-    currentEvent,
-    onEventUpdated,
-    ensureEventId,
-    onJumpToFunctions,
-}) {
-    return (
-        <div className="space-y-5">
-            <DatosBlock form={form} update={update} disabled={disabled} />
-            <CuandoBlock
-                form={form}
-                update={update}
-                disabled={disabled}
-                onJumpToFunctions={onJumpToFunctions}
-            />
-            <DondeBlock
-                form={form}
-                update={update}
-                disabled={disabled}
-                venues={venues}
-                currentEvent={currentEvent}
-                onEventUpdated={onEventUpdated}
-                ensureEventId={ensureEventId}
-            />
-        </div>
-    );
-}
+// ── Section: General (info principal + descripción) ─────────────────────────
+function SectionGeneral({ form, update, disabled }) {
+    const [keywordDraft, setKeywordDraft] = useState("");
+    const keywords = Array.isArray(form.keywords) ? form.keywords : [];
+    const categoryLabel =
+        EVENT_CATEGORIES.find((c) => c.code === form.category)?.label || form.category;
+    const pricingLabel = PRICING_LABELS[form.pricing_type] || form.pricing_type;
 
-function DatosBlock({ form, update, disabled }) {
+    const addKeyword = () => {
+        const kw = keywordDraft.trim();
+        if (!kw) return;
+        if (keywords.includes(kw)) {
+            setKeywordDraft("");
+            return;
+        }
+        update("keywords", [...keywords, kw]);
+        setKeywordDraft("");
+    };
+
+    const removeKeyword = (kw) => {
+        update(
+            "keywords",
+            keywords.filter((k) => k !== kw),
+        );
+    };
+
     return (
-        <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="info-datos-block">
-            <SubHeader icon="📝" title="Datos del evento" />
-            <Field label="Título del evento *" testId="wiz-title">
-                <Input
-                    value={form.title}
-                    onChange={(e) => update("title", e.target.value)}
-                    maxLength={140}
-                    disabled={disabled}
-                    placeholder="Ej: Concierto Acústico"
-                    data-testid="event-title-input"
-                />
-            </Field>
-            <Field label="Descripción corta (160 chars máx)">
-                <Textarea
-                    value={form.short_description}
-                    onChange={(e) => update("short_description", e.target.value)}
-                    maxLength={160}
-                    rows={2}
-                    data-testid="wiz-short-input"
-                />
-            </Field>
-            <Field label="Descripción completa">
-                <Textarea
-                    value={form.description}
-                    onChange={(e) => update("description", e.target.value)}
-                    maxLength={8000}
-                    rows={6}
-                    data-testid="wiz-desc-input"
-                />
-            </Field>
-            <Field label="Categoría">
-                <Select
-                    value={form.category}
-                    onValueChange={(v) => update("category", v)}
-                >
-                    <SelectTrigger data-testid="wiz-category">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {EVENT_CATEGORIES.map((c) => (
-                            <SelectItem key={c.code} value={c.code}>
-                                {c.label}
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-            </Field>
-            <Field label="Tipo de recaudación">
-                <Select
-                    value={form.pricing_type}
-                    onValueChange={(v) => update("pricing_type", v)}
-                    disabled={disabled}
-                >
-                    <SelectTrigger data-testid="wiz-pricing-type">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="free">Gratis</SelectItem>
-                        <SelectItem value="paid">Pago</SelectItem>
-                        <SelectItem value="donation">Donación</SelectItem>
-                    </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground mt-1">
-                    Define el resto del wizard: si es "Pago" vas a poder cobrar por
-                    localidad o precio único; "Donación" no admite venue con asientos
-                    numerados (el comprador elige el monto).
+        <div className="space-y-6" data-testid="section-general">
+            <div>
+                <h3 className="font-semibold text-base">General</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Nombre, tipo y textos del evento.
+                    {form.title?.trim() && (
+                        <>
+                            {" · "}
+                            <strong className="text-foreground">{form.title.trim()}</strong>
+                        </>
+                    )}
+                    {categoryLabel && (
+                        <>
+                            {" · "}
+                            <strong className="text-foreground">{categoryLabel}</strong>
+                        </>
+                    )}
+                    {" · "}
+                    <strong className="text-foreground">{pricingLabel}</strong>
                 </p>
-            </Field>
-            {form.pricing_type === "donation" && (
-                <div className="sm:col-span-2 flex items-center justify-between rounded-lg border p-4 bg-card">
+            </div>
+
+            <div className="grid lg:grid-cols-2 gap-5">
+                <section className="space-y-3" data-testid="info-datos-block">
                     <div>
-                        <div className="font-medium text-sm">Emitir tickets tipo RIFA</div>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                            Cada ticket recibe un número de rifa secuencial autogenerado,
-                            útil para sorteos asociados a la donación.
+                        <h4 className="text-sm font-medium">1. Información principal</h4>
+                        <p className="text-xs text-muted-foreground">
+                            Datos que identifican el evento en el microsite.
                         </p>
                     </div>
-                    <Switch
-                        checked={!!form.raffle_enabled}
-                        onCheckedChange={(v) => update("raffle_enabled", v)}
-                        disabled={disabled}
-                        data-testid="wiz-raffle-enabled"
-                    />
+                    <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
+                        <Field label="Nombre *" testId="wiz-title">
+                            <Input
+                                value={form.title}
+                                onChange={(e) => update("title", e.target.value)}
+                                maxLength={140}
+                                disabled={disabled}
+                                placeholder="Ej: Concierto Acústico"
+                                data-testid="event-title-input"
+                            />
+                        </Field>
+
+                        <div className="grid sm:grid-cols-2 gap-3">
+                            <Field label="Tipo de evento">
+                                <Select
+                                    value={form.category}
+                                    onValueChange={(v) => update("category", v)}
+                                >
+                                    <SelectTrigger data-testid="wiz-category">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {EVENT_CATEGORIES.map((c) => (
+                                            <SelectItem key={c.code} value={c.code}>
+                                                {c.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </Field>
+                            <Field
+                                label={
+                                    <LabelWithTip
+                                        text="Prioridad"
+                                        tip="Orden en listados del microsite. Mayor número = más arriba."
+                                    />
+                                }
+                            >
+                                <Input
+                                    type="number"
+                                    min="0"
+                                    max="9999"
+                                    value={form.priority ?? 0}
+                                    onChange={(e) =>
+                                        update("priority", parseInt(e.target.value || "0", 10))
+                                    }
+                                    disabled={disabled}
+                                    data-testid="wiz-priority"
+                                />
+                            </Field>
+                        </div>
+
+                        <Field label="URL de video">
+                            <Input
+                                type="url"
+                                value={form.video_url || ""}
+                                onChange={(e) => update("video_url", e.target.value)}
+                                disabled={disabled}
+                                placeholder="https://youtube.com/watch?v=…"
+                                data-testid="wiz-video-url"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Opcional · YouTube o Vimeo embebido en la página del evento.
+                            </p>
+                        </Field>
+
+                        <div className="space-y-2">
+                            <Label>Tipo de recaudación</Label>
+                            <p className="text-xs text-muted-foreground -mt-1">
+                                Define el resto del wizard (cobros, localidades, donación).
+                            </p>
+                            <div className="grid grid-cols-3 gap-2" data-testid="wiz-pricing-type">
+                                {[
+                                    {
+                                        value: "paid",
+                                        title: "Pago",
+                                        description: "Cobrá por localidad o precio fijo.",
+                                    },
+                                    {
+                                        value: "free",
+                                        title: "Gratis",
+                                        description: "Sin cobro. Reserva / inscripción.",
+                                    },
+                                    {
+                                        value: "donation",
+                                        title: "Donación",
+                                        description: "El comprador elige el monto.",
+                                    },
+                                ].map((opt) => {
+                                    const selected = form.pricing_type === opt.value;
+                                    return (
+                                        <button
+                                            key={opt.value}
+                                            type="button"
+                                            disabled={disabled}
+                                            onClick={() => update("pricing_type", opt.value)}
+                                            data-testid={`wiz-pricing-${opt.value}`}
+                                            className={`rounded-lg border p-3 text-left transition ${
+                                                selected
+                                                    ? "border-foreground/30 ring-1 ring-foreground/10 bg-card"
+                                                    : "border-border hover:border-foreground/20 bg-card"
+                                            } ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+                                        >
+                                            <div className="flex items-center gap-1.5">
+                                                <div className="font-medium text-sm">{opt.title}</div>
+                                                {selected && (
+                                                    <Badge
+                                                        variant="secondary"
+                                                        className="text-[10px] font-normal"
+                                                    >
+                                                        Activo
+                                                    </Badge>
+                                                )}
+                                            </div>
+                                            <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                                                {opt.description}
+                                            </p>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {form.pricing_type === "donation" && (
+                            <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                                <div className="min-w-0">
+                                    <div className="font-medium text-sm">Emitir tickets tipo rifa</div>
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                        Cada ticket recibe un número secuencial para sorteos.
+                                    </p>
+                                </div>
+                                <Switch
+                                    checked={!!form.raffle_enabled}
+                                    onCheckedChange={(v) => update("raffle_enabled", v)}
+                                    disabled={disabled}
+                                    data-testid="wiz-raffle-enabled"
+                                />
+                            </div>
+                        )}
+                    </div>
+                </section>
+
+                <section className="space-y-3" data-testid="info-desc-block">
+                    <div>
+                        <h4 className="text-sm font-medium">2. Descripción</h4>
+                        <p className="text-xs text-muted-foreground">
+                            Textos que ve el público en la página del evento.
+                        </p>
+                    </div>
+                    <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 h-full">
+                        <Field
+                            label={
+                                <span className="flex items-center justify-between w-full gap-2">
+                                    <span>Descripción corta</span>
+                                    <span className="text-[11px] font-normal text-muted-foreground">
+                                        {(form.short_description || "").length}/160
+                                    </span>
+                                </span>
+                            }
+                        >
+                            <Textarea
+                                value={form.short_description}
+                                onChange={(e) => update("short_description", e.target.value)}
+                                maxLength={160}
+                                rows={2}
+                                placeholder="Resumen para listados y compartir"
+                                data-testid="wiz-short-input"
+                            />
+                        </Field>
+                        <Field
+                            label={
+                                <span className="flex items-center justify-between w-full gap-2">
+                                    <span>Descripción completa</span>
+                                    <span className="text-[11px] font-normal text-muted-foreground">
+                                        {(form.description || "").length}/8000
+                                    </span>
+                                </span>
+                            }
+                        >
+                            <Textarea
+                                value={form.description}
+                                onChange={(e) => update("description", e.target.value)}
+                                maxLength={8000}
+                                rows={7}
+                                placeholder="Detalle del evento, artistas, horarios…"
+                                data-testid="wiz-desc-input"
+                            />
+                        </Field>
+                        <Field label="Palabras clave">
+                            <div className="flex gap-2">
+                                <Input
+                                    value={keywordDraft}
+                                    onChange={(e) => setKeywordDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            addKeyword();
+                                        }
+                                    }}
+                                    placeholder="Ej: rock, familiar, outdoor"
+                                    disabled={disabled}
+                                    data-testid="wiz-keyword-input"
+                                />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={addKeyword}
+                                    disabled={disabled || !keywordDraft.trim()}
+                                    data-testid="wiz-keyword-add"
+                                >
+                                    Agregar
+                                </Button>
+                            </div>
+                            {keywords.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5 mt-2" data-testid="wiz-keywords">
+                                    {keywords.map((kw) => (
+                                        <Badge
+                                            key={kw}
+                                            variant="secondary"
+                                            className="gap-1 pr-1"
+                                        >
+                                            {kw}
+                                            <button
+                                                type="button"
+                                                onClick={() => removeKeyword(kw)}
+                                                disabled={disabled}
+                                                className="rounded-sm p-0.5 hover:bg-muted"
+                                                aria-label={`Quitar ${kw}`}
+                                            >
+                                                <X className="h-3 w-3" />
+                                            </button>
+                                        </Badge>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-xs text-muted-foreground mt-1.5">
+                                    Opcional · ayudan a buscar el evento en el microsite.
+                                </p>
+                            )}
+                        </Field>
+                    </div>
+                </section>
+            </div>
+
+            <section className="space-y-3">
+                <div>
+                    <h4 className="text-sm font-medium">3. Contenido avanzado</h4>
+                    <p className="text-xs text-muted-foreground">
+                        Agenda, FAQ, artistas u otros bloques opcionales.
+                    </p>
                 </div>
-            )}
+                <details className="rounded-xl border bg-card group open:pb-0">
+                    <summary className="cursor-pointer list-none flex items-center justify-between gap-3 p-4 sm:p-5">
+                        <span className="text-sm font-medium">Mostrar contenido avanzado</span>
+                        <Badge variant="outline" className="text-[10px] font-normal shrink-0">
+                            <span className="group-open:hidden">Expandir</span>
+                            <span className="hidden group-open:inline">Ocultar</span>
+                        </Badge>
+                    </summary>
+                    <div className="px-4 sm:px-5 pb-4 sm:pb-5 border-t pt-4">
+                        <EventContentPanel
+                            content={form.content}
+                            update={update}
+                            disabled={disabled}
+                        />
+                    </div>
+                </details>
+            </section>
         </div>
     );
 }
 
-function CuandoBlock({ form, update, disabled, onJumpToFunctions }) {
-    const startsValid = !!form.starts_at;
+function SectionFechas({ form, update, disabled, eventId, localities }) {
+    const durationLabel =
+        DURATION_PRESETS.find((p) => p.key === form.duration_preset)?.label
+        || form.duration_preset;
+    const salesStartLabel =
+        SALES_START_PRESETS.find((p) => p.key === form.sales_window_preset_start)?.label
+        || form.sales_window_preset_start;
+    const modeLabel =
+        form.multi_function_mode === "subevent" ? "Subeventos" : "Funciones";
+
     return (
-        <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="info-cuando-block">
-            <SubHeader icon="📅" title="Cuándo" />
-
-            <div className="grid sm:grid-cols-2 gap-3">
-                <Field label="Fecha y hora de inicio *">
-                    <Input
-                        type="datetime-local"
-                        value={form.starts_at}
-                        onChange={(e) => update("starts_at", e.target.value)}
-                        disabled={disabled}
-                        data-testid="wiz-starts"
-                    />
-                </Field>
-                <Field label="Duración *">
-                    <Select
-                        value={form.duration_preset}
-                        onValueChange={(v) => update("duration_preset", v)}
-                        disabled={disabled}
-                    >
-                        <SelectTrigger data-testid="wiz-duration-preset">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {DURATION_PRESETS.map((p) => (
-                                <SelectItem key={p.key} value={p.key}>
-                                    {p.label}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </Field>
-            </div>
-            {form.duration_preset === "custom" && (
-                <Field label="Duración personalizada (minutos)">
-                    <Input
-                        type="number"
-                        min="5"
-                        step="5"
-                        value={form.duration_minutes_custom || ""}
-                        onChange={(e) =>
-                            update(
-                                "duration_minutes_custom",
-                                parseInt(e.target.value || "0", 10),
-                            )
-                        }
-                        disabled={disabled}
-                        placeholder="Ej: 90"
-                        data-testid="wiz-duration-custom"
-                    />
-                </Field>
-            )}
-
-            <Field label="Zona horaria">
-                <Select
-                    value={form.timezone}
-                    onValueChange={(v) => update("timezone", v)}
-                    disabled={disabled}
-                >
-                    <SelectTrigger data-testid="wiz-tz">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {TIMEZONES.map((t) => (
-                            <SelectItem key={t} value={t}>
-                                {t}
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-            </Field>
-
-            <div className="rounded-lg bg-secondary/40 border p-4 space-y-3">
-                <div className="text-sm font-medium flex items-center gap-2">
-                    <CalendarClock className="h-4 w-4 text-primary" />
-                    Ventana de venta
-                </div>
-                <p className="text-xs text-muted-foreground">
-                    Cuándo se habilita y se cierra la compra de tickets. Las opciones se
-                    calculan desde tu fecha de inicio.
+        <div className="space-y-6" data-testid="section-fechas">
+            <div>
+                <h3 className="font-semibold text-base">Fechas y ventas</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Cuándo ocurre el evento y cuándo se pueden comprar tickets.
+                    {form.starts_at && (
+                        <>
+                            {" · Inicio: "}
+                            <strong className="text-foreground">
+                                {form.starts_at.replace("T", " ")}
+                            </strong>
+                        </>
+                    )}
+                    {durationLabel && (
+                        <>
+                            {" · "}
+                            <strong className="text-foreground">{durationLabel}</strong>
+                        </>
+                    )}
+                    {" · "}
+                    <strong className="text-foreground">{modeLabel}</strong>
                 </p>
+            </div>
+
+            <CuandoBlock form={form} update={update} disabled={disabled} />
+
+            <section className="space-y-3">
+                <div>
+                    <h4 className="text-sm font-medium">3. Funciones o subeventos</h4>
+                    <p className="text-xs text-muted-foreground">
+                        Opcional · varias fechas, franjas o experiencias independientes.
+                        Venta: <strong className="text-foreground">{salesStartLabel}</strong>
+                    </p>
+                </div>
 
                 <div className="grid sm:grid-cols-2 gap-3">
-                    <Field label="Inicio de venta">
+                    <ChoiceCard
+                        icon={CalendarClock}
+                        title="Funciones"
+                        description="El mismo show se repite en varias fechas u horarios."
+                        selected={form.multi_function_mode !== "subevent"}
+                        onSelect={() => update("multi_function_mode", "function")}
+                        testid="wiz-multi-function-mode-function"
+                        disabled={disabled}
+                    />
+                    <ChoiceCard
+                        icon={CalendarClock}
+                        title="Subeventos"
+                        description="Experiencias independientes (VIP, cena, meet & greet)."
+                        selected={form.multi_function_mode === "subevent"}
+                        onSelect={() => update("multi_function_mode", "subevent")}
+                        testid="wiz-multi-function-mode-subevent"
+                        disabled={disabled}
+                    />
+                </div>
+                {/* Keep legacy testid for e2e / tooling that looks for the mode control */}
+                <input
+                    type="hidden"
+                    data-testid="wiz-multi-function-mode"
+                    value={form.multi_function_mode || "function"}
+                    readOnly
+                />
+
+                <div className="rounded-xl border bg-card p-4 sm:p-5">
+                    <EventFunctionsPanel
+                        eventId={eventId}
+                        localities={localities}
+                        mode={form.multi_function_mode}
+                        timezone={form.timezone}
+                    />
+                </div>
+            </section>
+        </div>
+    );
+}
+
+function CuandoBlock({ form, update, disabled }) {
+    const startsValid = !!form.starts_at;
+    return (
+        <>
+            <section className="space-y-3" data-testid="info-cuando-block">
+                <div>
+                    <h4 className="text-sm font-medium">1. Fecha y duración</h4>
+                    <p className="text-xs text-muted-foreground">
+                        Inicio del evento, cuánto dura y zona horaria.
+                    </p>
+                </div>
+                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
+                    <div className="grid sm:grid-cols-2 gap-3">
+                        <Field label="Fecha y hora de inicio *">
+                            <Input
+                                type="datetime-local"
+                                value={form.starts_at}
+                                onChange={(e) => update("starts_at", e.target.value)}
+                                disabled={disabled}
+                                data-testid="wiz-starts"
+                            />
+                        </Field>
+                        <Field label="Duración *">
+                            <Select
+                                value={form.duration_preset}
+                                onValueChange={(v) => update("duration_preset", v)}
+                                disabled={disabled}
+                            >
+                                <SelectTrigger data-testid="wiz-duration-preset">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {DURATION_PRESETS.map((p) => (
+                                        <SelectItem key={p.key} value={p.key}>
+                                            {p.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </Field>
+                    </div>
+                    {form.duration_preset === "custom" && (
+                        <Field label="Duración personalizada (minutos)">
+                            <Input
+                                type="number"
+                                min="5"
+                                step="5"
+                                value={form.duration_minutes_custom || ""}
+                                onChange={(e) =>
+                                    update(
+                                        "duration_minutes_custom",
+                                        parseInt(e.target.value || "0", 10),
+                                    )
+                                }
+                                disabled={disabled}
+                                placeholder="Ej: 90"
+                                data-testid="wiz-duration-custom"
+                            />
+                        </Field>
+                    )}
+                    <Field label="Zona horaria">
                         <Select
-                            value={form.sales_window_preset_start}
-                            onValueChange={(v) => update("sales_window_preset_start", v)}
-                            disabled={disabled || !startsValid}
+                            value={form.timezone}
+                            onValueChange={(v) => update("timezone", v)}
+                            disabled={disabled}
                         >
-                            <SelectTrigger data-testid="wiz-sales-start-preset">
+                            <SelectTrigger data-testid="wiz-tz">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                                {SALES_START_PRESETS.map((p) => (
-                                    <SelectItem key={p.key} value={p.key}>
-                                        {p.label}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </Field>
-                    <Field label="Fin de venta">
-                        <Select
-                            value={form.sales_window_preset_end}
-                            onValueChange={(v) => update("sales_window_preset_end", v)}
-                            disabled={disabled || !startsValid}
-                        >
-                            <SelectTrigger data-testid="wiz-sales-end-preset">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {SALES_END_PRESETS.map((p) => (
-                                    <SelectItem key={p.key} value={p.key}>
-                                        {p.label}
+                                {TIMEZONES.map((t) => (
+                                    <SelectItem key={t} value={t}>
+                                        {t}
                                     </SelectItem>
                                 ))}
                             </SelectContent>
                         </Select>
                     </Field>
                 </div>
+            </section>
 
-                {form.sales_window_preset_start === "custom" && (
-                    <Field label="Inicio de venta — fecha personalizada">
-                        <Input
-                            type="datetime-local"
-                            value={form.sales_start_custom}
-                            onChange={(e) => update("sales_start_custom", e.target.value)}
-                            disabled={disabled}
-                            data-testid="wiz-sales-start-custom"
-                        />
-                    </Field>
-                )}
-                {form.sales_window_preset_end === "custom" && (
-                    <Field label="Fin de venta — fecha personalizada">
-                        <Input
-                            type="datetime-local"
-                            value={form.sales_end_custom}
-                            onChange={(e) => update("sales_end_custom", e.target.value)}
-                            disabled={disabled}
-                            data-testid="wiz-sales-end-custom"
-                        />
-                    </Field>
-                )}
-            </div>
-
-            <div className="rounded-lg border p-3 bg-muted/30 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm">
-                        <div className="font-medium">Evento multi-función</div>
-                        <div className="text-xs text-muted-foreground">
-                            ¿Tu evento se repite en varias fechas u horarios, o agrupa varios
-                            subeventos (sala VIP, cena, meet & greet)? Agregalos en la pestaña
-                            "Funciones" — cada uno puede tener su propio venue, horario, aforo y
-                            precios.
-                        </div>
+            <section className="space-y-3">
+                <div>
+                    <h4 className="text-sm font-medium flex items-center gap-2">
+                        <CalendarClock className="h-4 w-4 text-muted-foreground" />
+                        2. Ventana de venta
+                    </h4>
+                    <p className="text-xs text-muted-foreground">
+                        Cuándo se habilita y se cierra la compra. Se calcula desde la fecha de inicio.
+                    </p>
+                </div>
+                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
+                    {!startsValid && (
+                        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                            Definí primero la fecha de inicio para habilitar estos presets.
+                        </p>
+                    )}
+                    <div className="grid sm:grid-cols-2 gap-3">
+                        <Field label="Inicio de venta">
+                            <Select
+                                value={form.sales_window_preset_start}
+                                onValueChange={(v) => update("sales_window_preset_start", v)}
+                                disabled={disabled || !startsValid}
+                            >
+                                <SelectTrigger data-testid="wiz-sales-start-preset">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {SALES_START_PRESETS.map((p) => (
+                                        <SelectItem key={p.key} value={p.key}>
+                                            {p.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </Field>
+                        <Field label="Fin de venta">
+                            <Select
+                                value={form.sales_window_preset_end}
+                                onValueChange={(v) => update("sales_window_preset_end", v)}
+                                disabled={disabled || !startsValid}
+                            >
+                                <SelectTrigger data-testid="wiz-sales-end-preset">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {SALES_END_PRESETS.map((p) => (
+                                        <SelectItem key={p.key} value={p.key}>
+                                            {p.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </Field>
                     </div>
-                    {onJumpToFunctions && (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={onJumpToFunctions}
-                            data-testid="jump-to-functions"
-                        >
-                            Ir a Funciones
-                        </Button>
+
+                    {form.sales_window_preset_start === "custom" && (
+                        <Field label="Inicio de venta — fecha personalizada">
+                            <Input
+                                type="datetime-local"
+                                value={form.sales_start_custom}
+                                onChange={(e) => update("sales_start_custom", e.target.value)}
+                                disabled={disabled}
+                                data-testid="wiz-sales-start-custom"
+                            />
+                        </Field>
+                    )}
+                    {form.sales_window_preset_end === "custom" && (
+                        <Field label="Fin de venta — fecha personalizada">
+                            <Input
+                                type="datetime-local"
+                                value={form.sales_end_custom}
+                                onChange={(e) => update("sales_end_custom", e.target.value)}
+                                disabled={disabled}
+                                data-testid="wiz-sales-end-custom"
+                            />
+                        </Field>
                     )}
                 </div>
-                <Field label="¿Mismo show repetido o subeventos independientes?">
-                    <Select
-                        value={form.multi_function_mode}
-                        onValueChange={(v) => update("multi_function_mode", v)}
-                        disabled={disabled}
-                    >
-                        <SelectTrigger data-testid="wiz-multi-function-mode">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="function">
-                                Funciones — el mismo show se repite (multifunción / franjas horarias)
-                            </SelectItem>
-                            <SelectItem value="subevent">
-                                Subeventos — experiencias independientes (sala VIP, cena, meet &amp; greet)
-                            </SelectItem>
-                        </SelectContent>
-                    </Select>
-                </Field>
-            </div>
-        </div>
+            </section>
+        </>
     );
 }
 
@@ -1267,18 +1552,10 @@ function DondeBlock({
     form,
     update,
     disabled,
-    venues,
     currentEvent,
-    onEventUpdated,
-    ensureEventId,
 }) {
     const seatedMode = !form.no_seating_mode; // ON => numbered venue
     const linkedVenueId = currentEvent?.venue_id || form.venue_id || null;
-    const linkedVenue = useMemo(
-        () => venues.find((v) => v.id === linkedVenueId) || null,
-        [venues, linkedVenueId],
-    );
-    const [linking, setLinking] = useState(false);
     const isDonation = form.pricing_type === "donation";
 
     // Numbered seating is ON by default for every new event. If the organizer
@@ -1291,79 +1568,6 @@ function DondeBlock({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isDonation, linkedVenueId]);
 
-    const handlePickVenue = async (vid) => {
-        if (!vid) return;
-        const venue = venues.find((v) => v.id === vid);
-        if (!venue) return;
-        setLinking(true);
-        try {
-            const eid = await ensureEventId();
-            if (!eid) return;
-            const activeIds = new Set();
-            for (const el of venue.elements || []) {
-                if (el.locality_id) activeIds.add(el.locality_id);
-            }
-            const body = {
-                venue_id: vid,
-                locality_pricing: Array.from(activeIds).map((id) => {
-                    const loc = venue.localities?.find((l) => l.id === id);
-                    return {
-                        locality_id: id,
-                        price_cents: loc?.default_price_cents || 0,
-                        max_tickets_per_purchase: null,
-                    };
-                }),
-                seat_holds_window_minutes: 10,
-            };
-            const { data } = await api.put(`/events/me/${eid}/venue`, body);
-            onEventUpdated(data);
-            update("venue_id", vid);
-            update("no_seating_mode", false);
-            toast.success(`Venue "${venue.name}" vinculado al evento`);
-        } catch (e) {
-            toast.error(
-                formatApiError(e?.response?.data?.detail) ||
-                    e.message ||
-                    "No se pudo vincular el venue.",
-            );
-        } finally {
-            setLinking(false);
-        }
-    };
-
-    const handleUnlink = async () => {
-        if (!currentEvent?.id) {
-            update("venue_id", null);
-            return;
-        }
-        if ((currentEvent.tickets_sold || 0) > 0) {
-            toast.error(
-                "No podés cambiar el venue después de la primera venta.",
-            );
-            return;
-        }
-        const ok = window.confirm(
-            "¿Desvincular el venue? Los precios por localidad se perderán.",
-        );
-        if (!ok) return;
-        setLinking(true);
-        try {
-            await api.delete(`/events/me/${currentEvent.id}/venue`);
-            onEventUpdated({
-                ...currentEvent,
-                venue_id: null,
-                venue_slug: null,
-                locality_pricing: [],
-            });
-            update("venue_id", null);
-            toast.success("Venue desvinculado");
-        } catch (e) {
-            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
-        } finally {
-            setLinking(false);
-        }
-    };
-
     const handleModeChange = (numbered) => {
         if (numbered && isDonation) {
             toast.error(
@@ -1373,7 +1577,7 @@ function DondeBlock({
         }
         if (!numbered && linkedVenueId) {
             toast.error(
-                "Para cambiar a evento general primero desvinculá el venue actual.",
+                "Para cambiar a evento general primero desvinculá el mapa más abajo.",
             );
             return;
         }
@@ -1382,183 +1586,37 @@ function DondeBlock({
 
     return (
         <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="info-donde-block">
-            <SubHeader icon="📍" title="Dónde" />
+            <div>
+                <h3 className="font-semibold text-base">1. Tipo de lugar</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Con mapa de asientos o ubicación general con precio único.
+                </p>
+            </div>
 
             <div className="flex items-start gap-3 rounded-lg border bg-secondary/30 p-3">
                 <Switch
                     checked={seatedMode}
                     onCheckedChange={handleModeChange}
-                    disabled={disabled || linking || (isDonation && !seatedMode)}
+                    disabled={disabled || (isDonation && !seatedMode)}
                     data-testid="wiz-seated-toggle"
                 />
                 <div className="text-sm">
                     <p className="font-medium leading-tight">
-                        ¿Tu evento tiene venue con asientos asignados?
+                        Asientos numerados (mapa)
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
                         {isDonation
-                            ? "No disponible para eventos de donación — el comprador elige el monto, no hay precio fijo por asiento."
-                            : "Activado: usás un mapa de asientos numerados. Apagado: ingresás nombre, dirección y precio único (eventos generales)."}
+                            ? "No disponible en donación: el comprador elige el monto."
+                            : seatedMode
+                              ? "Activado: abajo elegís el mapa y definís el precio de cada localidad."
+                              : "Apagado: solo nombre del lugar, dirección y un precio base."}
                     </p>
                 </div>
             </div>
 
-            {seatedMode ? (
-                <SeatedVenuePicker
-                    venues={venues}
-                    linkedVenue={linkedVenue}
-                    linkedVenueId={linkedVenueId}
-                    onPick={handlePickVenue}
-                    onUnlink={handleUnlink}
-                    disabled={disabled || linking}
-                    linking={linking}
-                    currentEventId={currentEvent?.id}
-                />
-            ) : (
+            {!seatedMode && (
                 <GeneralLocationFields form={form} update={update} disabled={disabled} />
             )}
-        </div>
-    );
-}
-
-function SeatedVenuePicker({
-    venues,
-    linkedVenue,
-    linkedVenueId,
-    onPick,
-    onUnlink,
-    disabled,
-    linking,
-    currentEventId,
-}) {
-    if (venues.length === 0 && !linkedVenue) {
-        const returnTo = currentEventId
-            ? encodeURIComponent(`/app/eventos/${currentEventId}/editar?tab=info`)
-            : encodeURIComponent("/app/eventos/nuevo");
-        return (
-            <div
-                className="rounded-xl border-2 border-dashed p-6 text-center bg-secondary/30 space-y-3"
-                data-testid="venue-empty-state"
-            >
-                <div className="mx-auto h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Building2 className="h-6 w-6 text-primary" />
-                </div>
-                <div className="space-y-1">
-                    <p className="font-medium">Todavía no tenés un venue publicado</p>
-                    <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                        Lo más fácil: elegí una plantilla prediseñada, publicala y volvé acá para
-                        vincularla. No necesitás diseñar el mapa desde cero.
-                    </p>
-                </div>
-                <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
-                    <Button asChild size="sm" data-testid="venue-template-cta">
-                        <a href={`/app/venues?create=1&return_to=${returnTo}`}>
-                            <LayoutTemplate className="h-4 w-4 mr-1.5" />
-                            Elegir plantilla
-                            <ArrowRight className="h-4 w-4 ml-1.5" />
-                        </a>
-                    </Button>
-                    <Button asChild size="sm" variant="outline" data-testid="venue-create-cta">
-                        <a href={`/app/venues?return_to=${returnTo}`}>
-                            <PlusCircle className="h-4 w-4 mr-1.5" />
-                            Ver todos mis venues
-                        </a>
-                    </Button>
-                </div>
-            </div>
-        );
-    }
-
-    return (
-        <div className="space-y-3" data-testid="venue-picker">
-            <Field label="Venue del evento">
-                <Select
-                    value={linkedVenueId || ""}
-                    onValueChange={onPick}
-                    disabled={disabled}
-                >
-                    <SelectTrigger data-testid="wiz-venue-select">
-                        <SelectValue placeholder="Elegí un venue…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {venues.map((v) => (
-                            <SelectItem
-                                key={v.id}
-                                value={v.id}
-                                data-testid={`venue-opt-${v.slug}`}
-                            >
-                                <span className="inline-flex items-center gap-2">
-                                    <MapPin className="h-3.5 w-3.5" />
-                                    {v.name}
-                                    <span className="text-xs text-muted-foreground">
-                                        · {v.capacity_calculated || 0} asientos
-                                    </span>
-                                </span>
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-            </Field>
-
-            {linkedVenue && (
-                <div
-                    className="rounded-lg border bg-primary/5 p-3 flex flex-wrap items-center justify-between gap-3"
-                    data-testid="venue-linked-card"
-                >
-                    <div className="flex items-center gap-3 text-sm">
-                        <div className="h-9 w-9 rounded-md bg-primary/15 grid place-items-center">
-                            <MapPin className="h-4 w-4 text-primary" />
-                        </div>
-                        <div>
-                            <div className="font-medium leading-tight">
-                                {linkedVenue.name}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                                {linkedVenue.capacity_calculated || 0} asientos ·{" "}
-                                {(linkedVenue.localities || []).length} localidad
-                                {(linkedVenue.localities || []).length !== 1 ? "es" : ""}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="flex gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            asChild
-                            data-testid="venue-preview"
-                        >
-                            <a
-                                href={`/o/${linkedVenue.tenant_slug}/venues/${linkedVenue.slug}/preview`}
-                                target="_blank"
-                                rel="noreferrer"
-                            >
-                                <Eye className="h-4 w-4 mr-1.5" />
-                                Ver mapa
-                            </a>
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={onUnlink}
-                            disabled={disabled || linking}
-                            className="text-red-600 hover:bg-red-50"
-                            data-testid="venue-unlink"
-                        >
-                            {linking ? (
-                                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                            ) : (
-                                <Unlink className="h-4 w-4 mr-1.5" />
-                            )}
-                            Cambiar
-                        </Button>
-                    </div>
-                </div>
-            )}
-
-            <p className="text-xs text-muted-foreground">
-                Configurás los precios por localidad en la pestaña <strong>Venue y
-                localidades</strong>.
-            </p>
         </div>
     );
 }
@@ -1598,7 +1656,7 @@ function GeneralLocationFields({ form, update, disabled }) {
     );
 }
 
-// ── Section: Venue y localidades (now: pricing + canvas only) ───────────────
+// ── Section: Venue y localidades (mapa + precios, o precio general) ─────────
 function SectionVenueLocalidades({
     form,
     update,
@@ -1606,147 +1664,98 @@ function SectionVenueLocalidades({
     event,
     onEventUpdated,
     onJumpToInfo,
+    onReturnFromVenueCreate,
 }) {
     const hasVenue = !!event?.venue_id;
     const isGeneralMode = form.no_seating_mode && !hasVenue;
+    const seatedMode = !form.no_seating_mode;
 
     return (
-        <div className="space-y-4" data-testid="section-venue-localidades">
-            <div className="flex items-center justify-between gap-3 rounded-xl border p-4 bg-card">
-                <div>
-                    <h4 className="font-semibold text-sm">Tipo de recaudación</h4>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                        {form.pricing_type === "free" && "Gratis — la compra se confirma sin cobrar, sin importar el precio que pongas por localidad."}
-                        {form.pricing_type === "paid" && "Pago — el precio real de cada localidad se define en la tabla de abajo."}
-                        {form.pricing_type === "donation" && "Donación — el comprador elige el monto a aportar."}
-                    </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                    <Badge variant="secondary" data-testid="venue-localidades-pricing-type-badge">
+        <div className="space-y-5" data-testid="section-venue-localidades">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span className="text-muted-foreground">
+                    Recaudación:{" "}
+                    <strong className="text-foreground">
                         {PRICING_LABELS[form.pricing_type] || form.pricing_type}
-                    </Badge>
-                    {onJumpToInfo && (
-                        <Button type="button" variant="outline" size="sm" onClick={onJumpToInfo}>
-                            Cambiar
-                        </Button>
-                    )}
-                </div>
+                    </strong>
+                </span>
+                {onJumpToInfo && (
+                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={onJumpToInfo}>
+                        Cambiar en General
+                    </Button>
+                )}
             </div>
 
-            {hasVenue && (
-                <div className="rounded-xl border-l-4 border-l-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4">
-                    <p className="text-sm font-medium flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
-                        <Info className="h-4 w-4 shrink-0" />
-                        Las localidades definen los tickets del comprador
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                        El precio y aforo de cada localidad aparecen directamente en el checkout del comprador. No necesitás configurar tipos de ticket adicionales.
-                    </p>
-                </div>
-            )}
-
             {isGeneralMode && (
-                <>
-                    <div className="rounded-xl border-l-4 border-l-primary bg-secondary/30 p-4">
-                        <p className="text-sm font-medium flex items-center gap-2">
-                            <Info className="h-4 w-4 text-primary" />
-                            Evento general (sin asientos numerados)
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            Definí el precio base y la capacidad total. Si querés usar un
-                            mapa con localidades, volvé a <strong>Información general → Dónde</strong>
-                            {" "}y activá el toggle.
+                <div className="space-y-3 rounded-xl border p-5 bg-card">
+                    <div>
+                        <h3 className="font-semibold text-base">2. Precio y capacidad</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Un solo precio para todo el evento (sin mapa de asientos).
                         </p>
                     </div>
-
-                    <div className="space-y-3 rounded-xl border p-5 bg-card">
-                        <h4 className="font-semibold text-sm">Precio y capacidad</h4>
-                        <div className="rounded-lg border overflow-hidden">
-                            <div className="grid grid-cols-2 bg-secondary/40 px-3 py-2 text-xs font-medium uppercase">
-                                <div>Precio</div>
-                                <div>Capacidad</div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 px-3 py-3 items-center">
-                                <div>
-                                    {form.pricing_type === "free" ? (
-                                        <span className="text-sm text-muted-foreground">
-                                            Sin costo
-                                        </span>
-                                    ) : (
-                                        <div className="relative">
-                                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                                                $
-                                            </span>
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                step="0.01"
-                                                className="pl-6 h-8"
-                                                value={form.base_price_dollars}
-                                                onChange={(e) =>
-                                                    update("base_price_dollars", e.target.value)
-                                                }
-                                                disabled={disabled}
-                                                data-testid="wiz-price"
-                                            />
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="flex items-center gap-2">
+                    <div className="grid sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Precio (USD)</Label>
+                            {form.pricing_type === "free" ? (
+                                <p className="text-sm text-muted-foreground h-9 flex items-center">Sin costo</p>
+                            ) : (
+                                <div className="relative">
+                                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
                                     <Input
                                         type="number"
                                         min="0"
-                                        className="h-8"
-                                        value={form.unlimited_capacity ? "" : form.capacity}
-                                        onChange={(e) => update("capacity", e.target.value)}
-                                        disabled={form.unlimited_capacity}
-                                        placeholder={
-                                            form.unlimited_capacity ? "Sin límite" : "ej: 100"
-                                        }
-                                        data-testid="wiz-capacity"
+                                        step="0.01"
+                                        className="pl-6"
+                                        value={form.base_price_dollars}
+                                        onChange={(e) => update("base_price_dollars", e.target.value)}
+                                        disabled={disabled}
+                                        data-testid="wiz-price"
                                     />
+                                </div>
+                            )}
+                        </div>
+                        <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-xs">Capacidad</Label>
+                                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                     <Switch
                                         checked={form.unlimited_capacity}
                                         onCheckedChange={(v) => update("unlimited_capacity", v)}
                                         data-testid="wiz-unlimited"
                                     />
-                                </div>
+                                    Sin límite
+                                </label>
                             </div>
-                        </div>
-                    </div>
-                </>
-            )}
-
-            {!isGeneralMode && !hasVenue && (
-                <div className="rounded-xl border-l-4 border-l-amber-500 bg-amber-50 border-amber-200 p-5 text-sm text-amber-900">
-                    <div className="flex items-start gap-2">
-                        <Info className="h-5 w-5 flex-shrink-0" />
-                        <div className="space-y-1">
-                            <p className="font-medium">Primero elegí un venue</p>
-                            <p className="text-amber-900/80">
-                                Configurá el venue en{" "}
-                                <button
-                                    type="button"
-                                    onClick={onJumpToInfo}
-                                    className="underline font-medium"
-                                    data-testid="jump-to-info"
-                                >
-                                    Información general → Dónde
-                                </button>
-                                . Una vez vinculado, acá vas a ver el mapa interactivo y
-                                la tabla de precios por localidad.
-                            </p>
+                            <Input
+                                type="number"
+                                min="0"
+                                value={form.unlimited_capacity ? "" : form.capacity}
+                                onChange={(e) => update("capacity", e.target.value)}
+                                disabled={form.unlimited_capacity}
+                                placeholder={form.unlimited_capacity ? "Sin límite" : "ej: 100"}
+                                data-testid="wiz-capacity"
+                            />
                         </div>
                     </div>
                 </div>
             )}
 
-            {!isGeneralMode && hasVenue && (
-                <EventVenueSection
-                    event={event}
-                    disabled={disabled}
-                    onUpdated={onEventUpdated}
-                />
+            {seatedMode && (
+                <div className="space-y-3">
+                    <div>
+                        <h3 className="font-semibold text-base">2. Mapa y precios por localidad</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Vinculá un mapa, ajustá localidades si hace falta y definí cuánto cobra cada una.
+                        </p>
+                    </div>
+                    <EventVenueSection
+                        event={event}
+                        disabled={disabled}
+                        onUpdated={onEventUpdated}
+                        onReturnFromVenueCreate={onReturnFromVenueCreate}
+                    />
+                </div>
             )}
         </div>
     );
@@ -1756,6 +1765,7 @@ function SectionVenueLocalidades({
 function SectionMedia({
     poster,
     banner,
+    small,
     gallery,
     uploadingKind,
     onUpload,
@@ -1763,57 +1773,72 @@ function SectionMedia({
     onReorderGallery,
     eventId: _eventId,
 }) {
+    const readyCount = [banner, poster, small].filter(Boolean).length;
+
     return (
         <div className="space-y-5" data-testid="section-media">
-            {/* — Poster — */}
-            <div className="rounded-xl border p-5 bg-card">
-                <header className="mb-3">
-                    <div className="flex items-center gap-2 text-base font-semibold">
-                        <ImageIcon className="h-5 w-5 text-indigo-600" />
-                        Póster del evento <span className="text-red-500">*</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1 leading-snug">
-                        Imagen <strong>cuadrada</strong>: aparece en la grilla del
-                        microsite y junto al código QR en el ticket PDF (si no
-                        diseñás un ticket propio en la pestaña "Diseño de
-                        ticket"). Recomendado <strong>1080 × 1080 px</strong>.
-                        JPG/PNG/WEBP/HEIC · 5 MB máx.
+            <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                    <h3 className="font-semibold text-base">1. Imágenes del evento</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        La mediana es obligatoria para publicar. Banner, pequeña y galería son opcionales.
                     </p>
-                </header>
-                <div className="grid sm:grid-cols-[1fr_auto] gap-4 items-start">
-                    <PosterMockup hasImage={!!poster} />
-                    <div className="w-full max-w-xs">
-                        <ImageDropzone
-                            label=""
-                            currentUrl={assetUrl(poster)}
-                            onUpload={(f) => onUpload(f, "poster")}
-                            uploading={uploadingKind === "poster"}
-                            testid="wiz-poster"
-                            aspect="square"
-                        />
-                    </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5 text-[11px]">
+                    <Badge variant={poster ? "default" : "outline"}>
+                        Mediana {poster ? "✓" : "requerida"}
+                    </Badge>
+                    <Badge variant={banner ? "secondary" : "outline"}>Banner</Badge>
+                    <Badge variant={small ? "secondary" : "outline"}>Pequeña</Badge>
+                    <Badge variant={gallery.length ? "secondary" : "outline"}>
+                        Galería {gallery.length}/10
+                    </Badge>
                 </div>
             </div>
 
-            {/* — Banner — */}
-            <div className="rounded-xl border p-5 bg-card">
-                <header className="mb-3">
-                    <div className="flex items-center gap-2 text-base font-semibold">
-                        <ImageIcon className="h-5 w-5 text-amber-600" />
-                        Banner del evento{" "}
-                        <span className="text-xs font-normal text-muted-foreground">
-                            (opcional)
-                        </span>
+            {/* Mediana — required, first */}
+            <div className="rounded-xl border bg-card p-4 sm:p-5">
+                <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                    <div>
+                        <div className="font-medium flex items-center gap-2">
+                            Mediana
+                            <span className="text-red-500 text-sm">*</span>
+                            {poster && (
+                                <Badge variant="secondary" className="text-[10px] font-normal">Lista</Badge>
+                            )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Cuadrada · microsite y ticket · recomendado 1080×1080
+                        </p>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1 leading-snug">
-                        Imagen <strong>wide 16:9</strong>: se muestra como header en
-                        la página pública del evento. Recomendado{" "}
-                        <strong>1920 × 1080 px</strong>. JPG/PNG/WEBP/HEIC · 5 MB
-                        máx.
-                    </p>
-                </header>
-                <div className="grid sm:grid-cols-[1fr_minmax(0,2fr)] gap-4 items-start">
-                    <BannerMockup hasImage={!!banner} />
+                </div>
+                <div className="max-w-xs">
+                    <ImageDropzone
+                        label=""
+                        currentUrl={assetUrl(poster)}
+                        onUpload={(f) => onUpload(f, "poster")}
+                        uploading={uploadingKind === "poster"}
+                        testid="wiz-poster"
+                        aspect="square"
+                    />
+                </div>
+            </div>
+
+            {/* Banner + Pequeña side by side on desktop */}
+            <div className="grid lg:grid-cols-2 gap-4">
+                <div className="rounded-xl border bg-card p-4 sm:p-5">
+                    <div className="mb-3">
+                        <div className="font-medium flex items-center gap-2">
+                            Banner
+                            <span className="text-xs font-normal text-muted-foreground">opcional</span>
+                            {banner && (
+                                <Badge variant="secondary" className="text-[10px] font-normal">Lista</Badge>
+                            )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            16:9 · header de la página · recomendado 1920×1080
+                        </p>
+                    </div>
                     <ImageDropzone
                         label=""
                         currentUrl={assetUrl(banner)}
@@ -1823,44 +1848,64 @@ function SectionMedia({
                         aspect="video"
                     />
                 </div>
-            </div>
 
-            {/* — Gallery — */}
-            <div className="rounded-xl border p-5 bg-card">
-                <header className="mb-3">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-base font-semibold">
-                            <ImageIcon className="h-5 w-5 text-emerald-600" />
-                            Galería{" "}
-                            <span className="text-xs font-normal text-muted-foreground">
-                                (opcional)
-                            </span>
+                <div className="rounded-xl border bg-card p-4 sm:p-5">
+                    <div className="mb-3">
+                        <div className="font-medium flex items-center gap-2">
+                            Pequeña
+                            <span className="text-xs font-normal text-muted-foreground">opcional</span>
+                            {small && (
+                                <Badge variant="secondary" className="text-[10px] font-normal">Lista</Badge>
+                            )}
                         </div>
-                        <span
-                            className="text-xs text-muted-foreground"
-                            data-testid="wiz-gallery-counter"
-                        >
-                            {gallery.length} / 10
-                        </span>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Miniatura · listados · recomendado 400×400
+                        </p>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1 leading-snug">
-                        Hasta <strong>10 imágenes</strong> adicionales. Arrastrá para
-                        reordenar, soltá archivos para subir. JPG/PNG/WEBP/HEIC · 5 MB
-                        cada una.
-                    </p>
-                </header>
-                <div className="grid md:grid-cols-[1fr_minmax(0,2fr)] gap-4 items-start">
-                    <GalleryMockup count={gallery.length} />
-                    <SortableGallery
-                        gallery={gallery}
-                        assetUrl={assetUrl}
-                        uploadingKind={uploadingKind}
-                        onUpload={onUpload}
-                        onDelete={onDeleteGallery}
-                        onReorder={onReorderGallery}
-                    />
+                    <div className="max-w-[220px]">
+                        <ImageDropzone
+                            label=""
+                            currentUrl={assetUrl(small)}
+                            onUpload={(f) => onUpload(f, "small")}
+                            uploading={uploadingKind === "small"}
+                            testid="wiz-small"
+                            aspect="square"
+                        />
+                    </div>
                 </div>
             </div>
+
+            {/* Gallery */}
+            <div className="rounded-xl border bg-card p-4 sm:p-5">
+                <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                    <div>
+                        <div className="font-medium flex items-center gap-2">
+                            Galería
+                            <span className="text-xs font-normal text-muted-foreground">opcional</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Hasta 10 fotos. Arrastrá para reordenar.
+                        </p>
+                    </div>
+                    <span className="text-xs text-muted-foreground" data-testid="wiz-gallery-counter">
+                        {gallery.length} / 10
+                    </span>
+                </div>
+                <SortableGallery
+                    gallery={gallery}
+                    assetUrl={assetUrl}
+                    uploadingKind={uploadingKind}
+                    onUpload={onUpload}
+                    onDelete={onDeleteGallery}
+                    onReorder={onReorderGallery}
+                />
+            </div>
+
+            {readyCount === 0 && (
+                <p className="text-xs text-muted-foreground">
+                    Tip: empezá por la <strong>Mediana</strong>; es la que más se ve en el microsite.
+                </p>
+            )}
         </div>
     );
 }
@@ -1869,11 +1914,11 @@ function SectionMedia({
 function SectionTicketDesign({ form, update, eventId }) {
     if (!eventId) {
         return (
-            <div className="flex items-center gap-2 text-muted-foreground p-6 rounded-xl border">
-                <Info className="h-4 w-4 shrink-0" />
-                <span className="text-sm">
-                    Guardá primero la información general del evento para diseñar el ticket.
-                </span>
+            <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground" data-testid="section-ticket-design">
+                <p className="font-medium text-foreground">2. Diseño del ticket</p>
+                <p className="mt-1">
+                    Guardá primero la información general del evento para poder diseñar el ticket.
+                </p>
             </div>
         );
     }
@@ -1886,16 +1931,21 @@ function SectionTicketDesign({ form, update, eventId }) {
     const [showCourtesy, setShowCourtesy] = useState(
         () => !!form.courtesy_ticket_design?.elements?.length,
     );
+    const hasMainDesign = !!form.ticket_design?.elements?.length;
+
     return (
-        <div className="space-y-6" data-testid="section-ticket-design">
-            <div className="rounded-xl border p-5 bg-card space-y-3">
-                <div>
-                    <div className="font-medium">Diseño del ticket</div>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                        Subí un fondo, posicioná tu logo, el QR y la información del
-                        asistente. Si no diseñás nada, se usa el formato estándar de TYS.
-                    </p>
-                </div>
+        <div className="space-y-4" data-testid="section-ticket-design">
+            <div>
+                <h3 className="font-semibold text-base">2. Diseño del ticket</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Elegí una plantilla y tu logo. Si no diseñás nada, se usa el formato estándar de TYS.
+                    {hasMainDesign && (
+                        <> · <strong className="text-foreground">Plantilla activa</strong></>
+                    )}
+                </p>
+            </div>
+
+            <div className="rounded-xl border p-4 sm:p-5 bg-card space-y-3">
                 <TicketDesignPanel
                     eventId={eventId}
                     slot="main"
@@ -1904,12 +1954,11 @@ function SectionTicketDesign({ form, update, eventId }) {
                 />
             </div>
 
-            <div className="flex items-center justify-between p-3 rounded-lg border">
-                <div className="text-sm">
-                    <div className="font-medium">Diseño separado para cortesías</div>
+            <div className="flex items-center justify-between gap-3 rounded-xl border bg-card p-4">
+                <div className="text-sm min-w-0">
+                    <div className="font-medium">Diseño aparte para cortesías</div>
                     <div className="text-xs text-muted-foreground">
-                        Para invitados sin costo. Si lo dejás apagado, las cortesías
-                        heredan el diseño principal.
+                        Si está apagado, las cortesías usan el mismo diseño de arriba.
                     </div>
                 </div>
                 <Switch
@@ -1930,8 +1979,8 @@ function SectionTicketDesign({ form, update, eventId }) {
             </div>
 
             {showCourtesy && (
-                <div className="rounded-xl border p-5 bg-card space-y-3">
-                    <div className="font-medium text-sm">Diseño de cortesía</div>
+                <div className="rounded-xl border p-4 sm:p-5 bg-card space-y-3">
+                    <div className="text-sm font-medium">Diseño de cortesía</div>
                     <TicketDesignPanel
                         eventId={eventId}
                         slot="courtesy"
@@ -1944,143 +1993,208 @@ function SectionTicketDesign({ form, update, eventId }) {
     );
 }
 
-// ── Section: Payments ───────────────────────────────────────────────────────
+
 function SectionPayments({ form, update }) {
     if (form.pricing_type === "free") {
         return (
             <div
-                className="rounded-xl border p-8 bg-card text-center text-muted-foreground"
+                className="rounded-xl border border-dashed p-10 bg-card text-center"
                 data-testid="section-payments"
             >
-                <Info className="h-6 w-6 mx-auto mb-2" />
-                Este evento es gratuito. No requiere métodos de pago.
+                <Info className="h-6 w-6 mx-auto mb-2 text-muted-foreground" />
+                <p className="font-medium">Evento gratuito</p>
+                <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto">
+                    No hace falta configurar formas de pago. Los compradores confirman sin cobrar.
+                </p>
             </div>
         );
     }
     const pm = form.payment_methods;
-    return (
-        <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="section-payments">
-            <PaymentRow
-                title="Tarjeta de crédito/débito (Stripe)"
-                description="Pago automático con confirmación inmediata. No se puede desactivar."
-                checked
-                disabled
-                testid="pay-stripe"
-            />
+    const extrasOn = [pm.transfer.enabled && "Transferencia", pm.cash.enabled && "Efectivo"].filter(Boolean);
 
-            <PaymentRow
-                title="Transferencia bancaria"
-                description="El comprador transfiere y vos confirmás manualmente desde el panel."
-                checked={pm.transfer.enabled}
-                onChange={(v) => update("payment_methods.transfer.enabled", v)}
-                testid="pay-transfer"
-            >
-                {pm.transfer.enabled && (
-                    <div className="space-y-3 pt-3">
-                        <div className="grid sm:grid-cols-2 gap-3">
-                            <Field label="Banco">
+    return (
+        <div className="space-y-5" data-testid="section-payments">
+            <div>
+                <h3 className="font-semibold text-base">Formas de pago</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Stripe siempre está activo. Activá transferencia o efectivo solo si vas a
+                    confirmar esos pagos a mano.
+                    {extrasOn.length > 0 && (
+                        <> · Activas: <strong className="text-foreground">Tarjeta</strong>
+                            {extrasOn.map((x) => (
+                                <span key={x}> · <strong className="text-foreground">{x}</strong></span>
+                            ))}
+                        </>
+                    )}
+                </p>
+            </div>
+
+            <div className="space-y-3">
+                <PaymentRow
+                    icon={CreditCard}
+                    title="Tarjeta (Stripe)"
+                    description="Confirmación automática. Siempre disponible."
+                    checked
+                    disabled
+                    badge="Siempre activo"
+                    testid="pay-stripe"
+                />
+
+                <PaymentRow
+                    icon={Landmark}
+                    title="Transferencia bancaria"
+                    description="El comprador transfiere y vos confirmás el pago desde el panel."
+                    checked={pm.transfer.enabled}
+                    onChange={(v) => update("payment_methods.transfer.enabled", v)}
+                    testid="pay-transfer"
+                >
+                    {pm.transfer.enabled && (
+                        <div className="mt-4 pt-4 border-t space-y-3">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                Datos que ve el comprador
+                            </p>
+                            <div className="grid sm:grid-cols-2 gap-3">
+                                <Field label="Banco">
+                                    <Input
+                                        value={pm.transfer.bank_name}
+                                        onChange={(e) =>
+                                            update("payment_methods.transfer.bank_name", e.target.value)
+                                        }
+                                        placeholder="Ej: Pichincha"
+                                        data-testid="pay-transfer-bank"
+                                    />
+                                </Field>
+                                <Field label="Número de cuenta">
+                                    <Input
+                                        value={pm.transfer.account_number}
+                                        onChange={(e) =>
+                                            update(
+                                                "payment_methods.transfer.account_number",
+                                                e.target.value,
+                                            )
+                                        }
+                                        data-testid="pay-transfer-acc"
+                                    />
+                                </Field>
+                            </div>
+                            <Field label="Titular">
                                 <Input
-                                    value={pm.transfer.bank_name}
-                                    onChange={(e) =>
-                                        update("payment_methods.transfer.bank_name", e.target.value)
-                                    }
-                                    data-testid="pay-transfer-bank"
-                                />
-                            </Field>
-                            <Field label="Número de cuenta">
-                                <Input
-                                    value={pm.transfer.account_number}
+                                    value={pm.transfer.account_holder}
                                     onChange={(e) =>
                                         update(
-                                            "payment_methods.transfer.account_number",
+                                            "payment_methods.transfer.account_holder",
                                             e.target.value,
                                         )
                                     }
-                                    data-testid="pay-transfer-acc"
+                                    data-testid="pay-transfer-holder"
+                                />
+                            </Field>
+                            <Field label="Instrucciones">
+                                <Textarea
+                                    value={pm.transfer.instructions}
+                                    onChange={(e) =>
+                                        update(
+                                            "payment_methods.transfer.instructions",
+                                            e.target.value,
+                                        )
+                                    }
+                                    rows={3}
+                                    placeholder="Ej: Enviá el comprobante al WhatsApp +593…"
+                                    data-testid="pay-transfer-inst"
                                 />
                             </Field>
                         </div>
-                        <Field label="Titular de la cuenta">
-                            <Input
-                                value={pm.transfer.account_holder}
-                                onChange={(e) =>
-                                    update(
-                                        "payment_methods.transfer.account_holder",
-                                        e.target.value,
-                                    )
-                                }
-                                data-testid="pay-transfer-holder"
-                            />
-                        </Field>
-                        <Field label="Instrucciones (visible para el comprador)">
-                            <Textarea
-                                value={pm.transfer.instructions}
-                                onChange={(e) =>
-                                    update(
-                                        "payment_methods.transfer.instructions",
-                                        e.target.value,
-                                    )
-                                }
-                                rows={3}
-                                placeholder="Ej: Adjuntá el comprobante al WhatsApp +593..."
-                                data-testid="pay-transfer-inst"
-                            />
-                        </Field>
-                    </div>
-                )}
-            </PaymentRow>
+                    )}
+                </PaymentRow>
 
-            <PaymentRow
-                title="Pago en efectivo"
-                description="Pago en persona. Tickets se entregan al confirmar."
-                checked={pm.cash.enabled}
-                onChange={(v) => update("payment_methods.cash.enabled", v)}
-                testid="pay-cash"
-            >
-                {pm.cash.enabled && (
-                    <div className="space-y-3 pt-3">
-                        <Field label="Lugar / punto de pago">
-                            <Input
-                                value={pm.cash.location}
-                                onChange={(e) =>
-                                    update("payment_methods.cash.location", e.target.value)
-                                }
-                                data-testid="pay-cash-location"
-                            />
-                        </Field>
-                        <Field label="Horarios">
-                            <Input
-                                value={pm.cash.schedule}
-                                onChange={(e) =>
-                                    update("payment_methods.cash.schedule", e.target.value)
-                                }
-                                placeholder="Lun-Vie 9:00-18:00"
-                                data-testid="pay-cash-schedule"
-                            />
-                        </Field>
-                        <Field label="Contacto">
-                            <Input
-                                value={pm.cash.contact}
-                                onChange={(e) =>
-                                    update("payment_methods.cash.contact", e.target.value)
-                                }
-                                placeholder="+593..."
-                                data-testid="pay-cash-contact"
-                            />
-                        </Field>
-                    </div>
-                )}
-            </PaymentRow>
+                <PaymentRow
+                    icon={Banknote}
+                    title="Efectivo"
+                    description="Pago en persona. Entregás el ticket al confirmar."
+                    checked={pm.cash.enabled}
+                    onChange={(v) => update("payment_methods.cash.enabled", v)}
+                    testid="pay-cash"
+                >
+                    {pm.cash.enabled && (
+                        <div className="mt-4 pt-4 border-t space-y-3">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                Punto de cobro
+                            </p>
+                            <Field label="Lugar">
+                                <Input
+                                    value={pm.cash.location}
+                                    onChange={(e) =>
+                                        update("payment_methods.cash.location", e.target.value)
+                                    }
+                                    placeholder="Taquilla / oficina"
+                                    data-testid="pay-cash-location"
+                                />
+                            </Field>
+                            <div className="grid sm:grid-cols-2 gap-3">
+                                <Field label="Horarios">
+                                    <Input
+                                        value={pm.cash.schedule}
+                                        onChange={(e) =>
+                                            update("payment_methods.cash.schedule", e.target.value)
+                                        }
+                                        placeholder="Lun–Vie 9:00–18:00"
+                                        data-testid="pay-cash-schedule"
+                                    />
+                                </Field>
+                                <Field label="Contacto">
+                                    <Input
+                                        value={pm.cash.contact}
+                                        onChange={(e) =>
+                                            update("payment_methods.cash.contact", e.target.value)
+                                        }
+                                        placeholder="+593…"
+                                        data-testid="pay-cash-contact"
+                                    />
+                                </Field>
+                            </div>
+                        </div>
+                    )}
+                </PaymentRow>
+            </div>
         </div>
     );
 }
 
-function PaymentRow({ title, description, checked, onChange = undefined, disabled = false, testid, children = null }) {
+function PaymentRow({
+    icon: Icon,
+    title,
+    description,
+    checked,
+    onChange = undefined,
+    disabled = false,
+    badge = null,
+    testid,
+    children = null,
+}) {
     return (
-        <div className="rounded-lg border p-4" data-testid={testid}>
-            <div className="flex items-start justify-between gap-3">
-                <div className="space-y-0.5">
-                    <div className="font-medium">{title}</div>
+        <div
+            className={`rounded-xl border bg-card p-4 transition ${
+                checked ? "border-foreground/20" : "border-border"
+            }`}
+            data-testid={testid}
+        >
+            <div className="flex items-start gap-3">
+                <div
+                    className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${
+                        checked ? "bg-teal-50 text-teal-800" : "bg-secondary text-muted-foreground"
+                    }`}
+                >
+                    <Icon className="h-5 w-5" />
+                </div>
+                <div className="flex-1 min-w-0 space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-medium">{title}</div>
+                        {badge && (
+                            <Badge variant="secondary" className="text-[10px] font-normal">
+                                {badge}
+                            </Badge>
+                        )}
+                    </div>
                     <div className="text-xs text-muted-foreground">{description}</div>
                 </div>
                 <Switch
@@ -2107,89 +2221,145 @@ function enabledPaymentMethodsOf(pm) {
 // ── Section: Discounts ──────────────────────────────────────────────────────
 function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }) {
     const d = form.discounts;
+    const rulesCount = (d.rules || []).filter((r) => r.enabled).length;
+
     return (
-        <div className="space-y-4" data-testid="section-discounts">
-            <div className="rounded-lg border p-4 bg-card">
-                <div className="flex items-start justify-between gap-3">
-                    <div>
-                        <div className="font-medium">
-                            Descuento por ley de discapacidad (Ecuador)
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                            Aplica 50% a quienes carguen documento de discapacidad. La
-                            verificación se implementará en Fase 3b.
-                        </div>
-                    </div>
-                    <Switch
-                        checked={d.disability_law.enabled}
-                        onCheckedChange={(v) =>
-                            update("discounts.disability_law.enabled", v)
-                        }
-                        data-testid="disc-disability"
-                    />
-                </div>
+        <div className="space-y-6" data-testid="section-discounts">
+            <div>
+                <h3 className="font-semibold text-base">Descuentos</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Activá beneficios fijos o creá reglas (códigos, cantidad, automáticos).
+                    {rulesCount > 0 && (
+                        <> · <strong className="text-foreground">{rulesCount}</strong> regla{rulesCount !== 1 ? "s" : ""} activa{rulesCount !== 1 ? "s" : ""}</>
+                    )}
+                </p>
             </div>
 
-            <div className="rounded-lg border p-4">
-                <div className="flex items-start justify-between gap-3">
-                    <div>
-                        <div className="font-medium">Descuento por presale</div>
-                        <div className="text-xs text-muted-foreground">
-                            Porcentaje aplicado hasta la fecha límite.
-                        </div>
-                    </div>
-                    <Switch
-                        checked={d.presale.enabled}
-                        onCheckedChange={(v) => update("discounts.presale.enabled", v)}
-                        data-testid="disc-presale"
-                    />
+            <section className="space-y-3">
+                <div>
+                    <h4 className="text-sm font-medium">1. Beneficios fijos</h4>
+                    <p className="text-xs text-muted-foreground">
+                        Se aplican en checkout sin código promocional.
+                    </p>
                 </div>
-                {d.presale.enabled && (
-                    <div className="grid sm:grid-cols-2 gap-3 mt-3">
-                        <Field label="Porcentaje %">
-                            <Input
-                                type="number"
-                                min="1"
-                                max="80"
-                                value={d.presale.percent}
-                                onChange={(e) =>
-                                    update(
-                                        "discounts.presale.percent",
-                                        parseInt(e.target.value || "0", 10),
-                                    )
-                                }
-                                data-testid="disc-presale-percent"
-                            />
-                        </Field>
-                        <Field label="Termina">
-                            <Input
-                                type="datetime-local"
-                                value={
-                                    d.presale.ends_at
-                                        ? isoToLocalInput(d.presale.ends_at, form.timezone)
-                                        : ""
-                                }
-                                onChange={(e) =>
-                                    update(
-                                        "discounts.presale.ends_at",
-                                        e.target.value ? localInputToIso(e.target.value, form.timezone) : null,
-                                    )
-                                }
-                                data-testid="disc-presale-ends"
-                            />
-                        </Field>
+
+                <div className="rounded-xl border bg-card p-4">
+                    <div className="flex items-start gap-3">
+                        <div
+                            className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${
+                                d.disability_law.enabled
+                                    ? "bg-teal-50 text-teal-800"
+                                    : "bg-secondary text-muted-foreground"
+                            }`}
+                        >
+                            <Accessibility className="h-5 w-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="font-medium">Ley de discapacidad (Ecuador)</div>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                50% de descuento para compradores que acrediten discapacidad.
+                            </p>
+                        </div>
+                        <Switch
+                            checked={d.disability_law.enabled}
+                            onCheckedChange={(v) =>
+                                update("discounts.disability_law.enabled", v)
+                            }
+                            data-testid="disc-disability"
+                        />
                     </div>
-                )}
-            </div>
+                </div>
 
-            <DiscountRulesPanel
-                rules={d.rules || []}
-                onChange={(next) => update("discounts.rules", next)}
-                localities={venueLocalities}
-                enabledPaymentMethods={enabledPaymentMethodsOf(form.payment_methods)}
-            />
+                <div className="rounded-xl border bg-card p-4">
+                    <div className="flex items-start gap-3">
+                        <div
+                            className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${
+                                d.presale.enabled
+                                    ? "bg-teal-50 text-teal-800"
+                                    : "bg-secondary text-muted-foreground"
+                            }`}
+                        >
+                            <Percent className="h-5 w-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="font-medium">Preventa</div>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                Porcentaje automático hasta una fecha límite.
+                            </p>
+                        </div>
+                        <Switch
+                            checked={d.presale.enabled}
+                            onCheckedChange={(v) => update("discounts.presale.enabled", v)}
+                            data-testid="disc-presale"
+                        />
+                    </div>
+                    {d.presale.enabled && (
+                        <div className="mt-4 pt-4 border-t grid sm:grid-cols-2 gap-3">
+                            <Field label="Porcentaje %">
+                                <Input
+                                    type="number"
+                                    min="1"
+                                    max="80"
+                                    value={d.presale.percent}
+                                    onChange={(e) =>
+                                        update(
+                                            "discounts.presale.percent",
+                                            parseInt(e.target.value || "0", 10),
+                                        )
+                                    }
+                                    data-testid="disc-presale-percent"
+                                />
+                            </Field>
+                            <Field label="Termina">
+                                <Input
+                                    type="datetime-local"
+                                    value={
+                                        d.presale.ends_at
+                                            ? isoToLocalInput(d.presale.ends_at, form.timezone)
+                                            : ""
+                                    }
+                                    onChange={(e) =>
+                                        update(
+                                            "discounts.presale.ends_at",
+                                            e.target.value
+                                                ? localInputToIso(e.target.value, form.timezone)
+                                                : null,
+                                        )
+                                    }
+                                    data-testid="disc-presale-ends"
+                                />
+                            </Field>
+                        </div>
+                    )}
+                </div>
+            </section>
 
-            {eventId && <DiscountsReportPanel eventId={eventId} />}
+            <section className="space-y-3">
+                <div>
+                    <h4 className="text-sm font-medium">2. Códigos y reglas</h4>
+                    <p className="text-xs text-muted-foreground">
+                        Promo codes, descuentos por cantidad o automáticos. Máximo stacking: 1 código + 1 automático.
+                    </p>
+                </div>
+                <DiscountRulesPanel
+                    rules={d.rules || []}
+                    onChange={(next) => update("discounts.rules", next)}
+                    localities={venueLocalities}
+                    enabledPaymentMethods={enabledPaymentMethodsOf(form.payment_methods)}
+                />
+            </section>
+
+            {eventId && (
+                <section className="space-y-3">
+                    <div>
+                        <h4 className="text-sm font-medium">3. Uso y conversión</h4>
+                        <p className="text-xs text-muted-foreground">
+                            Cómo rindieron tus reglas en órdenes pagadas.
+                        </p>
+                    </div>
+                    <DiscountsReportPanel eventId={eventId} />
+                </section>
+            )}
         </div>
     );
 }
@@ -2213,54 +2383,61 @@ function DiscountsReportPanel({ eventId }) {
         };
     }, [eventId]);
 
-    if (loading || !report || report.length === 0) return null;
+    if (loading) {
+        return (
+            <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                Cargando reporte…
+            </div>
+        );
+    }
+
+    if (!report || report.length === 0) {
+        return (
+            <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                Todavía no hay usos registrados. El reporte aparece cuando haya órdenes pagadas con descuento.
+            </div>
+        );
+    }
 
     return (
-        <div className="rounded-lg border p-4 bg-card space-y-3" data-testid="discounts-report-panel">
-            <div>
-                <div className="font-medium">Reporte de uso y conversión</div>
-                <div className="text-xs text-muted-foreground">
-                    Cuántas órdenes pagadas usaron cada regla, y cuánto descuento e
-                    ingreso generaron — útil para medir códigos de influencer.
-                </div>
-            </div>
+        <div className="rounded-xl border p-4 bg-card space-y-3" data-testid="discounts-report-panel">
             <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                     <thead>
                         <tr className="text-left text-xs text-muted-foreground border-b">
-                            <th className="py-1.5 pr-3">Regla</th>
-                            <th className="py-1.5 pr-3">Influencer</th>
-                            <th className="py-1.5 pr-3 text-right">Usos</th>
-                            <th className="py-1.5 pr-3 text-right">Órdenes pagadas</th>
-                            <th className="py-1.5 pr-3 text-right">Descuento otorgado</th>
-                            <th className="py-1.5 text-right">Ingreso atribuido</th>
+                            <th className="py-2 pr-3 font-medium">Regla</th>
+                            <th className="py-2 pr-3 font-medium">Influencer</th>
+                            <th className="py-2 pr-3 text-right font-medium">Usos</th>
+                            <th className="py-2 pr-3 text-right font-medium">Órdenes</th>
+                            <th className="py-2 pr-3 text-right font-medium">Descuento</th>
+                            <th className="py-2 text-right font-medium">Ingreso</th>
                         </tr>
                     </thead>
                     <tbody>
                         {report.map((r) => (
                             <tr key={r.rule_id} className="border-b last:border-0" data-testid={`report-row-${r.rule_id}`}>
-                                <td className="py-1.5 pr-3">
-                                    {r.name}
+                                <td className="py-2.5 pr-3">
+                                    <span className="font-medium">{r.name}</span>
                                     {r.code && (
-                                        <code className="ml-1.5 text-xs bg-secondary px-1 py-0.5 rounded">
+                                        <code className="ml-1.5 text-[11px] bg-secondary px-1.5 py-0.5 rounded">
                                             {r.code}
                                         </code>
                                     )}
                                 </td>
-                                <td className="py-1.5 pr-3 text-muted-foreground">
+                                <td className="py-2.5 pr-3 text-muted-foreground text-xs">
                                     {r.influencer_name
                                         ? `${r.influencer_name}${r.channel ? ` · ${r.channel}` : ""}`
                                         : "—"}
                                 </td>
-                                <td className="py-1.5 pr-3 text-right">
+                                <td className="py-2.5 pr-3 text-right">
                                     {r.uses_count}
                                     {r.max_uses ? `/${r.max_uses}` : ""}
                                 </td>
-                                <td className="py-1.5 pr-3 text-right">{r.orders_count}</td>
-                                <td className="py-1.5 pr-3 text-right">
+                                <td className="py-2.5 pr-3 text-right">{r.orders_count}</td>
+                                <td className="py-2.5 pr-3 text-right">
                                     ${(r.total_discount_cents / 100).toFixed(2)}
                                 </td>
-                                <td className="py-1.5 text-right">
+                                <td className="py-2.5 text-right font-medium">
                                     ${(r.total_revenue_cents / 100).toFixed(2)}
                                 </td>
                             </tr>
@@ -2272,220 +2449,405 @@ function DiscountsReportPanel({ eventId }) {
     );
 }
 
-// ── Section: Access ─────────────────────────────────────────────────────────
+// ── Section: Accesos ────────────────────────────────────────────────────────
+const VISIBILITY_OPTIONS = [
+    {
+        value: "public",
+        icon: Globe,
+        title: "Público",
+        description: "Aparece en tu microsite y cualquiera puede verlo.",
+    },
+    {
+        value: "public_blocked",
+        icon: Lock,
+        title: "Público bloqueado",
+        description: "Se ve en el microsite, pero solo compra con código o lista.",
+    },
+    {
+        value: "private",
+        icon: Link2,
+        title: "Privado",
+        description: "Solo con link directo. No aparece en listados.",
+    },
+];
+
+const ACCESS_TYPE_OPTIONS = [
+    {
+        value: "open",
+        icon: Globe,
+        title: "Abierto",
+        description: "Cualquiera puede comprar sin código ni lista.",
+    },
+    {
+        value: "link_only",
+        icon: Link2,
+        title: "Solo con link",
+        description: "No aparece en listados; hace falta el link directo.",
+    },
+    {
+        value: "verified_list",
+        icon: Users,
+        title: "Lista verificada",
+        description: "Solo quienes estén en la lista (email o cédula).",
+    },
+    {
+        value: "access_code",
+        icon: KeyRound,
+        title: "Código de acceso",
+        description: "El comprador ingresa un código para poder comprar.",
+    },
+];
+
 function SectionAccess({ form, update, eventId }) {
     const ap = form.access_params;
-    const deliveryMode = form.ticket_delivery_mode || "al_momento";
+    const visibilityLabel =
+        VISIBILITY_OPTIONS.find((o) => o.value === form.visibility)?.title || form.visibility;
+    const accessLabel =
+        ACCESS_TYPE_OPTIONS.find((o) => o.value === ap.access_type)?.title || ap.access_type;
+    const needsListOrCode =
+        ap.access_type === "verified_list" || ap.access_type === "access_code";
+
     return (
-        <div className="space-y-5" data-testid="section-access">
-            <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="access-control-block">
-                <SubHeader icon="🔒" title="Control de acceso" />
-                <p className="text-xs text-muted-foreground -mt-2">
-                    Esto define quién puede ver y comprar en la <strong>página del evento</strong>{" "}
-                    (tu microsite) — no es el control de acceso físico al evento el día de la función,
-                    que se valida con el ticket/QR en la puerta.
+        <div className="space-y-6" data-testid="section-access">
+            <div>
+                <h3 className="font-semibold text-base">Accesos</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Quién ve el evento en el microsite y quién puede comprar.
+                    El control en puerta se valida con el ticket/QR.
+                    {" · "}
+                    <strong className="text-foreground">{visibilityLabel}</strong>
+                    {" · "}
+                    <strong className="text-foreground">{accessLabel}</strong>
                 </p>
-                <Field label="Visibilidad">
-                    <Select
-                        value={form.visibility}
-                        onValueChange={(v) => update("visibility", v)}
-                    >
-                        <SelectTrigger data-testid="access-visibility">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="public">Público — aparece en tu microsite</SelectItem>
-                            <SelectItem value="public_blocked">
-                                Público bloqueado — aparece en tu microsite, pero solo se puede
-                                comprar con código o estando en lista
-                            </SelectItem>
-                            <SelectItem value="private">Privado — solo con link directo</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </Field>
-
-                <Field label="Tipo de acceso">
-                    <Select
-                        value={ap.access_type}
-                        onValueChange={(v) => update("access_params.access_type", v)}
-                    >
-                        <SelectTrigger data-testid="access-type">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="open">Abierto · cualquiera puede comprar</SelectItem>
-                            <SelectItem value="link_only">
-                                Solo con link · no aparece en listados
-                            </SelectItem>
-                            <SelectItem value="verified_list">Lista verificada</SelectItem>
-                            <SelectItem value="access_code">Código de acceso</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </Field>
-
-                {ap.access_type === "verified_list" && <GuestListPanel eventId={eventId} />}
-                {ap.access_type === "access_code" && <AccessCodesPanel eventId={eventId} />}
             </div>
 
-            <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="access-purchase-block">
-                <SubHeader icon="🎟️" title="Parámetros de compra" />
-                <div className="grid sm:grid-cols-2 gap-3">
-                    <Field
-                        label={
-                            <LabelWithTip
-                                text="Máx. tickets por compra"
-                                tip={
-                                    <>
-                                        Tope por <strong>transacción</strong>, sumando todos los
-                                        tipos de ticket. No se acumula entre compras distintas del
-                                        mismo comprador — para eso usá "Máx. por persona / email".
-                                    </>
-                                }
-                            />
-                        }
-                    >
-                        <Input
-                            type="number"
-                            min="1"
-                            max="100"
-                            value={ap.max_per_purchase}
-                            onChange={(e) =>
-                                update(
-                                    "access_params.max_per_purchase",
-                                    parseInt(e.target.value || "1", 10),
-                                )
-                            }
-                            data-testid="access-max-purchase"
-                        />
-                    </Field>
-                    <Field
-                        label={
-                            <LabelWithTip
-                                text="Máx. por persona / email (opcional)"
-                                tip={
-                                    <>
-                                        Tope acumulado entre <strong>todas las compras</strong> de un
-                                        mismo email a este evento. Si además configuraste un "Máx.
-                                        por comprador" dentro de un tipo de ticket específico (pestaña
-                                        Tipos de ticket), ese límite se aplica adicionalmente.
-                                    </>
-                                }
-                            />
-                        }
-                    >
-                        <Input
-                            type="number"
-                            min="1"
-                            value={ap.max_per_email || ""}
-                            onChange={(e) =>
-                                update(
-                                    "access_params.max_per_email",
-                                    e.target.value ? parseInt(e.target.value, 10) : null,
-                                )
-                            }
-                            placeholder="Sin límite"
-                            data-testid="access-max-email"
-                        />
-                    </Field>
+            <section className="space-y-3" data-testid="access-control-block">
+                <div>
+                    <h4 className="text-sm font-medium">1. Visibilidad</h4>
+                    <p className="text-xs text-muted-foreground">
+                        Define si el evento aparece en tu microsite.
+                    </p>
                 </div>
+                <div className="grid sm:grid-cols-3 gap-3" data-testid="access-visibility">
+                    {VISIBILITY_OPTIONS.map((opt) => (
+                        <ChoiceCard
+                            key={opt.value}
+                            icon={opt.icon}
+                            title={opt.title}
+                            description={opt.description}
+                            selected={form.visibility === opt.value}
+                            onSelect={() => update("visibility", opt.value)}
+                            testid={`access-visibility-${opt.value}`}
+                        />
+                    ))}
+                </div>
+            </section>
 
-                <Field label="Reembolsos hasta X horas antes del evento">
-                    <Input
-                        type="number"
-                        min="0"
-                        value={ap.refund_window_hours}
-                        onChange={(e) =>
-                            update(
-                                "access_params.refund_window_hours",
-                                parseInt(e.target.value || "0", 10),
-                            )
-                        }
-                        data-testid="access-refund-window"
-                    />
-                </Field>
+            <section className="space-y-3">
+                <div>
+                    <h4 className="text-sm font-medium">2. Quién puede comprar</h4>
+                    <p className="text-xs text-muted-foreground">
+                        Elegí un modo. Si usás lista o código, configurá los accesos abajo.
+                    </p>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3" data-testid="access-type">
+                    {ACCESS_TYPE_OPTIONS.map((opt) => (
+                        <ChoiceCard
+                            key={opt.value}
+                            icon={opt.icon}
+                            title={opt.title}
+                            description={opt.description}
+                            selected={ap.access_type === opt.value}
+                            onSelect={() => update("access_params.access_type", opt.value)}
+                            testid={`access-type-${opt.value}`}
+                        />
+                    ))}
+                </div>
+            </section>
 
-                <div className="flex items-center justify-between p-3 rounded-lg border">
-                    <div className="text-sm">
-                        <div className="font-medium">Mostrar nombre del comprador en el ticket</div>
-                        <div className="text-xs text-muted-foreground">
-                            Útil para tickets nominativos
-                        </div>
+            {needsListOrCode && (
+                <section className="space-y-3">
+                    <div>
+                        <h4 className="text-sm font-medium">
+                            3. {ap.access_type === "verified_list" ? "Lista de invitados" : "Códigos de acceso"}
+                        </h4>
+                        <p className="text-xs text-muted-foreground">
+                            {ap.access_type === "verified_list"
+                                ? "Agregá invitados uno a uno o importá un CSV."
+                                : "Creá uno o más códigos con límite de usos y tickets."}
+                        </p>
                     </div>
-                    <Switch
-                        checked={ap.show_buyer_name_on_ticket}
-                        onCheckedChange={(v) =>
-                            update("access_params.show_buyer_name_on_ticket", v)
-                        }
-                        data-testid="access-show-name"
-                    />
+                    <div className="rounded-xl border bg-card p-4 sm:p-5">
+                        {ap.access_type === "verified_list" && (
+                            <GuestListPanel eventId={eventId} embedded />
+                        )}
+                        {ap.access_type === "access_code" && (
+                            <AccessCodesPanel eventId={eventId} embedded />
+                        )}
+                    </div>
+                </section>
+            )}
+        </div>
+    );
+}
+
+function ChoiceCard({ icon: Icon, title, description, selected, onSelect, testid, disabled = false }) {
+    return (
+        <button
+            type="button"
+            onClick={onSelect}
+            disabled={disabled}
+            data-testid={testid}
+            className={`rounded-xl border bg-card p-4 text-left transition w-full ${
+                selected
+                    ? "border-foreground/30 ring-1 ring-foreground/10"
+                    : "border-border hover:border-foreground/20"
+            } ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+        >
+            <div className="flex items-start gap-3">
+                <div
+                    className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 ${
+                        selected ? "bg-teal-50 text-teal-800" : "bg-secondary text-muted-foreground"
+                    }`}
+                >
+                    <Icon className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                        <div className="font-medium text-sm">{title}</div>
+                        {selected && (
+                            <Badge variant="secondary" className="text-[10px] font-normal">
+                                Activo
+                            </Badge>
+                        )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                        {description}
+                    </p>
                 </div>
             </div>
+        </button>
+    );
+}
 
-            <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="access-delivery-block">
-                <SubHeader icon="📤" title="Envío del eTicket (QR)" />
-                <p className="text-xs text-muted-foreground -mt-2">
-                    Define cuándo se envían los QR por email al comprador.
+// ── Section: Parámetros ─────────────────────────────────────────────────────
+function SectionParams({ form, update, venueLocalities = [] }) {
+    const ap = form.access_params;
+    const deliveryMode = form.ticket_delivery_mode || "al_momento";
+    const questionsCount = (form.custom_questions || []).filter((q) => q.label?.trim()).length;
+
+    const deliveryLabel = {
+        al_momento: "Al momento de la compra",
+        horas_antes: "X horas antes",
+        fecha_especifica: "Fecha específica",
+        manual: "Manual",
+    }[deliveryMode] || deliveryMode;
+
+    return (
+        <div className="space-y-6" data-testid="section-params">
+            <div>
+                <h3 className="font-semibold text-base">Parámetros</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Preguntas en la compra, límites y cuándo se envía el eTicket.
+                    {questionsCount > 0 && (
+                        <>
+                            {" · "}
+                            <strong className="text-foreground">{questionsCount}</strong> pregunta
+                            {questionsCount !== 1 ? "s" : ""}
+                        </>
+                    )}
+                    {" · Envío: "}
+                    <strong className="text-foreground">{deliveryLabel}</strong>
                 </p>
-                <Field label="Modo de envío">
-                    <Select
-                        value={deliveryMode}
-                        onValueChange={(v) => update("ticket_delivery_mode", v)}
-                    >
-                        <SelectTrigger data-testid="access-delivery-mode">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="al_momento">
-                                Al momento de la compra
-                            </SelectItem>
-                            <SelectItem value="horas_antes">
-                                X horas antes del evento
-                            </SelectItem>
-                            <SelectItem value="fecha_especifica">
-                                En una fecha específica
-                            </SelectItem>
-                            <SelectItem value="manual">
-                                Manual — el organizador los envía
-                            </SelectItem>
-                        </SelectContent>
-                    </Select>
-                </Field>
-                {deliveryMode === "horas_antes" && (
-                    <Field label="Horas antes del evento">
-                        <Input
-                            type="number"
-                            min="1"
-                            max="720"
-                            value={form.ticket_delivery_hours}
-                            onChange={(e) =>
-                                update("ticket_delivery_hours", e.target.value)
-                            }
-                            placeholder="24"
-                            data-testid="access-delivery-hours"
-                        />
-                    </Field>
-                )}
-                {deliveryMode === "fecha_especifica" && (
-                    <Field label="Fecha y hora de envío">
-                        <Input
-                            type="datetime-local"
-                            value={form.ticket_delivery_at}
-                            onChange={(e) =>
-                                update("ticket_delivery_at", e.target.value)
-                            }
-                            data-testid="access-delivery-at"
-                        />
-                    </Field>
-                )}
             </div>
 
-            <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="access-questions-block">
-                <SubHeader icon="💬" title="Preguntas para el comprador" />
+            <section className="space-y-3" data-testid="access-questions-block">
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                    <div>
+                        <h4 className="text-sm font-medium flex items-center gap-2">
+                            <MessageSquareText className="h-4 w-4 text-muted-foreground" />
+                            1. Preguntas al comprador
+                        </h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Campos extra en checkout (cédula, talla, etc.). Las respuestas quedan en cada orden.
+                        </p>
+                    </div>
+                </div>
                 <CustomQuestionsPanel
                     questions={form.custom_questions || []}
                     onChange={(next) => update("custom_questions", next)}
+                    venueLocalities={venueLocalities}
                 />
-            </div>
+            </section>
+
+            <section className="space-y-3" data-testid="access-purchase-block">
+                <div>
+                    <h4 className="text-sm font-medium flex items-center gap-2">
+                        <Ticket className="h-4 w-4 text-muted-foreground" />
+                        2. Límites de compra
+                    </h4>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        Topes por transacción y por comprador. Opcional.
+                    </p>
+                </div>
+                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
+                    <div className="grid sm:grid-cols-2 gap-3">
+                        <Field
+                            label={
+                                <LabelWithTip
+                                    text="Máx. tickets por compra"
+                                    tip={
+                                        <>
+                                            Tope por <strong>transacción</strong>, sumando todos los
+                                            tipos de ticket. No se acumula entre compras distintas del
+                                            mismo comprador — para eso usá &quot;Máx. por persona / email&quot;.
+                                        </>
+                                    }
+                                />
+                            }
+                        >
+                            <Input
+                                type="number"
+                                min="1"
+                                max="100"
+                                value={ap.max_per_purchase}
+                                onChange={(e) =>
+                                    update(
+                                        "access_params.max_per_purchase",
+                                        parseInt(e.target.value || "1", 10),
+                                    )
+                                }
+                                data-testid="access-max-purchase"
+                            />
+                        </Field>
+                        <Field
+                            label={
+                                <LabelWithTip
+                                    text="Máx. por persona / email"
+                                    tip={
+                                        <>
+                                            Tope acumulado entre <strong>todas las compras</strong> de un
+                                            mismo email a este evento. Si además configuraste un &quot;Máx.
+                                            por comprador&quot; dentro de un tipo de ticket (paso Localidades),
+                                            ese límite se aplica adicionalmente.
+                                        </>
+                                    }
+                                />
+                            }
+                        >
+                            <Input
+                                type="number"
+                                min="1"
+                                value={ap.max_per_email || ""}
+                                onChange={(e) =>
+                                    update(
+                                        "access_params.max_per_email",
+                                        e.target.value ? parseInt(e.target.value, 10) : null,
+                                    )
+                                }
+                                placeholder="Sin límite"
+                                data-testid="access-max-email"
+                            />
+                        </Field>
+                    </div>
+
+                    <Field label="Reembolsos hasta X horas antes del evento">
+                        <Input
+                            type="number"
+                            min="0"
+                            value={ap.refund_window_hours}
+                            onChange={(e) =>
+                                update(
+                                    "access_params.refund_window_hours",
+                                    parseInt(e.target.value || "0", 10),
+                                )
+                            }
+                            data-testid="access-refund-window"
+                        />
+                    </Field>
+
+                    <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                        <div className="text-sm min-w-0">
+                            <div className="font-medium">Mostrar nombre del comprador en el ticket</div>
+                            <div className="text-xs text-muted-foreground">
+                                Útil para tickets nominativos
+                            </div>
+                        </div>
+                        <Switch
+                            checked={ap.show_buyer_name_on_ticket}
+                            onCheckedChange={(v) =>
+                                update("access_params.show_buyer_name_on_ticket", v)
+                            }
+                            data-testid="access-show-name"
+                        />
+                    </div>
+                </div>
+            </section>
+
+            <section className="space-y-3" data-testid="access-delivery-block">
+                <div>
+                    <h4 className="text-sm font-medium flex items-center gap-2">
+                        <Mail className="h-4 w-4 text-muted-foreground" />
+                        3. Envío del eTicket (QR)
+                    </h4>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        Cuándo se envían los QR por email al comprador.
+                    </p>
+                </div>
+                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
+                    <Field label="Modo de envío">
+                        <Select
+                            value={deliveryMode}
+                            onValueChange={(v) => update("ticket_delivery_mode", v)}
+                        >
+                            <SelectTrigger data-testid="access-delivery-mode">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="al_momento">
+                                    Al momento de la compra
+                                </SelectItem>
+                                <SelectItem value="horas_antes">
+                                    X horas antes del evento
+                                </SelectItem>
+                                <SelectItem value="fecha_especifica">
+                                    En una fecha específica
+                                </SelectItem>
+                                <SelectItem value="manual">
+                                    Manual — el organizador los envía
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </Field>
+                    {deliveryMode === "horas_antes" && (
+                        <Field label="Horas antes del evento">
+                            <Input
+                                type="number"
+                                min="1"
+                                max="720"
+                                value={form.ticket_delivery_hours}
+                                onChange={(e) =>
+                                    update("ticket_delivery_hours", e.target.value)
+                                }
+                                placeholder="24"
+                                data-testid="access-delivery-hours"
+                            />
+                        </Field>
+                    )}
+                    {deliveryMode === "fecha_especifica" && (
+                        <Field label="Fecha y hora de envío">
+                            <Input
+                                type="datetime-local"
+                                value={form.ticket_delivery_at}
+                                onChange={(e) =>
+                                    update("ticket_delivery_at", e.target.value)
+                                }
+                                data-testid="access-delivery-at"
+                            />
+                        </Field>
+                    )}
+                </div>
+            </section>
         </div>
     );
 }
@@ -2498,40 +2860,46 @@ function newCustomQuestion() {
         type: "text",
         required: false,
         options: [],
+        locality_ids: null,
     };
 }
 
-function CustomQuestionsPanel({ questions, onChange }) {
+function CustomQuestionsPanel({ questions, onChange, venueLocalities = [] }) {
     const add = () => onChange([...questions, newCustomQuestion()]);
     const remove = (id) => onChange(questions.filter((q) => q.id !== id));
     const upd = (id, patch) =>
         onChange(questions.map((q) => (q.id === id ? { ...q, ...patch } : q)));
 
+    const toggleLocality = (q, locId) => {
+        const current = Array.isArray(q.locality_ids) ? q.locality_ids : [];
+        const next = current.includes(locId)
+            ? current.filter((id) => id !== locId)
+            : [...current, locId];
+        // empty selection = all localities
+        upd(q.id, { locality_ids: next.length ? next : null });
+    };
+
     return (
-        <div className="rounded-lg border p-4 bg-card space-y-3" data-testid="custom-questions-panel">
+        <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3" data-testid="custom-questions-panel">
             <div className="flex items-start justify-between gap-3">
-                <div>
-                    <div className="font-medium">Preguntas adicionales al comprador</div>
-                    <div className="text-xs text-muted-foreground">
-                        Se muestran al momento de la compra. Las respuestas quedan
-                        visibles en el detalle de cada orden.
-                    </div>
-                </div>
-                <Button size="sm" onClick={add} data-testid="cq-add">
-                    <Plus className="h-4 w-4 mr-1.5" /> Agregar pregunta
+                <p className="text-xs text-muted-foreground">
+                    Se muestran al momento de la compra. Vacío = no se pide nada extra.
+                </p>
+                <Button size="sm" onClick={add} data-testid="cq-add" className="shrink-0">
+                    <Plus className="h-4 w-4 mr-1.5" /> Nueva pregunta
                 </Button>
             </div>
 
             {questions.length === 0 ? (
-                <div className="rounded-md border border-dashed py-6 text-center text-sm text-muted-foreground">
-                    Sin preguntas adicionales todavía.
+                <div className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
+                    Sin preguntas todavía. Agregá una para pedir datos en el checkout.
                 </div>
             ) : (
                 <ul className="space-y-2" data-testid="cq-list">
                     {questions.map((q) => (
                         <li
                             key={q.id}
-                            className="rounded-lg border p-3 space-y-2"
+                            className="rounded-lg border p-3 space-y-2 bg-background"
                             data-testid={`cq-row-${q.id}`}
                         >
                             <div className="grid sm:grid-cols-[1fr_140px] gap-2">
@@ -2550,6 +2918,7 @@ function CustomQuestionsPanel({ questions, onChange }) {
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="text">Texto libre</SelectItem>
+                                        <SelectItem value="number">Número</SelectItem>
                                         <SelectItem value="select">Opción múltiple</SelectItem>
                                         <SelectItem value="checkbox">Sí / No</SelectItem>
                                     </SelectContent>
@@ -2569,6 +2938,36 @@ function CustomQuestionsPanel({ questions, onChange }) {
                                     placeholder="Opciones separadas por coma: Vegetariano, Vegano, Ninguna"
                                     data-testid={`cq-options-${q.id}`}
                                 />
+                            )}
+                            {venueLocalities.length > 0 && (
+                                <div
+                                    className="rounded-md border p-2 space-y-1.5"
+                                    data-testid={`cq-localities-${q.id}`}
+                                >
+                                    <div className="text-xs font-medium text-muted-foreground">
+                                        Localidades (vacío = todas)
+                                    </div>
+                                    <div className="flex flex-wrap gap-x-3 gap-y-1">
+                                        {venueLocalities.map((loc) => {
+                                            const checked = Array.isArray(q.locality_ids)
+                                                && q.locality_ids.includes(loc.id);
+                                            return (
+                                                <label
+                                                    key={loc.id}
+                                                    className="flex items-center gap-1.5 text-xs"
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={checked}
+                                                        onChange={() => toggleLocality(q, loc.id)}
+                                                        data-testid={`cq-loc-${q.id}-${loc.id}`}
+                                                    />
+                                                    {loc.name}
+                                                </label>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
                             )}
                             <div className="flex items-center justify-between">
                                 <label className="flex items-center gap-2 text-sm">
@@ -2598,15 +2997,6 @@ function CustomQuestionsPanel({ questions, onChange }) {
 }
 
 // ── Small atoms ─────────────────────────────────────────────────────────────
-function SubHeader({ icon, title }) {
-    return (
-        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-            <span aria-hidden>{icon}</span>
-            {title}
-        </h3>
-    );
-}
-
 function LabelWithTip({ text, tip }) {
     return (
         <span className="inline-flex items-center gap-1.5">
@@ -2633,150 +3023,5 @@ function Field({ label, children, testId = undefined }) {
 }
 
 // ── Media mockups (Item 4) ──────────────────────────────────────────────────
-function PosterMockup({ hasImage }) {
-    return (
-        <figure
-            className="rounded-xl border bg-secondary/30 p-3 max-w-[200px]"
-            data-testid="poster-mockup"
-        >
-            <svg viewBox="0 0 180 240" className="w-full h-auto" aria-hidden="true">
-                <rect width="180" height="240" rx="14" fill="#FFFFFF" stroke="#E2E8F0" />
-                <rect
-                    x="14"
-                    y="14"
-                    width="152"
-                    height="152"
-                    rx="8"
-                    fill={hasImage ? "#6366F1" : "#EEF2FF"}
-                    stroke="#6366F1"
-                    strokeWidth="1.5"
-                    strokeDasharray={hasImage ? "0" : "5 4"}
-                    fillOpacity={hasImage ? "0.18" : "1"}
-                />
-                <text
-                    x="90"
-                    y="93"
-                    fontSize="10"
-                    textAnchor="middle"
-                    fill="#6366F1"
-                    fontWeight="600"
-                >
-                    Tu póster
-                </text>
-                <rect x="14" y="180" width="120" height="8" rx="3" fill="#94A3B8" />
-                <rect x="14" y="196" width="80" height="6" rx="3" fill="#CBD5E1" />
-                <rect x="14" y="212" width="60" height="14" rx="7" fill="#6366F1" opacity="0.9" />
-                <text x="44" y="222" fontSize="7" textAnchor="middle" fill="#FFFFFF" fontWeight="600">
-                    Ver evento
-                </text>
-            </svg>
-            <figcaption className="text-[11px] text-muted-foreground text-center mt-1.5">
-                Cómo se ve en la grilla
-            </figcaption>
-        </figure>
-    );
-}
 
-function BannerMockup({ hasImage }) {
-    return (
-        <figure
-            className="rounded-xl border bg-secondary/30 p-3"
-            data-testid="banner-mockup"
-        >
-            <svg viewBox="0 0 320 200" className="w-full h-auto" aria-hidden="true">
-                <rect width="320" height="200" rx="12" fill="#FFFFFF" stroke="#E2E8F0" />
-                <rect
-                    x="10"
-                    y="10"
-                    width="300"
-                    height="90"
-                    rx="6"
-                    fill={hasImage ? "#F59E0B" : "#FEF3C7"}
-                    stroke="#D97706"
-                    strokeWidth="1.5"
-                    strokeDasharray={hasImage ? "0" : "5 4"}
-                    fillOpacity={hasImage ? "0.25" : "1"}
-                />
-                <text
-                    x="160"
-                    y="60"
-                    fontSize="11"
-                    textAnchor="middle"
-                    fill="#92400E"
-                    fontWeight="600"
-                >
-                    Banner del evento (1920×1080)
-                </text>
-                <rect x="20" y="112" width="160" height="10" rx="3" fill="#1E293B" />
-                <rect x="20" y="128" width="220" height="6" rx="3" fill="#94A3B8" />
-                <rect x="20" y="140" width="180" height="6" rx="3" fill="#CBD5E1" />
-                <rect x="20" y="158" width="80" height="22" rx="11" fill="#6366F1" />
-                <text x="60" y="174" fontSize="9" textAnchor="middle" fill="#FFFFFF" fontWeight="700">
-                    Comprar
-                </text>
-            </svg>
-            <figcaption className="text-[11px] text-muted-foreground text-center mt-1.5">
-                Header de la página pública del evento
-            </figcaption>
-        </figure>
-    );
-}
 
-function GalleryMockup({ count }) {
-    const filled = Math.min(count, 4);
-    return (
-        <figure
-            className="rounded-xl border bg-secondary/30 p-3"
-            data-testid="gallery-mockup"
-        >
-            <svg viewBox="0 0 240 180" className="w-full h-auto" aria-hidden="true">
-                <rect width="240" height="180" rx="12" fill="#FFFFFF" stroke="#E2E8F0" />
-                <text x="120" y="18" fontSize="9" textAnchor="middle" fill="#475569" fontWeight="600">
-                    Galería del evento
-                </text>
-                {[0, 1, 2, 3].map((i) => {
-                    const x = 16 + (i % 4) * 54;
-                    const isFilled = i < filled;
-                    return (
-                        <g key={i}>
-                            <rect
-                                x={x}
-                                y={32}
-                                width="48"
-                                height="48"
-                                rx="6"
-                                fill={isFilled ? "#10B981" : "#ECFDF5"}
-                                stroke="#10B981"
-                                strokeWidth="1.2"
-                                strokeDasharray={isFilled ? "0" : "4 3"}
-                                fillOpacity={isFilled ? "0.3" : "1"}
-                            />
-                            {isFilled && (
-                                <text
-                                    x={x + 24}
-                                    y={59}
-                                    fontSize="8"
-                                    textAnchor="middle"
-                                    fill="#047857"
-                                    fontWeight="700"
-                                >
-                                    {i + 1}
-                                </text>
-                            )}
-                        </g>
-                    );
-                })}
-                <rect x="16" y="98" width="208" height="60" rx="6" fill="#F8FAFC" stroke="#E2E8F0" />
-                <text x="120" y="125" fontSize="8" textAnchor="middle" fill="#64748B">
-                    Carousel scroll
-                </text>
-                <text x="120" y="140" fontSize="7" textAnchor="middle" fill="#94A3B8">
-                    ←  ●  ○  ○  →
-                </text>
-            </svg>
-            <figcaption className="text-[11px] text-muted-foreground text-center mt-1.5">
-                Sección galería de la página pública
-            </figcaption>
-        </figure>
-    );
-}

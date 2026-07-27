@@ -227,6 +227,14 @@ export const venuesApi = {
     publicGet: (tenant, slug) => api.get(`/public/venues/${tenant}/${slug}`).then((r) => r.data),
 };
 
+/** Event-scoped venue snapshot (canvas/elements/localities on the event). */
+export const eventVenueLayoutApi = {
+    get: (eventId: string) =>
+        api.get(`/events/me/${eventId}/venue-layout`).then((r) => r.data),
+    put: (eventId: string, body: { canvas: unknown; elements: unknown[]; localities: unknown[] }) =>
+        api.put(`/events/me/${eventId}/venue-layout`, body).then((r) => r.data),
+};
+
 export const adminVenueTemplatesApi = {
     list: () => api.get("/admin/venue-templates").then((r) => r.data),
     create: (body) => api.post("/admin/venue-templates", body).then((r) => r.data),

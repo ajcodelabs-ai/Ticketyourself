@@ -73,6 +73,7 @@ class GuestListEntryCreate(BaseModel):
     cedula: Optional[str] = Field(default=None, max_length=40)
     name: Optional[str] = Field(default=None, max_length=140)
     notes: Optional[str] = Field(default=None, max_length=300)
+    max_tickets: int = Field(default=1, ge=1, le=100)
 
     @model_validator(mode="after")
     def _require_one(self):
@@ -100,6 +101,7 @@ async def add_guest_list_entry(
         cedula=(body.cedula or "").strip() or None,
         name=(body.name or "").strip() or None,
         notes=(body.notes or "").strip() or None,
+        max_tickets=body.max_tickets,
     )
     session.add(entry)
     await session.flush()
@@ -231,11 +233,13 @@ async def delete_guest_list_entry(
 class AccessCodeCreate(BaseModel):
     code: Optional[str] = Field(default=None, max_length=40)
     max_uses: Optional[int] = Field(default=1, ge=1)
+    max_tickets_per_redemption: Optional[int] = Field(default=None, ge=1, le=100)
     active: bool = True
 
 
 class AccessCodeUpdate(BaseModel):
     max_uses: Optional[int] = Field(default=None, ge=1)
+    max_tickets_per_redemption: Optional[int] = Field(default=None, ge=1, le=100)
     active: Optional[bool] = None
 
 
@@ -265,6 +269,7 @@ async def create_access_code(
         organizer_id=org.id,
         code=code,
         max_uses=body.max_uses,
+        max_tickets_per_redemption=body.max_tickets_per_redemption,
         active=body.active,
     )
     session.add(row)

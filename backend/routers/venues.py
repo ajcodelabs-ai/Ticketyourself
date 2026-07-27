@@ -234,7 +234,10 @@ def _validate_elements(elements: List[VenueElement]) -> None:
 
 
 async def _get_active_events_using(venue_id: str) -> List[Dict[str, Any]]:
-    """Events that bind to venue and have tickets_sold > 0 and not ended."""
+    """Legacy lock: only events that still bind live to the master (no snapshot).
+
+    Events with venue_layout edit their own copy and must not lock the master.
+    """
     from database import AsyncSessionLocal
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as pg:
@@ -242,6 +245,7 @@ async def _get_active_events_using(venue_id: str) -> List[Dict[str, Any]]:
             select(Event.id, Event.title, Event.starts_at, Event.tickets_sold)
             .where(
                 Event.venue_id == venue_id,
+                Event.venue_layout.is_(None),
                 Event.tickets_sold > 0,
                 or_(Event.ends_at.is_(None), Event.ends_at >= now),
             )
