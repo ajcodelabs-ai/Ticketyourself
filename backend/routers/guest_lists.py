@@ -17,6 +17,7 @@ DELETE /api/events/me/{event_id}/access-codes/{code_id}
 # Public
 POST   /api/public/events/{tenant_slug}/{event_slug}/check-access
 """
+
 import csv
 import io
 import secrets
@@ -47,14 +48,18 @@ def _gen_code(length: int = 8) -> str:
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 async def _get_org(user: dict, session: AsyncSession) -> Organizer:
-    result = await session.execute(select(Organizer).where(Organizer.user_id == user["id"]))
+    result = await session.execute(
+        select(Organizer).where(Organizer.user_id == user["id"])
+    )
     org = result.scalar_one_or_none()
     if not org:
         raise HTTPException(status_code=404, detail="Organizer not found")
     return org
 
 
-async def _get_event_for_org(event_id: str, org_id: str, session: AsyncSession) -> Event:
+async def _get_event_for_org(
+    event_id: str, org_id: str, session: AsyncSession
+) -> Event:
     result = await session.execute(
         select(Event).where(Event.id == event_id, Event.organizer_id == org_id)
     )
@@ -67,6 +72,7 @@ async def _get_event_for_org(event_id: str, org_id: str, session: AsyncSession) 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GUEST LIST (lista verificada)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class GuestListEntryCreate(BaseModel):
     email: Optional[EmailStr] = Field(default=None, max_length=254)
@@ -127,8 +133,9 @@ async def list_guest_list_entries(
         .limit(limit)
     )
     total = await session.scalar(
-        select(func.count(EventGuestListEntry.id))
-        .where(EventGuestListEntry.event_id == event_id)
+        select(func.count(EventGuestListEntry.id)).where(
+            EventGuestListEntry.event_id == event_id
+        )
     )
     return {
         "items": [row_to_dict(r) for r in result.scalars().all()],
@@ -189,14 +196,16 @@ async def import_guest_list(
         if (email and email in seen_emails) or (cedula and cedula in seen_cedulas):
             skipped += 1
             continue
-        session.add(EventGuestListEntry(
-            id=str(uuid.uuid4()),
-            event_id=event_id,
-            organizer_id=org.id,
-            email=email,
-            cedula=cedula,
-            name=name or None,
-        ))
+        session.add(
+            EventGuestListEntry(
+                id=str(uuid.uuid4()),
+                event_id=event_id,
+                organizer_id=org.id,
+                email=email,
+                cedula=cedula,
+                name=name or None,
+            )
+        )
         if email:
             seen_emails.add(email)
         if cedula:
@@ -217,7 +226,8 @@ async def delete_guest_list_entry(
     await _get_event_for_org(event_id, org.id, session)
     result = await session.execute(
         select(EventGuestListEntry).where(
-            EventGuestListEntry.id == entry_id, EventGuestListEntry.event_id == event_id,
+            EventGuestListEntry.id == entry_id,
+            EventGuestListEntry.event_id == event_id,
         )
     )
     entry = result.scalar_one_or_none()
@@ -229,6 +239,7 @@ async def delete_guest_list_entry(
 # ═══════════════════════════════════════════════════════════════════════════════
 # ACCESS CODES (código de acceso)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class AccessCodeCreate(BaseModel):
     code: Optional[str] = Field(default=None, max_length=40)
@@ -257,7 +268,8 @@ async def create_access_code(
     code = (body.code or "").strip().upper() or _gen_code()
     existing = await session.execute(
         select(EventAccessCode).where(
-            EventAccessCode.event_id == event_id, EventAccessCode.code == code,
+            EventAccessCode.event_id == event_id,
+            EventAccessCode.code == code,
         )
     )
     if existing.scalar_one_or_none():
@@ -306,7 +318,8 @@ async def update_access_code(
     await _get_event_for_org(event_id, org.id, session)
     result = await session.execute(
         select(EventAccessCode).where(
-            EventAccessCode.id == code_id, EventAccessCode.event_id == event_id,
+            EventAccessCode.id == code_id,
+            EventAccessCode.event_id == event_id,
         )
     )
     row = result.scalar_one_or_none()
@@ -329,7 +342,8 @@ async def delete_access_code(
     await _get_event_for_org(event_id, org.id, session)
     result = await session.execute(
         select(EventAccessCode).where(
-            EventAccessCode.id == code_id, EventAccessCode.event_id == event_id,
+            EventAccessCode.id == code_id,
+            EventAccessCode.event_id == event_id,
         )
     )
     row = result.scalar_one_or_none()
@@ -341,6 +355,7 @@ async def delete_access_code(
 # ═══════════════════════════════════════════════════════════════════════════════
 # PUBLIC — check access before showing the purchase form
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class CheckAccessBody(BaseModel):
     email: Optional[EmailStr] = Field(default=None, max_length=254)
@@ -355,7 +370,9 @@ async def public_check_access(
     body: CheckAccessBody,
     session: AsyncSession = Depends(get_db),
 ):
-    org_row = await session.scalar(select(Organizer).where(Organizer.slug == tenant_slug))
+    org_row = await session.scalar(
+        select(Organizer).where(Organizer.slug == tenant_slug)
+    )
     if not org_row:
         raise HTTPException(404, "Organizador no encontrado")
     tenant_row = await session.scalar(select(Tenant).where(Tenant.slug == tenant_slug))

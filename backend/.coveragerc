@@ -1,0 +1,15 @@
+[run]
+branch = true
+source = .
+parallel = true
+omit =
+    tests/*
+    alembic/*
+    .venv/*
+    poc_models.py
+    routers/poc.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:

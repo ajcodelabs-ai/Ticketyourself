@@ -1,7 +1,10 @@
 """Pydantic models for TYS. UUID strings as `id`; no Mongo `_id` leakage."""
+
 from datetime import datetime
 from typing import List, Literal, Optional
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Common

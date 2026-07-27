@@ -14,9 +14,9 @@ import jwt
 import pytest
 import requests
 from conftest import (
-    API,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
+    API,
     DEMO_EMAIL,
     DEMO_PASSWORD,
     ORG_PASSWORD,

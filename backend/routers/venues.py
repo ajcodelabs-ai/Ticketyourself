@@ -10,6 +10,7 @@ Scope (intentionally limited to 6a):
 
 Phase 6b will add: curved rows, tables, individual seats, advanced multi-select.
 """
+
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -46,7 +47,9 @@ async def _require_active_organizer(user) -> Dict[str, Any]:
     if not org:
         raise HTTPException(status_code=403, detail="Organizer profile missing")
     if org.get("status") not in {"pending", "approved"}:
-        raise HTTPException(status_code=403, detail="Tu cuenta no tiene acceso al panel de venues.")
+        raise HTTPException(
+            status_code=403, detail="Tu cuenta no tiene acceso al panel de venues."
+        )
     return org
 
 
@@ -73,16 +76,31 @@ async def require_organizer(user=Depends(get_current_user)) -> Dict[str, Any]:
     return await _require_active_organizer(user)
 
 
-async def require_organizer_can_publish(user=Depends(get_current_user)) -> Dict[str, Any]:
+async def require_organizer_can_publish(
+    user=Depends(get_current_user),
+) -> Dict[str, Any]:
     """Strict dependency: only approved orgs can hit publish endpoints."""
     return await _require_approved_organizer(user)
 
 
 # ───────────────────────── Models ──────────────────────────────────────────
-VENUE_TYPES = {"theater", "auditorium", "stadium", "fair", "classroom", "mixed", "other"}
+VENUE_TYPES = {
+    "theater",
+    "auditorium",
+    "stadium",
+    "fair",
+    "classroom",
+    "mixed",
+    "other",
+}
 ELEMENT_KINDS = {
-    "stage", "unnumbered_zone", "seat_row_straight",
-    "seat_row_curved", "seat_individual", "table_round", "table_rect",
+    "stage",
+    "unnumbered_zone",
+    "seat_row_straight",
+    "seat_row_curved",
+    "seat_individual",
+    "table_round",
+    "table_rect",
 }
 
 
@@ -104,8 +122,13 @@ class CanvasCfg(BaseModel):
 class VenueElement(BaseModel):
     id: str
     kind: Literal[
-        "stage", "unnumbered_zone", "seat_row_straight",
-        "seat_row_curved", "seat_individual", "table_round", "table_rect",
+        "stage",
+        "unnumbered_zone",
+        "seat_row_straight",
+        "seat_row_curved",
+        "seat_individual",
+        "table_round",
+        "table_rect",
     ]
     x: float
     y: float
@@ -144,14 +167,18 @@ class VenueElement(BaseModel):
 
 class VenueIn(BaseModel):
     name: str = Field(min_length=2, max_length=120)
-    type: Literal["theater", "auditorium", "stadium", "fair", "classroom", "mixed", "other"] = "other"
+    type: Literal[
+        "theater", "auditorium", "stadium", "fair", "classroom", "mixed", "other"
+    ] = "other"
     description: Optional[str] = None
     canvas: Optional[CanvasCfg] = None
 
 
 class VenuePut(BaseModel):
     name: str = Field(min_length=2, max_length=120)
-    type: Literal["theater", "auditorium", "stadium", "fair", "classroom", "mixed", "other"] = "other"
+    type: Literal[
+        "theater", "auditorium", "stadium", "fair", "classroom", "mixed", "other"
+    ] = "other"
     description: Optional[str] = None
     canvas: CanvasCfg
     elements: List[VenueElement] = []
@@ -181,11 +208,15 @@ def _compute_capacity(elements: List[Dict[str, Any]]) -> int:
             total += int(e.get("chairs_count") or 0)
         elif k == "table_rect":
             cps = e.get("chairs_per_side") or {}
-            total += sum(int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left"))
+            total += sum(
+                int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left")
+            )
     return total
 
 
-def _clamp_elements(elements: List[Dict[str, Any]], canvas: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _clamp_elements(
+    elements: List[Dict[str, Any]], canvas: Dict[str, Any]
+) -> List[Dict[str, Any]]:
     """Force x, y, width, height inside canvas bounds."""
     w = float(canvas.get("width", 1200))
     h = float(canvas.get("height", 800))
@@ -205,28 +236,35 @@ def _validate_elements(elements: List[VenueElement]) -> None:
     for el in elements:
         if el.kind == "unnumbered_zone":
             if not el.capacity or el.capacity <= 0:
-                raise HTTPException(422, f"Zone '{el.label or el.id}' must have capacity > 0")
+                raise HTTPException(
+                    422, f"Zone '{el.label or el.id}' must have capacity > 0"
+                )
         if el.kind in ("seat_row_straight", "seat_row_curved"):
             n = el.seats_count or 0
             if not (1 <= n <= 200):
                 raise HTTPException(
-                    422, f"Row '{el.row_label or el.id}' seats_count must be 1..200 (got {n})"
+                    422,
+                    f"Row '{el.row_label or el.id}' seats_count must be 1..200 (got {n})",
                 )
         if el.kind == "seat_row_curved":
             arc = el.curve_arc_degrees or 0
             if not (10 <= arc <= 180):
                 raise HTTPException(
-                    422, f"Row '{el.row_label or el.id}' curve_arc_degrees must be 10..180 (got {arc})"
+                    422,
+                    f"Row '{el.row_label or el.id}' curve_arc_degrees must be 10..180 (got {arc})",
                 )
         if el.kind == "table_round":
             n = el.chairs_count or 0
             if not (2 <= n <= 12):
                 raise HTTPException(
-                    422, f"Table '{el.label or el.id}' chairs_count must be 2..12 (got {n})"
+                    422,
+                    f"Table '{el.label or el.id}' chairs_count must be 2..12 (got {n})",
                 )
         if el.kind == "table_rect":
             cps = el.chairs_per_side or {}
-            total = sum(int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left"))
+            total = sum(
+                int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left")
+            )
             if total < 1:
                 raise HTTPException(
                     422, f"Table '{el.label or el.id}' must have at least 1 chair"
@@ -239,11 +277,11 @@ async def _get_active_events_using(venue_id: str) -> List[Dict[str, Any]]:
     Events with venue_layout edit their own copy and must not lock the master.
     """
     from database import AsyncSessionLocal
+
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as pg:
         result = await pg.execute(
-            select(Event.id, Event.title, Event.starts_at, Event.tickets_sold)
-            .where(
+            select(Event.id, Event.title, Event.starts_at, Event.tickets_sold).where(
                 Event.venue_id == venue_id,
                 Event.venue_layout.is_(None),
                 Event.tickets_sold > 0,
@@ -251,12 +289,19 @@ async def _get_active_events_using(venue_id: str) -> List[Dict[str, Any]]:
             )
         )
         return [
-            {"id": r.id, "title": r.title, "starts_at": r.starts_at, "tickets_sold": r.tickets_sold}
+            {
+                "id": r.id,
+                "title": r.title,
+                "starts_at": r.starts_at,
+                "tickets_sold": r.tickets_sold,
+            }
             for r in result.all()
         ]
 
 
-async def _ensure_organizer_owns(organizer_id: str, venue_id: str, session: AsyncSession) -> dict:
+async def _ensure_organizer_owns(
+    organizer_id: str, venue_id: str, session: AsyncSession
+) -> dict:
     result = await session.execute(select(Venue).where(Venue.id == venue_id))
     row = result.scalar_one_or_none()
     if not row or row.organizer_id != organizer_id or row.is_template:
@@ -264,7 +309,9 @@ async def _ensure_organizer_owns(organizer_id: str, venue_id: str, session: Asyn
     return row_to_dict(row)
 
 
-async def _ensure_organizer_owns_row(organizer_id: str, venue_id: str, session: AsyncSession) -> Venue:
+async def _ensure_organizer_owns_row(
+    organizer_id: str, venue_id: str, session: AsyncSession
+) -> Venue:
     result = await session.execute(select(Venue).where(Venue.id == venue_id))
     row = result.scalar_one_or_none()
     if not row or row.organizer_id != organizer_id or row.is_template:
@@ -296,25 +343,30 @@ async def _unique_slug(
 
 
 async def _venue_count(organizer_id: str, session: AsyncSession) -> int:
-    return await session.scalar(
-        select(func.count(Venue.id)).where(
-            Venue.organizer_id == organizer_id,
-            Venue.status != "archived",
-            Venue.is_template.is_(False),
+    return (
+        await session.scalar(
+            select(func.count(Venue.id)).where(
+                Venue.organizer_id == organizer_id,
+                Venue.status != "archived",
+                Venue.is_template.is_(False),
+            )
         )
-    ) or 0
+        or 0
+    )
 
 
-def _clone_venue_elements(original: Venue) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _clone_venue_elements(
+    original: Venue,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Regenerate locality + element ids for a copy."""
     loc_map: Dict[str, str] = {}
     new_locs: List[Dict[str, Any]] = []
-    for loc in (original.localities or []):
+    for loc in original.localities or []:
         new_id = str(uuid.uuid4())
         loc_map[loc["id"]] = new_id
         new_locs.append({**loc, "id": new_id})
     new_elements: List[Dict[str, Any]] = []
-    for el in (original.elements or []):
+    for el in original.elements or []:
         ne = {**el, "id": str(uuid.uuid4())}
         if ne.get("locality_id"):
             ne["locality_id"] = loc_map.get(ne["locality_id"])
@@ -560,7 +612,9 @@ async def update_venue(
     if locked:
         old_elements = row.elements or []
         old_locs = row.localities or []
-        if _structural_diff(old_elements, elements) or _locality_structural_diff(old_locs, localities):
+        if _structural_diff(old_elements, elements) or _locality_structural_diff(
+            old_locs, localities
+        ):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 {
@@ -572,7 +626,9 @@ async def update_venue(
 
     new_slug = row.slug
     if row.name != body.name:
-        new_slug = await _unique_slug(org["id"], normalize_slug(body.name), session, ignore_id=venue_id)
+        new_slug = await _unique_slug(
+            org["id"], normalize_slug(body.name), session, ignore_id=venue_id
+        )
 
     row.name = body.name
     row.slug = new_slug
@@ -601,8 +657,17 @@ def _structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> bo
     by_id_new = {e["id"]: e for e in new}
     if set(by_id_old) != set(by_id_new):
         return True
-    keys_structural = ("x", "y", "width", "height", "rotation", "kind",
-                       "seats_count", "capacity", "locality_id")
+    keys_structural = (
+        "x",
+        "y",
+        "width",
+        "height",
+        "rotation",
+        "kind",
+        "seats_count",
+        "capacity",
+        "locality_id",
+    )
     for k, a in by_id_old.items():
         b = by_id_new[k]
         for kk in keys_structural:
@@ -611,7 +676,9 @@ def _structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> bo
     return False
 
 
-def _locality_structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> bool:
+def _locality_structural_diff(
+    old: List[Dict[str, Any]], new: List[Dict[str, Any]]
+) -> bool:
     if len(old) != len(new):
         return True
     by_id_old = {it["id"]: it for it in old}
@@ -634,9 +701,12 @@ async def delete_venue(
     session: AsyncSession = Depends(get_db),
 ):
     row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
-    bound = await session.scalar(
-        select(func.count(Event.id)).where(Event.venue_id == venue_id)
-    ) or 0
+    bound = (
+        await session.scalar(
+            select(func.count(Event.id)).where(Event.venue_id == venue_id)
+        )
+        or 0
+    )
     if bound > 0:
         raise HTTPException(409, f"No se puede eliminar: {bound} evento(s) lo usan.")
     await session.delete(row)
@@ -693,7 +763,9 @@ async def publish_venue(
 ):
     row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
     if not row.elements:
-        raise HTTPException(422, "Agregá al menos un elemento antes de publicar el venue.")
+        raise HTTPException(
+            422, "Agregá al menos un elemento antes de publicar el venue."
+        )
     row.status = "published"
     row.published_at = _now()
     row.updated_at = _now()

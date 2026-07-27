@@ -1,14 +1,11 @@
 """
 PostgreSQL async engine + session factory (SQLAlchemy 2.x).
 """
+
 import os
 from typing import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 DATABASE_URL = os.environ["DATABASE_URL"]  # postgresql+asyncpg://user:pass@host/db
@@ -24,7 +21,7 @@ engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     pool_pre_ping=True,
-    pool_size=5,       # PgBouncer multiplexes; keep SQLAlchemy pool small
+    pool_size=5,  # PgBouncer multiplexes; keep SQLAlchemy pool small
     max_overflow=10,
     connect_args=_connect_args,
 )

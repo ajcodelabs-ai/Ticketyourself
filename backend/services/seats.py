@@ -12,6 +12,7 @@ Seat-id format (string):
   table_rect:                          "{element_id}::c::{index}"   (idx walks top→right→bottom→left)
   unnumbered_zone:                     NOT a seat — sold as quantity, no map.
 """
+
 from __future__ import annotations
 
 import logging
@@ -55,48 +56,56 @@ def expand_venue_seats(venue: Dict[str, Any]) -> List[Dict[str, Any]]:
         if kind in ("seat_row_straight", "seat_row_curved"):
             n = int(el.get("seats_count") or 0)
             for i in range(n):
-                out.append({
-                    "seat_id": f"{el['id']}::s::{i}",
-                    "label": _row_seat_label(el, i),
+                out.append(
+                    {
+                        "seat_id": f"{el['id']}::s::{i}",
+                        "label": _row_seat_label(el, i),
+                        "locality_id": el.get("locality_id"),
+                        "element_id": el["id"],
+                        "kind": kind,
+                        "sub_index": i,
+                    }
+                )
+        elif kind == "seat_individual":
+            out.append(
+                {
+                    "seat_id": el["id"],
+                    "label": el.get("label") or "Asiento",
                     "locality_id": el.get("locality_id"),
                     "element_id": el["id"],
                     "kind": kind,
-                    "sub_index": i,
-                })
-        elif kind == "seat_individual":
-            out.append({
-                "seat_id": el["id"],
-                "label": el.get("label") or "Asiento",
-                "locality_id": el.get("locality_id"),
-                "element_id": el["id"],
-                "kind": kind,
-                "sub_index": 0,
-            })
+                    "sub_index": 0,
+                }
+            )
         elif kind == "table_round":
             n = int(el.get("chairs_count") or 0)
             for i in range(n):
-                out.append({
-                    "seat_id": f"{el['id']}::c::{i}",
-                    "label": f"{el.get('label') or 'Mesa'}-{i + 1}",
-                    "locality_id": el.get("locality_id"),
-                    "element_id": el["id"],
-                    "kind": kind,
-                    "sub_index": i,
-                })
+                out.append(
+                    {
+                        "seat_id": f"{el['id']}::c::{i}",
+                        "label": f"{el.get('label') or 'Mesa'}-{i + 1}",
+                        "locality_id": el.get("locality_id"),
+                        "element_id": el["id"],
+                        "kind": kind,
+                        "sub_index": i,
+                    }
+                )
         elif kind == "table_rect":
             cps = el.get("chairs_per_side") or {}
             idx = 0
             for side in ("top", "right", "bottom", "left"):
                 c = int(cps.get(side) or 0)
                 for _ in range(c):
-                    out.append({
-                        "seat_id": f"{el['id']}::c::{idx}",
-                        "label": f"{el.get('label') or 'Mesa'}-{idx + 1}",
-                        "locality_id": el.get("locality_id"),
-                        "element_id": el["id"],
-                        "kind": kind,
-                        "sub_index": idx,
-                    })
+                    out.append(
+                        {
+                            "seat_id": f"{el['id']}::c::{idx}",
+                            "label": f"{el.get('label') or 'Mesa'}-{idx + 1}",
+                            "locality_id": el.get("locality_id"),
+                            "element_id": el["id"],
+                            "kind": kind,
+                            "sub_index": idx,
+                        }
+                    )
                     idx += 1
     return out
 
@@ -113,8 +122,12 @@ def full_purchase_elements(venue: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         el["id"]: el
         for el in venue.get("elements", [])
         if el.get("require_full_purchase")
-        and el.get("kind") in (
-            "seat_row_straight", "seat_row_curved", "table_round", "table_rect",
+        and el.get("kind")
+        in (
+            "seat_row_straight",
+            "seat_row_curved",
+            "table_round",
+            "table_rect",
         )
     }
 
@@ -130,8 +143,12 @@ def active_localities(venue: Dict[str, Any]) -> List[str]:
     used: set[str] = set()
     for el in venue.get("elements", []):
         if el.get("kind") in (
-            "seat_row_straight", "seat_row_curved", "seat_individual",
-            "table_round", "table_rect", "unnumbered_zone",
+            "seat_row_straight",
+            "seat_row_curved",
+            "seat_individual",
+            "table_round",
+            "table_rect",
+            "unnumbered_zone",
         ):
             if el.get("locality_id"):
                 used.add(el["locality_id"])
@@ -144,9 +161,10 @@ async def compute_event_seats_status(
 ) -> List[Dict[str, Any]]:
     """Returns one entry per seat with its current public status, scoped to
     one función's own pool (function_id="" = general / non-multi-función)."""
-    from database import AsyncSessionLocal
-    from orm_models import SeatHold, EventSeatAssignment
     from sqlalchemy import select
+
+    from database import AsyncSessionLocal
+    from orm_models import EventSeatAssignment, SeatHold
 
     seats = expand_venue_seats(venue)
     now = _now()
@@ -161,7 +179,10 @@ async def compute_event_seats_status(
             )
         )
         held: Dict[str, Dict[str, Any]] = {
-            row.seat_id: {"expires_at": row.expires_at, "session_token": row.session_token}
+            row.seat_id: {
+                "expires_at": row.expires_at,
+                "session_token": row.session_token,
+            }
             for row in held_result.all()
         }
 
@@ -187,8 +208,12 @@ async def compute_event_seats_status(
 
 # ── Hold mutations ──────────────────────────────────────────────────────
 async def create_seat_holds(
-    *, event_id: str, venue_id: str, seat_ids: List[str],
-    session_token: str, buyer_email: Optional[str] = None,
+    *,
+    event_id: str,
+    venue_id: str,
+    seat_ids: List[str],
+    session_token: str,
+    buyer_email: Optional[str] = None,
     window_minutes: int = SEAT_HOLD_WINDOW_MIN_DEFAULT,
     function_id: str = "",
     venue: Optional[Dict[str, Any]] = None,
@@ -207,10 +232,11 @@ async def create_seat_holds(
     use the event layout; `venue_id` is still stored on hold rows (master FK).
     """
     from fastapi import HTTPException
+    from sqlalchemy import delete, select
+
     from database import AsyncSessionLocal
-    from orm_models import SeatHold, EventSeatAssignment
-    from sqlalchemy import select, delete
-    from db_helpers import row_to_dict, get_venue_by_id
+    from db_helpers import get_venue_by_id, row_to_dict
+    from orm_models import EventSeatAssignment, SeatHold
 
     now = _now()
     expires = now + timedelta(minutes=window_minutes)
@@ -230,7 +256,9 @@ async def create_seat_holds(
             by_id = seats_by_id(venue)
             for s in by_id.values():
                 if s["element_id"] in flagged:
-                    members_by_element.setdefault(s["element_id"], []).append(s["seat_id"])
+                    members_by_element.setdefault(s["element_id"], []).append(
+                        s["seat_id"]
+                    )
             for sid in seat_ids:
                 seat = by_id.get(sid)
                 if seat and seat["element_id"] in flagged:
@@ -347,11 +375,15 @@ async def create_seat_holds(
 
 
 async def release_holds_for_session(
-    *, event_id: str, session_token: str, function_id: Optional[str] = None,
+    *,
+    event_id: str,
+    session_token: str,
+    function_id: Optional[str] = None,
 ) -> int:
+    from sqlalchemy import delete
+
     from database import AsyncSessionLocal
     from orm_models import SeatHold
-    from sqlalchemy import delete
 
     conditions = [
         SeatHold.event_id == event_id,
@@ -363,21 +395,28 @@ async def release_holds_for_session(
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            delete(SeatHold).where(*conditions).execution_options(synchronize_session=False)
+            delete(SeatHold)
+            .where(*conditions)
+            .execution_options(synchronize_session=False)
         )
         await session.commit()
     return result.rowcount or 0
 
 
 async def consume_holds_for_order(
-    *, event_id: str, session_token: str, seat_ids: List[str], order_id: str,
+    *,
+    event_id: str,
+    session_token: str,
+    seat_ids: List[str],
+    order_id: str,
     function_id: str = "",
 ) -> None:
     """Transitions held → converted at order-creation time."""
     from fastapi import HTTPException
+    from sqlalchemy import update
+
     from database import AsyncSessionLocal
     from orm_models import SeatHold
-    from sqlalchemy import update
 
     now = _now()
     async with AsyncSessionLocal() as session:
@@ -403,7 +442,10 @@ async def consume_holds_for_order(
 
 
 async def assign_seats_to_tickets(
-    *, event_id: str, venue: Dict[str, Any], order: Dict[str, Any],
+    *,
+    event_id: str,
+    venue: Dict[str, Any],
+    order: Dict[str, Any],
     tickets: List[Dict[str, Any]],
 ) -> None:
     """
@@ -411,9 +453,11 @@ async def assign_seats_to_tickets(
     Each ticket is bound to one seat (in the same order as seat_ids).
     Records event_seat_assignments + sets the ticket's seat_label.
     """
-    from database import AsyncSessionLocal
-    from orm_models import Ticket as TicketModel, EventSeatAssignment
     from sqlalchemy import update
+
+    from database import AsyncSessionLocal
+    from orm_models import EventSeatAssignment
+    from orm_models import Ticket as TicketModel
 
     seat_ids = order.get("seat_ids") or []
     if not seat_ids:
@@ -431,7 +475,9 @@ async def assign_seats_to_tickets(
                 continue
             label = seat["label"]
             loc_id = seat.get("locality_id")
-            loc = next((it for it in venue.get("localities", []) if it["id"] == loc_id), None)
+            loc = next(
+                (it for it in venue.get("localities", []) if it["id"] == loc_id), None
+            )
             full_label = f"{label} · {loc['name']}" if loc else label
 
             await session.execute(
@@ -444,30 +490,34 @@ async def assign_seats_to_tickets(
             ticket["seat_id"] = sid
             ticket["locality_id"] = loc_id
 
-            session.add(EventSeatAssignment(
-                id=ticket["id"],  # 1:1 with ticket
-                event_id=event_id,
-                venue_id=venue["id"],
-                seat_id=sid,
-                ticket_id=ticket["id"],
-                order_id=order["id"],
-                holder_email=(order.get("buyer") or {}).get("email"),
-                locality_id=loc_id,
-                assigned_at=now,
-                function_id=function_id,
-            ))
+            session.add(
+                EventSeatAssignment(
+                    id=ticket["id"],  # 1:1 with ticket
+                    event_id=event_id,
+                    venue_id=venue["id"],
+                    seat_id=sid,
+                    ticket_id=ticket["id"],
+                    order_id=order["id"],
+                    holder_email=(order.get("buyer") or {}).get("email"),
+                    locality_id=loc_id,
+                    assigned_at=now,
+                    function_id=function_id,
+                )
+            )
         await session.commit()
 
 
 async def release_seat_holds_for_order(order_id: str) -> int:
     """Called when an order is cancelled/rejected — frees its converted holds."""
+    from sqlalchemy import delete
+
     from database import AsyncSessionLocal
     from orm_models import SeatHold
-    from sqlalchemy import delete
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            delete(SeatHold).where(SeatHold.order_id == order_id)
+            delete(SeatHold)
+            .where(SeatHold.order_id == order_id)
             .execution_options(synchronize_session=False)
         )
         await session.commit()

@@ -6,6 +6,7 @@ Replaces a previously hardcoded set: any super_admin can add a new type
 (e.g. "Pasaporte"), and it immediately becomes selectable in the organizer
 upload form and assignable in the required-documents matrix.
 """
+
 from datetime import datetime, timezone
 from typing import Dict, List
 
@@ -18,11 +19,15 @@ from slugs import normalize_slug
 
 
 async def list_document_types(session: AsyncSession) -> List[Dict[str, str]]:
-    result = await session.execute(select(DocumentType).order_by(DocumentType.created_at))
+    result = await session.execute(
+        select(DocumentType).order_by(DocumentType.created_at)
+    )
     return [{"code": r.code, "label": r.label} for r in result.scalars().all()]
 
 
-async def create_document_type(session: AsyncSession, label: str, admin_id: str) -> Dict[str, str]:
+async def create_document_type(
+    session: AsyncSession, label: str, admin_id: str
+) -> Dict[str, str]:
     code = normalize_slug(label)
     if not code:
         raise HTTPException(400, "Invalid label")

@@ -78,7 +78,9 @@ def _ts() -> str:
 async def export_organizers(
     status: Optional[str] = Query(default=None),
     plan_code: Optional[str] = Query(default=None),
-    limit: Optional[int] = Query(default=None, ge=1, description="Max rows to return. Omit for all rows."),
+    limit: Optional[int] = Query(
+        default=None, ge=1, description="Max rows to return. Omit for all rows."
+    ),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
 ):
@@ -172,7 +174,9 @@ async def export_organizers(
 async def export_events(
     status: Optional[str] = Query(default=None),
     category: Optional[str] = Query(default=None),
-    limit: Optional[int] = Query(default=None, ge=1, description="Max rows to return. Omit for all rows."),
+    limit: Optional[int] = Query(
+        default=None, ge=1, description="Max rows to return. Omit for all rows."
+    ),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
 ):
@@ -265,7 +269,9 @@ async def export_orders(
     status: Optional[str] = Query(default=None),
     payment_method: Optional[str] = Query(default=None),
     organizer_id: Optional[str] = Query(default=None),
-    limit: Optional[int] = Query(default=None, ge=1, description="Max rows to return. Omit for all rows."),
+    limit: Optional[int] = Query(
+        default=None, ge=1, description="Max rows to return. Omit for all rows."
+    ),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
 ):
@@ -354,7 +360,9 @@ async def export_orders(
 async def export_audit_log(
     action: Optional[str] = Query(default=None),
     target_type: Optional[str] = Query(default=None),
-    limit: Optional[int] = Query(default=None, ge=1, description="Max rows to return. Omit for all rows."),
+    limit: Optional[int] = Query(
+        default=None, ge=1, description="Max rows to return. Omit for all rows."
+    ),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
 ):

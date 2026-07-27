@@ -14,17 +14,18 @@ POST   /api/public/season-passes/{season_pass_id}/purchase
 GET    /api/public/season-pass-purchases/{purchase_token}
 POST   /api/public/season-pass-purchases/{purchase_token}/redeem
 """
+
 import logging
 import os
 import uuid
 from datetime import datetime
 from typing import Optional
 
+import stripe
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-import stripe
 
 from database import AsyncSessionLocal, get_db
 from db_helpers import row_to_dict
@@ -58,15 +59,20 @@ def _frontend_base(payload_origin: Optional[str]) -> str:
 # Organizer CRUD
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 async def _get_org(user: dict, session: AsyncSession) -> Organizer:
-    result = await session.execute(select(Organizer).where(Organizer.user_id == user["id"]))
+    result = await session.execute(
+        select(Organizer).where(Organizer.user_id == user["id"])
+    )
     org = result.scalar_one_or_none()
     if not org:
         raise HTTPException(status_code=404, detail="Organizer not found")
     return org
 
 
-async def _get_event_for_org(event_id: str, org_id: str, session: AsyncSession) -> Event:
+async def _get_event_for_org(
+    event_id: str, org_id: str, session: AsyncSession
+) -> Event:
     result = await session.execute(
         select(Event).where(Event.id == event_id, Event.organizer_id == org_id)
     )
@@ -162,7 +168,8 @@ async def update_season_pass(
     await _get_event_for_org(event_id, org.id, session)
     result = await session.execute(
         select(SeasonPass).where(
-            SeasonPass.id == season_pass_id, SeasonPass.event_id == event_id,
+            SeasonPass.id == season_pass_id,
+            SeasonPass.event_id == event_id,
         )
     )
     pass_row = result.scalar_one_or_none()
@@ -174,7 +181,9 @@ async def update_season_pass(
     return row_to_dict(pass_row)
 
 
-@router.delete("/api/events/me/{event_id}/season-passes/{season_pass_id}", status_code=204)
+@router.delete(
+    "/api/events/me/{event_id}/season-passes/{season_pass_id}", status_code=204
+)
 async def delete_season_pass(
     event_id: str,
     season_pass_id: str,
@@ -185,7 +194,8 @@ async def delete_season_pass(
     await _get_event_for_org(event_id, org.id, session)
     result = await session.execute(
         select(SeasonPass).where(
-            SeasonPass.id == season_pass_id, SeasonPass.event_id == event_id,
+            SeasonPass.id == season_pass_id,
+            SeasonPass.event_id == event_id,
         )
     )
     pass_row = result.scalar_one_or_none()
@@ -203,11 +213,15 @@ async def delete_season_pass(
 # Public — list / purchase / redeem
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @public_router.get("/api/public/events/{event_id}/season-passes")
-async def public_list_season_passes(event_id: str, session: AsyncSession = Depends(get_db)):
+async def public_list_season_passes(
+    event_id: str, session: AsyncSession = Depends(get_db)
+):
     result = await session.execute(
         select(SeasonPass).where(
-            SeasonPass.event_id == event_id, SeasonPass.status == "active",
+            SeasonPass.event_id == event_id,
+            SeasonPass.status == "active",
         )
     )
     out = []
@@ -234,17 +248,23 @@ class PurchasePassBody(BaseModel):
 
 async def _load_pass_or_404(season_pass_id: str) -> tuple[dict, dict, dict]:
     async with AsyncSessionLocal() as pg:
-        pass_row = await pg.scalar(select(SeasonPass).where(SeasonPass.id == season_pass_id))
+        pass_row = await pg.scalar(
+            select(SeasonPass).where(SeasonPass.id == season_pass_id)
+        )
     if not pass_row:
         raise HTTPException(404, "Abono no encontrado")
     season_pass = row_to_dict(pass_row)
     async with AsyncSessionLocal() as pg:
-        event_row = await pg.scalar(select(Event).where(Event.id == season_pass["event_id"]))
+        event_row = await pg.scalar(
+            select(Event).where(Event.id == season_pass["event_id"])
+        )
     if not event_row or event_row.status != "published":
         raise HTTPException(404, "Evento no disponible")
     event = row_to_dict(event_row)
     async with AsyncSessionLocal() as pg:
-        org_row = await pg.scalar(select(Organizer).where(Organizer.id == season_pass["organizer_id"]))
+        org_row = await pg.scalar(
+            select(Organizer).where(Organizer.id == season_pass["organizer_id"])
+        )
     organizer = row_to_dict(org_row) if org_row else None
     if not organizer:
         raise HTTPException(404, "Organizador no encontrado")
@@ -253,19 +273,26 @@ async def _load_pass_or_404(season_pass_id: str) -> tuple[dict, dict, dict]:
 
 @public_router.post("/api/public/season-passes/{season_pass_id}/purchase")
 async def purchase_season_pass(
-    season_pass_id: str, payload: PurchasePassBody, background_tasks: BackgroundTasks,
+    season_pass_id: str,
+    payload: PurchasePassBody,
+    background_tasks: BackgroundTasks,
 ):
     season_pass, event, organizer = await _load_pass_or_404(season_pass_id)
     buyer = order_service.validate_buyer(payload.buyer.model_dump())
 
     purchase = await season_pass_service.create_purchase_skeleton(
-        season_pass=season_pass, event=event, organizer=organizer, buyer=buyer,
+        season_pass=season_pass,
+        event=event,
+        organizer=organizer,
+        buyer=buyer,
     )
 
     # Free pass (price_cents == 0) — confirm instantly, mirrors free ticket events.
     if purchase["total_cents"] == 0:
         finalized = await season_pass_service.finalize_paid_purchase(purchase=purchase)
-        background_tasks.add_task(_send_pass_confirmation_safe, finalized, season_pass, event, organizer)
+        background_tasks.add_task(
+            _send_pass_confirmation_safe, finalized, season_pass, event, organizer
+        )
         return {
             "order_number": finalized["order_number"],
             "status": "paid",
@@ -277,18 +304,31 @@ async def purchase_season_pass(
         f"{origin}/o/{organizer['slug']}/abono/{purchase['purchase_token']}"
         "?session_id={CHECKOUT_SESSION_ID}"
     )
-    cancel_url = f"{origin}/o/{organizer['slug']}/abono/{purchase['purchase_token']}/cancelado"
+    cancel_url = (
+        f"{origin}/o/{organizer['slug']}/abono/{purchase['purchase_token']}/cancelado"
+    )
     try:
         checkout = season_pass_service.create_pass_checkout_session(
-            purchase=purchase, season_pass=season_pass, event=event,
-            success_url=success_url, cancel_url=cancel_url,
+            purchase=purchase,
+            season_pass=season_pass,
+            event=event,
+            success_url=success_url,
+            cancel_url=cancel_url,
         )
     except stripe.error.StripeError as e:
-        logger.error("Stripe checkout failed for pass purchase %s: %s", purchase["order_number"], e)
-        raise HTTPException(502, f"Stripe checkout error: {e.user_message or str(e)}") from e
+        logger.error(
+            "Stripe checkout failed for pass purchase %s: %s",
+            purchase["order_number"],
+            e,
+        )
+        raise HTTPException(
+            502, f"Stripe checkout error: {e.user_message or str(e)}"
+        ) from e
 
     async with AsyncSessionLocal() as _pg:
-        _row = await _pg.scalar(select(SeasonPassPurchase).where(SeasonPassPurchase.id == purchase["id"]))
+        _row = await _pg.scalar(
+            select(SeasonPassPurchase).where(SeasonPassPurchase.id == purchase["id"])
+        )
         _row.stripe_session_id = checkout["id"]
         await _pg.commit()
 
@@ -300,11 +340,17 @@ async def purchase_season_pass(
     }
 
 
-async def _send_pass_confirmation_safe(finalized, season_pass, event, organizer) -> None:
+async def _send_pass_confirmation_safe(
+    finalized, season_pass, event, organizer
+) -> None:
     try:
         from services.email_service import send_season_pass_confirmation
+
         await send_season_pass_confirmation(
-            purchase=finalized, season_pass=season_pass, event=event, organizer=organizer,
+            purchase=finalized,
+            season_pass=season_pass,
+            event=event,
+            organizer=organizer,
         )
     except Exception:  # noqa: BLE001
         logger.exception("Failed sending season pass confirmation email")
@@ -313,7 +359,9 @@ async def _send_pass_confirmation_safe(finalized, season_pass, event, organizer)
 async def _load_purchase_or_404(purchase_token: str) -> dict:
     async with AsyncSessionLocal() as pg:
         row = await pg.scalar(
-            select(SeasonPassPurchase).where(SeasonPassPurchase.purchase_token == purchase_token)
+            select(SeasonPassPurchase).where(
+                SeasonPassPurchase.purchase_token == purchase_token
+            )
         )
     if not row:
         raise HTTPException(404, "Abono no encontrado")
@@ -322,27 +370,43 @@ async def _load_purchase_or_404(purchase_token: str) -> dict:
 
 @public_router.get("/api/public/season-pass-purchases/{purchase_token}")
 async def get_pass_purchase(
-    purchase_token: str, background_tasks: BackgroundTasks, session_id: Optional[str] = None,
+    purchase_token: str,
+    background_tasks: BackgroundTasks,
+    session_id: Optional[str] = None,
 ):
     purchase = await _load_purchase_or_404(purchase_token)
     season_pass, event, organizer = await _load_pass_or_404(purchase["season_pass_id"])
 
-    if purchase["status"] == "pending" and session_id and purchase.get("stripe_session_id") == session_id:
+    if (
+        purchase["status"] == "pending"
+        and session_id
+        and purchase.get("stripe_session_id") == session_id
+    ):
         try:
             stripe_session = stripe.checkout.Session.retrieve(session_id)
             if stripe_session.get("payment_status") == "paid":
                 purchase = await season_pass_service.finalize_paid_purchase(
-                    purchase=purchase, stripe_session_id=session_id,
+                    purchase=purchase,
+                    stripe_session_id=session_id,
                 )
-                background_tasks.add_task(_send_pass_confirmation_safe, purchase, season_pass, event, organizer)
+                background_tasks.add_task(
+                    _send_pass_confirmation_safe,
+                    purchase,
+                    season_pass,
+                    event,
+                    organizer,
+                )
         except stripe.error.StripeError as e:
             logger.warning("Could not refresh pass session %s: %s", session_id, e)
 
     async with AsyncSessionLocal() as pg:
         fn_result = await pg.execute(
-            select(EventFunction).where(
-                EventFunction.event_id == event["id"], EventFunction.status == "active",
-            ).order_by(EventFunction.sort_order, EventFunction.starts_at)
+            select(EventFunction)
+            .where(
+                EventFunction.event_id == event["id"],
+                EventFunction.status == "active",
+            )
+            .order_by(EventFunction.sort_order, EventFunction.starts_at)
         )
         functions = [row_to_dict(f) for f in fn_result.scalars().all()]
 
@@ -350,10 +414,15 @@ async def get_pass_purchase(
         "purchase": purchase,
         "season_pass": season_pass,
         "event": {
-            "id": event["id"], "title": event["title"], "slug": event["slug"],
+            "id": event["id"],
+            "title": event["title"],
+            "slug": event["slug"],
             "timezone": event.get("timezone"),
         },
-        "organizer": {"slug": organizer["slug"], "company_name": organizer.get("company_name")},
+        "organizer": {
+            "slug": organizer["slug"],
+            "company_name": organizer.get("company_name"),
+        },
         "functions": functions,
     }
 
@@ -365,7 +434,9 @@ class RedeemBody(BaseModel):
 
 @public_router.post("/api/public/season-pass-purchases/{purchase_token}/redeem")
 async def redeem_pass_credit(
-    purchase_token: str, body: RedeemBody, background_tasks: BackgroundTasks,
+    purchase_token: str,
+    body: RedeemBody,
+    background_tasks: BackgroundTasks,
 ):
     purchase = await _load_purchase_or_404(purchase_token)
     season_pass, event, organizer = await _load_pass_or_404(purchase["season_pass_id"])
@@ -373,7 +444,8 @@ async def redeem_pass_credit(
     async with AsyncSessionLocal() as pg:
         fn_row = await pg.scalar(
             select(EventFunction).where(
-                EventFunction.id == body.function_id, EventFunction.event_id == event["id"],
+                EventFunction.id == body.function_id,
+                EventFunction.event_id == event["id"],
             )
         )
     if not fn_row:
@@ -385,7 +457,8 @@ async def redeem_pass_credit(
         async with AsyncSessionLocal() as pg:
             tt_row = await pg.scalar(
                 select(TicketType).where(
-                    TicketType.id == body.ticket_type_id, TicketType.event_id == event["id"],
+                    TicketType.id == body.ticket_type_id,
+                    TicketType.event_id == event["id"],
                 )
             )
         if not tt_row:
@@ -393,11 +466,20 @@ async def redeem_pass_credit(
         ticket_type = row_to_dict(tt_row)
 
     refreshed_purchase, order, tickets = await season_pass_service.redeem_credit(
-        purchase=purchase, season_pass=season_pass, event=event, organizer=organizer,
-        function=function, ticket_type=ticket_type,
+        purchase=purchase,
+        season_pass=season_pass,
+        event=event,
+        organizer=organizer,
+        function=function,
+        ticket_type=ticket_type,
     )
     from services.email_service import send_purchase_confirmation
+
     background_tasks.add_task(
-        send_purchase_confirmation, order=order, event=event, organizer=organizer, tickets=tickets,
+        send_purchase_confirmation,
+        order=order,
+        event=event,
+        organizer=organizer,
+        tickets=tickets,
     )
     return {"purchase": refreshed_purchase, "tickets": tickets}

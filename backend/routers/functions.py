@@ -26,26 +26,21 @@ DELETE /api/events/me/{event_id}/functions/{function_id}
 GET    /api/public/events/{event_id}/functions
 GET    /api/public/events/{event_id}/functions/{function_id}
 """
+
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
-import sqlalchemy as sa
 from sqlalchemy import select
-from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from database import get_db
 from db_helpers import row_to_dict
-from orm_models import (
-    Event,
-    EventFunction,
-    FunctionTicketType,
-    Organizer,
-    TicketType,
-)
+from orm_models import Event, EventFunction, FunctionTicketType, Organizer, TicketType
 from security import get_current_user, require_role
 
 router = APIRouter(tags=["functions"])
@@ -53,6 +48,7 @@ public_router = APIRouter(tags=["functions-public"])
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
+
 
 async def _get_org(user: dict, session: AsyncSession) -> Organizer:
     result = await session.execute(
@@ -64,7 +60,9 @@ async def _get_org(user: dict, session: AsyncSession) -> Organizer:
     return org
 
 
-async def _get_event_for_org(event_id: str, org_id: str, session: AsyncSession) -> Event:
+async def _get_event_for_org(
+    event_id: str, org_id: str, session: AsyncSession
+) -> Event:
     result = await session.execute(
         select(Event).where(Event.id == event_id, Event.organizer_id == org_id)
     )
@@ -88,6 +86,7 @@ def _func_out(row: EventFunction, overrides: list = None) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TICKET TYPES
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TicketTypeCreate(BaseModel):
     name: str
@@ -197,7 +196,9 @@ async def update_ticket_type(
     org = await _get_org(user, session)
     await _get_event_for_org(event_id, org.id, session)
     result = await session.execute(
-        select(TicketType).where(TicketType.id == type_id, TicketType.event_id == event_id)
+        select(TicketType).where(
+            TicketType.id == type_id, TicketType.event_id == event_id
+        )
     )
     tt = result.scalar_one_or_none()
     if not tt:
@@ -219,7 +220,9 @@ async def delete_ticket_type(
     org = await _get_org(user, session)
     await _get_event_for_org(event_id, org.id, session)
     result = await session.execute(
-        select(TicketType).where(TicketType.id == type_id, TicketType.event_id == event_id)
+        select(TicketType).where(
+            TicketType.id == type_id, TicketType.event_id == event_id
+        )
     )
     tt = result.scalar_one_or_none()
     if not tt:
@@ -254,7 +257,9 @@ async def public_list_ticket_types(
     overrides_by_type: Dict[str, FunctionTicketType] = {}
     if function_id:
         ov_result = await session.execute(
-            select(FunctionTicketType).where(FunctionTicketType.function_id == function_id)
+            select(FunctionTicketType).where(
+                FunctionTicketType.function_id == function_id
+            )
         )
         overrides_by_type = {o.ticket_type_id: o for o in ov_result.scalars().all()}
 
@@ -284,9 +289,15 @@ async def public_list_ticket_types(
         if tt.sale_end and now > tt.sale_end:
             d["is_on_sale"] = False
         # Early bird: closes at date OR when capacity exhausted (checked client-side via sold_out)
-        if tt.is_early_bird and tt.early_bird_closes_at and now > tt.early_bird_closes_at:
+        if (
+            tt.is_early_bird
+            and tt.early_bird_closes_at
+            and now > tt.early_bird_closes_at
+        ):
             d["is_on_sale"] = False
-        d["is_sold_out"] = effective_capacity is not None and effective_sold >= effective_capacity
+        d["is_sold_out"] = (
+            effective_capacity is not None and effective_sold >= effective_capacity
+        )
         out.append(d)
     return out
 
@@ -294,6 +305,7 @@ async def public_list_ticket_types(
 # ═══════════════════════════════════════════════════════════════════════════════
 # EVENT FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class FunctionTicketTypeOverride(BaseModel):
     ticket_type_id: str
@@ -400,14 +412,16 @@ async def _upsert_overrides(
         )
     )
     for o in overrides:
-        session.add(FunctionTicketType(
-            id=str(uuid.uuid4()),
-            function_id=function_id,
-            ticket_type_id=o.ticket_type_id,
-            price_cents_override=o.price_cents_override,
-            capacity_override=o.capacity_override,
-            active=o.active,
-        ))
+        session.add(
+            FunctionTicketType(
+                id=str(uuid.uuid4()),
+                function_id=function_id,
+                ticket_type_id=o.ticket_type_id,
+                price_cents_override=o.price_cents_override,
+                capacity_override=o.capacity_override,
+                active=o.active,
+            )
+        )
 
 
 @router.post("/api/events/me/{event_id}/functions", status_code=201)
@@ -420,7 +434,12 @@ async def create_function(
     org = await _get_org(user, session)
     event = await _get_event_for_org(event_id, org.id, session)
     await _check_schedule_conflict(
-        event_id, body.starts_at, body.ends_at, body.venue_name, None, session,
+        event_id,
+        body.starts_at,
+        body.ends_at,
+        body.venue_name,
+        None,
+        session,
         kind=body.kind,
     )
 
@@ -511,10 +530,17 @@ async def update_function(
 
     effective_starts = body.starts_at if body.starts_at is not None else func.starts_at
     effective_ends = body.ends_at if body.ends_at is not None else func.ends_at
-    effective_venue = body.venue_name if body.venue_name is not None else func.venue_name
+    effective_venue = (
+        body.venue_name if body.venue_name is not None else func.venue_name
+    )
     effective_kind = body.kind if body.kind is not None else func.kind
     await _check_schedule_conflict(
-        event_id, effective_starts, effective_ends, effective_venue, function_id, session,
+        event_id,
+        effective_starts,
+        effective_ends,
+        effective_venue,
+        function_id,
+        session,
         kind=effective_kind,
     )
 
@@ -522,7 +548,9 @@ async def update_function(
     update_data = body.model_dump(exclude_none=True, exclude={"ticket_type_overrides"})
     for field, val in update_data.items():
         setattr(func, field, val)
-    jsonb_cols = {c.name for c in EventFunction.__table__.columns if isinstance(c.type, sa.JSON)}
+    jsonb_cols = {
+        c.name for c in EventFunction.__table__.columns if isinstance(c.type, sa.JSON)
+    }
     for f in update_data:
         if f in jsonb_cols:
             flag_modified(func, f)
@@ -565,6 +593,7 @@ async def delete_function(
 
 
 # ── Public function endpoints ─────────────────────────────────────────────────
+
 
 @public_router.get("/api/public/events/{event_id}/functions")
 async def public_list_functions(

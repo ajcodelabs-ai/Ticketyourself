@@ -1,4 +1,5 @@
 """Integration: event venue_layout snapshots are independent of the master venue."""
+
 from __future__ import annotations
 
 import copy
@@ -9,13 +10,15 @@ import requests
 
 from tests.conftest import API, DEMO_TENANT
 
-
-pytestmark = pytest.mark.skipif(not API or API == "/api", reason="REACT_APP_BACKEND_URL not set")
+pytestmark = pytest.mark.skipif(
+    not API or API == "/api", reason="REACT_APP_BACKEND_URL not set"
+)
 
 
 def _create_draft_event(client: requests.Session, title: str) -> dict:
     slug = f"snap-{uuid.uuid4().hex[:8]}"
     from datetime import datetime, timedelta, timezone
+
     starts = datetime.now(timezone.utc) + timedelta(days=30)
     ends = starts + timedelta(hours=2)
     r = client.post(
@@ -58,21 +61,25 @@ def _pricing_for_venue(venue: dict) -> list:
     out = []
     for lid in active:
         loc = by_id.get(lid) or {}
-        out.append({
-            "locality_id": lid,
-            "price_cents": int(loc.get("default_price_cents") or 1000),
-            "service_fee_cents": 0,
-            "admin_fee_cents": 0,
-            "max_tickets_per_purchase": None,
-        })
+        out.append(
+            {
+                "locality_id": lid,
+                "price_cents": int(loc.get("default_price_cents") or 1000),
+                "service_fee_cents": 0,
+                "admin_fee_cents": 0,
+                "max_tickets_per_purchase": None,
+            }
+        )
     if not out and venue.get("localities"):
         loc = venue["localities"][0]
-        out.append({
-            "locality_id": loc["id"],
-            "price_cents": int(loc.get("default_price_cents") or 1000),
-            "service_fee_cents": 0,
-            "admin_fee_cents": 0,
-        })
+        out.append(
+            {
+                "locality_id": loc["id"],
+                "price_cents": int(loc.get("default_price_cents") or 1000),
+                "service_fee_cents": 0,
+                "admin_fee_cents": 0,
+            }
+        )
     return out
 
 
@@ -180,11 +187,17 @@ class TestEventVenueSnapshot:
         if int(numbered.get("tickets_sold") or 0) <= 0:
             pytest.skip("Numbered demo has no sold tickets; lock not exercisable")
 
-        layout = demo_client.get(f"{API}/events/me/{numbered['id']}/venue-layout").json()
+        layout = demo_client.get(
+            f"{API}/events/me/{numbered['id']}/venue-layout"
+        ).json()
         assert layout["lock_status"]["locked"] is True
         elements = copy.deepcopy(layout["elements"])
         row = next(
-            (e for e in elements if e.get("kind") in ("seat_row_straight", "seat_row_curved")),
+            (
+                e
+                for e in elements
+                if e.get("kind") in ("seat_row_straight", "seat_row_curved")
+            ),
             None,
         )
         if not row:

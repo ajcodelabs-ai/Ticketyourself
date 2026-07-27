@@ -1,4 +1,5 @@
 """Auth router — Phase 2: users, tenants, organizers migrated to PostgreSQL."""
+
 import logging
 import os
 import uuid
@@ -33,10 +34,7 @@ from security import (
     set_auth_cookies,
     verify_password,
 )
-from services.activation import (
-    create_activation_token,
-    ensure_activation_record,
-)
+from services.activation import create_activation_token, ensure_activation_record
 from services.email_service import send_welcome_email
 from slugs import find_unique_slug_pg, is_valid_slug, normalize_slug
 
@@ -57,6 +55,7 @@ def _org_row_to_out(row: Optional[Organizer]) -> Optional[OrganizerOut]:
 
 # ── Slug check ────────────────────────────────────────────────────────────────
 
+
 @router.post("/check-slug", response_model=SlugCheckResponse)
 async def check_slug(
     payload: dict,
@@ -65,10 +64,14 @@ async def check_slug(
     raw = (payload.get("slug") or payload.get("company_name") or "").strip()
     base = normalize_slug(raw)
     if not base:
-        return SlugCheckResponse(slug="", available=False, suggestion=None, reason="empty")
+        return SlugCheckResponse(
+            slug="", available=False, suggestion=None, reason="empty"
+        )
     if not is_valid_slug(base):
         reason = "too_short" if len(base) < 2 else "invalid"
-        return SlugCheckResponse(slug=base, available=False, suggestion=None, reason=reason)
+        return SlugCheckResponse(
+            slug=base, available=False, suggestion=None, reason=reason
+        )
     suggestion = await find_unique_slug_pg(base, session, Organizer)
     available = suggestion == base
     return SlugCheckResponse(
@@ -80,6 +83,7 @@ async def check_slug(
 
 
 # ── Register ──────────────────────────────────────────────────────────────────
+
 
 @router.post("/register", response_model=AuthMeResponse)
 async def register(
@@ -94,7 +98,11 @@ async def register(
         raise HTTPException(status_code=409, detail="Email already registered")
 
     desired_slug = (payload.slug or "").strip()
-    base_slug = normalize_slug(desired_slug) if desired_slug else normalize_slug(payload.company_name)
+    base_slug = (
+        normalize_slug(desired_slug)
+        if desired_slug
+        else normalize_slug(payload.company_name)
+    )
     if not base_slug:
         raise HTTPException(status_code=400, detail="Invalid slug")
     if not is_valid_slug(base_slug):
@@ -130,7 +138,14 @@ async def register(
             tenant_row.name = payload.company_name.strip()
             tenant_row.status = "inactive"
         else:
-            session.add(Tenant(slug=slug, name=payload.company_name.strip(), status="inactive", created_at=now))
+            session.add(
+                Tenant(
+                    slug=slug,
+                    name=payload.company_name.strip(),
+                    status="inactive",
+                    created_at=now,
+                )
+            )
 
         await session.flush()
 
@@ -176,7 +191,9 @@ async def register(
         )
         frontend_base = os.environ.get("FRONTEND_URL", "").rstrip("/")
         continue_url = (
-            f"{frontend_base}/onboarding?at={token}" if frontend_base else f"/onboarding?at={token}"
+            f"{frontend_base}/onboarding?at={token}"
+            if frontend_base
+            else f"/onboarding?at={token}"
         )
         await send_welcome_email(
             to=email,
@@ -202,6 +219,7 @@ async def register(
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
+
 
 @router.post("/login", response_model=AuthMeResponse)
 async def login(
@@ -243,6 +261,7 @@ async def login(
 
 # ── Logout ────────────────────────────────────────────────────────────────────
 
+
 @router.post("/logout")
 async def logout(response: Response):
     clear_auth_cookies(response)
@@ -250,6 +269,7 @@ async def logout(response: Response):
 
 
 # ── Refresh ───────────────────────────────────────────────────────────────────
+
 
 @router.post("/refresh")
 async def refresh_token(
@@ -274,6 +294,7 @@ async def refresh_token(
 
 
 # ── Me ────────────────────────────────────────────────────────────────────────
+
 
 @router.get("/me", response_model=AuthMeResponse)
 async def me(

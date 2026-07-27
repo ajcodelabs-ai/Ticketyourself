@@ -1,4 +1,5 @@
 """DEV-only endpoints. Enabled when ENV=development OR ENABLE_DEMO_SHORTCUTS=true."""
+
 import logging
 import os
 import uuid
@@ -13,8 +14,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from database import AsyncSessionLocal
-from db_helpers import organizer_row_to_dict, get_organizer_by_id, row_to_dict
-from orm_models import Organizer, OrganizerAdminComment, SubscriptionPlan, Tenant, Ticket, TicketOrder
+from db_helpers import get_organizer_by_id, organizer_row_to_dict, row_to_dict
+from orm_models import (
+    Organizer,
+    OrganizerAdminComment,
+    SubscriptionPlan,
+    Tenant,
+    Ticket,
+    TicketOrder,
+)
 from security import get_current_user
 from services.activation import log_funnel_event
 
@@ -98,7 +106,10 @@ async def demo_activate(payload: DemoActivateBody, user=Depends(get_current_user
             raise HTTPException(status_code=404, detail="Organizer not found")
 
         # Authorization: a regular user can only activate their own organizer.
-        if user.get("role") != "super_admin" and user.get("organizer_id") != organizer_id:
+        if (
+            user.get("role") != "super_admin"
+            and user.get("organizer_id") != organizer_id
+        ):
             raise HTTPException(status_code=403, detail="Forbidden")
 
         plan_code = payload.plan_code or "profesional"
@@ -165,15 +176,20 @@ async def demo_activate(payload: DemoActivateBody, user=Depends(get_current_user
     # successful activation into a 500.
     try:
         from routers.microsite import _get_or_create_microsite_row
+
         await _get_or_create_microsite_row(organizer)
     except Exception:  # noqa: BLE001
-        logger.exception("Demo shortcut: microsite creation failed organizer=%s", organizer_id)
+        logger.exception(
+            "Demo shortcut: microsite creation failed organizer=%s", organizer_id
+        )
 
     # Funnel — best-effort.
     try:
         await log_funnel_event(organizer_id=organizer_id, event_name="plan_selected")
         await log_funnel_event(organizer_id=organizer_id, event_name="checkout_started")
-        await log_funnel_event(organizer_id=organizer_id, event_name="subscription_active")
+        await log_funnel_event(
+            organizer_id=organizer_id, event_name="subscription_active"
+        )
     except Exception:  # noqa: BLE001
         pass
 
@@ -218,6 +234,7 @@ async def simulate_purchase_paid(payload: SimulatePurchasePaidBody):
     finalized, tickets = await order_service.finalize_paid_order(order=order)
     try:
         from db_helpers import get_event_by_id
+
         event = await get_event_by_id(order["event_id"])
         organizer = await get_organizer_by_id(order["organizer_id"])
         await send_purchase_confirmation(
@@ -247,7 +264,9 @@ async def simulate_season_pass_paid(payload: SimulatePassPurchasePaidBody):
 
     async with AsyncSessionLocal() as _pg:
         _row = await _pg.scalar(
-            select(SeasonPassPurchase).where(SeasonPassPurchase.order_number == payload.order_number)
+            select(SeasonPassPurchase).where(
+                SeasonPassPurchase.order_number == payload.order_number
+            )
         )
         if not _row:
             raise HTTPException(status_code=404, detail="Purchase not found")

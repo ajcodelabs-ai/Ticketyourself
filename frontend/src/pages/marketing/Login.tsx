@@ -9,6 +9,11 @@ export default function Login() {
             allowRole={(role) => role !== "super_admin"}
             rejectMessage="Los administradores ingresan desde /admin/login."
             defaultRedirect="/app/dashboard"
+            icon={
+                <div className="inline-flex items-center justify-center h-10 w-10 rounded-xl bg-primary text-primary-foreground mb-2">
+                    <LogIn className="h-5 w-5" />
+                </div>
+            }
             title="Iniciar sesión"
             description="Ingresá con tu email y contraseña."
             submitIcon={<LogIn className="h-4 w-4 mr-2" />}

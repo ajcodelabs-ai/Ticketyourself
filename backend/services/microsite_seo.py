@@ -1,4 +1,5 @@
 """SEO defaults and custom CSS validation for microsites."""
+
 import re
 
 DEFAULT_SEO = {

@@ -25,7 +25,6 @@ import time
 
 import pytest
 import requests
-
 from conftest import (
     API,
     BASE_URL,
@@ -715,8 +714,7 @@ def test_free_event_ignores_payment_method():
     assert r2.status_code == 200, r2.text
     data = r2.json()
     assert (
-        data.get("status") in ("paid", "pending_manual_payment") is False
-        or data.get("status") == "paid"
+        data.get("status") == "paid"
     ), f"Free event should be instant paid, got: {data}"
 
 

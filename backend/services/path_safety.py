@@ -1,4 +1,5 @@
 """Resolve user-supplied relative paths safely under a known base directory."""
+
 from __future__ import annotations
 
 from pathlib import Path

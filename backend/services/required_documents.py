@@ -6,6 +6,7 @@ Single source of truth for which OrganizerDocument.doc_type values are
 mandatory before an organizer can move past "uploading docs" into review
 (see routers/organizers.py::resubmit_me and the onboarding gate).
 """
+
 from datetime import datetime, timezone
 from typing import Dict, List, Set
 
@@ -49,6 +50,8 @@ async def set_required_documents(
     await session.flush()
 
 
-async def is_satisfied(session: AsyncSession, org_type: str, present_doc_types: Set[str]) -> bool:
+async def is_satisfied(
+    session: AsyncSession, org_type: str, present_doc_types: Set[str]
+) -> bool:
     required = (await get_required_documents(session)).get(org_type, [])
     return all(doc_type in present_doc_types for doc_type in required)

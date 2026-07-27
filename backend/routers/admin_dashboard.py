@@ -6,18 +6,18 @@ organizers list with sort/filter and a global audit-log query.
 
 All endpoints require `super_admin` role.
 """
+
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from db_helpers import get_event_by_id, row_to_dict
 from orm_models import AuditLog, Event, Organizer, SubscriptionPlan, TicketOrder, User
-from sqlalchemy import desc
 from security import require_role
 
 logger = logging.getLogger("tys.admin_dashboard")
@@ -63,10 +63,20 @@ async def dashboard_stats(session: AsyncSession = Depends(get_db)) -> Dict[str, 
     plan_codes = {p["code"]: p for p in plans}
 
     orgs_result = await session.execute(
-        select(Organizer.id, Organizer.company_name, Organizer.plan_id,
-               Organizer.status, Organizer.subscription_status)
+        select(
+            Organizer.id,
+            Organizer.company_name,
+            Organizer.plan_id,
+            Organizer.status,
+            Organizer.subscription_status,
+        )
     )
-    organizers_by_status: Dict[str, int] = {"pending": 0, "approved": 0, "rejected": 0, "suspended": 0}
+    organizers_by_status: Dict[str, int] = {
+        "pending": 0,
+        "approved": 0,
+        "rejected": 0,
+        "suspended": 0,
+    }
     organizers_by_plan: Dict[str, int] = {c: 0 for c in plan_codes}
     organizers_by_plan["sin_plan"] = 0
     mrr_cents = 0
@@ -77,36 +87,47 @@ async def dashboard_stats(session: AsyncSession = Depends(get_db)) -> Dict[str, 
             organizers_by_status[sb] += 1
         plan = plan_by_id.get(o.plan_id)
         if plan:
-            organizers_by_plan[plan["code"]] = organizers_by_plan.get(plan["code"], 0) + 1
+            organizers_by_plan[plan["code"]] = (
+                organizers_by_plan.get(plan["code"], 0) + 1
+            )
         else:
             organizers_by_plan["sin_plan"] += 1
-        is_active = (o.status == "approved" and o.subscription_status == "active")
+        is_active = o.status == "approved" and o.subscription_status == "active"
         if is_active:
             active_organizers += 1
             if plan and plan["billing_period"] == "monthly":
                 mrr_cents += plan["price_cents"]
 
     # ── GMV + fees (paid orders) — current vs prev month ──────────────────
-    cur_row = (await session.execute(
-        select(
-            func.coalesce(func.sum(TicketOrder.total_cents), 0).label("gmv"),
-            func.coalesce(func.sum(TicketOrder.fees_cents), 0).label("fees"),
-            func.coalesce(func.sum(TicketOrder.quantity_total), 0).label("tickets"),
-            func.count(TicketOrder.id).label("n"),
-        ).where(TicketOrder.status == "paid", TicketOrder.paid_at >= month_now)
-    )).first()
-    cur = {"gmv": cur_row.gmv or 0, "fees": cur_row.fees or 0, "tickets": cur_row.tickets or 0, "n": cur_row.n or 0}
-
-    prev_row = (await session.execute(
-        select(
-            func.coalesce(func.sum(TicketOrder.total_cents), 0).label("gmv"),
-            func.count(TicketOrder.id).label("n"),
-        ).where(
-            TicketOrder.status == "paid",
-            TicketOrder.paid_at >= month_prev,
-            TicketOrder.paid_at < month_now,
+    cur_row = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(TicketOrder.total_cents), 0).label("gmv"),
+                func.coalesce(func.sum(TicketOrder.fees_cents), 0).label("fees"),
+                func.coalesce(func.sum(TicketOrder.quantity_total), 0).label("tickets"),
+                func.count(TicketOrder.id).label("n"),
+            ).where(TicketOrder.status == "paid", TicketOrder.paid_at >= month_now)
         )
-    )).first()
+    ).first()
+    cur = {
+        "gmv": cur_row.gmv or 0,
+        "fees": cur_row.fees or 0,
+        "tickets": cur_row.tickets or 0,
+        "n": cur_row.n or 0,
+    }
+
+    prev_row = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(TicketOrder.total_cents), 0).label("gmv"),
+                func.count(TicketOrder.id).label("n"),
+            ).where(
+                TicketOrder.status == "paid",
+                TicketOrder.paid_at >= month_prev,
+                TicketOrder.paid_at < month_now,
+            )
+        )
+    ).first()
     prev = {"gmv": prev_row.gmv or 0, "n": prev_row.n or 0}
 
     breakdown_rows = await session.execute(
@@ -116,20 +137,31 @@ async def dashboard_stats(session: AsyncSession = Depends(get_db)) -> Dict[str, 
     )
     breakdown = {r.status: r.n for r in breakdown_rows.all()}
 
-    tickets_total = await session.scalar(
-        select(func.coalesce(func.sum(TicketOrder.quantity_total), 0)).where(TicketOrder.status == "paid")
-    ) or 0
+    tickets_total = (
+        await session.scalar(
+            select(func.coalesce(func.sum(TicketOrder.quantity_total), 0)).where(
+                TicketOrder.status == "paid"
+            )
+        )
+        or 0
+    )
 
     # ── Events activity ───────────────────────────────────────────────────
-    events_published_total = await session.scalar(
-        select(func.count(Event.id)).where(Event.status == "published")
-    ) or 0
-    events_published_month = await session.scalar(
-        select(func.count(Event.id)).where(
-            Event.status == "published",
-            Event.published_at >= month_now,
+    events_published_total = (
+        await session.scalar(
+            select(func.count(Event.id)).where(Event.status == "published")
         )
-    ) or 0
+        or 0
+    )
+    events_published_month = (
+        await session.scalar(
+            select(func.count(Event.id)).where(
+                Event.status == "published",
+                Event.published_at >= month_now,
+            )
+        )
+        or 0
+    )
 
     # ── Top 5 organizers by GMV (current month) ───────────────────────────
     top_orgs_result = await session.execute(
@@ -147,22 +179,25 @@ async def dashboard_stats(session: AsyncSession = Depends(get_db)) -> Dict[str, 
     top_organizers_by_gmv = []
     for row in top_orgs_result.all():
         org_res = await session.execute(
-            select(Organizer.id, Organizer.slug, Organizer.company_name, Organizer.plan_id)
-            .where(Organizer.id == row.organizer_id)
+            select(
+                Organizer.id, Organizer.slug, Organizer.company_name, Organizer.plan_id
+            ).where(Organizer.id == row.organizer_id)
         )
         org_row = org_res.first()
         if not org_row:
             continue
         plan = plan_by_id.get(org_row.plan_id)
-        top_organizers_by_gmv.append({
-            "organizer_id": org_row.id,
-            "slug": org_row.slug,
-            "company_name": org_row.company_name,
-            "plan_name": plan["name"] if plan else None,
-            "gmv_cents": row.gmv,
-            "tickets": row.tickets,
-            "orders": row.orders,
-        })
+        top_organizers_by_gmv.append(
+            {
+                "organizer_id": org_row.id,
+                "slug": org_row.slug,
+                "company_name": org_row.company_name,
+                "plan_name": plan["name"] if plan else None,
+                "gmv_cents": row.gmv,
+                "tickets": row.tickets,
+                "orders": row.orders,
+            }
+        )
 
     # ── Top 5 events by sales (current month) ─────────────────────────────
     top_evt_result = await session.execute(
@@ -185,18 +220,20 @@ async def dashboard_stats(session: AsyncSession = Depends(get_db)) -> Dict[str, 
             select(Organizer.company_name).where(Organizer.id == evt["organizer_id"])
         )
         company_name = org_res2.scalar_one_or_none() or ""
-        top_events_by_sales.append({
-            "event_id": evt["id"],
-            "slug": evt["slug"],
-            "title": evt["title"],
-            "starts_at": evt.get("starts_at"),
-            "tenant_slug": evt.get("tenant_slug"),
-            "company_name": company_name,
-            "tickets_sold": evt.get("tickets_sold", 0),
-            "capacity": evt.get("capacity"),
-            "gmv_cents": row.gmv,
-            "tickets": row.tickets,
-        })
+        top_events_by_sales.append(
+            {
+                "event_id": evt["id"],
+                "slug": evt["slug"],
+                "title": evt["title"],
+                "starts_at": evt.get("starts_at"),
+                "tenant_slug": evt.get("tenant_slug"),
+                "company_name": company_name,
+                "tickets_sold": evt.get("tickets_sold", 0),
+                "capacity": evt.get("capacity"),
+                "gmv_cents": row.gmv,
+                "tickets": row.tickets,
+            }
+        )
 
     return {
         "kpis": {
@@ -233,19 +270,30 @@ async def dashboard_stats(session: AsyncSession = Depends(get_db)) -> Dict[str, 
 # ── /admin/attention-items ──────────────────────────────────────────────────
 @router.get("/attention-items")
 async def attention_items(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
-    pending_organizers = await session.scalar(
-        select(func.count(Organizer.id)).where(Organizer.status == "pending")
-    ) or 0
-    cutoff_24h = _now() - timedelta(hours=24)
-    stale_manual_orders = await session.scalar(
-        select(func.count(TicketOrder.id)).where(
-            TicketOrder.status == "pending_manual_payment",
-            TicketOrder.created_at < cutoff_24h,
+    pending_organizers = (
+        await session.scalar(
+            select(func.count(Organizer.id)).where(Organizer.status == "pending")
         )
-    ) or 0
-    past_due_subs = await session.scalar(
-        select(func.count(Organizer.id)).where(Organizer.subscription_status == "past_due")
-    ) or 0
+        or 0
+    )
+    cutoff_24h = _now() - timedelta(hours=24)
+    stale_manual_orders = (
+        await session.scalar(
+            select(func.count(TicketOrder.id)).where(
+                TicketOrder.status == "pending_manual_payment",
+                TicketOrder.created_at < cutoff_24h,
+            )
+        )
+        or 0
+    )
+    past_due_subs = (
+        await session.scalar(
+            select(func.count(Organizer.id)).where(
+                Organizer.subscription_status == "past_due"
+            )
+        )
+        or 0
+    )
     return {
         "pending_organizers": pending_organizers,
         "stale_manual_orders": stale_manual_orders,
@@ -255,8 +303,13 @@ async def attention_items(session: AsyncSession = Depends(get_db)) -> Dict[str, 
 
 # ── Organizers list with sort/filter/aggregations ───────────────────────────
 SortableField = Literal[
-    "created_at", "company_name", "email", "revenue", "tickets_emitted",
-    "events_published", "last_login",
+    "created_at",
+    "company_name",
+    "email",
+    "revenue",
+    "tickets_emitted",
+    "events_published",
+    "last_login",
 ]
 
 
@@ -324,7 +377,10 @@ async def organizers_rich(
         .where(TicketOrder.organizer_id.in_(org_ids), TicketOrder.status == "paid")
         .group_by(TicketOrder.organizer_id)
     )
-    rev_map = {r.organizer_id: {"revenue": r.revenue, "tickets": r.tickets} for r in rev_result.all()}
+    rev_map = {
+        r.organizer_id: {"revenue": r.revenue, "tickets": r.tickets}
+        for r in rev_result.all()
+    }
 
     # Events published count per organizer (PG)
     evt_result = await session.execute(
@@ -356,21 +412,23 @@ async def organizers_rich(
                 continue
             if activity == "10+" and n_events < 10:
                 continue
-        enriched.append({
-            "id": o["id"],
-            "slug": o["slug"],
-            "company_name": o["company_name"],
-            "email": o["email"],
-            "status": o.get("status"),
-            "subscription_status": o.get("subscription_status"),
-            "plan_code": plan["code"] if plan else None,
-            "plan_name": plan["name"] if plan else None,
-            "created_at": o.get("created_at"),
-            "revenue": rev.get("revenue", 0),
-            "tickets_emitted": rev.get("tickets", 0),
-            "events_published": n_events,
-            "last_login": login_map.get(o["id"]),
-        })
+        enriched.append(
+            {
+                "id": o["id"],
+                "slug": o["slug"],
+                "company_name": o["company_name"],
+                "email": o["email"],
+                "status": o.get("status"),
+                "subscription_status": o.get("subscription_status"),
+                "plan_code": plan["code"] if plan else None,
+                "plan_name": plan["name"] if plan else None,
+                "created_at": o.get("created_at"),
+                "revenue": rev.get("revenue", 0),
+                "tickets_emitted": rev.get("tickets", 0),
+                "events_published": n_events,
+                "last_login": login_map.get(o["id"]),
+            }
+        )
 
     # Sort
     reverse = direction == "desc"
@@ -425,7 +483,9 @@ async def audit_log(
     items = [row_to_dict(r) for r in result.scalars().all()]
 
     # Enrich actor with email
-    actor_ids = list({it.get("actor_user_id") for it in items if it.get("actor_user_id")})
+    actor_ids = list(
+        {it.get("actor_user_id") for it in items if it.get("actor_user_id")}
+    )
     actors: Dict[str, dict] = {}
     if actor_ids:
         users_result = await session.execute(

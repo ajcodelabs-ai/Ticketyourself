@@ -1,4 +1,5 @@
 """Unit tests for TicketShow-aligned wizard pricing / access helpers."""
+
 from __future__ import annotations
 
 import os
@@ -11,10 +12,10 @@ from fastapi import HTTPException
 
 from routers.events import CustomQuestion, LocalityPriceIn
 from services.order_service import (
+    DEFAULT_FEE_PERCENT,
     compute_totals_with_seats,
     locality_fee_cents,
     locality_pricing_map,
-    DEFAULT_FEE_PERCENT,
 )
 
 
@@ -78,7 +79,9 @@ def test_compute_totals_with_seats_fees_on_entrada_only():
     seats_mod.seats_by_id = fake_seats_by_id
     try:
         totals = compute_totals_with_seats(
-            event=event, venue=venue, seat_ids=["s1", "s2"],
+            event=event,
+            venue=venue,
+            seat_ids=["s1", "s2"],
         )
     finally:
         seats_mod.seats_by_id = original
@@ -113,7 +116,12 @@ def test_locality_fee_cents_applies_to_ticket_type_bound_to_locality():
     compute_totals_with_seats's per-seat path."""
     event = {
         "locality_pricing": [
-            {"locality_id": "vip", "price_cents": 5000, "service_fee_cents": 300, "admin_fee_cents": 150},
+            {
+                "locality_id": "vip",
+                "price_cents": 5000,
+                "service_fee_cents": 300,
+                "admin_fee_cents": 150,
+            },
         ]
     }
     pricing_map = locality_pricing_map(event)
@@ -122,7 +130,11 @@ def test_locality_fee_cents_applies_to_ticket_type_bound_to_locality():
 
 
 def test_locality_fee_cents_zero_for_ticket_type_without_locality():
-    event = {"locality_pricing": [{"locality_id": "vip", "price_cents": 5000, "service_fee_cents": 300}]}
+    event = {
+        "locality_pricing": [
+            {"locality_id": "vip", "price_cents": 5000, "service_fee_cents": 300}
+        ]
+    }
     pricing_map = locality_pricing_map(event)
     assert locality_fee_cents(pricing_map, None) == (0, 0)
     assert locality_fee_cents(pricing_map, "unknown-locality") == (0, 0)

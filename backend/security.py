@@ -1,6 +1,7 @@
 """Auth helpers: password hashing, JWT, dependencies for FastAPI routes."""
+
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
@@ -141,9 +142,11 @@ async def get_current_user(request: Request) -> dict:
         }
 
     from sqlalchemy import select
+
     from database import AsyncSessionLocal
-    from orm_models import User
     from db_helpers import row_to_dict
+    from orm_models import User
+
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.id == payload["sub"]))
         row = result.scalar_one_or_none()
@@ -159,6 +162,7 @@ def require_role(*roles: UserRole):
         if user.get("role") not in roles:
             raise HTTPException(status_code=403, detail="Forbidden")
         return user
+
     return dep
 
 
@@ -172,7 +176,9 @@ async def get_refresh_payload(request: Request) -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 # Staff JWT (Phase 8)
 # ──────────────────────────────────────────────────────────────────────────────
-def create_staff_token(staff_id: str, email: str, organizer_id: str, roles: list) -> str:
+def create_staff_token(
+    staff_id: str, email: str, organizer_id: str, roles: list
+) -> str:
     payload = {
         "sub": staff_id,
         "email": email,
@@ -195,9 +201,11 @@ async def get_current_staff(request: Request) -> dict:
     if payload.get("role") != "org_staff":
         raise HTTPException(status_code=403, detail="Staff access required")
     from sqlalchemy import select
+
     from database import AsyncSessionLocal
-    from orm_models import StaffMember
     from db_helpers import row_to_dict
+    from orm_models import StaffMember
+
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(StaffMember).where(
@@ -215,8 +223,10 @@ async def get_current_staff(request: Request) -> dict:
 
 def require_staff_role(role: str):
     """Check that the authenticated staff has a specific role in their roles list."""
+
     async def dep(staff: dict = Depends(get_current_staff)) -> dict:
         if role not in (staff.get("roles") or []):
             raise HTTPException(status_code=403, detail=f"Requires staff role: {role}")
         return staff
+
     return dep

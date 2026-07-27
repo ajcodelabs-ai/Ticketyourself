@@ -1,4 +1,5 @@
 """Organizer self-service: profile + document uploads — Phase 2: PostgreSQL."""
+
 import logging
 import os
 import uuid
@@ -86,7 +87,9 @@ async def update_me(
     user=Depends(require_role("organizer")),
     session: AsyncSession = Depends(get_db),
 ):
-    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    updates = {
+        k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None
+    }
     if not updates:
         raise HTTPException(400, "No fields to update")
 
@@ -96,7 +99,9 @@ async def update_me(
 
     # If company_name changes, propagate to tenant name (slug is immutable).
     if "company_name" in updates:
-        tenant_result = await session.execute(select(Tenant).where(Tenant.slug == row.slug))
+        tenant_result = await session.execute(
+            select(Tenant).where(Tenant.slug == row.slug)
+        )
         tenant_row = tenant_result.scalar_one_or_none()
         if tenant_row:
             tenant_row.name = updates["company_name"]
@@ -173,7 +178,9 @@ async def upload_my_doc(
     if file.content_type not in ALLOWED_MIME:
         logger.warning(
             "Document upload rejected: organizer=%s mime=%s filename=%s",
-            row.id, file.content_type, file.filename,
+            row.id,
+            file.content_type,
+            file.filename,
         )
         raise HTTPException(
             415,
@@ -216,6 +223,7 @@ async def upload_my_doc(
     )
     try:
         from services.activation import log_funnel_event
+
         await log_funnel_event(organizer_id=row.id, event_name="first_doc_uploaded")
     except Exception:  # noqa: BLE001
         pass
@@ -257,7 +265,9 @@ admin_router = APIRouter(
 )
 
 
-@admin_router.get("/{organizer_id}/documents", response_model=List[OrganizerDocumentOut])
+@admin_router.get(
+    "/{organizer_id}/documents", response_model=List[OrganizerDocumentOut]
+)
 async def admin_list_docs(
     organizer_id: str,
     session: AsyncSession = Depends(get_db),

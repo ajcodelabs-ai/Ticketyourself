@@ -1,0 +1,97 @@
+name: Deploy to staging
+
+on:
+  push:
+    branches: [staging]
+
+permissions:
+  id-token: write # required to assume the AWS role via OIDC
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false # never interrupt a deploy mid-flight
+
+jobs:
+  deploy:
+    name: Deploy to staging EC2 via SSM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_STAGING_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Wake instance (auto on/off schedule may have it stopped)
+        env:
+          INSTANCE_ID: ${{ secrets.AWS_STAGING_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+          state=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query "Reservations[0].Instances[0].State.Name" --output text)
+          if [[ "$state" != "running" ]]; then
+            echo "Instance is $state — starting it."
+            aws ec2 start-instances --instance-ids "$INSTANCE_ID" >/dev/null
+            aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
+          fi
+
+          for _ in $(seq 1 30); do
+            ping=$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$INSTANCE_ID" --query "InstanceInformationList[0].PingStatus" --output text 2>/dev/null || echo "")
+            [[ "$ping" == "Online" ]] && exit 0
+            sleep 10
+          done
+          echo "::error::SSM agent never came online on $INSTANCE_ID"
+          exit 1
+
+      - name: Deploy via SSM
+        env:
+          INSTANCE_ID: ${{ secrets.AWS_STAGING_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+
+          send() {
+            local params
+            params=$(jq -cn --arg cmd "$1" '{commands: [$cmd]}')
+            aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --document-name "AWS-RunShellScript" \
+              --parameters "$params" \
+              --output text --query "Command.CommandId"
+          }
+
+          # Polls a single SSM command to completion, prints its output, and
+          # fails the job (non-zero exit) if the command itself failed.
+          wait_and_show() {
+            local cmd_id="$1" result status
+            for _ in $(seq 1 60); do
+              result=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" \
+                --query "[Status,StandardOutputContent,StandardErrorContent]" --output text 2>/dev/null || echo -e "Pending\t\t")
+              status=$(cut -f1 <<<"$result")
+              if [[ "$status" != "Pending" && "$status" != "InProgress" ]]; then
+                echo "$result"
+                if [[ "$status" != "Success" ]]; then
+                  echo "::error::SSM command failed with status: $status"
+                  exit 1
+                fi
+                return 0
+              fi
+              sleep 5
+            done
+            echo "::error::Timed out waiting for SSM command $cmd_id"
+            exit 1
+          }
+
+          echo "::group::1) Pull latest staging branch"
+          wait_and_show "$(send "cd /home/ec2-user/Ticketyourself && git fetch origin staging && git checkout staging && git reset --hard origin/staging")"
+          echo "::endgroup::"
+
+          echo "::group::2) Stop containers (frees RAM for the build)"
+          wait_and_show "$(send "cd /home/ec2-user/Ticketyourself && docker compose --env-file .env.prod -f docker-compose.prod.yml down")"
+          echo "::endgroup::"
+
+          echo "::group::3) Rebuild and start"
+          wait_and_show "$(send "cd /home/ec2-user/Ticketyourself && docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build")"
+          echo "::endgroup::"
+
+          echo "::group::4) Health check"
+          wait_and_show "$(send "for _ in \$(seq 1 12); do curl -sf http://localhost:8000/api/health && exit 0; sleep 5; done; exit 1")"
+          echo "::endgroup::"

@@ -12,13 +12,13 @@ either the full order (when `locality_ids` is empty/missing) or only the items
 whose `locality_id` matches the list. For non-seated events `locality_id` is
 None, so a locality-filtered rule never applies.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
-
 
 
 # ── Item builder ─────────────────────────────────────────────────────────────
@@ -47,11 +47,13 @@ def items_from_payload(
             if not seat:
                 continue
             loc = seat.get("locality_id")
-            items.append({
-                "seat_id": sid,
-                "locality_id": loc,
-                "price_cents": pricing_map.get(loc, 0),
-            })
+            items.append(
+                {
+                    "seat_id": sid,
+                    "locality_id": loc,
+                    "price_cents": pricing_map.get(loc, 0),
+                }
+            )
         return items
     unit = int(event.get("base_price_cents") or 0)
     return [
@@ -145,7 +147,11 @@ def _apply_rule_to_items(items: list[dict], rule: dict) -> int:
 
 # ── Public evaluators ───────────────────────────────────────────────────────
 def evaluate_promo_code(
-    *, event: dict, items: list[dict], promo_code: str | None, payment_method: str | None = None,
+    *,
+    event: dict,
+    items: list[dict],
+    promo_code: str | None,
+    payment_method: str | None = None,
 ) -> tuple[dict | None, str | None]:
     """Resolve the rule matching `promo_code` (case-insensitive). Returns
     (rule, error). Either `rule` (a dict) when valid, or `error` (str) when
@@ -156,9 +162,9 @@ def evaluate_promo_code(
     rules = (event.get("discounts") or {}).get("rules") or []
     rule = next(
         (
-            r for r in rules
-            if r.get("type") == "promo_code"
-            and (r.get("code") or "").upper() == code
+            r
+            for r in rules
+            if r.get("type") == "promo_code" and (r.get("code") or "").upper() == code
         ),
         None,
     )
@@ -179,7 +185,10 @@ def evaluate_promo_code(
 
 
 def evaluate_auto_quantity(
-    *, event: dict, items: list[dict], payment_method: str | None = None,
+    *,
+    event: dict,
+    items: list[dict],
+    payment_method: str | None = None,
 ) -> dict | None:
     """Pick the best auto/quantity/buy_n_get_m rule that applies. `best` =
     largest discount amount over the current items."""
@@ -225,42 +234,52 @@ def evaluate_discounts(
     applied: list[dict] = []
     # 1) promo_code (buyer-driven)
     promo_rule, err = evaluate_promo_code(
-        event=event, items=items, promo_code=promo_code, payment_method=payment_method,
+        event=event,
+        items=items,
+        promo_code=promo_code,
+        payment_method=payment_method,
     )
     if err:
         warnings.append(err)
     if promo_rule:
         amt = _apply_rule_to_items(items, promo_rule)
         if amt > 0:
-            applied.append({
-                "rule_id": promo_rule.get("id"),
-                "name": promo_rule.get("name"),
-                "type": promo_rule.get("type"),
-                "code": promo_rule.get("code"),
-                "amount_cents": amt,
-            })
+            applied.append(
+                {
+                    "rule_id": promo_rule.get("id"),
+                    "name": promo_rule.get("name"),
+                    "type": promo_rule.get("type"),
+                    "code": promo_rule.get("code"),
+                    "amount_cents": amt,
+                }
+            )
     # 2) Best auto/quantity/buy_n_get_m, excluding the already-applied promo_code rule.
-    auto_rule = evaluate_auto_quantity(event=event, items=items, payment_method=payment_method)
+    auto_rule = evaluate_auto_quantity(
+        event=event, items=items, payment_method=payment_method
+    )
     if auto_rule and (not promo_rule or auto_rule.get("id") != promo_rule.get("id")):
         amt = _apply_rule_to_items(items, auto_rule)
         if amt > 0:
-            applied.append({
-                "rule_id": auto_rule.get("id"),
-                "name": auto_rule.get("name"),
-                "type": auto_rule.get("type"),
-                "code": None,
-                "amount_cents": amt,
-            })
+            applied.append(
+                {
+                    "rule_id": auto_rule.get("id"),
+                    "name": auto_rule.get("name"),
+                    "type": auto_rule.get("type"),
+                    "code": None,
+                    "amount_cents": amt,
+                }
+            )
     return applied, warnings
 
 
 async def consume_promo_code(event_id: str, rule_id: str) -> bool:
     """Increment `uses_count` for the matching rule under a row-level lock.
     Returns True when the increment succeeded (i.e. we haven't exceeded `max_uses`)."""
-    from database import AsyncSessionLocal
-    from orm_models import Event
     from sqlalchemy import select
     from sqlalchemy.orm.attributes import flag_modified
+
+    from database import AsyncSessionLocal
+    from orm_models import Event
 
     async with AsyncSessionLocal() as session:
         row = await session.scalar(
@@ -298,5 +317,6 @@ def assert_buyer_allowed(rule: dict, buyer: dict, applied_count: int) -> None:
     cap = cond.get("max_per_buyer")
     if cap and applied_count > int(cap):
         raise HTTPException(
-            422, f"Este código permite hasta {cap} usos por comprador.",
+            422,
+            f"Este código permite hasta {cap} usos por comprador.",
         )

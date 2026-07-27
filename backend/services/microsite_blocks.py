@@ -3,6 +3,7 @@ Block layout helpers for the microsite page builder.
 Blocks are stored as an ordered JSON array; legacy microsites without blocks
 are inferred from template + sections_enabled at read time.
 """
+
 import re
 import uuid
 from typing import Any
@@ -10,8 +11,22 @@ from typing import Any
 import nh3
 
 _ALLOWED_TAGS = {
-    "p", "br", "strong", "em", "b", "i", "u", "ul", "ol", "li",
-    "h1", "h2", "h3", "h4", "a", "blockquote",
+    "p",
+    "br",
+    "strong",
+    "em",
+    "b",
+    "i",
+    "u",
+    "ul",
+    "ol",
+    "li",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "a",
+    "blockquote",
 }
 _ALLOWED_ATTRIBUTES = {"a": {"href", "target"}}
 
@@ -38,6 +53,7 @@ def safe_href(href: str | None) -> str | None:
     href = href.strip()
     return href if _SAFE_HREF_RE.match(href) else None
 
+
 BLOCK_TYPES = (
     "hero",
     "about",
@@ -54,58 +70,110 @@ BLOCK_TYPES = (
 # Preset block layouts keyed by legacy template code
 TEMPLATE_BLOCK_PRESETS: dict[str, list[dict[str, Any]]] = {
     "estandar": [
-        {"type": "hero", "enabled": True, "props": {"variant": "normal", "align": "left"}},
+        {
+            "type": "hero",
+            "enabled": True,
+            "props": {"variant": "normal", "align": "left"},
+        },
         {"type": "about", "enabled": True, "props": {"align": "left"}},
         {"type": "events", "enabled": True, "props": {"layout": "grid"}},
         {"type": "contact", "enabled": True, "props": {}},
         {"type": "social", "enabled": True, "props": {}},
     ],
     "galeria": [
-        {"type": "hero", "enabled": True, "props": {"variant": "huge", "align": "center"}},
+        {
+            "type": "hero",
+            "enabled": True,
+            "props": {"variant": "huge", "align": "center"},
+        },
         {"type": "events", "enabled": True, "props": {"layout": "galeria"}},
         {"type": "about", "enabled": True, "props": {"align": "center"}},
         {"type": "contact", "enabled": True, "props": {}},
         {"type": "social", "enabled": True, "props": {}},
     ],
     "evento_unico": [
-        {"type": "hero", "enabled": True, "props": {"variant": "huge", "align": "center"}},
+        {
+            "type": "hero",
+            "enabled": True,
+            "props": {"variant": "huge", "align": "center"},
+        },
         {"type": "events", "enabled": True, "props": {"layout": "featured"}},
         {"type": "about", "enabled": True, "props": {"align": "left"}},
         {"type": "contact", "enabled": True, "props": {}},
         {"type": "social", "enabled": True, "props": {}},
     ],
     "minimal": [
-        {"type": "hero", "enabled": True, "props": {"variant": "normal", "align": "center"}},
+        {
+            "type": "hero",
+            "enabled": True,
+            "props": {"variant": "normal", "align": "center"},
+        },
         {"type": "events", "enabled": True, "props": {"layout": "grid"}},
         {"type": "social", "enabled": True, "props": {}},
     ],
     "showcase": [
-        {"type": "hero", "enabled": True, "props": {"variant": "huge", "align": "center"}},
-        {"type": "gallery", "enabled": True, "props": {"columns": 3, "layout": "grid", "images": []}},
+        {
+            "type": "hero",
+            "enabled": True,
+            "props": {"variant": "huge", "align": "center"},
+        },
+        {
+            "type": "gallery",
+            "enabled": True,
+            "props": {"columns": 3, "layout": "grid", "images": []},
+        },
         {"type": "events", "enabled": True, "props": {"layout": "galeria"}},
         {"type": "social", "enabled": True, "props": {}},
     ],
     "cronologico": [
-        {"type": "hero", "enabled": True, "props": {"variant": "normal", "align": "left"}},
+        {
+            "type": "hero",
+            "enabled": True,
+            "props": {"variant": "normal", "align": "left"},
+        },
         {"type": "events", "enabled": True, "props": {"layout": "list"}},
         {"type": "about", "enabled": True, "props": {"align": "left"}},
         {"type": "contact", "enabled": True, "props": {}},
         {"type": "social", "enabled": True, "props": {}},
     ],
     "landing": [
-        {"type": "hero", "enabled": True, "props": {"variant": "huge", "align": "center"}},
+        {
+            "type": "hero",
+            "enabled": True,
+            "props": {"variant": "huge", "align": "center"},
+        },
         {"type": "about", "enabled": True, "props": {"align": "center"}},
         {"type": "events", "enabled": True, "props": {"layout": "grid"}},
-        {"type": "testimonials", "enabled": True, "props": {"title": "Lo que dicen nuestros asistentes", "items": []}},
-        {"type": "faq", "enabled": True, "props": {"title": "Preguntas frecuentes", "items": []}},
+        {
+            "type": "testimonials",
+            "enabled": True,
+            "props": {"title": "Lo que dicen nuestros asistentes", "items": []},
+        },
+        {
+            "type": "faq",
+            "enabled": True,
+            "props": {"title": "Preguntas frecuentes", "items": []},
+        },
         {"type": "contact", "enabled": True, "props": {}},
         {"type": "social", "enabled": True, "props": {}},
     ],
     "portfolio": [
-        {"type": "hero", "enabled": True, "props": {"variant": "normal", "align": "center"}},
-        {"type": "gallery", "enabled": True, "props": {"columns": 2, "layout": "masonry", "images": []}},
+        {
+            "type": "hero",
+            "enabled": True,
+            "props": {"variant": "normal", "align": "center"},
+        },
+        {
+            "type": "gallery",
+            "enabled": True,
+            "props": {"columns": 2, "layout": "masonry", "images": []},
+        },
         {"type": "about", "enabled": True, "props": {"align": "center"}},
-        {"type": "image", "enabled": True, "props": {"layout": "full", "caption": "", "image_url": None}},
+        {
+            "type": "image",
+            "enabled": True,
+            "props": {"layout": "full", "caption": "", "image_url": None},
+        },
         {"type": "contact", "enabled": True, "props": {}},
         {"type": "social", "enabled": True, "props": {}},
     ],
@@ -139,12 +207,18 @@ def _safe_hex_color(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     v = value.strip()
-    if len(v) == 7 and v.startswith("#") and all(c in "0123456789abcdefABCDEF" for c in v[1:]):
+    if (
+        len(v) == 7
+        and v.startswith("#")
+        and all(c in "0123456789abcdefABCDEF" for c in v[1:])
+    ):
         return v.lower()
     return None
 
 
-def make_block(block_type: str, *, enabled: bool = True, props: dict | None = None) -> dict:
+def make_block(
+    block_type: str, *, enabled: bool = True, props: dict | None = None
+) -> dict:
     if block_type not in BLOCK_TYPES:
         raise ValueError(f"Invalid block type: {block_type}")
     merged_props = dict(DEFAULT_BLOCK_PROPS.get(block_type, {}))
@@ -227,8 +301,7 @@ def _validate_block_props(block_type: str, props: dict) -> dict:
             merged["images"] = []
         else:
             merged["images"] = [
-                img for img in images[:12]
-                if isinstance(img, dict) and img.get("url")
+                img for img in images[:12] if isinstance(img, dict) and img.get("url")
             ]
         cols = merged.get("columns")
         if not isinstance(cols, int) or cols < 1 or cols > 4:
@@ -246,7 +319,9 @@ def _validate_block_props(block_type: str, props: dict) -> dict:
                     {
                         "id": str(item.get("id") or new_block_id()),
                         "question": str(item.get("question") or "")[:200],
-                        "answer_html": sanitize_html(str(item.get("answer_html") or "")[:2000]),
+                        "answer_html": sanitize_html(
+                            str(item.get("answer_html") or "")[:2000]
+                        ),
                     }
                 )
             merged["items"] = cleaned_items
@@ -285,21 +360,34 @@ def _validate_block_props(block_type: str, props: dict) -> dict:
                 role = layer.get("role")
                 cleaned = {
                     "id": str(layer.get("id") or new_block_id()),
-                    "type": layer.get("type")
-                    if layer.get("type") in ("heading", "text", "badge", "button", "image")
-                    else "text",
+                    "type": (
+                        layer.get("type")
+                        if layer.get("type")
+                        in ("heading", "text", "badge", "button", "image")
+                        else "text"
+                    ),
                     "content": str(layer.get("content") or "")[:120],
                     "colStart": max(1, min(12, int(layer.get("colStart") or 1))),
                     "colSpan": max(1, min(12, int(layer.get("colSpan") or 6))),
                     "row": max(1, min(6, int(layer.get("row") or 1))),
-                    "align": layer.get("align") if layer.get("align") in ("left", "center", "right") else "left",
+                    "align": (
+                        layer.get("align")
+                        if layer.get("align") in ("left", "center", "right")
+                        else "left"
+                    ),
                     "color": _safe_hex_color(layer.get("color")),
-                    "fontSize": layer.get("fontSize")
-                    if layer.get("fontSize") in ("sm", "base", "lg", "xl", "2xl", "3xl")
-                    else None,
-                    "fontWeight": layer.get("fontWeight")
-                    if layer.get("fontWeight") in ("normal", "medium", "semibold", "bold")
-                    else None,
+                    "fontSize": (
+                        layer.get("fontSize")
+                        if layer.get("fontSize")
+                        in ("sm", "base", "lg", "xl", "2xl", "3xl")
+                        else None
+                    ),
+                    "fontWeight": (
+                        layer.get("fontWeight")
+                        if layer.get("fontWeight")
+                        in ("normal", "medium", "semibold", "bold")
+                        else None
+                    ),
                     "href": safe_href(str(layer.get("href") or "")[:500]),
                     "imageUrl": str(layer.get("imageUrl") or "")[:500] or None,
                 }

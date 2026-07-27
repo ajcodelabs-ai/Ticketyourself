@@ -355,7 +355,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     useEffect(() => {
         if (!currentEvent?.venue_id) return;
         update("venue_name", currentEvent.venue_name || "");
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentEvent?.venue_name, currentEvent?.venue_id]);
 
     // When building payload, use the latest form state via ref to avoid stale
@@ -555,7 +554,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         const toUpload = list.slice(0, remaining);
         let uploaded = 0;
         for (const f of toUpload) {
-            // eslint-disable-next-line no-await-in-loop
             const r = await uploadImage(f, "gallery");
             if (r) uploaded += 1;
         }
@@ -1913,6 +1911,17 @@ function SectionMedia({
 
 // ── Section: Ticket design (M4) ─────────────────────────────────────────────
 function SectionTicketDesign({ form, update, eventId }) {
+    // Whether the courtesy panel is shown is a local UI choice, independent
+    // from whether it has any elements yet (a freshly-enabled design starts
+    // empty). Persistence-wise, "off" is saved as an empty-elements design —
+    // the generic PUT diff can't clear a field back to `null`, but the
+    // renderer already treats empty elements the same as "no design" (falls
+    // back to inheriting the main one).
+    // Declared before the `!eventId` early return below — hooks must run
+    // unconditionally on every render (Rules of Hooks).
+    const [showCourtesy, setShowCourtesy] = useState(
+        () => !!form.courtesy_ticket_design?.elements?.length,
+    );
     if (!eventId) {
         return (
             <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground" data-testid="section-ticket-design">
@@ -1923,15 +1932,6 @@ function SectionTicketDesign({ form, update, eventId }) {
             </div>
         );
     }
-    // Whether the courtesy panel is shown is a local UI choice, independent
-    // from whether it has any elements yet (a freshly-enabled design starts
-    // empty). Persistence-wise, "off" is saved as an empty-elements design —
-    // the generic PUT diff can't clear a field back to `null`, but the
-    // renderer already treats empty elements the same as "no design" (falls
-    // back to inheriting the main one).
-    const [showCourtesy, setShowCourtesy] = useState(
-        () => !!form.courtesy_ticket_design?.elements?.length,
-    );
     const hasMainDesign = !!form.ticket_design?.elements?.length;
 
     return (

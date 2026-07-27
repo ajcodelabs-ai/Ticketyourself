@@ -1,4 +1,5 @@
 """Tenant resolution endpoint — Phase 1: migrated to PostgreSQL."""
+
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request

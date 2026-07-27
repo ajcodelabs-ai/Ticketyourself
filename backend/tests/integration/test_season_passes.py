@@ -23,8 +23,8 @@ pytestmark = pytest.mark.skip(reason="season pass API not deployed")
 
 from conftest import (
     API,
-    PAID_EVENT_SLUG,
     DEMO_TENANT,
+    PAID_EVENT_SLUG,
     bearer,
     new_session,
     unique_buyer,

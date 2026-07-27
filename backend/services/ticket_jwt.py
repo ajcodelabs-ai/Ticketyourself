@@ -3,6 +3,7 @@ Ticket JWT — separate secret from auth JWT so we can rotate independently.
 The QR code on each ticket is the JWT itself. Validators verify signature
 + exp + purpose, then look up the ticket in DB for revocation status.
 """
+
 import logging
 import os
 from datetime import datetime, timezone
