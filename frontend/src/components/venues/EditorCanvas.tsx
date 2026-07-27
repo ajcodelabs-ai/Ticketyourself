@@ -86,6 +86,8 @@ interface EditorCanvasProps {
     onCanvasClick?: (tool: string, world: { x: number; y: number }) => void;
     readOnly?: boolean;
     height?: number;
+    /** When this value changes (venue/event id), auto fit-to-view once after layout loads. */
+    autoFitKey?: string;
 }
 
 function snapVal(v) {
@@ -124,6 +126,7 @@ export default function EditorCanvas({
     onCanvasClick,
     readOnly = false,
     height = 600,
+    autoFitKey,
 }: EditorCanvasProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<Konva.Stage>(null);
@@ -131,27 +134,41 @@ export default function EditorCanvas({
     const elementRefs = useRef<Record<string, Konva.Group>>({});
     const elementsRef = useRef(elements);
     useEffect(() => { elementsRef.current = elements; }, [elements]);
+    const fittedKeyRef = useRef<string | null>(null);
 
-    const [containerSize, setContainerSize] = useState({ width: 800, height });
+    const [containerSize, setContainerSize] = useState({ width: 0, height });
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [guides, setGuides] = useState<GuideLine[]>([]);
     const dragSnapshot = useRef<DragSnapshot | null>(null);
 
-    // Container size + ResizeObserver for responsive width
+    // Measure available width from the parent (not self) to avoid a
+    // Stage↔container ResizeObserver feedback loop that grows forever.
     useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return undefined;
+        const target = el.parentElement || el;
+
         const update = () => {
-            if (containerRef.current) {
-                setContainerSize({
-                    width: containerRef.current.offsetWidth,
-                    height,
-                });
-            }
+            const width = Math.floor(target.getBoundingClientRect().width);
+            if (width < 1) return;
+            setContainerSize((prev) => {
+                if (Math.abs(prev.width - width) < 1 && prev.height === height) return prev;
+                return { width, height };
+            });
         };
+
         update();
+        const ro = typeof ResizeObserver !== "undefined"
+            ? new ResizeObserver(update)
+            : null;
+        ro?.observe(target);
         window.addEventListener("resize", update);
-        return () => window.removeEventListener("resize", update);
+        return () => {
+            window.removeEventListener("resize", update);
+            ro?.disconnect();
+        };
     }, [height]);
 
     // Sync Transformer — only on single selection (multi-select uses group drag).
@@ -222,6 +239,18 @@ export default function EditorCanvas({
             y: ch / 2 - (bbox.y + bbox.height / 2) * next,
         });
     }, [elements, containerSize.width, containerSize.height, resetView]);
+
+    // Auto-center when a venue/layout loads (same as clicking "Centrar").
+    useEffect(() => {
+        const key = autoFitKey ?? "__default__";
+        if (fittedKeyRef.current === key) return;
+        if (!elements?.length || containerSize.width < 50) return;
+        const raf = requestAnimationFrame(() => {
+            fitToView();
+            fittedKeyRef.current = key;
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [autoFitKey, elements, containerSize.width, containerSize.height, fitToView]);
 
     // Keyboard shortcuts: `F` (fit) and `0` (reset). Skip when typing.
     useEffect(() => {
@@ -393,30 +422,26 @@ export default function EditorCanvas({
         const snap = dragSnapshot.current?.snap;
         const multi = snap && Object.keys(snap).length > 1;
 
-        if (multi && onBatchUpdate) {
+        if (multi) {
+            // Snap the *delta* (via the dragged anchor), then apply the same
+            // offset to every selected element. Snapping each absolute x/y
+            // independently destroys relative spacing (e.g. seats from an
+            // exploded row with 30px gaps on a 20px grid).
             const origin = snap[el.id] || { startX: el.x, startY: el.y };
-            const dx = x - origin.startX;
-            const dy = y - origin.startY;
+            const dx = snapVal(x) - origin.startX;
+            const dy = snapVal(y) - origin.startY;
             const patches: Record<string, Record<string, unknown>> = {};
             Object.entries(snap).forEach(([id, info]) => {
                 patches[id] = {
-                    x: snapVal(info.startX + dx),
-                    y: snapVal(info.startY + dy),
+                    x: Math.round((info.startX + dx) * 10) / 10,
+                    y: Math.round((info.startY + dy) * 10) / 10,
                 };
             });
-            onBatchUpdate(patches);
-        } else if (multi) {
-            const origin = snap[el.id] || { startX: el.x, startY: el.y };
-            const dx = x - origin.startX;
-            const dy = y - origin.startY;
-            Object.entries(snap).forEach(([id, info]) => {
-                if (id === el.id) return;
-                onUpdate(id, {
-                    x: snapVal(info.startX + dx),
-                    y: snapVal(info.startY + dy),
-                });
-            });
-            onUpdate(el.id, { x: snapVal(x), y: snapVal(y) });
+            if (onBatchUpdate) {
+                onBatchUpdate(patches);
+            } else {
+                Object.entries(patches).forEach(([id, patch]) => onUpdate(id, patch));
+            }
         } else {
             onUpdate(el.id, { x: snapVal(x), y: snapVal(y) });
         }
@@ -512,14 +537,15 @@ export default function EditorCanvas({
     return (
         <div
             ref={containerRef}
-            className="w-full bg-slate-50 rounded-lg border relative overflow-hidden"
+            className="w-full max-w-full min-w-0 bg-slate-50 rounded-lg border relative overflow-hidden"
+            style={{ height, maxWidth: "100%" }}
             data-testid="venue-canvas-wrap"
             onContextMenu={(e) => e.preventDefault()}
         >
             <Stage
                 ref={stageRef}
-                width={containerSize.width}
-                height={containerSize.height}
+                width={Math.max(1, containerSize.width)}
+                height={Math.max(1, containerSize.height)}
                 scaleX={zoom}
                 scaleY={zoom}
                 x={pan.x}
@@ -529,7 +555,11 @@ export default function EditorCanvas({
                 onMouseMove={handleStageMouseMove}
                 onMouseUp={handleStageMouseUp}
                 onTouchStart={handleStageMouseDown}
-                style={{ cursor: tool && tool !== "select" ? "crosshair" : "default" }}
+                style={{
+                    cursor: tool && tool !== "select" ? "crosshair" : "default",
+                    display: "block",
+                    maxWidth: "100%",
+                }}
             >
                 {/* Background + grid layer (no listening) */}
                 <Layer listening={true}>

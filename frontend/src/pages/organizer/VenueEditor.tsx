@@ -15,7 +15,6 @@ import {
     ArrowLeft, Save, Send, AlertCircle, Lock, ExternalLink, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -32,9 +31,9 @@ import PublishPendingDialog from "@/components/PublishPendingDialog";
 import VenueEmptyCanvasOverlay from "@/components/venues/VenueEmptyCanvasOverlay";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-    venuesApi, adminVenueTemplatesApi, makeStage, makeZone, makeRow, makeCurvedRow, makeSeat,
+    venuesApi, adminVenueTemplatesApi, eventVenueLayoutApi, makeStage, makeZone, makeRow, makeCurvedRow, makeSeat,
     makeTableRound, makeTableRect, computeCapacity, newId, bumpLabel,
-    elementAcceptsLocality, elementBBox, STATUS_LABEL,
+    elementAcceptsLocality, elementBBox, STATUS_LABEL, explodeRowToSeats, isSeatRowKind, GRID,
 } from "@/lib/venues";
 
 const AUTO_SAVE_MS = 30_000;
@@ -53,14 +52,18 @@ function nextRowLabel(elements) {
 }
 
 export default function VenueEditor() {
-    const { id } = useParams();
+    const { id, eventId: eventIdParam } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
     const [searchParams] = useSearchParams();
     const { organizer } = useAuth();
     const isAdminTemplate = location.pathname.startsWith("/admin/venue-templates/");
+    const isEventScope = Boolean(eventIdParam) || /\/app\/eventos\/[^/]+\/mapa/.test(location.pathname);
+    const eventId = eventIdParam || null;
     const venueApi = isAdminTemplate ? adminVenueTemplatesApi : venuesApi;
-    const listPath = isAdminTemplate ? "/admin/venue-templates" : "/app/venues";
+    const listPath = isEventScope
+        ? (searchParams.get("return_to") || (eventId ? `/app/eventos/${eventId}/editar?tab=localidades` : "/app/eventos"))
+        : (isAdminTemplate ? "/admin/venue-templates" : "/app/venues");
     // When the user landed here from the event wizard, the URL carries
     // `?return_to=` and we send them back automatically right after publishing.
     const returnTo = searchParams.get("return_to");
@@ -83,28 +86,70 @@ export default function VenueEditor() {
 
     const dirtyRef = useRef(false);
     const saveLockRef = useRef(false);
+    const historyRef = useRef([]);
+    const futureRef = useRef([]);
+    const venueRef = useRef(null);
+    const selectionRef = useRef([]);
+
+    // Keep refs in sync for keyboard handlers (avoid stale closures).
+    useEffect(() => { venueRef.current = venue; }, [venue]);
+    useEffect(() => { selectionRef.current = selection; }, [selection]);
+    useEffect(() => { historyRef.current = history; }, [history]);
+    useEffect(() => { futureRef.current = future; }, [future]);
 
     // Load
     useEffect(() => {
         let mounted = true;
         (async () => {
             try {
-                const v = await venueApi.get(id);
-                if (mounted) {
-                    setVenue(v);
-                    // The venue list already asked "plantilla o en blanco?" before
-                    // creating this venue — don't ask again here.
-                    setEmptyOverlayDismissed(searchParams.get("blank") === "1");
+                if (isEventScope && eventId) {
+                    const layout = await eventVenueLayoutApi.get(eventId);
+                    if (!mounted) return;
+                    setVenue({
+                        id: layout.venue_id || eventId,
+                        name: layout.venue_name || "Mapa del evento",
+                        slug: layout.venue_slug,
+                        status: "published",
+                        canvas: layout.canvas || { width: 1000, height: 600 },
+                        elements: layout.elements || [],
+                        localities: layout.localities || [],
+                        capacity_calculated: layout.capacity_calculated || 0,
+                        lock_status: layout.lock_status || { locked: false },
+                        is_event_snapshot: true,
+                        source_venue_id: layout.source_venue_id,
+                        source_venue_name: layout.venue_name,
+                    });
+                    historyRef.current = [];
+                    futureRef.current = [];
+                    setHistory([]);
+                    setFuture([]);
+                    setEmptyOverlayDismissed(true);
+                } else {
+                    const v = await venueApi.get(id);
+                    if (mounted) {
+                        setVenue(v);
+                        historyRef.current = [];
+                        futureRef.current = [];
+                        setHistory([]);
+                        setFuture([]);
+                        // The venue list already asked "plantilla o en blanco?" before
+                        // creating this venue — don't ask again here.
+                        setEmptyOverlayDismissed(searchParams.get("blank") === "1");
+                    }
                 }
             } catch (e) {
-                toast.error(isAdminTemplate ? "No pudimos cargar la plantilla." : "No pudimos cargar el venue.");
+                toast.error(
+                    isEventScope
+                        ? "No pudimos cargar el mapa del evento."
+                        : (isAdminTemplate ? "No pudimos cargar la plantilla." : "No pudimos cargar el venue."),
+                );
                 navigate(listPath);
             } finally {
                 if (mounted) setLoading(false);
             }
         })();
         return () => { mounted = false; };
-    }, [id, navigate, venueApi, listPath, isAdminTemplate]);
+    }, [id, eventId, isEventScope, navigate, venueApi, listPath, isAdminTemplate]);
 
     useEffect(() => {
         const handler = (e) => {
@@ -125,36 +170,27 @@ export default function VenueEditor() {
     const locked = venue?.lock_status?.locked || false;
     const activeEvents = venue?.lock_status?.active_events || [];
 
-    // When the canvas is blank and the overlay is gone, default to a drawing
-    // tool so the user can start creating immediately (not "select" which
-    // does nothing on an empty canvas). Depends on `!!venue` (a stable
-    // boolean), not `venue` itself — venue gets a new object reference on
-    // every field edit (e.g. typing the venue name), and depending on the
-    // object would re-fire this on each keystroke, silently overriding
-    // whatever tool the user picked in the meantime.
-    const hasVenue = !!venue;
-    useEffect(() => {
-        if (hasVenue && elements.length === 0 && emptyOverlayDismissed) {
-            setTool("zone");
-        }
-    }, [hasVenue, elements.length, emptyOverlayDismissed]);
-
     const markDirty = () => {
         dirtyRef.current = true;
         setDirty(true);
     };
-    const pushHistory = (snapshot) => {
-        setHistory((h) => [...h, snapshot].slice(-30));
-        setFuture([]);
-    };
+
     const mutateVenue = (mutator) => {
-        setVenue((prev) => {
-            if (!prev) return prev;
-            const snap = JSON.stringify({ elements: prev.elements, localities: prev.localities });
-            pushHistory(snap);
-            const next = mutator(prev);
-            return { ...next, capacity_calculated: computeCapacity(next.elements) };
-        });
+        const prev = venueRef.current;
+        if (!prev) return;
+        const snap = JSON.stringify({ elements: prev.elements, localities: prev.localities });
+        const nextHistory = [...historyRef.current, snap].slice(-30);
+        historyRef.current = nextHistory;
+        futureRef.current = [];
+        setHistory(nextHistory);
+        setFuture([]);
+        const mutated = mutator(prev);
+        const next = {
+            ...mutated,
+            capacity_calculated: computeCapacity(mutated.elements),
+        };
+        venueRef.current = next;
+        setVenue(next);
         markDirty();
     };
 
@@ -238,9 +274,18 @@ export default function VenueEditor() {
             )),
         }));
     };
-    const deleteElement = (elemId) => {
-        mutateVenue((v) => ({ ...v, elements: v.elements.filter((e) => e.id !== elemId) }));
-        setSelection((s) => s.filter((x) => x !== elemId));
+    const deleteElement = (elemIdOrIds) => {
+        const ids = Array.isArray(elemIdOrIds) ? elemIdOrIds : [elemIdOrIds];
+        deleteElements(ids);
+    };
+    const deleteElements = (ids) => {
+        if (!ids?.length) return;
+        const idSet = new Set(ids);
+        mutateVenue((v) => ({
+            ...v,
+            elements: v.elements.filter((e) => !idSet.has(e.id)),
+        }));
+        setSelection((s) => s.filter((x) => !idSet.has(x)));
     };
     const onTransform = (elemId, patch) => updateElement(elemId, patch);
 
@@ -341,6 +386,32 @@ export default function VenueEditor() {
         });
         setSelection(newIds);
     };
+
+    const explodeRows = (ids) => {
+        const targetIds = ids?.length ? ids : selection;
+        const rows = elements.filter((e) => targetIds.includes(e.id) && isSeatRowKind(e.kind));
+        if (rows.length === 0) {
+            toast.message("Seleccioná una fila (recta o curva) para convertir.");
+            return;
+        }
+        const newIds = [];
+        mutateVenue((v) => {
+            let next = [...v.elements];
+            for (const row of rows) {
+                const seats = explodeRowToSeats(row);
+                next = next.filter((e) => e.id !== row.id).concat(seats);
+                newIds.push(...seats.map((s) => s.id));
+            }
+            return { ...v, elements: next };
+        });
+        setSelection(newIds);
+        toast.success(
+            rows.length === 1
+                ? `Fila convertida en ${newIds.length} asientos. Ahora podés seleccionarlos por separado.`
+                : `${rows.length} filas → ${newIds.length} asientos individuales.`,
+        );
+    };
+
     const copySelection = () => {
         if (selection.length === 0) return;
         clipboardRef.current = elements.filter((e) => selection.includes(e.id));
@@ -378,28 +449,54 @@ export default function VenueEditor() {
     };
 
     // ── Save / Publish ─────────────────────────────────────────────────
-    const persist = async ({ silent = false } = {}) => {
+    const persist = async ({ silent = false, navigateAway = true } = {}) => {
         if (!venue || saveLockRef.current) return;
         saveLockRef.current = true;
         setSaving(true);
         try {
-            const body = {
-                name: venue.name,
-                type: venue.type,
-                description: venue.description,
-                canvas: venue.canvas,
-                elements: venue.elements,
-                localities: venue.localities || [],
-            };
-            const updated = await venueApi.update(venue.id, body);
-            setVenue(updated);
-            dirtyRef.current = false;
-            setDirty(false);
-            if (!silent) toast.success(isAdminTemplate ? "Plantilla guardada" : "Venue guardado");
+            if (isEventScope && eventId) {
+                const updated = await eventVenueLayoutApi.put(eventId, {
+                    canvas: venue.canvas,
+                    elements: venue.elements,
+                    localities: venue.localities || [],
+                });
+                setVenue((prev) => ({
+                    ...prev,
+                    canvas: updated.canvas,
+                    elements: updated.elements,
+                    localities: updated.localities,
+                    capacity_calculated: updated.capacity_calculated,
+                    lock_status: updated.lock_status || prev.lock_status,
+                }));
+                dirtyRef.current = false;
+                setDirty(false);
+                if (!silent) toast.success("Mapa del evento guardado");
+                if (!silent && navigateAway && returnTo) {
+                    navigate(returnTo, { replace: true });
+                }
+            } else {
+                const body = {
+                    name: venue.name,
+                    type: venue.type,
+                    description: venue.description,
+                    canvas: venue.canvas,
+                    elements: venue.elements,
+                    localities: venue.localities || [],
+                };
+                const updated = await venueApi.update(venue.id, body);
+                setVenue(updated);
+                dirtyRef.current = false;
+                setDirty(false);
+                if (!silent) toast.success(isAdminTemplate ? "Plantilla guardada" : "Venue guardado");
+            }
         } catch (e) {
             const detail = e?.response?.data?.detail;
             if (e?.response?.status === 409) {
-                toast.error("Venue bloqueado: hay eventos con ventas activas.");
+                toast.error(
+                    isEventScope
+                        ? (typeof detail === "string" ? detail : "Mapa bloqueado: hay tickets vendidos.")
+                        : "Venue bloqueado: hay eventos con ventas activas.",
+                );
             } else if (typeof detail === "string") {
                 toast.error(detail);
             } else {
@@ -481,27 +578,55 @@ export default function VenueEditor() {
 
     // ── Undo / Redo ────────────────────────────────────────────────────
     const undo = () => {
-        if (history.length === 0 || !venue) return;
-        const last = history[history.length - 1];
-        setHistory((h) => h.slice(0, -1));
-        setFuture((f) => [...f, JSON.stringify({ elements: venue.elements, localities: venue.localities })]);
+        const hist = historyRef.current;
+        const current = venueRef.current;
+        if (hist.length === 0 || !current) return;
+        const last = hist[hist.length - 1];
+        const nextHistory = hist.slice(0, -1);
+        const nextFuture = [
+            ...futureRef.current,
+            JSON.stringify({ elements: current.elements, localities: current.localities }),
+        ];
+        historyRef.current = nextHistory;
+        futureRef.current = nextFuture;
+        setHistory(nextHistory);
+        setFuture(nextFuture);
         const snap = JSON.parse(last);
-        setVenue((v) => ({
-            ...v, elements: snap.elements, localities: snap.localities,
+        const next = {
+            ...current,
+            elements: snap.elements,
+            localities: snap.localities,
             capacity_calculated: computeCapacity(snap.elements),
-        }));
+        };
+        venueRef.current = next;
+        setVenue(next);
+        setSelection([]);
         markDirty();
     };
     const redo = () => {
-        if (future.length === 0 || !venue) return;
-        const next = future[future.length - 1];
-        setFuture((f) => f.slice(0, -1));
-        setHistory((h) => [...h, JSON.stringify({ elements: venue.elements, localities: venue.localities })]);
-        const snap = JSON.parse(next);
-        setVenue((v) => ({
-            ...v, elements: snap.elements, localities: snap.localities,
+        const fut = futureRef.current;
+        const current = venueRef.current;
+        if (fut.length === 0 || !current) return;
+        const nextSnap = fut[fut.length - 1];
+        const nextFuture = fut.slice(0, -1);
+        const nextHistory = [
+            ...historyRef.current,
+            JSON.stringify({ elements: current.elements, localities: current.localities }),
+        ];
+        historyRef.current = nextHistory;
+        futureRef.current = nextFuture;
+        setHistory(nextHistory);
+        setFuture(nextFuture);
+        const snap = JSON.parse(nextSnap);
+        const next = {
+            ...current,
+            elements: snap.elements,
+            localities: snap.localities,
             capacity_calculated: computeCapacity(snap.elements),
-        }));
+        };
+        venueRef.current = next;
+        setVenue(next);
+        setSelection([]);
         markDirty();
     };
 
@@ -511,35 +636,66 @@ export default function VenueEditor() {
             const target = e.target;
             if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
             const ctrl = e.ctrlKey || e.metaKey;
-            if ((e.key === "Delete" || e.key === "Backspace") && selection.length > 0) {
-                e.preventDefault(); selection.forEach(deleteElement);
-            } else if (ctrl && e.key.toLowerCase() === "z") {
-                e.preventDefault(); if (e.shiftKey) redo(); else undo();
-            } else if (ctrl && e.key.toLowerCase() === "a") {
-                e.preventDefault(); selectAll();
-            } else if (ctrl && e.key.toLowerCase() === "c") {
-                e.preventDefault(); copySelection();
-            } else if (ctrl && e.key.toLowerCase() === "v") {
-                e.preventDefault(); paste();
-            } else if (ctrl && e.key.toLowerCase() === "d") {
-                e.preventDefault(); duplicateSelection();
-            } else if (e.key === "Escape") {
-                setSelection([]); setTool("select"); setContextMenu(null);
-            } else if (e.key === "+" || e.key === "=") {
-                // Handled in canvas via wheel; placeholder.
-            } else if (selection.length && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+            const sel = selectionRef.current;
+            const current = venueRef.current;
+            const els = current?.elements || [];
+
+            if ((e.key === "Delete" || e.key === "Backspace") && sel.length > 0) {
                 e.preventDefault();
-                const step = e.shiftKey ? 10 : 1;
+                deleteElements(sel);
+            } else if (ctrl && e.key.toLowerCase() === "z") {
+                e.preventDefault();
+                if (e.shiftKey) redo();
+                else undo();
+            } else if (ctrl && e.key.toLowerCase() === "y") {
+                e.preventDefault();
+                redo();
+            } else if (ctrl && e.key.toLowerCase() === "a") {
+                e.preventDefault();
+                setSelection(els.map((el) => el.id));
+            } else if (ctrl && e.key.toLowerCase() === "c") {
+                e.preventDefault();
+                clipboardRef.current = els.filter((el) => sel.includes(el.id));
+                if (clipboardRef.current.length) {
+                    toast.message(`${clipboardRef.current.length} elemento(s) copiado(s)`);
+                }
+            } else if (ctrl && e.key.toLowerCase() === "v") {
+                e.preventDefault();
+                if (clipboardRef.current.length === 0) return;
+                const newIds = [];
+                mutateVenue((v) => {
+                    const pastes = clipboardRef.current.map((el) => {
+                        const nid = newId();
+                        newIds.push(nid);
+                        return { ...el, id: nid, x: el.x + 20, y: el.y + 20 };
+                    });
+                    return { ...v, elements: [...v.elements, ...pastes] };
+                });
+                setSelection(newIds);
+            } else if (ctrl && e.key.toLowerCase() === "d") {
+                e.preventDefault();
+                duplicateSelection();
+            } else if (e.key === "Escape") {
+                setSelection([]);
+                setTool("select");
+                setContextMenu(null);
+            } else if (sel.length && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+                e.preventDefault();
+                const step = e.shiftKey ? 10 : GRID;
                 const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
                 const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
-                selection.forEach((id_) => {
-                    const el = elements.find((x) => x.id === id_);
-                    if (el) updateElement(id_, { x: el.x + dx, y: el.y + dy });
+                const patches = {};
+                sel.forEach((id_) => {
+                    const el = els.find((x) => x.id === id_);
+                    if (el) patches[id_] = { x: el.x + dx, y: el.y + dy };
                 });
+                if (Object.keys(patches).length) updateElementsBatch(patches);
             }
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
+        // Handlers read from refs; stable listener is intentional.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // ── Context menu actions ───────────────────────────────────────────
@@ -551,8 +707,10 @@ export default function VenueEditor() {
             toast.message("Editá las propiedades en el panel derecho.");
         } else if (action === "duplicate") {
             duplicateSelection();
+        } else if (action === "explode") {
+            explodeRows([elId]);
         } else if (action === "delete") {
-            selection.forEach(deleteElement);
+            deleteElements(selectionRef.current.length ? selectionRef.current : [elId]);
         } else if (action === "bring-front") {
             bringToFront();
         } else if (action === "send-back") {
@@ -574,83 +732,143 @@ export default function VenueEditor() {
 
     return (
         <div className="space-y-3" data-testid="venue-editor-page">
-            <header className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                    <Button asChild variant="ghost" size="icon">
-                        <Link to={listPath} aria-label="Volver">
-                            <ArrowLeft className="h-4 w-4" />
-                        </Link>
-                    </Button>
-                    <Input
-                        value={venue.name}
-                        onChange={(e) => {
-                            setVenue((v) => ({ ...v, name: e.target.value }));
-                            markDirty();
-                        }}
-                        className="h-9 font-semibold text-lg w-[300px] max-w-full"
-                        data-testid="venue-name-input"
-                    />
-                    <Badge variant="secondary">
-                        {isAdminTemplate ? "Plantilla" : STATUS_LABEL[venue.status]}
-                    </Badge>
-                    {locked && (
-                        <Badge className="bg-amber-100 text-amber-900 border-amber-200">
-                            <Lock className="h-3 w-3 mr-1" /> Bloqueado
-                        </Badge>
-                    )}
-                    {dirty && !saving && (
-                        <Badge variant="outline" className="text-amber-700 border-amber-300">● Sin guardar</Badge>
-                    )}
-                    {saving && (
-                        <Badge variant="outline" className="text-slate-600">
-                            <Loader2 className="h-3 w-3 mr-1 animate-spin" /> Guardando…
-                        </Badge>
-                    )}
-                </div>
-                <div className="flex items-center gap-2">
-                    {!isAdminTemplate && venue.status === "published" && (
-                        <Button asChild variant="outline" size="sm">
-                            <a href={`/o/${venue.tenant_slug}/venues/${venue.slug}/preview`} target="_blank"
-                               rel="noreferrer" data-testid="venue-preview-link">
-                                <ExternalLink className="h-3.5 w-3.5 mr-1" /> Preview público
-                            </a>
+            <header className="space-y-2">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <Button asChild variant="ghost" size="icon">
+                            <Link to={listPath} aria-label="Volver">
+                                <ArrowLeft className="h-4 w-4" />
+                            </Link>
                         </Button>
-                    )}
-                    <Button size="sm" variant="outline" onClick={() => persist()}
-                            disabled={saving} data-testid="venue-save-btn">
-                        <Save className="h-3.5 w-3.5 mr-1" /> Guardar
-                    </Button>
-                    {!isAdminTemplate && venue.status !== "published" && (
-                        <Button size="sm" onClick={publish}
-                                disabled={saving || elements.length === 0}
-                                data-testid="venue-publish-btn">
-                            <Send className="h-3.5 w-3.5 mr-1" /> Publicar
+                        {isEventScope ? (
+                            <div className="min-w-0">
+                                <div className="font-semibold text-lg truncate" data-testid="event-map-title">
+                                    {venue.name}
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    Copia del evento · origen {venue.source_venue_name || venue.name}
+                                    {" · "}
+                                    <strong className="text-foreground">{capacity}</strong> cap.
+                                    {" · "}
+                                    <strong className="text-foreground">{elements.length}</strong> elementos
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="min-w-0 space-y-0.5">
+                                <Input
+                                    value={venue.name}
+                                    onChange={(e) => {
+                                        setVenue((v) => {
+                                            const next = { ...v, name: e.target.value };
+                                            venueRef.current = next;
+                                            return next;
+                                        });
+                                        markDirty();
+                                    }}
+                                    className="h-9 font-semibold text-lg w-[300px] max-w-full"
+                                    data-testid="venue-name-input"
+                                />
+                                <p className="text-xs text-muted-foreground pl-0.5">
+                                    <strong className="text-foreground">{capacity}</strong> capacidad
+                                    {" · "}
+                                    <strong className="text-foreground">{elements.length}</strong> elementos
+                                </p>
+                            </div>
+                        )}
+                        <Badge variant="secondary" className="text-[10px] font-normal shrink-0">
+                            {isEventScope
+                                ? "Mapa del evento"
+                                : (isAdminTemplate ? "Plantilla" : STATUS_LABEL[venue.status])}
+                        </Badge>
+                        {locked && (
+                            <Badge className="bg-amber-100 text-amber-900 border-amber-200 text-[10px] font-normal">
+                                <Lock className="h-3 w-3 mr-1" /> Bloqueado
+                            </Badge>
+                        )}
+                        {dirty && !saving && (
+                            <Badge variant="outline" className="text-amber-700 border-amber-300 text-[10px] font-normal">
+                                ● Sin guardar
+                            </Badge>
+                        )}
+                        {saving && (
+                            <Badge variant="outline" className="text-muted-foreground text-[10px] font-normal">
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" /> Guardando…
+                            </Badge>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {!isEventScope && !isAdminTemplate && venue.status === "published" && (
+                            <Button asChild variant="outline" size="sm">
+                                <a href={`/o/${venue.tenant_slug}/venues/${venue.slug}/preview`} target="_blank"
+                                   rel="noreferrer" data-testid="venue-preview-link">
+                                    <ExternalLink className="h-3.5 w-3.5 mr-1" /> Preview
+                                </a>
+                            </Button>
+                        )}
+                        <Button size="sm" variant="outline" onClick={() => persist({ navigateAway: false })}
+                                disabled={saving} data-testid="venue-save-btn">
+                            <Save className="h-3.5 w-3.5 mr-1" /> Guardar
                         </Button>
-                    )}
+                        {!isEventScope && !isAdminTemplate && venue.status !== "published" && (
+                            <Button size="sm" onClick={publish}
+                                    disabled={saving || elements.length === 0}
+                                    data-testid="venue-publish-btn">
+                                <Send className="h-3.5 w-3.5 mr-1" /> Publicar
+                            </Button>
+                        )}
+                        {isEventScope && returnTo && (
+                            <Button
+                                size="sm"
+                                onClick={async () => {
+                                    if (dirty) await persist({ silent: true });
+                                    navigate(returnTo, { replace: true });
+                                }}
+                                disabled={saving}
+                                data-testid="event-map-done-btn"
+                            >
+                                Listo
+                            </Button>
+                        )}
+                    </div>
                 </div>
             </header>
 
-            {!isAdminTemplate && returnTo && elements.length > 0 && venue.status !== "published" && (
-                <Card className="border-indigo-200 bg-indigo-50/60">
-                    <CardContent className="py-3 text-sm text-indigo-900">
-                        Cuando termines, hacé clic en <strong>Publicar</strong> para volver a tu evento y
-                        vincular este venue.
-                    </CardContent>
-                </Card>
+            {!isEventScope && !isAdminTemplate && returnTo && elements.length > 0 && venue.status !== "published" && (
+                <div className="rounded-xl border bg-card p-3 text-sm text-muted-foreground flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" />
+                    <p>
+                        Cuando termines, hacé clic en <strong className="text-foreground">Publicar</strong> para
+                        volver a tu evento y vincular este venue.
+                    </p>
+                </div>
+            )}
+
+            {isEventScope && (
+                <div className="rounded-xl border bg-card p-3 text-sm text-muted-foreground flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" />
+                    <p>
+                        Estás editando la <strong className="text-foreground">copia del mapa de este evento</strong>.
+                        Los cambios no afectan el venue maestro ni otros eventos.
+                    </p>
+                </div>
             )}
 
             {locked && (
-                <Card className="border-amber-200 bg-amber-50/60">
-                    <CardContent className="pt-4 flex items-start gap-2 text-sm">
-                        <AlertCircle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
-                        <div>
-                            <p className="font-medium text-amber-900">Venue bloqueado para cambios estructurales</p>
-                            <p className="text-amber-800 text-xs">
-                                {activeEvents.length} evento(s) con ventas activas. Podés editar nombre, descripción y colores.
-                            </p>
-                        </div>
-                    </CardContent>
-                </Card>
+                <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 flex items-start gap-2 text-sm">
+                    <AlertCircle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+                    <div>
+                        <p className="font-medium text-amber-900">
+                            {isEventScope
+                                ? "Mapa bloqueado para cambios estructurales"
+                                : "Venue bloqueado para cambios estructurales"}
+                        </p>
+                        <p className="text-amber-800 text-xs mt-0.5">
+                            {isEventScope
+                                ? "Hay tickets vendidos en este evento. Podés editar colores y etiquetas no estructurales."
+                                : `${activeEvents.length} evento(s) con ventas activas. Podés editar nombre, descripción y colores.`}
+                        </p>
+                    </div>
+                </div>
             )}
 
             <EditorToolbar
@@ -662,9 +880,9 @@ export default function VenueEditor() {
                 canRedo={future.length > 0}
             />
 
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-3">
-                <div>
-                    <div className="relative">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-3">
+                <div className="min-w-0 max-w-full overflow-hidden">
+                    <div className="relative min-w-0 max-w-full">
                         <EditorCanvas
                             canvas={venue.canvas}
                             elements={elements}
@@ -679,6 +897,7 @@ export default function VenueEditor() {
                             onCanvasClick={handleCanvasClick}
                             readOnly={locked}
                             height={600}
+                            autoFitKey={venue.id}
                         />
                         {!isAdminTemplate && elements.length === 0 && !locked && !emptyOverlayDismissed && (
                             <VenueEmptyCanvasOverlay
@@ -688,44 +907,45 @@ export default function VenueEditor() {
                             />
                         )}
                     </div>
-                    <div className="mt-2 text-xs text-muted-foreground flex justify-between">
-                        <span>Canvas {venue.canvas.width} × {venue.canvas.height}px · Snap {venue.canvas.grid_size}px</span>
-                        <span><strong>{capacity}</strong> capacidad · <strong>{elements.length}</strong> elementos</span>
+                    <div className="mt-2 text-xs text-muted-foreground flex flex-wrap justify-between gap-2">
+                        <span>
+                            Canvas {venue.canvas.width} × {venue.canvas.height}px · Snap {venue.canvas.grid_size}px
+                        </span>
+                        <span className="text-right">
+                            Ctrl+Z deshacer · Ctrl+click multi · click derecho menú
+                        </span>
                     </div>
                 </div>
 
-                <aside className="space-y-4">
-                    <Card>
-                        <CardContent className="pt-4 space-y-4">
-                            <PropertiesPanel
-                                selection={selection}
-                                elements={elements}
-                                localities={localities}
-                                onUpdate={updateElement}
-                                onDelete={deleteElement}
-                                onAlign={align}
-                                onDistribute={distribute}
-                                onBringFront={bringToFront}
-                                onSendBack={sendToBack}
-                                onDuplicate={duplicateSelection}
-                                readOnly={locked}
-                            />
-                        </CardContent>
-                    </Card>
-                    <Card>
-                        <CardContent className="pt-4">
-                            <LocalitiesPanel
-                                localities={localities}
-                                elements={elements}
-                                selection={selection}
-                                onAdd={addLocality}
-                                onUpdate={updateLocality}
-                                onDelete={deleteLocality}
-                                onAssign={assignLocalityToSelection}
-                                readOnly={locked}
-                            />
-                        </CardContent>
-                    </Card>
+                <aside className="space-y-3 lg:sticky lg:top-3 lg:self-start lg:max-h-[min(720px,calc(100vh-8rem))] lg:overflow-y-auto">
+                    <div className="rounded-xl border bg-card p-4 space-y-4">
+                        <PropertiesPanel
+                            selection={selection}
+                            elements={elements}
+                            localities={localities}
+                            onUpdate={updateElement}
+                            onDelete={deleteElement}
+                            onAlign={align}
+                            onDistribute={distribute}
+                            onBringFront={bringToFront}
+                            onSendBack={sendToBack}
+                            onDuplicate={duplicateSelection}
+                            onExplodeRows={explodeRows}
+                            readOnly={locked}
+                        />
+                    </div>
+                    <div className="rounded-xl border bg-card p-4 flex flex-col min-h-0">
+                        <LocalitiesPanel
+                            localities={localities}
+                            elements={elements}
+                            selection={selection}
+                            onAdd={addLocality}
+                            onUpdate={updateLocality}
+                            onDelete={deleteLocality}
+                            onAssign={assignLocalityToSelection}
+                            readOnly={locked}
+                        />
+                    </div>
                 </aside>
             </div>
 
@@ -748,6 +968,9 @@ export default function VenueEditor() {
                 onClose={() => setContextMenu(null)}
                 onAction={handleContextAction}
                 hasLocality={!!elements.find((e) => e.id === contextMenu?.elementId && e.kind !== "stage")}
+                canExplode={isSeatRowKind(
+                    elements.find((e) => e.id === contextMenu?.elementId)?.kind,
+                )}
             />
             <PublishPendingDialog
                 open={publishPendingOpen}

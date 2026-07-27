@@ -6,11 +6,11 @@
  */
 import { useEffect, useRef } from "react";
 import {
-    Copy, Trash2, ArrowUpToLine, ArrowDownToLine, Palette, Pencil,
+    Copy, Trash2, ArrowUpToLine, ArrowDownToLine, Palette, Pencil, Ungroup,
 } from "lucide-react";
 
 export default function ContextMenu({
-    open, x, y, onClose, onAction, hasLocality = true,
+    open, x, y, onClose, onAction, hasLocality = true, canExplode = false,
 }) {
     const ref = useRef(null);
 
@@ -32,6 +32,11 @@ export default function ContextMenu({
     const items = [
         { id: "edit", label: "Editar propiedades", icon: Pencil },
         { id: "duplicate", label: "Duplicar (Ctrl+D)", icon: Copy },
+        canExplode && {
+            id: "explode",
+            label: "Convertir en asientos individuales",
+            icon: Ungroup,
+        },
         hasLocality && { id: "locality", label: "Asignar localidad…", icon: Palette },
         { id: "bring-front", label: "Traer al frente", icon: ArrowUpToLine },
         { id: "send-back", label: "Enviar al fondo", icon: ArrowDownToLine },

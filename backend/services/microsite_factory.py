@@ -6,12 +6,30 @@ A microsite is auto-created 1:1 with the organizer on first access to the editor
 import uuid
 from datetime import datetime, timezone
 
+from services.microsite_blocks import default_blocks
+from services.microsite_seo import default_seo
+
 DEFAULT_PRIMARY = "#4f46e5"   # indigo-600
 DEFAULT_SECONDARY = "#f1f5f9"  # slate-100
 DEFAULT_FONT = "Inter"
+DEFAULT_RADIUS = "rounded"
+DEFAULT_SHADOW = "soft"
+DEFAULT_DENSITY = "cozy"
 
-TEMPLATES = ("estandar", "galeria", "evento_unico")
+TEMPLATES = (
+    "estandar",
+    "galeria",
+    "evento_unico",
+    "minimal",
+    "showcase",
+    "cronologico",
+    "landing",
+    "portfolio",
+)
 FONTS = ("Inter", "Playfair Display", "Poppins")
+RADIUS_STYLES = ("sharp", "rounded", "pill")
+SHADOW_STYLES = ("flat", "soft", "dramatic")
+DENSITY_STYLES = ("compact", "cozy", "spacious")
 
 
 def _now_iso() -> str:
@@ -30,16 +48,21 @@ def default_microsite(*, organizer_id: str, tenant_slug: str, company_name: str)
             "logo_url": None,
             "banner_url": None,
             "font_family": DEFAULT_FONT,
+            "radius": DEFAULT_RADIUS,
+            "shadow_style": DEFAULT_SHADOW,
+            "density": DEFAULT_DENSITY,
         },
         "content": {
             "hero_title": company_name,
             "hero_subtitle": "Eventos en vivo, tickets sin complicaciones.",
             "hero_cta_text": "Ver eventos",
+            "hero_cta_href": "#events",
             "about_title": "Sobre nosotros",
             "about_body": (
                 "Somos un equipo apasionado por crear experiencias inolvidables. "
                 "Descubrí nuestros próximos eventos y unite a la comunidad."
             ),
+            "about_body_html": "",
             "contact_email": "",
             "contact_phone": "",
             "address": "",
@@ -59,6 +82,8 @@ def default_microsite(*, organizer_id: str, tenant_slug: str, company_name: str)
             "contact": True,
             "social": True,
         },
+        "blocks": default_blocks(),
+        "seo": default_seo(company_name=company_name),
         "published": False,
         "created_at": _now_iso(),
         "updated_at": _now_iso(),

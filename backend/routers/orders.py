@@ -15,7 +15,8 @@ from pydantic import BaseModel, EmailStr, Field
 import stripe
 
 from database import AsyncSessionLocal
-from db_helpers import get_event_by_id, get_microsite_by_organizer, get_organizer_by_id, get_organizer_by_slug, get_venue_by_id, row_to_dict
+from db_helpers import get_event_by_id, get_microsite_by_organizer, get_organizer_by_id, get_organizer_by_slug, row_to_dict
+from services.event_venue import resolve_event_venue
 from orm_models import Organizer
 from services import order_service
 from services import discount_service
@@ -85,9 +86,7 @@ class PreviewOrderBody(BaseModel):
 
 async def _resolve_event_for_pricing(tenant_slug: str, event_slug: str):
     organizer, event = await _load_event_or_404(tenant_slug, event_slug)
-    venue = None
-    if event.get("venue_id"):
-        venue = await get_venue_by_id(event["venue_id"])
+    venue = await resolve_event_venue(event) if event.get("venue_id") else None
     return organizer, event, venue
 
 
@@ -178,20 +177,6 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
     if event["status"] != "published":
         raise HTTPException(409, "El evento no está disponible para compra")
 
-    from services.access_control import check_purchase_access
-
-    async with AsyncSessionLocal() as access_session:
-        try:
-            access_code_id = await check_purchase_access(
-                event=event,
-                session=access_session,
-                buyer_email=payload.buyer.email,
-                buyer_document_id=payload.buyer.document_id,
-                access_code=payload.access_code,
-            )
-        except ValueError as exc:
-            raise HTTPException(403, str(exc))
-
     buyer = order_service.validate_buyer(payload.buyer.model_dump())
 
     # Phase 8 — multi-función: validate function_id belongs to this event and
@@ -220,8 +205,9 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
     seat_ids = payload.seat_ids or None
     venue = None
     items_override = None
+    selected_locality_ids: set[str] = set()
     if seat_ids and event.get("venue_id"):
-        venue = await get_venue_by_id(event["venue_id"])
+        venue = await resolve_event_venue(event)
         if not venue:
             raise HTTPException(409, "El venue del evento ya no está disponible.")
         if not payload.seat_holds_session_token:
@@ -235,6 +221,12 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             event=pricing_event, venue=venue, seat_ids=seat_ids,
         )
         quantity = len(seat_ids)
+        from services.seats import seats_by_id
+        by_id = seats_by_id(venue)
+        for sid in seat_ids:
+            loc = (by_id.get(sid) or {}).get("locality_id")
+            if loc:
+                selected_locality_ids.add(loc)
     elif payload.ticket_type_selections:
         # Phase 8 — ticket types: compute totals from per-type pricing
         from orm_models import TicketType as _TTModel
@@ -247,7 +239,17 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             tt_map = {r.id: row_to_dict(r) for r in result.scalars().all()}
         if len(tt_map) != len(tt_ids):
             raise HTTPException(422, "Uno o más tipos de ticket no son válidos para este evento.")
+        # A función may override per-locality pricing; fall back to the
+        # event's own locality_pricing when it doesn't set its own (mirrors
+        # the seat-based branch above).
+        pricing_event = event
+        if function and function.get("locality_pricing"):
+            pricing_event = {**event, "locality_pricing": function["locality_pricing"]}
+        pricing_map = order_service.locality_pricing_map(pricing_event)
         subtotal = 0
+        entrada_subtotal = 0
+        service_subtotal = 0
+        admin_subtotal = 0
         items_override = []
         for sel in payload.ticket_type_selections:
             tt = tt_map[sel.ticket_type_id]
@@ -281,8 +283,12 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                     raise HTTPException(
                         409, f"No hay suficiente aforo de '{tt['name']}' para esta función."
                     )
-            sel_subtotal = unit * sel.quantity
+            service, admin = order_service.locality_fee_cents(pricing_map, tt.get("venue_locality_id"))
+            sel_subtotal = (unit + service + admin) * sel.quantity
             subtotal += sel_subtotal
+            entrada_subtotal += unit * sel.quantity
+            service_subtotal += service * sel.quantity
+            admin_subtotal += admin * sel.quantity
             items_override.append({
                 "ticket_type_id": tt["id"],
                 "ticket_type": tt["name"],
@@ -291,10 +297,13 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                 "subtotal_cents": sel_subtotal,
             })
         quantity = sum(s.quantity for s in payload.ticket_type_selections)
-        fees = int(round(subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
+        fees = int(round(entrada_subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
         totals = {
-            "unit_price_cents": subtotal // max(1, quantity),
+            "unit_price_cents": entrada_subtotal // max(1, quantity),
             "subtotal_cents": subtotal,
+            "entrada_cents": entrada_subtotal,
+            "service_fee_cents": service_subtotal,
+            "admin_fee_cents": admin_subtotal,
             "fees_cents": fees,
             "total_cents": subtotal + fees,
             "donation_amount_cents": 0,
@@ -307,6 +316,22 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         )
         quantity = payload.quantity
 
+    # Access gate after quantity is known (guest list / access code ticket caps).
+    from services.access_control import check_purchase_access
+
+    async with AsyncSessionLocal() as access_session:
+        try:
+            access_code_id = await check_purchase_access(
+                event=event,
+                session=access_session,
+                buyer_email=payload.buyer.email,
+                buyer_document_id=payload.buyer.document_id,
+                access_code=payload.access_code,
+                quantity=quantity,
+            )
+        except ValueError as exc:
+            raise HTTPException(403, str(exc))
+
     # §4.2.6 — límite "por compra / transacción" configurado en el evento.
     max_per_purchase = (event.get("access_params") or {}).get("max_per_purchase")
     if max_per_purchase and quantity > max_per_purchase:
@@ -314,11 +339,24 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             422, f"Esta compra admite un máximo de {max_per_purchase} entradas por transacción."
         )
 
-    # §4.2.8 — preguntas adicionales al comprador: las requeridas deben venir respondidas.
+    # §4.2.8 — preguntas adicionales; filtrar por localidad y validar tipo number.
     custom_answers = payload.custom_answers or {}
     for q in (event.get("custom_questions") or []):
-        if q.get("required") and not (custom_answers.get(q["id"]) or "").strip():
+        q_locs = q.get("locality_ids") or []
+        if q_locs and selected_locality_ids and not (selected_locality_ids & set(q_locs)):
+            continue  # question does not apply to selected localities
+        if q_locs and not selected_locality_ids:
+            # Non-seated purchase: locality-scoped questions are skipped
+            continue
+        raw = custom_answers.get(q["id"])
+        raw_s = ("" if raw is None else str(raw)).strip()
+        if q.get("required") and not raw_s:
             raise HTTPException(422, f"Falta responder: {q['label']}")
+        if raw_s and q.get("type") == "number":
+            try:
+                float(raw_s.replace(",", "."))
+            except ValueError:
+                raise HTTPException(422, f"'{q['label']}' debe ser un número.")
 
     # Free events ignore payment_method (no payment at all)
     effective_method = (

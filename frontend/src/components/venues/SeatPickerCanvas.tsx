@@ -7,6 +7,21 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Stage, Layer, Rect, Group, Circle, Text } from "react-konva";
 import { seatWorldPos, seatRadius, SEAT_STATUS_COLORS } from "@/lib/seats";
+import { elementBBox } from "@/lib/venues";
+
+function computeBoundingBox(elements) {
+    if (!elements || elements.length === 0) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const el of elements) {
+        const b = elementBBox(el);
+        if (b.minX < minX) minX = b.minX;
+        if (b.minY < minY) minY = b.minY;
+        if (b.maxX > maxX) maxX = b.maxX;
+        if (b.maxY > maxY) maxY = b.maxY;
+    }
+    if (!isFinite(minX)) return null;
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
 
 export default function SeatPickerCanvas({
     venue,
@@ -18,34 +33,65 @@ export default function SeatPickerCanvas({
 }) {
     const containerRef = useRef(null);
     const stageRef = useRef(null);
-    const [containerSize, setContainerSize] = useState({ width: 800, height });
+    const fittedKeyRef = useRef(null);
+    const [containerSize, setContainerSize] = useState({ width: 0, height });
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [draggingPan, setDraggingPan] = useState(null);
 
     useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return undefined;
+        const target = el.parentElement || el;
+
         const update = () => {
-            if (containerRef.current) {
-                setContainerSize({ width: containerRef.current.offsetWidth, height });
-            }
+            const width = Math.floor(target.getBoundingClientRect().width);
+            if (width < 1) return;
+            setContainerSize((prev) => {
+                if (Math.abs(prev.width - width) < 1 && prev.height === height) return prev;
+                return { width, height };
+            });
         };
+
         update();
+        const ro = typeof ResizeObserver !== "undefined"
+            ? new ResizeObserver(update)
+            : null;
+        ro?.observe(target);
         window.addEventListener("resize", update);
-        return () => window.removeEventListener("resize", update);
+        return () => {
+            window.removeEventListener("resize", update);
+            ro?.disconnect();
+        };
     }, [height]);
 
-    // Auto-fit: scale to fit canvas width on first load
+    // Auto-fit to element bbox (not raw canvas size) so clustered layouts center.
     useEffect(() => {
-        if (!venue?.canvas || !containerRef.current) return;
-        const containerW = containerRef.current.offsetWidth;
-        const scale = Math.min(1, (containerW - 40) / venue.canvas.width);
-        setZoom(scale);
-        setPan({
-            x: (containerW - venue.canvas.width * scale) / 2,
-            y: 20,
-        });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [venue?.id]);
+        const key = venue?.id || "";
+        if (!key || fittedKeyRef.current === key) return;
+        if (!containerSize.width || containerSize.width < 50) return;
+        const elements = venue?.elements || [];
+        const bbox = computeBoundingBox(elements);
+        const margin = 40;
+        const cw = containerSize.width;
+        const ch = containerSize.height;
+        if (!bbox) {
+            const canvasW = venue?.canvas?.width || 1000;
+            const scale = Math.min(1, (cw - margin) / canvasW);
+            setZoom(scale);
+            setPan({ x: (cw - canvasW * scale) / 2, y: 20 });
+        } else {
+            const scaleX = (cw - margin * 2) / Math.max(1, bbox.width);
+            const scaleY = (ch - margin * 2) / Math.max(1, bbox.height);
+            const next = Math.min(3, Math.max(0.25, Math.min(scaleX, scaleY)));
+            setZoom(next);
+            setPan({
+                x: cw / 2 - (bbox.x + bbox.width / 2) * next,
+                y: ch / 2 - (bbox.y + bbox.height / 2) * next,
+            });
+        }
+        fittedKeyRef.current = key;
+    }, [venue?.id, venue?.elements, venue?.canvas?.width, containerSize.width, containerSize.height]);
 
     const handleWheel = useCallback((e) => {
         e.evt.preventDefault();
@@ -100,13 +146,14 @@ export default function SeatPickerCanvas({
     return (
         <div
             ref={containerRef}
-            className="w-full bg-slate-50 rounded-lg border relative overflow-hidden"
+            className="w-full max-w-full min-w-0 bg-slate-50 rounded-lg border relative overflow-hidden"
+            style={{ height, maxWidth: "100%" }}
             data-testid="seat-picker"
         >
             <Stage
                 ref={stageRef}
-                width={containerSize.width}
-                height={containerSize.height}
+                width={Math.max(1, containerSize.width)}
+                height={Math.max(1, containerSize.height)}
                 scaleX={zoom}
                 scaleY={zoom}
                 x={pan.x}
@@ -116,7 +163,7 @@ export default function SeatPickerCanvas({
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
-                style={{ cursor: draggingPan ? "grabbing" : "default" }}
+                style={{ cursor: draggingPan ? "grabbing" : "default", display: "block", maxWidth: "100%" }}
             >
                 <Layer listening={true}>
                     <Rect

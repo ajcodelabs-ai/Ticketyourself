@@ -152,4 +152,38 @@ test.describe("Venue editor", () => {
 
     if (venueId) await archiveVenue(page, venueId);
   });
+
+  // Regression coverage: in the event-scoped map editor, the plain "Guardar"
+  // toolbar button called the same `persist()` as "Listo" — both saved AND
+  // navigated back to `return_to`, so there was no way to save progress and
+  // keep editing a seat map; only the silent 30s autosave avoided the bounce.
+  // Fixed by giving persist() a `navigateAway` flag that "Guardar" now opts
+  // out of.
+  test("Guardar in the event map editor saves without leaving the editor", async ({ page }) => {
+    page.on("pageerror", (err) => {
+      throw new Error(`Uncaught page exception: ${err.message}`);
+    });
+
+    const token = await page.evaluate(() => localStorage.getItem("tys_access_token"));
+    const res = await page.request.get(
+      `${BACKEND_URL}/api/events/me?search=${encodeURIComponent("Demo Numerado")}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const body = await res.json();
+    const event = (body.items || []).find(
+      (e: { slug: string }) => e.slug === "funcion-especial-demo-numerado",
+    );
+    expect(event, "seeded demo numbered event not found").toBeTruthy();
+
+    const returnTo = encodeURIComponent(`/app/eventos/${event.id}/editar?tab=localidades`);
+    await page.goto(`/app/eventos/${event.id}/mapa?return_to=${returnTo}`);
+    await expect(page.getByTestId("venue-editor-page")).toBeVisible({ timeout: 10_000 });
+
+    await page.getByTestId("venue-save-btn").click();
+    await expect(page.getByText("Mapa del evento guardado")).toBeVisible({ timeout: 5_000 });
+
+    // The bug: this used to redirect to `returnTo` just like "Listo" does.
+    await expect(page).toHaveURL(new RegExp(`/app/eventos/${event.id}/mapa`));
+    await expect(page.getByTestId("venue-editor-page")).toBeVisible();
+  });
 });

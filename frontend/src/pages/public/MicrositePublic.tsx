@@ -9,6 +9,8 @@ import { Loader2, Frown, ArrowLeft } from "lucide-react";
 
 import api from "@/lib/api";
 import MicrositeRenderer from "@/components/microsite/MicrositeRenderer";
+import MicrositeHead from "@/components/microsite/MicrositeHead";
+import { publicMicrositeUrl } from "@/lib/config";
 
 export default function MicrositePublic() {
     const slug = useSlug();
@@ -23,7 +25,6 @@ export default function MicrositePublic() {
                 if (!alive) return;
                 setMicrosite(r.data);
                 setState("ready");
-                document.title = `${r.data.company_name} · Ticket Yourself`;
             })
             .catch((e) => {
                 if (!alive) return;
@@ -61,5 +62,10 @@ export default function MicrositePublic() {
         );
     }
 
-    return <MicrositeRenderer microsite={microsite} tenantSlug={slug} />;
+    return (
+        <>
+            <MicrositeHead microsite={microsite} publicUrl={publicMicrositeUrl(slug)} />
+            <MicrositeRenderer microsite={microsite} tenantSlug={slug} />
+        </>
+    );
 }

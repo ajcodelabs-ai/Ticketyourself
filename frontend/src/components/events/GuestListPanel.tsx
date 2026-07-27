@@ -11,16 +11,19 @@ interface GuestListEntry {
     email?: string;
     cedula?: string;
     name?: string;
+    max_tickets?: number;
     used_at?: string | null;
 }
 
 interface Props {
     eventId: string | null;
+    /** When true, omit outer card chrome (parent already provides it). */
+    embedded?: boolean;
 }
 
-const BLANK = { email: "", cedula: "", name: "" };
+const BLANK = { email: "", cedula: "", name: "", max_tickets: "1" };
 
-export default function GuestListPanel({ eventId }: Props) {
+export default function GuestListPanel({ eventId, embedded = false }: Props) {
     const [entries, setEntries] = useState<GuestListEntry[]>([]);
     const [loading, setLoading] = useState(false);
     const [form, setForm] = useState(BLANK);
@@ -59,6 +62,7 @@ export default function GuestListPanel({ eventId }: Props) {
                 email: form.email.trim() || null,
                 cedula: form.cedula.trim() || null,
                 name: form.name.trim() || null,
+                max_tickets: Math.max(1, parseInt(form.max_tickets || "1", 10) || 1),
             });
             setForm(BLANK);
             toast.success("Invitado agregado");
@@ -104,27 +108,36 @@ export default function GuestListPanel({ eventId }: Props) {
 
     if (!eventId) {
         return (
-            <div className="flex items-center gap-2 text-muted-foreground p-4 rounded-xl border">
+            <div className="flex items-center gap-2 text-muted-foreground p-4 rounded-xl border border-dashed">
                 <AlertCircle className="h-4 w-4 shrink-0" />
                 <span className="text-sm">
-                    Guarda primero la información general del evento para gestionar la lista de invitados.
+                    Guardá primero la información general del evento para gestionar la lista de invitados.
                 </span>
             </div>
         );
     }
 
     return (
-        <div className="space-y-4 rounded-xl border p-4" data-testid="guest-list-panel">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h4 className="font-medium text-sm flex items-center gap-1.5">
-                        <Users className="h-4 w-4" /> Lista de invitados
-                    </h4>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                        Solo quienes estén en esta lista (por email o cédula) podrán comprar.
-                    </p>
-                </div>
-                <div>
+        <div
+            className={embedded ? "space-y-4" : "space-y-4 rounded-xl border p-4"}
+            data-testid="guest-list-panel"
+        >
+            <div className="flex items-center justify-between gap-3">
+                {!embedded ? (
+                    <div>
+                        <h4 className="font-medium text-sm flex items-center gap-1.5">
+                            <Users className="h-4 w-4" /> Lista de invitados
+                        </h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Solo quienes estén en esta lista (por email o cédula) podrán comprar.
+                        </p>
+                    </div>
+                ) : (
+                    <div className="text-xs text-muted-foreground">
+                        Solo quienes estén en esta lista (email o cédula) podrán comprar.
+                    </div>
+                )}
+                <div className="shrink-0">
                     <input
                         ref={fileRef}
                         type="file"
@@ -150,7 +163,7 @@ export default function GuestListPanel({ eventId }: Props) {
                 </div>
             </div>
 
-            <div className="grid sm:grid-cols-[1fr_1fr_1fr_auto] gap-2">
+            <div className="grid sm:grid-cols-[1fr_1fr_1fr_5rem_auto] gap-2">
                 <Input
                     placeholder="Email"
                     value={form.email}
@@ -169,12 +182,22 @@ export default function GuestListPanel({ eventId }: Props) {
                     onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                     data-testid="guest-list-name-input"
                 />
+                <Input
+                    type="number"
+                    min="1"
+                    title="Máx. tickets"
+                    placeholder="Tickets"
+                    value={form.max_tickets}
+                    onChange={(e) => setForm((f) => ({ ...f, max_tickets: e.target.value }))}
+                    data-testid="guest-list-max-tickets-input"
+                />
                 <Button size="sm" onClick={handleAdd} disabled={saving} data-testid="guest-list-add-btn">
                     <Plus className="h-4 w-4 mr-1" /> Agregar
                 </Button>
             </div>
             <p className="text-xs text-muted-foreground">
                 El CSV debe tener una columna <code>email</code> y/o <code>cedula</code> (opcional: <code>name</code>).
+                Por defecto cada invitado puede comprar 1 ticket.
             </p>
 
             {loading ? (
@@ -198,6 +221,8 @@ export default function GuestListPanel({ eventId }: Props) {
                                 </div>
                                 <div className="text-xs text-muted-foreground truncate">
                                     {[e.email, e.cedula].filter(Boolean).join(" · ")}
+                                    {" · "}
+                                    {(e.max_tickets ?? 1)} ticket{(e.max_tickets ?? 1) !== 1 ? "s" : ""}
                                 </div>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">

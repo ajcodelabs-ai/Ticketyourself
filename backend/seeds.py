@@ -715,6 +715,8 @@ async def _seed_demo_microsites() -> None:
                 content=doc.get("content", {}),
                 social_links=doc.get("social_links", {}),
                 sections_enabled=doc.get("sections_enabled", {}),
+                blocks=doc.get("blocks", []),
+                seo=doc.get("seo", {}),
                 published=doc.get("published", False),
                 created_at=now_dt,
                 updated_at=now_dt,
@@ -1529,7 +1531,11 @@ async def _seed_demo_numbered_event() -> None:
             row.visibility = "public"
             row.status = "published"
             row.poster_url = "https://images.unsplash.com/photo-1503095396549-807759245b35?w=800"
+            from services.event_venue import snapshot_from_venue as _snap_venue
+            _layout = _snap_venue(venue)
             row.venue_id = venue["id"]
+            row.source_venue_id = venue["id"]
+            row.venue_layout = _layout
             row.venue_slug = venue["slug"]
             row.locality_pricing = pricing
             row.seat_holds_window_minutes = 10
@@ -1539,10 +1545,13 @@ async def _seed_demo_numbered_event() -> None:
             row.updated_at = now
             row.published_at = now
             _flag_modified(row, "locality_pricing")
+            _flag_modified(row, "venue_layout")
             _flag_modified(row, "payment_methods")
             _flag_modified(row, "discounts")
             _flag_modified(row, "access_params")
         else:
+            from services.event_venue import snapshot_from_venue as _snap_venue
+            _layout = _snap_venue(venue)
             event_id = str(uuid.uuid4())
             session.add(Event(
                 id=event_id,
@@ -1576,6 +1585,8 @@ async def _seed_demo_numbered_event() -> None:
                 banner_url=None,
                 gallery_urls=[],
                 venue_id=venue["id"],
+                source_venue_id=venue["id"],
+                venue_layout=_layout,
                 venue_slug=venue["slug"],
                 locality_pricing=pricing,
                 seat_holds_window_minutes=10,

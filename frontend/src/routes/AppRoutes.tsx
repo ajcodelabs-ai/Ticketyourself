@@ -76,6 +76,7 @@ export default function AppRoutes() {
             <Route path="/app/dashboard" element={<Dashboard><LazyPage page={Pages.DashboardHome} /></Dashboard>} />
             <Route path="/app/venues" element={<Dashboard><LazyPage page={Pages.Venues} /></Dashboard>} />
             <Route path="/app/venues/:id/editor" element={<Dashboard><LazyPage page={Pages.VenueEditor} /></Dashboard>} />
+            <Route path="/app/eventos/:eventId/mapa" element={<Dashboard><LazyPage page={Pages.VenueEditor} /></Dashboard>} />
             <Route path="/app/microsite" element={<Dashboard><LazyPage page={Pages.MicrositeEditor} /></Dashboard>} />
             <Route path="/app/eventos" element={<Dashboard><LazyPage page={Pages.EventsList} /></Dashboard>} />
             <Route path="/app/eventos/nuevo" element={<Dashboard><LazyPage page={Pages.EventNew} /></Dashboard>} />

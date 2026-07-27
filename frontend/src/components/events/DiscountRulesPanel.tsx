@@ -147,14 +147,10 @@ export default function DiscountRulesPanel({
         onChange(rules.map((r) => (r.id === id ? { ...r, enabled } : r)));
 
     return (
-        <div className="rounded-lg border p-4 bg-card space-y-3" data-testid="discount-rules-panel">
+        <div className="rounded-xl border p-4 bg-card space-y-3" data-testid="discount-rules-panel">
             <div className="flex items-start justify-between gap-3">
-                <div>
-                    <div className="font-medium">Reglas de descuento</div>
-                    <div className="text-xs text-muted-foreground">
-                        Códigos promocionales, descuentos automáticos o por cantidad. Stacking
-                        máximo: <strong>1 código + 1 automático/por cantidad</strong>.
-                    </div>
+                <div className="text-xs text-muted-foreground">
+                    Stacking máximo: <strong className="text-foreground">1 código + 1 automático/cantidad</strong>.
                 </div>
                 <Button size="sm" onClick={() => open(null)} data-testid="disc-rule-add">
                     <Plus className="h-4 w-4 mr-1.5" /> Agregar regla
@@ -162,9 +158,14 @@ export default function DiscountRulesPanel({
             </div>
 
             {rules.length === 0 ? (
-                <div className="rounded-md border border-dashed py-6 text-center text-sm text-muted-foreground">
-                    Sin reglas todavía. Agregá una para ofrecer códigos promocionales o
-                    descuentos automáticos.
+                <div className="rounded-lg border border-dashed py-8 text-center space-y-2">
+                    <p className="text-sm font-medium">Sin reglas todavía</p>
+                    <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                        Creá un código promocional, un descuento por cantidad o uno automático.
+                    </p>
+                    <Button size="sm" variant="outline" onClick={() => open(null)} className="mt-1">
+                        <Plus className="h-4 w-4 mr-1.5" /> Primera regla
+                    </Button>
                 </div>
             ) : (
                 <ul className="space-y-2" data-testid="disc-rules-list">

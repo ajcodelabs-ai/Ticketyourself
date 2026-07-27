@@ -47,10 +47,10 @@ export default function VenueEmptyCanvasOverlay({
 
     return (
         <div
-            className="absolute inset-0 z-10 flex items-center justify-center p-4 bg-slate-50/95 backdrop-blur-[1px] rounded-lg border border-dashed border-indigo-200"
+            className="absolute inset-0 z-10 flex items-center justify-center p-4 bg-background/90 backdrop-blur-[1px] rounded-xl border border-dashed"
             data-testid="venue-empty-canvas-overlay"
         >
-            <div className="relative max-w-lg w-full bg-white rounded-xl shadow-sm border p-5 space-y-3 max-h-full overflow-y-auto">
+            <div className="relative max-w-lg w-full bg-card rounded-xl shadow-sm border p-5 space-y-3 max-h-full overflow-y-auto">
                 {onDismiss && (
                     <Button
                         type="button"
@@ -64,9 +64,14 @@ export default function VenueEmptyCanvasOverlay({
                         <X className="h-4 w-4" />
                     </Button>
                 )}
-                <div className="flex items-center gap-2">
-                    <LayoutTemplate className="h-5 w-5 text-indigo-600" />
-                    <h3 className="font-semibold">Empieza con una plantilla (opcional)</h3>
+                <div className="flex items-center gap-2 pr-8">
+                    <div className="h-9 w-9 rounded-lg bg-secondary text-muted-foreground grid place-items-center shrink-0">
+                        <LayoutTemplate className="h-4 w-4" />
+                    </div>
+                    <div>
+                        <h3 className="font-medium text-sm">Empezá con una plantilla</h3>
+                        <p className="text-xs text-muted-foreground">Opcional · también podés dibujar desde cero</p>
+                    </div>
                 </div>
                 <VenueTemplatePicker
                     templates={templates}

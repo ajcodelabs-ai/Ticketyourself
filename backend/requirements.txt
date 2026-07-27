@@ -58,6 +58,7 @@ MarkupSafe==3.0.3
 mccabe==0.7.0
 mdurl==0.1.2
 motor==3.3.1
+nh3==0.3.6
 sqlalchemy[asyncio]==2.0.41
 asyncpg==0.30.0
 alembic==1.16.1

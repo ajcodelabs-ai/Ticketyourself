@@ -162,7 +162,21 @@ export default function PurchaseModal({
     const [errors, setErrors] = useState<Record<string, string>>({});
     // §4.2.8 — preguntas adicionales al comprador, por id de pregunta
     const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
-    const customQuestions = event?.custom_questions || [];
+    const selectedLocalityIds = useMemo(() => {
+        if (!seatHoldsInfo?.seats) return new Set<string>();
+        return new Set(
+            seatHoldsInfo.seats.map((s: any) => s.locality_id).filter(Boolean),
+        );
+    }, [seatHoldsInfo]);
+    const customQuestions = useMemo(() => {
+        const all = event?.custom_questions || [];
+        return all.filter((q: any) => {
+            const locs = q.locality_ids || [];
+            if (!locs.length) return true;
+            if (!selectedLocalityIds.size) return false;
+            return locs.some((id: string) => selectedLocalityIds.has(id));
+        });
+    }, [event?.custom_questions, selectedLocalityIds]);
     const [promoCodeInput, setPromoCodeInput] = useState("");
     const [appliedPromo, setAppliedPromo] = useState<{
         code: string;
@@ -1031,9 +1045,10 @@ export default function PurchaseModal({
                                         <Label htmlFor={`cq-${q.id}`}>
                                             {q.label} {q.required && "*"}
                                         </Label>
-                                        {q.type === "text" && (
+                                        {(q.type === "text" || q.type === "number" || !q.type) && (
                                             <Input
                                                 id={`cq-${q.id}`}
+                                                type={q.type === "number" ? "number" : "text"}
                                                 value={customAnswers[q.id] || ""}
                                                 onChange={(e) =>
                                                     setCustomAnswers((prev) => ({
@@ -1154,6 +1169,28 @@ export default function PurchaseModal({
                                             />
                                         );
                                     })
+                                ) : isSeatNumbered ? (
+                                    <>
+                                        <Row
+                                            label={`Entrada (${seatHoldsInfo.seats.length} asiento${seatHoldsInfo.seats.length !== 1 ? "s" : ""})`}
+                                            value={formatCents(
+                                                seatHoldsInfo.entrada_cents ?? seatHoldsInfo.subtotal_cents,
+                                                event.currency,
+                                            )}
+                                        />
+                                        {(seatHoldsInfo.service_fee_cents || 0) > 0 && (
+                                            <Row
+                                                label="Cargo de servicio"
+                                                value={formatCents(seatHoldsInfo.service_fee_cents, event.currency)}
+                                            />
+                                        )}
+                                        {(seatHoldsInfo.admin_fee_cents || 0) > 0 && (
+                                            <Row
+                                                label="Cargo admin"
+                                                value={formatCents(seatHoldsInfo.admin_fee_cents, event.currency)}
+                                            />
+                                        )}
+                                    </>
                                 ) : (
                                     <Row
                                         label={
@@ -1174,7 +1211,7 @@ export default function PurchaseModal({
                                 )}
                                 {totals.fees > 0 && (
                                     <Row
-                                        label={`Tarifa de servicio (${FEE_PERCENT}%)`}
+                                        label={`Tarifa plataforma TYS (${FEE_PERCENT}%)`}
                                         value={formatCents(totals.fees, event.currency)}
                                     />
                                 )}

@@ -80,7 +80,16 @@ class TestMicrositeMe:
         r = requests.get(f"{API}/microsite/me", headers=bearer(demo_token))
         assert r.status_code == 200
         d = r.json()
-        assert d["template"] in ("estandar", "galeria", "evento_unico")
+        assert d["template"] in (
+            "estandar",
+            "galeria",
+            "evento_unico",
+            "minimal",
+            "showcase",
+            "cronologico",
+            "landing",
+            "portfolio",
+        )
         assert "branding" in d and "content" in d
 
     def test_get_me_pending_200_publish_403(self, prueba_token):
@@ -155,6 +164,203 @@ class TestMicrositeMe:
             json={"branding": {"font_family": "Comic Sans"}},
         )
         assert r.status_code == 422
+
+    def test_put_radius_valid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"radius": "pill"}},
+        )
+        assert r.status_code == 200
+        assert r.json()["branding"]["radius"] == "pill"
+
+    def test_put_radius_invalid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"radius": "square"}},
+        )
+        assert r.status_code == 422
+
+    def test_put_shadow_style_valid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"shadow_style": "dramatic"}},
+        )
+        assert r.status_code == 200
+        assert r.json()["branding"]["shadow_style"] == "dramatic"
+
+    def test_put_shadow_style_invalid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"shadow_style": "glow"}},
+        )
+        assert r.status_code == 422
+
+    def test_put_density_valid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"density": "spacious"}},
+        )
+        assert r.status_code == 200
+        assert r.json()["branding"]["density"] == "spacious"
+
+    def test_put_density_invalid(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"branding": {"density": "huge"}},
+        )
+        assert r.status_code == 422
+
+    def test_put_blocks_valid(self, demo_token):
+        blocks = [
+            {
+                "id": "test-block-1",
+                "type": "hero",
+                "enabled": True,
+                "props": {"variant": "huge", "align": "center"},
+            },
+            {
+                "id": "test-block-2",
+                "type": "events",
+                "enabled": True,
+                "props": {"layout": "grid"},
+            },
+        ]
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"blocks": blocks},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert len(d["blocks"]) == 2
+        assert d["blocks"][0]["type"] == "hero"
+        assert d["sections_enabled"]["hero"] is True
+
+    def test_put_blocks_invalid_type(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"blocks": [{"id": "x", "type": "invalido", "enabled": True, "props": {}}]},
+        )
+        assert r.status_code == 422
+
+    def test_put_blocks_faq_and_image(self, demo_token):
+        blocks = [
+            {
+                "id": "faq-1",
+                "type": "faq",
+                "enabled": True,
+                "props": {
+                    "title": "FAQ",
+                    "items": [{"id": "q1", "question": "¿Cómo compro?", "answer_html": "<p>Online</p>"}],
+                },
+            },
+            {
+                "id": "img-1",
+                "type": "image",
+                "enabled": True,
+                "props": {"layout": "contained", "caption": "Foto", "image_url": None},
+            },
+        ]
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"blocks": blocks},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        faq = next(b for b in d["blocks"] if b["type"] == "faq")
+        assert faq["props"]["items"][0]["question"] == "¿Cómo compro?"
+
+    def test_put_blocks_faq_answer_html_is_sanitized(self, demo_token):
+        blocks = [
+            {
+                "id": "faq-1",
+                "type": "faq",
+                "enabled": True,
+                "props": {
+                    "title": "FAQ",
+                    "items": [
+                        {
+                            "id": "q1",
+                            "question": "¿Es seguro?",
+                            "answer_html": '<p onclick="evil()">Sí</p><script>alert(1)</script>',
+                        }
+                    ],
+                },
+            },
+        ]
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"blocks": blocks},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        faq = next(b for b in d["blocks"] if b["type"] == "faq")
+        answer_html = faq["props"]["items"][0]["answer_html"]
+        assert "<script" not in answer_html
+        assert "onclick" not in answer_html
+        assert "Sí" in answer_html
+
+    def test_put_content_about_body_html_is_sanitized(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={
+                "content": {
+                    "about_body_html": '<p>Bienvenidos</p><img src=x onerror="alert(1)">'
+                }
+            },
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        about_html = d["content"]["about_body_html"]
+        assert "onerror" not in about_html
+        assert "<img" not in about_html
+        assert "Bienvenidos" in about_html
+
+    def test_put_content_hero_cta_href_rejects_javascript_protocol(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"content": {"hero_cta_href": "javascript:alert(1)"}},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["content"].get("hero_cta_href") != "javascript:alert(1)"
+
+    def test_put_seo(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={
+                "seo": {
+                    "meta_title": "Demo Events EC",
+                    "meta_description": "Tickets para eventos en Ecuador",
+                }
+            },
+        )
+        assert r.status_code == 200, r.text
+        seo = r.json().get("seo") or {}
+        assert seo.get("meta_title") == "Demo Events EC"
+
+    def test_revisions_save_and_list(self, demo_token):
+        r = requests.post(
+            f"{API}/microsite/me/revisions",
+            headers=bearer(demo_token),
+            json={"label": "Test snapshot"},
+        )
+        assert r.status_code == 201, r.text
+        r2 = requests.get(f"{API}/microsite/me/revisions", headers=bearer(demo_token))
+        assert r2.status_code == 200
+        assert len(r2.json()) >= 1
 
 
 # ── 3. Asset upload ──────────────────────────────────────────────────────────

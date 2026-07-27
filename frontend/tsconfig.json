@@ -14,10 +14,9 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* Path alias */
-    "baseUrl": ".",
+    /* Path alias — paths are relative to this tsconfig (no baseUrl; deprecated in TS 6+) */
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     },
 
     /* Permissive — tighten gradually */

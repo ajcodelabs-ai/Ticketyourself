@@ -1,5 +1,5 @@
 /**
- * /app/eventos/:event_id/editar — edit event via the 7-section wizard.
+ * /app/eventos/:event_id/editar — edit event via the 8-section wizard.
  */
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";

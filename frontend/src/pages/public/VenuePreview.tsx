@@ -87,6 +87,7 @@ export default function VenuePreview() {
                             onCanvasClick={() => {}}
                             readOnly
                             height={620}
+                            autoFitKey={venue.id}
                         />
                     </CardContent>
                 </Card>

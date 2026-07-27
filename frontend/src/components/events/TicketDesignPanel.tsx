@@ -1,21 +1,17 @@
 /**
- * TicketDesignPanel — M4 drag & drop visual ticket designer.
+ * TicketDesignPanel — template-first ticket designer.
  *
- * Elements are stored as fractions [0,1] of the canvas so the same design
- * renders correctly at any output size (digital / A4 / PVC) — see
- * backend/services/pdf_service.py's FORMAT_PAGE_SIZES for the matching
- * real-world page sizes used when actually rendering the PDF.
- *
- * The canvas here is an editing surface, not the renderer — organizers use
- * the "Vista previa" button to render the real reportlab output (with
- * sample data) inline below the canvas.
+ * Organizers pick a curated layout, optionally set color / logo / fondo,
+ * and preview the real PDF. Free-form element editing was removed to keep
+ * the wizard simple; the stored JSON shape is unchanged for pdf_service.
  */
-import { useEffect, useRef, useState } from "react";
-import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group } from "react-konva";
+import { useEffect, useState } from "react";
+import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
 import { toast } from "sonner";
 import {
-    Image as ImageIcon, QrCode, Type, Trash2, Upload, Loader2, Eye, ExternalLink,
+    Upload, Loader2, Eye, ExternalLink, Check, RotateCcw,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,55 +19,26 @@ import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import api from "@/lib/api";
+import {
+    TICKET_TEMPLATES,
+    applyTicketTemplate,
+    detectTemplateId,
+    emptyDesign,
+    type TicketDesign,
+} from "@/lib/ticketDesignTemplates";
 
 const FORMAT_RATIOS = { digital: 800 / 360, a4: 595.27 / 841.89, pvc: 85.6 / 54 };
 const FORMAT_LABELS = {
     digital: "Digital (email)",
     a4: "Imprimible (A4)",
-    pvc: "Gafete / PVC (kiosco)",
+    pvc: "Gafete / PVC",
 };
-const FIELD_LABELS = {
-    title: "Título del evento",
-    starts_at: "Fecha y hora",
-    venue: "Lugar",
-    holder_name: "Nombre del asistente",
-    holder_email: "Email del asistente",
-    price: "Precio / aporte",
-    seat_or_raffle: "Asiento o N° de rifa",
-    order_number: "N° de orden",
-    organizer_name: "Organizador",
-    custom: "Texto personalizado",
-};
-const DISPLAY_W = 560;
+const DISPLAY_W = 520;
 
-const PALETTE = [
-    "#ffffff", "#f8fafc", "#1f1f33", "#0f172a",
-    "#6366f1", "#0ea5e9", "#22c55e", "#f59e0b",
-    "#ef4444", "#a855f7", "#ec4899", "#14b8a6",
+const BG_PALETTE = [
+    "#ffffff", "#f8fafc", "#0f172a", "#0f766e",
+    "#134e4a", "#1e3a5f", "#fef3c7", "#ecfdf5",
 ];
-
-function ColorSwatches({ value, onChange, testid }) {
-    return (
-        <div className="flex gap-1.5 flex-wrap" data-testid={testid}>
-            {PALETTE.map((c) => (
-                <button
-                    key={c}
-                    type="button"
-                    title={c}
-                    onClick={() => onChange(c)}
-                    className={`h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 ${
-                        value?.toLowerCase() === c ? "border-foreground scale-110" : "border-border"
-                    }`}
-                    style={{ backgroundColor: c }}
-                />
-            ))}
-        </div>
-    );
-}
-
-function defaultDesign() {
-    return { format: "digital", background_url: null, background_color: "#ffffff", elements: [] };
-}
 
 function backendAbsoluteUrl(relativeUrl) {
     if (!relativeUrl) return null;
@@ -84,7 +51,7 @@ function useHtmlImage(url) {
     useEffect(() => {
         if (!url) {
             setImg(null);
-            return;
+            return undefined;
         }
         const el = new window.Image();
         el.crossOrigin = "anonymous";
@@ -95,84 +62,85 @@ function useHtmlImage(url) {
     return img;
 }
 
-function newElement(type) {
-    const base = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, type };
-    if (type === "logo") return { ...base, x: 0.05, y: 0.05, width: 0.2, height: 0.2, image_url: null };
-    if (type === "qr") return { ...base, x: 0.72, y: 0.55, width: 0.23, height: 0.4 };
-    return {
-        ...base, x: 0.05, y: 0.3, width: 0.55, height: 0.1,
-        field: "title", text: null, font_size: 16, color: "#1f1f33", align: "left",
-    };
+function MiniPreview({ template }) {
+    return (
+        <div
+            className="h-20 w-full rounded-md border overflow-hidden relative"
+            style={{ backgroundColor: template.previewBg }}
+        >
+            <div
+                className="absolute left-2 top-2 h-5 w-5 rounded-sm opacity-80"
+                style={{ backgroundColor: template.previewFg, opacity: 0.25 }}
+            />
+            <div
+                className="absolute left-9 top-2.5 h-2 w-16 rounded-sm"
+                style={{ backgroundColor: template.previewFg, opacity: 0.55 }}
+            />
+            <div
+                className="absolute left-9 top-6 h-1.5 w-12 rounded-sm"
+                style={{ backgroundColor: template.previewFg, opacity: 0.3 }}
+            />
+            <div
+                className="absolute right-2 bottom-2 h-10 w-10 rounded-sm border border-dashed"
+                style={{ borderColor: template.previewFg, opacity: 0.45 }}
+            />
+        </div>
+    );
 }
 
 export default function TicketDesignPanel({ eventId, design, onChange, slot = "main" }) {
-    const safeDesign = design || defaultDesign();
-    const [selectedId, setSelectedId] = useState(null);
+    const safeDesign: TicketDesign = design || emptyDesign();
+    const selectedTemplateId = detectTemplateId(safeDesign);
     const [uploading, setUploading] = useState(false);
     const [previewing, setPreviewing] = useState(false);
     const [previewUrl, setPreviewUrl] = useState(null);
-    const stageRef = useRef(null);
-    const trRef = useRef(null);
-    const shapeRefs = useRef({});
 
     const ratio = FORMAT_RATIOS[safeDesign.format] || FORMAT_RATIOS.digital;
     const displayH = Math.round(DISPLAY_W / ratio);
-
     const bgImg = useHtmlImage(backendAbsoluteUrl(safeDesign.background_url));
-    const selected = safeDesign.elements.find((e) => e.id === selectedId) || null;
+    const hasDesign = (safeDesign.elements || []).length > 0;
 
-    useEffect(() => {
-        const tr = trRef.current;
-        if (!tr) return;
-        const node = selectedId ? shapeRefs.current[selectedId] : null;
-        tr.nodes(node ? [node] : []);
-        tr.getLayer()?.batchDraw();
-    }, [selectedId, safeDesign.elements.length]);
-
-    // Revoke the last generated preview's blob URL on unmount / regeneration
-    // so we don't leak memory across edits.
     useEffect(() => {
         return () => {
             if (previewUrl) URL.revokeObjectURL(previewUrl);
         };
     }, [previewUrl]);
 
-    const updateDesign = (patch) => onChange({ ...safeDesign, ...patch });
-    const updateElement = (id, patch) =>
-        updateDesign({ elements: safeDesign.elements.map((e) => (e.id === id ? { ...e, ...patch } : e)) });
-    const addElement = (type) => {
-        const el = newElement(type);
-        updateDesign({ elements: [...safeDesign.elements, el] });
-        setSelectedId(el.id);
-    };
-    const removeSelected = () => {
-        if (!selectedId) return;
-        updateDesign({ elements: safeDesign.elements.filter((e) => e.id !== selectedId) });
-        setSelectedId(null);
+    const updateDesign = (patch: Partial<TicketDesign>) => onChange({ ...safeDesign, ...patch });
+
+    const pickTemplate = (templateId: string) => {
+        const next = applyTicketTemplate(templateId, safeDesign);
+        onChange(next);
+        setPreviewUrl(null);
+        toast.success("Plantilla aplicada");
     };
 
-    const handleTransformEnd = (id) => {
-        const node = shapeRefs.current[id];
-        if (!node) return;
-        const sx = node.scaleX();
-        const sy = node.scaleY();
-        node.scaleX(1);
-        node.scaleY(1);
-        const el = safeDesign.elements.find((e) => e.id === id);
-        if (!el) return;
-        updateElement(id, {
-            x: node.x() / DISPLAY_W,
-            y: node.y() / displayH,
-            width: Math.max(0.02, (el.width * sx)),
-            height: Math.max(0.02, (el.height * sy)),
-        });
+    const clearDesign = () => {
+        onChange(emptyDesign(safeDesign.format));
+        setPreviewUrl(null);
+        toast.message("Se usará el ticket estándar de TYS");
     };
 
-    const handleDragEnd = (id, node) => {
-        updateElement(id, { x: node.x() / DISPLAY_W, y: node.y() / displayH });
+    const setLogoOnDesign = (url: string) => {
+        const elements = [...(safeDesign.elements || [])];
+        const idx = elements.findIndex((e) => e.type === "logo");
+        if (idx >= 0) {
+            elements[idx] = { ...elements[idx], image_url: url };
+        } else {
+            elements.unshift({
+                id: `logo-${Date.now()}`,
+                type: "logo",
+                x: 0.05,
+                y: 0.08,
+                width: 0.18,
+                height: 0.28,
+                image_url: url,
+            });
+        }
+        updateDesign({ elements });
     };
 
-    const uploadAsset = async (file, role) => {
+    const uploadAsset = async (file, role: "background" | "logo") => {
         setUploading(true);
         try {
             const form = new FormData();
@@ -184,10 +152,18 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
             );
             if (role === "background") {
                 updateDesign({ background_url: data.url });
-            } else if (selectedId) {
-                updateElement(selectedId, { image_url: data.url });
+            } else {
+                if (!hasDesign) {
+                    const next = applyTicketTemplate("clasico", safeDesign);
+                    next.elements = next.elements.map((e) =>
+                        e.type === "logo" ? { ...e, image_url: data.url } : e,
+                    );
+                    onChange(next);
+                } else {
+                    setLogoOnDesign(data.url);
+                }
             }
-            toast.success("Imagen subida");
+            toast.success(role === "logo" ? "Logo actualizado" : "Fondo actualizado");
         } catch (e) {
             toast.error(e?.response?.data?.detail || "No se pudo subir la imagen");
         } finally {
@@ -199,11 +175,12 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
         if (!eventId) return;
         setPreviewing(true);
         try {
-            // Persist the in-progress design first — the preview endpoint reads
-            // from the saved event, not the live canvas state, and this button
-            // should always reflect exactly what's on screen right now.
+            // The preview PDF endpoint reads the persisted design, so we save it
+            // first — this design edit lands in the DB even if the rest of the
+            // wizard form is never submitted.
             const field = slot === "courtesy" ? "courtesy_ticket_design" : "ticket_design";
             await api.put(`/events/me/${eventId}`, { [field]: safeDesign });
+            toast.message("Diseño guardado para generar la vista previa");
 
             const base = import.meta.env.VITE_BACKEND_URL || "";
             const token = localStorage.getItem("tys_access_token");
@@ -216,6 +193,7 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                 throw new Error(body?.detail || "No se pudo generar el PDF de prueba");
             }
             const blob = await res.blob();
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
             setPreviewUrl(URL.createObjectURL(blob));
         } catch (e: any) {
             toast.error(e.message || "No se pudo generar el PDF de prueba");
@@ -225,32 +203,114 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
     };
 
     return (
-        <div className="space-y-3" data-testid={`ticket-design-panel-${slot}`}>
-            <div className="flex flex-wrap items-center gap-2">
-                <Select
-                    value={safeDesign.format}
-                    onValueChange={(v) => updateDesign({ format: v })}
-                >
-                    <SelectTrigger className="w-48" data-testid={`td-format-${slot}`}>
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {Object.entries(FORMAT_LABELS).map(([k, label]) => (
-                            <SelectItem key={k} value={k}>{label}</SelectItem>
+        <div className="space-y-5" data-testid={`ticket-design-panel-${slot}`}>
+            <div>
+                <div className="flex items-center gap-2 mb-1">
+                    <div className="text-sm font-medium">Plantilla</div>
+                    {hasDesign && !selectedTemplateId && (
+                        <Badge variant="secondary" data-testid={`td-custom-badge-${slot}`}>
+                            Diseño personalizado (heredado)
+                        </Badge>
+                    )}
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">
+                    {hasDesign && !selectedTemplateId
+                        ? "Este evento tiene un diseño hecho antes de las plantillas. Elegir una plantilla lo reemplaza por completo."
+                        : "Cada una ya trae logo, datos del evento y QR. Después solo personalizás color y logo."}
+                </p>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid={`td-templates-${slot}`}>
+                    {TICKET_TEMPLATES.map((tpl) => {
+                        const active = selectedTemplateId === tpl.id;
+                        return (
+                            <button
+                                key={tpl.id}
+                                type="button"
+                                onClick={() => pickTemplate(tpl.id)}
+                                className={`text-left rounded-xl border p-2.5 transition hover:border-foreground/30 ${
+                                    active
+                                        ? "border-foreground ring-2 ring-foreground/15"
+                                        : "border-border"
+                                }`}
+                                data-testid={`td-template-${tpl.id}-${slot}`}
+                            >
+                                <MiniPreview template={tpl} />
+                                <div className="mt-2 flex items-start justify-between gap-1">
+                                    <div>
+                                        <div className="text-sm font-medium leading-tight">{tpl.name}</div>
+                                        <div className="text-[11px] text-muted-foreground leading-snug mt-0.5">
+                                            {tpl.blurb}
+                                        </div>
+                                    </div>
+                                    {active && <Check className="h-4 w-4 shrink-0 text-teal-700" />}
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-3 rounded-xl border bg-secondary/20 p-3">
+                <div className="space-y-1.5">
+                    <Label className="text-xs">Formato</Label>
+                    <Select
+                        value={safeDesign.format}
+                        onValueChange={(v) => updateDesign({ format: v as TicketDesign["format"] })}
+                    >
+                        <SelectTrigger className="w-44" data-testid={`td-format-${slot}`}>
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {Object.entries(FORMAT_LABELS).map(([k, label]) => (
+                                <SelectItem key={k} value={k}>{label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                    <Label className="text-xs">Color de fondo</Label>
+                    <div className="flex items-center gap-1.5">
+                        {BG_PALETTE.map((c) => (
+                            <button
+                                key={c}
+                                type="button"
+                                title={c}
+                                onClick={() => updateDesign({ background_color: c })}
+                                className={`h-7 w-7 rounded-full border-2 ${
+                                    (safeDesign.background_color || "").toLowerCase() === c
+                                        ? "border-foreground scale-110"
+                                        : "border-border"
+                                }`}
+                                style={{ backgroundColor: c }}
+                            />
                         ))}
-                    </SelectContent>
-                </Select>
-                <Button size="sm" variant="outline" onClick={() => addElement("logo")} data-testid={`td-add-logo-${slot}`}>
-                    <ImageIcon className="h-4 w-4 mr-1.5" /> Logo
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => addElement("qr")} data-testid={`td-add-qr-${slot}`}>
-                    <QrCode className="h-4 w-4 mr-1.5" /> QR
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => addElement("text")} data-testid={`td-add-text-${slot}`}>
-                    <Type className="h-4 w-4 mr-1.5" /> Texto
-                </Button>
+                        <Input
+                            type="color"
+                            value={safeDesign.background_color || "#ffffff"}
+                            onChange={(e) => updateDesign({ background_color: e.target.value })}
+                            className="h-7 w-9 p-0.5 cursor-pointer"
+                            data-testid={`td-bg-color-${slot}`}
+                        />
+                    </div>
+                </div>
+
                 <label className="inline-flex">
-                    <Button size="sm" variant="outline" asChild disabled={uploading}>
+                    <Button size="sm" variant="outline" asChild disabled={uploading || !eventId}>
+                        <span>
+                            <Upload className="h-4 w-4 mr-1.5" /> Logo
+                            <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => e.target.files?.[0] && uploadAsset(e.target.files[0], "logo")}
+                                data-testid={`td-upload-logo-${slot}`}
+                            />
+                        </span>
+                    </Button>
+                </label>
+
+                <label className="inline-flex">
+                    <Button size="sm" variant="outline" asChild disabled={uploading || !eventId}>
                         <span>
                             <Upload className="h-4 w-4 mr-1.5" /> Fondo
                             <input
@@ -263,199 +323,105 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                         </span>
                     </Button>
                 </label>
-                <div className="flex items-center gap-1.5 pl-2 border-l">
-                    <span className="text-xs text-muted-foreground">Color de fondo:</span>
-                    <ColorSwatches
-                        value={safeDesign.background_color || "#ffffff"}
-                        onChange={(c) => updateDesign({ background_color: c })}
-                        testid={`td-bg-palette-${slot}`}
-                    />
-                    <Input
-                        type="color"
-                        value={safeDesign.background_color || "#ffffff"}
-                        onChange={(e) => updateDesign({ background_color: e.target.value })}
-                        className="h-7 w-9 p-0.5 cursor-pointer"
-                        data-testid={`td-bg-color-${slot}`}
-                    />
-                </div>
+
                 <Button
                     size="sm"
                     variant="secondary"
                     onClick={generatePreview}
-                    disabled={previewing || !safeDesign.elements.length}
+                    disabled={previewing || !hasDesign || !eventId}
                     data-testid={`td-preview-${slot}`}
                 >
                     {previewing ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Eye className="h-4 w-4 mr-1.5" />}
                     Vista previa
                 </Button>
+
                 {previewUrl && (
                     <Button size="sm" variant="ghost" asChild>
                         <a href={previewUrl} target="_blank" rel="noreferrer" data-testid={`td-preview-open-${slot}`}>
-                            <ExternalLink className="h-4 w-4 mr-1.5" />
-                            Abrir / descargar
+                            <ExternalLink className="h-4 w-4 mr-1.5" /> Abrir PDF
                         </a>
+                    </Button>
+                )}
+
+                {hasDesign && (
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-muted-foreground"
+                        onClick={clearDesign}
+                        data-testid={`td-clear-${slot}`}
+                    >
+                        <RotateCcw className="h-4 w-4 mr-1.5" /> Usar estándar TYS
                     </Button>
                 )}
             </div>
 
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap gap-4 items-start">
                 <div
-                    className="border rounded-lg overflow-hidden shrink-0"
+                    className="border rounded-lg overflow-hidden shrink-0 shadow-sm"
                     style={{ width: DISPLAY_W, height: displayH }}
                     data-testid={`td-canvas-${slot}`}
                 >
-                    <Stage
-                        ref={stageRef}
-                        width={DISPLAY_W}
-                        height={displayH}
-                        onMouseDown={(e) => {
-                            if (e.target === e.target.getStage()) setSelectedId(null);
-                        }}
-                    >
-                        <Layer>
-                            <Rect x={0} y={0} width={DISPLAY_W} height={displayH} fill={safeDesign.background_color || "#ffffff"} />
-                            {bgImg && (
-                                <KonvaImage image={bgImg} x={0} y={0} width={DISPLAY_W} height={displayH} listening={false} />
-                            )}
-                            {safeDesign.elements.map((el) => (
-                                <DesignElementNode
-                                    key={el.id}
-                                    el={el}
-                                    displayW={DISPLAY_W}
-                                    displayH={displayH}
-                                    isSelected={selectedId === el.id}
-                                    onSelect={() => setSelectedId(el.id)}
-                                    onDragEnd={(node) => handleDragEnd(el.id, node)}
-                                    registerRef={(node) => { shapeRefs.current[el.id] = node; }}
+                    {hasDesign ? (
+                        <Stage width={DISPLAY_W} height={displayH} listening={false}>
+                            <Layer listening={false}>
+                                <Rect
+                                    x={0}
+                                    y={0}
+                                    width={DISPLAY_W}
+                                    height={displayH}
+                                    fill={safeDesign.background_color || "#ffffff"}
                                 />
-                            ))}
-                            <Transformer
-                                ref={trRef}
-                                rotateEnabled={false}
-                                onTransformEnd={() => selectedId && handleTransformEnd(selectedId)}
-                            />
-                        </Layer>
-                    </Stage>
+                                {bgImg && (
+                                    <KonvaImage
+                                        image={bgImg}
+                                        x={0}
+                                        y={0}
+                                        width={DISPLAY_W}
+                                        height={displayH}
+                                    />
+                                )}
+                                {safeDesign.elements.map((el) => (
+                                    <DesignElementNode
+                                        key={el.id}
+                                        el={el}
+                                        displayW={DISPLAY_W}
+                                        displayH={displayH}
+                                    />
+                                ))}
+                            </Layer>
+                        </Stage>
+                    ) : (
+                        <div
+                            className="h-full w-full flex items-center justify-center text-center p-6 bg-muted/40"
+                            style={{ width: DISPLAY_W, height: displayH }}
+                        >
+                            <p className="text-sm text-muted-foreground max-w-xs">
+                                Elegí una plantilla arriba. Si no diseñás nada, los compradores
+                                reciben el ticket estándar de Ticket Yourself.
+                            </p>
+                        </div>
+                    )}
                 </div>
 
-                <div className="w-64 space-y-3" data-testid={`td-properties-${slot}`}>
-                    {!selected ? (
-                        <p className="text-xs text-muted-foreground">
-                            Hacé click en un elemento del ticket para editarlo, o agregá uno nuevo
-                            con los botones de arriba.
-                        </p>
-                    ) : (
-                        <>
-                            <div className="flex items-center justify-between">
-                                <span className="text-xs font-medium uppercase text-muted-foreground">
-                                    {selected.type === "logo" ? "Logo" : selected.type === "qr" ? "Código QR" : "Texto"}
-                                </span>
-                                <Button variant="ghost" size="icon" onClick={removeSelected} data-testid={`td-remove-${slot}`}>
-                                    <Trash2 className="h-4 w-4 text-red-600" />
-                                </Button>
-                            </div>
-
-                            {selected.type === "logo" && (
-                                <label className="inline-flex w-full">
-                                    <Button size="sm" variant="outline" className="w-full" asChild disabled={uploading}>
-                                        <span>
-                                            <Upload className="h-4 w-4 mr-1.5" /> Subir logo
-                                            <input
-                                                type="file"
-                                                accept="image/*"
-                                                className="hidden"
-                                                onChange={(e) => e.target.files?.[0] && uploadAsset(e.target.files[0], "logo")}
-                                                data-testid={`td-upload-logo-${slot}`}
-                                            />
-                                        </span>
-                                    </Button>
-                                </label>
-                            )}
-
-                            {selected.type === "text" && (
-                                <>
-                                    <div className="space-y-1.5">
-                                        <Label>Contenido</Label>
-                                        <Select
-                                            value={selected.field || "custom"}
-                                            onValueChange={(v) => updateElement(selected.id, { field: v })}
-                                        >
-                                            <SelectTrigger data-testid={`td-field-${slot}`}>
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {Object.entries(FIELD_LABELS).map(([k, label]) => (
-                                                    <SelectItem key={k} value={k}>{label}</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    {selected.field === "custom" && (
-                                        <div className="space-y-1.5">
-                                            <Label>Texto fijo</Label>
-                                            <Input
-                                                value={selected.text || ""}
-                                                onChange={(e) => updateElement(selected.id, { text: e.target.value })}
-                                                data-testid={`td-text-${slot}`}
-                                            />
-                                        </div>
-                                    )}
-                                    <div className="space-y-1.5">
-                                        <Label>Tamaño</Label>
-                                        <Input
-                                            type="number"
-                                            min="6"
-                                            max="72"
-                                            value={selected.font_size || 14}
-                                            onChange={(e) => updateElement(selected.id, { font_size: parseInt(e.target.value, 10) || 14 })}
-                                            data-testid={`td-font-size-${slot}`}
-                                        />
-                                    </div>
-                                    <div className="space-y-1.5">
-                                        <Label>Color</Label>
-                                        <ColorSwatches
-                                            value={selected.color || "#1f1f33"}
-                                            onChange={(c) => updateElement(selected.id, { color: c })}
-                                            testid={`td-color-palette-${slot}`}
-                                        />
-                                        <Input
-                                            type="color"
-                                            value={selected.color || "#1f1f33"}
-                                            onChange={(e) => updateElement(selected.id, { color: e.target.value })}
-                                            className="h-8 w-full cursor-pointer"
-                                            data-testid={`td-color-${slot}`}
-                                        />
-                                    </div>
-                                    <div className="space-y-1.5">
-                                        <Label>Alineación</Label>
-                                        <Select
-                                            value={selected.align || "left"}
-                                            onValueChange={(v) => updateElement(selected.id, { align: v })}
-                                        >
-                                            <SelectTrigger data-testid={`td-align-${slot}`}>
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="left">Izquierda</SelectItem>
-                                                <SelectItem value="center">Centro</SelectItem>
-                                                <SelectItem value="right">Derecha</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                </>
-                            )}
-
-                            <p className="text-xs text-muted-foreground">
-                                Arrastrá para mover, usá las esquinas para cambiar el tamaño.
-                            </p>
-                        </>
+                <div className="flex-1 min-w-[200px] text-xs text-muted-foreground space-y-2 pt-1">
+                    <p>
+                        La vista de la izquierda es un esquema. Usá <strong>Vista previa</strong> para
+                        ver el PDF real con datos de ejemplo (lo mismo que recibe el comprador).
+                    </p>
+                    {safeDesign.background_url && (
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => updateDesign({ background_url: null })}
+                        >
+                            Quitar imagen de fondo
+                        </Button>
                     )}
                 </div>
             </div>
 
-            {/* Real preview — the canvas above is an editing surface (shows
-                {{field}} placeholders); this is the actual reportlab PDF with
-                sample data, so fonts/scaling/poster match exactly what buyers get. */}
             <div className="space-y-2">
                 <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                     Vista previa real
@@ -465,14 +431,14 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                         src={previewUrl}
                         title="Vista previa del ticket"
                         className="w-full border rounded-lg"
-                        style={{ height: 600 }}
+                        style={{ height: 520 }}
                         data-testid={`td-preview-frame-${slot}`}
                     />
                 ) : (
-                    <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                        {safeDesign.elements.length
+                    <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                        {hasDesign
                             ? "Hacé click en \"Vista previa\" para ver el ticket con datos de muestra."
-                            : "Agregá al menos un elemento (logo, QR o texto) para poder generar una vista previa."}
+                            : "Elegí una plantilla para poder generar la vista previa."}
                     </div>
                 )}
             </div>
@@ -480,63 +446,55 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
     );
 }
 
-function DesignElementNode({ el, displayW, displayH, isSelected, onSelect, onDragEnd, registerRef }) {
+function DesignElementNode({ el, displayW, displayH }) {
     const x = el.x * displayW;
     const y = el.y * displayH;
     const w = el.width * displayW;
     const h = el.height * displayH;
     const logoImg = useHtmlImage(el.type === "logo" ? backendAbsoluteUrl(el.image_url) : null);
 
-    const common = {
-        x, y, draggable: true,
-        onClick: onSelect,
-        onTap: onSelect,
-        onDragEnd: (e) => onDragEnd(e.target),
-        ref: registerRef,
-    };
-
     if (el.type === "qr") {
         return (
-            <Group {...common} width={w} height={h}>
-                <Rect
+            <Group x={x} y={y} width={w} height={h}>
+                <Rect width={w} height={h} fill="#f1f1f6" stroke="#c7c7d6" strokeWidth={1} dash={[6, 4]} />
+                <Text
                     width={w}
                     height={h}
-                    fill="#f1f1f6"
-                    stroke={isSelected ? "#6366f1" : "#c7c7d6"}
-                    strokeWidth={isSelected ? 2 : 1}
-                    dash={[6, 4]}
+                    text="QR"
+                    fontSize={Math.min(w, h) * 0.2}
+                    fill="#9292a8"
+                    align="center"
+                    verticalAlign="middle"
                 />
-                <Text width={w} height={h} text="QR" fontSize={Math.min(w, h) * 0.2} fill="#9292a8" align="center" verticalAlign="middle" />
             </Group>
         );
     }
     if (el.type === "logo") {
-        // Always the same outer Group — whether the image is loaded yet or
-        // not — so the registered ref (and the Transformer attached to it)
-        // never goes stale when the placeholder swaps for the real image.
         return (
-            <Group {...common} width={w} height={h}>
+            <Group x={x} y={y} width={w} height={h}>
                 {logoImg ? (
                     <KonvaImage image={logoImg} width={w} height={h} />
                 ) : (
                     <>
-                        <Rect
+                        <Rect width={w} height={h} fill="#f1f1f6" stroke="#c7c7d6" strokeWidth={1} />
+                        <Text
                             width={w}
                             height={h}
-                            fill="#f1f1f6"
-                            stroke={isSelected ? "#6366f1" : "#c7c7d6"}
-                            strokeWidth={isSelected ? 2 : 1}
+                            text="LOGO"
+                            fontSize={Math.min(w, h) * 0.18}
+                            fill="#9292a8"
+                            align="center"
+                            verticalAlign="middle"
                         />
-                        <Text width={w} height={h} text="LOGO" fontSize={Math.min(w, h) * 0.18} fill="#9292a8" align="center" verticalAlign="middle" />
                     </>
                 )}
             </Group>
         );
     }
-    // text
     return (
         <Text
-            {...common}
+            x={x}
+            y={y}
             width={w}
             height={h}
             text={el.field === "custom" ? (el.text || "Texto") : `{{${el.field || "title"}}}`}
@@ -544,8 +502,6 @@ function DesignElementNode({ el, displayW, displayH, isSelected, onSelect, onDra
             fill={el.color || "#1f1f33"}
             align={el.align || "left"}
             verticalAlign="middle"
-            stroke={isSelected ? "#6366f1" : undefined}
-            strokeWidth={isSelected ? 0.6 : 0}
         />
     );
 }

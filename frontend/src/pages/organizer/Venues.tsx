@@ -1,13 +1,13 @@
 /**
- * /app/venues — list page (rewrite of placeholder).
- * Shows venues for the current organizer, with type + status + capacity.
+ * /app/venues — list + create dialog for organizer venues.
  */
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, MapPin, Copy, Trash2, Archive, ExternalLink, Pencil, LayoutTemplate } from "lucide-react";
+import {
+    Plus, Search, MapPin, Copy, Trash2, Archive, ExternalLink, Pencil, LayoutTemplate, Info,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -51,7 +51,7 @@ export default function Venues() {
             setItems(data.items);
             setMaxV(data.max_venues);
             setActiveCount(data.active_count);
-        } catch (e) {
+        } catch {
             toast.error("No pudimos cargar tus venues.");
         } finally {
             setLoading(false);
@@ -104,8 +104,6 @@ export default function Venues() {
         try {
             const v = await venuesApi.create({ name: newName, type: newType });
             toast.success("Venue creado");
-            // The organizer already chose "empezar en blanco" here — don't ask
-            // again in the editor with the template overlay.
             navigate(editorUrl(v.id, { blank: "1" }));
         } catch (e) {
             toast.error(e?.response?.data?.detail || "Error al crear venue");
@@ -140,7 +138,7 @@ export default function Venues() {
             await venuesApi.archive(v.id);
             toast.success("Venue archivado");
             reload();
-        } catch (e) {
+        } catch {
             toast.error("No se pudo archivar");
         }
     };
@@ -182,44 +180,46 @@ export default function Venues() {
             <header className="flex flex-wrap items-end gap-3 justify-between">
                 <div>
                     <h1 className="text-2xl font-bold">Venues</h1>
-                    <p className="text-sm text-muted-foreground">
-                        Elegí una plantilla y publicá — o personalizá el mapa en el editor avanzado.
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                        Mapas y localidades para tus eventos.
+                        {" · "}
+                        <strong className="text-foreground" data-testid="venues-quota">
+                            {activeCount} de {maxV === -1 ? "∞" : maxV}
+                        </strong>
+                        {" activos"}
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground" data-testid="venues-quota">
-                        {activeCount} de {maxV === -1 ? "ilimitado" : maxV} venues
-                    </span>
-                    <Button
-                        onClick={() => openCreateDialog("template")}
-                        disabled={!canCreate}
-                        data-testid="venues-create-btn"
-                        title={!canCreate ? `Llegaste al límite de ${maxV} venues de tu plan` : ""}
-                    >
-                        <Plus className="h-4 w-4 mr-1.5" />
-                        Nuevo venue
-                    </Button>
-                </div>
+                <Button
+                    onClick={() => openCreateDialog("template")}
+                    disabled={!canCreate}
+                    data-testid="venues-create-btn"
+                    title={!canCreate ? `Llegaste al límite de ${maxV} venues de tu plan` : ""}
+                >
+                    <Plus className="h-4 w-4 mr-1.5" />
+                    Nuevo venue
+                </Button>
             </header>
 
             {returnTo && (
-                <Card className="border-indigo-200 bg-indigo-50/50">
-                    <CardContent className="py-3 text-sm text-indigo-900">
-                        Estás creando un venue para tu evento. Elegí una plantilla, ajustá precios si
-                        querés y <strong>publicá</strong> — te llevamos de vuelta al evento automáticamente.
-                    </CardContent>
-                </Card>
+                <div className="rounded-xl border bg-card p-4 flex items-start gap-3 text-sm">
+                    <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                    <p className="text-muted-foreground">
+                        Estás creando un venue para tu evento. Elegí una plantilla o empezá en blanco,
+                        diseñá el mapa y <strong className="text-foreground">publicá</strong> —
+                        te llevamos de vuelta al evento.
+                    </p>
+                </div>
             )}
 
             {(templatesLoading || templates.length > 0) && (
                 <section className="space-y-3" data-testid="venue-templates-section">
                     <div>
-                        <h2 className="text-lg font-semibold flex items-center gap-2">
-                            <LayoutTemplate className="h-5 w-5 text-indigo-600" />
-                            Plantillas de la plataforma
+                        <h2 className="text-sm font-medium flex items-center gap-2">
+                            <LayoutTemplate className="h-4 w-4 text-muted-foreground" />
+                            1. Plantillas de la plataforma
                         </h2>
-                        <p className="text-sm text-muted-foreground">
-                            Empezá con un layout prediseñado y personalizalo a tu gusto.
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Empezá con un layout prediseñado y personalizalo.
                         </p>
                     </div>
                     {templatesLoading ? (
@@ -227,224 +227,239 @@ export default function Venues() {
                     ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             {templates.map((tpl) => (
-                                <Card key={tpl.id} className="border-dashed border-indigo-200 bg-indigo-50/30">
-                                    <CardContent className="pt-4 space-y-3">
-                                        <div className="flex items-start gap-3">
-                                            <div className="h-10 w-10 rounded-lg bg-indigo-100 text-indigo-700 grid place-items-center shrink-0">
-                                                <LayoutTemplate className="h-5 w-5" />
-                                            </div>
-                                            <div className="min-w-0">
-                                                <h3 className="font-medium truncate">{tpl.name}</h3>
-                                                <p className="text-xs text-muted-foreground">
-                                                    {typeLabel(tpl.type)} · {tpl.capacity_calculated || 0} asientos
-                                                </p>
-                                            </div>
+                                <div key={tpl.id} className="rounded-xl border bg-card p-4 space-y-3">
+                                    <div className="flex items-start gap-3">
+                                        <div className="h-10 w-10 rounded-lg bg-secondary text-muted-foreground grid place-items-center shrink-0">
+                                            <LayoutTemplate className="h-5 w-5" />
                                         </div>
-                                        {tpl.description && (
-                                            <p className="text-xs text-muted-foreground line-clamp-2">{tpl.description}</p>
-                                        )}
-                                        <Button
-                                            size="sm"
-                                            className="w-full"
-                                            disabled={!canCreate || usingTemplate === tpl.id}
-                                            onClick={() => handleUseTemplate(tpl)}
-                                            data-testid={`use-template-${tpl.slug}`}
-                                        >
-                                            {usingTemplate === tpl.id ? "Creando…" : "Usar plantilla"}
-                                        </Button>
-                                    </CardContent>
-                                </Card>
+                                        <div className="min-w-0">
+                                            <h3 className="font-medium truncate text-sm">{tpl.name}</h3>
+                                            <p className="text-xs text-muted-foreground">
+                                                {typeLabel(tpl.type)} · {tpl.capacity_calculated || 0} asientos
+                                            </p>
+                                        </div>
+                                    </div>
+                                    {tpl.description && (
+                                        <p className="text-xs text-muted-foreground line-clamp-2">{tpl.description}</p>
+                                    )}
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="w-full"
+                                        disabled={!canCreate || usingTemplate === tpl.id}
+                                        onClick={() => handleUseTemplate(tpl)}
+                                        data-testid={`use-template-${tpl.slug}`}
+                                    >
+                                        {usingTemplate === tpl.id ? "Creando…" : "Usar plantilla"}
+                                    </Button>
+                                </div>
                             ))}
                         </div>
                     )}
                 </section>
             )}
 
-            <div className="flex flex-wrap gap-2">
-                <div className="relative flex-1 min-w-[200px]">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Buscar por nombre"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className="pl-8"
-                        data-testid="venues-search"
-                    />
+            <section className="space-y-3">
+                <div>
+                    <h2 className="text-sm font-medium">2. Tus venues</h2>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        Abrí el diseñador para editar el mapa y las localidades.
+                    </p>
                 </div>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-[160px]">
-                        <SelectValue placeholder="Estado" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Todos los estados</SelectItem>
-                        <SelectItem value="draft">Borrador</SelectItem>
-                        <SelectItem value="published">Publicado</SelectItem>
-                        <SelectItem value="archived">Archivado</SelectItem>
-                    </SelectContent>
-                </Select>
-                <Select value={typeFilter} onValueChange={setTypeFilter}>
-                    <SelectTrigger className="w-[160px]">
-                        <SelectValue placeholder="Tipo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Todos los tipos</SelectItem>
-                        {VENUE_TYPES.map((t) => (
-                            <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-            </div>
 
-            {loading ? (
-                <p className="text-sm text-muted-foreground">Cargando…</p>
-            ) : filtered.length === 0 ? (
-                <Card>
-                    <CardContent className="py-16 text-center space-y-3">
+                <div className="flex flex-wrap gap-2">
+                    <div className="relative flex-1 min-w-[200px]">
+                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Buscar por nombre"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="pl-8"
+                            data-testid="venues-search"
+                        />
+                    </div>
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                        <SelectTrigger className="w-[160px]">
+                            <SelectValue placeholder="Estado" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">Todos los estados</SelectItem>
+                            <SelectItem value="draft">Borrador</SelectItem>
+                            <SelectItem value="published">Publicado</SelectItem>
+                            <SelectItem value="archived">Archivado</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <Select value={typeFilter} onValueChange={setTypeFilter}>
+                        <SelectTrigger className="w-[160px]">
+                            <SelectValue placeholder="Tipo" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">Todos los tipos</SelectItem>
+                            {VENUE_TYPES.map((t) => (
+                                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                {loading ? (
+                    <p className="text-sm text-muted-foreground">Cargando…</p>
+                ) : filtered.length === 0 ? (
+                    <div className="rounded-xl border border-dashed bg-card py-14 text-center space-y-3">
                         <MapPin className="mx-auto h-10 w-10 text-muted-foreground/40" />
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-sm text-muted-foreground max-w-sm mx-auto">
                             {items.length === 0
-                                ? "Elegí una plantilla arriba o creá un venue nuevo — en minutos podés vincularlo a un evento."
+                                ? "Todavía no tenés venues. Usá una plantilla o creá uno nuevo para vincularlo a un evento."
                                 : "Sin venues que coincidan con los filtros."}
                         </p>
                         {items.length === 0 && (
                             <Button onClick={() => openCreateDialog("template")} disabled={!canCreate}>
-                                <LayoutTemplate className="h-4 w-4 mr-1.5" />
-                                Elegir plantilla
+                                <Plus className="h-4 w-4 mr-1.5" />
+                                Nuevo venue
                             </Button>
                         )}
-                    </CardContent>
-                </Card>
-            ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {filtered.map((v) => (
-                        <Card key={v.id} className="overflow-hidden" data-testid={`venue-card-${v.slug}`}>
-                            <div className="h-32 bg-gradient-to-br from-indigo-50 to-slate-100 flex items-center justify-center text-slate-400 relative">
-                                <MapPin className="h-12 w-12" />
-                                <Badge
-                                    variant="secondary"
-                                    className="absolute top-2 right-2 capitalize"
-                                >
-                                    {STATUS_LABEL[v.status] || v.status}
-                                </Badge>
-                            </div>
-                            <CardContent className="pt-3 space-y-2">
-                                <div>
-                                    <h3 className="font-semibold truncate">{v.name}</h3>
-                                    <p className="text-xs text-muted-foreground">
-                                        {VENUE_TYPES.find((t) => t.value === v.type)?.label || v.type}
-                                        {" · "}
-                                        {v.capacity_calculated} cap.
-                                    </p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {filtered.map((v) => (
+                            <div
+                                key={v.id}
+                                className="rounded-xl border bg-card overflow-hidden"
+                                data-testid={`venue-card-${v.slug}`}
+                            >
+                                <div className="h-28 bg-secondary/50 flex items-center justify-center text-muted-foreground relative border-b">
+                                    <MapPin className="h-10 w-10 opacity-40" />
+                                    <Badge
+                                        variant="secondary"
+                                        className="absolute top-2 right-2 capitalize text-[10px] font-normal"
+                                    >
+                                        {STATUS_LABEL[v.status] || v.status}
+                                    </Badge>
                                 </div>
-                                <p className="text-xs text-muted-foreground">
-                                    {v.events_count > 0
-                                        ? `${v.events_count} evento${v.events_count > 1 ? "s" : ""} vinculados`
-                                        : "Sin eventos vinculados"}
-                                </p>
-                                <div className="flex gap-1.5 flex-wrap pt-1">
-                                    <Button
-                                        asChild
-                                        size="sm"
-                                        variant="default"
-                                        data-testid={`venue-edit-${v.slug}`}
-                                    >
-                                        <Link to={`/app/venues/${v.id}/editor`}>
-                                            <Pencil className="h-3.5 w-3.5 mr-1" />
-                                            Editor
-                                        </Link>
-                                    </Button>
-                                    {v.status === "published" && (
-                                        <Button asChild size="sm" variant="outline">
-                                            <a
-                                                href={`/o/${v.tenant_slug}/venues/${v.slug}/preview`}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                            >
-                                                <ExternalLink className="h-3.5 w-3.5 mr-1" />
-                                                Preview
-                                            </a>
+                                <div className="p-4 space-y-3">
+                                    <div>
+                                        <h3 className="font-medium truncate">{v.name}</h3>
+                                        <p className="text-xs text-muted-foreground mt-0.5">
+                                            {typeLabel(v.type)}
+                                            {" · "}
+                                            {v.capacity_calculated} cap.
+                                            {" · "}
+                                            {v.events_count > 0
+                                                ? `${v.events_count} evento${v.events_count > 1 ? "s" : ""}`
+                                                : "Sin eventos"}
+                                        </p>
+                                    </div>
+                                    <div className="flex gap-1.5 flex-wrap">
+                                        <Button
+                                            asChild
+                                            size="sm"
+                                            data-testid={`venue-edit-${v.slug}`}
+                                        >
+                                            <Link to={`/app/venues/${v.id}/editor`}>
+                                                <Pencil className="h-3.5 w-3.5 mr-1" />
+                                                Diseñar
+                                            </Link>
                                         </Button>
-                                    )}
-                                    <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() => handleDuplicate(v)}
-                                        disabled={!canCreate}
-                                    >
-                                        <Copy className="h-3.5 w-3.5" />
-                                    </Button>
-                                    {v.status !== "archived" && (
+                                        {v.status === "published" && (
+                                            <Button asChild size="sm" variant="outline">
+                                                <a
+                                                    href={`/o/${v.tenant_slug}/venues/${v.slug}/preview`}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                >
+                                                    <ExternalLink className="h-3.5 w-3.5 mr-1" />
+                                                    Preview
+                                                </a>
+                                            </Button>
+                                        )}
                                         <Button
                                             size="sm"
                                             variant="ghost"
-                                            onClick={() => handleArchive(v)}
+                                            onClick={() => handleDuplicate(v)}
+                                            disabled={!canCreate}
+                                            title="Duplicar"
                                         >
-                                            <Archive className="h-3.5 w-3.5" />
+                                            <Copy className="h-3.5 w-3.5" />
                                         </Button>
-                                    )}
-                                    <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() => setConfirmDelete(v)}
-                                        className="text-red-600 hover:bg-red-50"
-                                    >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                    </Button>
+                                        {v.status !== "archived" && (
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                onClick={() => handleArchive(v)}
+                                                title="Archivar"
+                                            >
+                                                <Archive className="h-3.5 w-3.5" />
+                                            </Button>
+                                        )}
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            onClick={() => setConfirmDelete(v)}
+                                            className="text-red-600 hover:bg-red-50"
+                                            title="Eliminar"
+                                        >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </Button>
+                                    </div>
                                 </div>
-                            </CardContent>
-                        </Card>
-                    ))}
-                </div>
-            )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </section>
 
-            {/* Create dialog — plantilla primero */}
             <Dialog open={showNew} onOpenChange={(o) => !o && closeCreateDialog()}>
                 <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>
-                            {createMode === "template" ? "Nuevo venue desde plantilla" : "Venue en blanco"}
-                        </DialogTitle>
+                        <DialogTitle>Nuevo venue</DialogTitle>
                     </DialogHeader>
 
                     {createMode === "template" ? (
-                        <VenueTemplatePicker
-                            templates={templates}
-                            loading={templatesLoading}
-                            usingId={usingTemplate}
-                            disabled={!canCreate}
-                            onUseTemplate={(tpl) => {
-                                closeCreateDialog();
-                                handleUseTemplate(tpl);
-                            }}
-                            onStartBlank={() => setCreateMode("blank")}
-                        />
+                        <>
+                            <VenueTemplatePicker
+                                templates={templates}
+                                loading={templatesLoading}
+                                usingId={usingTemplate}
+                                disabled={!canCreate}
+                                onUseTemplate={(tpl) => {
+                                    closeCreateDialog();
+                                    handleUseTemplate(tpl);
+                                }}
+                                onStartBlank={() => setCreateMode("blank")}
+                            />
+                            <DialogFooter>
+                                <Button variant="ghost" onClick={closeCreateDialog}>Cancelar</Button>
+                            </DialogFooter>
+                        </>
                     ) : (
-                        <div className="space-y-3 py-2">
-                            <p className="text-sm text-muted-foreground">
-                                Canvas vacío para diseñar a mano. Recomendado si ya conocés el editor.
+                        <div className="space-y-4">
+                            <p className="text-xs text-muted-foreground">
+                                Canvas vacío para diseñar a mano. Ideal si ya conocés el editor.
                             </p>
-                            <div className="space-y-1">
-                                <Label>Nombre</Label>
-                                <Input
-                                    value={newName}
-                                    onChange={(e) => setNewName(e.target.value)}
-                                    placeholder="Teatro Nacional Sucre"
-                                    autoFocus
-                                    data-testid="venue-new-name"
-                                />
+                            <div className="rounded-xl border bg-card p-4 space-y-3">
+                                <div className="space-y-1.5">
+                                    <Label>Nombre *</Label>
+                                    <Input
+                                        value={newName}
+                                        onChange={(e) => setNewName(e.target.value)}
+                                        placeholder="Teatro Nacional Sucre"
+                                        autoFocus
+                                        data-testid="venue-new-name"
+                                    />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label>Tipo</Label>
+                                    <Select value={newType} onValueChange={setNewType}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            {VENUE_TYPES.map((t) => (
+                                                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
-                            <div className="space-y-1">
-                                <Label>Tipo</Label>
-                                <Select value={newType} onValueChange={setNewType}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        {VENUE_TYPES.map((t) => (
-                                            <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <DialogFooter className="pt-2 sm:justify-between gap-2">
+                            <DialogFooter className="sm:justify-between gap-2">
                                 <Button type="button" variant="ghost" onClick={() => setCreateMode("template")}>
                                     ← Volver a plantillas
                                 </Button>
@@ -458,22 +473,15 @@ export default function Venues() {
                                         disabled={!newName.trim()}
                                         data-testid="venue-new-submit"
                                     >
-                                        Crear canvas vacío
+                                        Crear y diseñar
                                     </Button>
                                 </div>
                             </DialogFooter>
                         </div>
                     )}
-
-                    {createMode === "template" && (
-                        <DialogFooter>
-                            <Button variant="ghost" onClick={closeCreateDialog}>Cancelar</Button>
-                        </DialogFooter>
-                    )}
                 </DialogContent>
             </Dialog>
 
-            {/* Delete confirmation */}
             <AlertDialog
                 open={!!confirmDelete}
                 onOpenChange={(o) => !o && setConfirmDelete(null)}

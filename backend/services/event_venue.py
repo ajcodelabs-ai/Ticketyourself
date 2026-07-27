@@ -1,0 +1,133 @@
+"""Event-scoped venue layout (snapshot) helpers.
+
+When an event links a master venue, we deep-copy canvas/elements/localities into
+`event.venue_layout`. Runtime (purchase, holds, public map) resolves that
+snapshot first so two events can share the same master Teatro without sharing
+edits.
+"""
+from __future__ import annotations
+
+import copy
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from db_helpers import get_venue_by_id
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def compute_capacity(elements: List[Dict[str, Any]]) -> int:
+    """Sum of seat counts across element kinds that contribute (mirrors venues router)."""
+    total = 0
+    for e in elements or []:
+        k = e.get("kind")
+        if k == "unnumbered_zone":
+            total += int(e.get("capacity") or 0)
+        elif k in ("seat_row_straight", "seat_row_curved"):
+            total += int(e.get("seats_count") or 0)
+        elif k == "seat_individual":
+            total += 1
+        elif k == "table_round":
+            total += int(e.get("chairs_count") or 0)
+        elif k == "table_rect":
+            cps = e.get("chairs_per_side") or {}
+            total += sum(int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left"))
+    return total
+
+
+def snapshot_from_venue(venue: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep-copy layout fields from a venue dict, preserving element/locality ids."""
+    venue_id = venue.get("id")
+    elements = copy.deepcopy(venue.get("elements") or [])
+    return {
+        "canvas": copy.deepcopy(venue.get("canvas") or {}),
+        "elements": elements,
+        "localities": copy.deepcopy(venue.get("localities") or []),
+        "capacity_calculated": int(
+            venue.get("capacity_calculated") or compute_capacity(elements) or 0
+        ),
+        "snapshotted_at": _now_iso(),
+        "source_venue_id": venue_id,
+    }
+
+
+def layout_as_venue(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Build a venue-shaped dict from event.venue_layout, or None if missing."""
+    layout = event.get("venue_layout")
+    if not layout or not isinstance(layout, dict):
+        return None
+    source = (
+        event.get("source_venue_id")
+        or event.get("venue_id")
+        or layout.get("source_venue_id")
+    )
+    return {
+        "id": source,
+        "slug": event.get("venue_slug"),
+        "name": event.get("venue_name") or "Mapa del evento",
+        "canvas": layout.get("canvas") or {},
+        "elements": layout.get("elements") or [],
+        "localities": layout.get("localities") or [],
+        "capacity_calculated": int(layout.get("capacity_calculated") or 0),
+        "status": "published",
+        "organizer_id": event.get("organizer_id"),
+        "tenant_slug": event.get("tenant_slug"),
+        "is_event_snapshot": True,
+        "source_venue_id": source,
+    }
+
+
+async def resolve_event_venue(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Prefer event.venue_layout; fall back to live master venue (legacy)."""
+    snap = layout_as_venue(event)
+    if snap is not None:
+        return snap
+    vid = event.get("venue_id")
+    if not vid:
+        return None
+    return await get_venue_by_id(vid)
+
+
+def recalc_layout_capacity(layout: Dict[str, Any]) -> int:
+    """Recompute capacity from elements; mutate layout and return the value."""
+    cap = compute_capacity(layout.get("elements") or [])
+    layout["capacity_calculated"] = int(cap or 0)
+    return layout["capacity_calculated"]
+
+
+def structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> bool:
+    """True if add/delete/move/resize/kind/locality changed (ignores labels)."""
+    if len(old) != len(new):
+        return True
+    by_id_old = {e["id"]: e for e in old}
+    by_id_new = {e["id"]: e for e in new}
+    if set(by_id_old) != set(by_id_new):
+        return True
+    keys_structural = (
+        "x", "y", "width", "height", "rotation", "kind",
+        "seats_count", "capacity", "locality_id",
+    )
+    for k, a in by_id_old.items():
+        b = by_id_new[k]
+        for kk in keys_structural:
+            if a.get(kk) != b.get(kk):
+                return True
+    return False
+
+
+def locality_structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> bool:
+    if len(old) != len(new):
+        return True
+    by_id_old = {it["id"]: it for it in old}
+    by_id_new = {it["id"]: it for it in new}
+    if set(by_id_old) != set(by_id_new):
+        return True
+    for k, a in by_id_old.items():
+        b = by_id_new[k]
+        if a.get("color") != b.get("color"):
+            return True
+        if a.get("default_price_cents") != b.get("default_price_cents"):
+            return True
+    return False

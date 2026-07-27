@@ -255,7 +255,12 @@ class Event(Base):
     # Venue link (numbered seating)
     venue_id = Column(String(36), ForeignKey("venues.id"), nullable=True)
     venue_slug = Column(String(120), nullable=True)
-    # [{locality_id, price_cents, max_tickets_per_purchase}]
+    # Master venue this event was snapshotted from (same as venue_id on first link).
+    source_venue_id = Column(String(36), nullable=True)
+    # Event-scoped copy of canvas/elements/localities — edited independently of the master.
+    # Shape: {canvas, elements, localities, capacity_calculated, snapshotted_at, source_venue_id}
+    venue_layout = Column(JSONB, nullable=True)
+    # [{locality_id, price_cents, service_fee_cents, admin_fee_cents, max_tickets_per_purchase}]
     locality_pricing = Column(JSONB, nullable=False, default=list)
     seat_holds_window_minutes = Column(Integer, nullable=False, default=10)
 
@@ -269,10 +274,16 @@ class Event(Base):
     raffle_enabled = Column(Boolean, nullable=False, default=False)
     raffle_numbers_issued = Column(Integer, nullable=False, default=0)
 
-    # Media
+    # Media — Banner / Mediana (poster) / Pequeña (small) + gallery
     poster_url = Column(Text, nullable=True)
     banner_url = Column(Text, nullable=True)
+    small_url = Column(Text, nullable=True)
     gallery_urls = Column(JSONB, nullable=False, default=list)
+
+    # General metadata (TicketShow-aligned)
+    priority = Column(Integer, nullable=False, default=0)
+    video_url = Column(Text, nullable=True)
+    keywords = Column(JSONB, nullable=False, default=list)
 
     # Complex JSONB config fields
     payment_methods = Column(
@@ -553,12 +564,26 @@ class Microsite(Base):
     content = Column(JSONB, nullable=False, default=dict)
     social_links = Column(JSONB, nullable=False, default=dict)
     sections_enabled = Column(JSONB, nullable=False, default=dict)
+    blocks = Column(JSONB, nullable=False, default=list)
+    seo = Column(JSONB, nullable=False, default=dict)
     published = Column(Boolean, nullable=False, default=False)
     published_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(
         DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
     )
+
+
+class MicrositeRevision(Base):
+    __tablename__ = "microsite_revisions"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    microsite_id = Column(
+        String(36), ForeignKey("microsites.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    label = Column(String(120), nullable=True)
+    snapshot = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -633,7 +658,7 @@ class EventAsset(Base):
     id = Column(String(36), primary_key=True, default=_uuid4)
     event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
     organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False)
-    kind = Column(String(20), nullable=False)  # poster | banner | gallery
+    kind = Column(String(20), nullable=False)  # poster | banner | small | gallery
     file_path = Column(String(500), nullable=False)
     mime_type = Column(String(100), nullable=True)
     size_bytes = Column(Integer, nullable=True)
@@ -725,6 +750,8 @@ class EventGuestListEntry(Base):
     cedula = Column(String(40), nullable=True)
     name = Column(String(140), nullable=True)
     notes = Column(String(300), nullable=True)
+    # Max tickets this guest may buy across purchases (default 1).
+    max_tickets = Column(Integer, nullable=False, default=1)
     used_at = Column(DateTime(timezone=True), nullable=True)  # set when they complete a purchase
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
@@ -745,8 +772,10 @@ class EventAccessCode(Base):
     )
     organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
     code = Column(String(40), nullable=False)
-    max_uses = Column(Integer, nullable=True)  # null = unlimited
+    max_uses = Column(Integer, nullable=True)  # null = unlimited redemptions
     uses_count = Column(Integer, nullable=False, default=0)
+    # Max tickets allowed in a single purchase that uses this code (null = no extra cap).
+    max_tickets_per_redemption = Column(Integer, nullable=True)
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)

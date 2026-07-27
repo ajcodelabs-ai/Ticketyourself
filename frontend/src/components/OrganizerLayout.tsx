@@ -72,6 +72,11 @@ const NAV_ITEMS = [
 export default function OrganizerLayout({ children }) {
     const { user, organizer, logout } = useAuth();
     const [mobileOpen, setMobileOpen] = useState(false);
+    const location = useLocation();
+    const isFullWidthPage =
+        location.pathname.startsWith("/app/microsite") ||
+        /^\/app\/venues\/[^/]+\/editor$/.test(location.pathname) ||
+        /^\/app\/eventos\/[^/]+\/mapa$/.test(location.pathname);
 
     // logout() already navigates to the right entry point for the user's
     // role — a hardcoded navigate("/login") afterwards would be redundant.
@@ -135,8 +140,13 @@ export default function OrganizerLayout({ children }) {
             </header>
 
             {/* ── Main content ────────────────────────────────────────────── */}
-            <main className="lg:ml-60 px-4 sm:px-6 py-6 sm:py-8" data-testid="org-main">
-                <div className="max-w-6xl mx-auto">{children}</div>
+            <main
+                className={`lg:ml-60 ${isFullWidthPage ? "px-3 sm:px-4 py-3" : "px-4 sm:px-6 py-6 sm:py-8"}`}
+                data-testid="org-main"
+            >
+                <div className={isFullWidthPage ? "w-full max-w-none" : "max-w-6xl mx-auto"}>
+                    {children}
+                </div>
             </main>
         </div>
     );

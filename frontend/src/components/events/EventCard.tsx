@@ -16,7 +16,7 @@ export default function EventCard({ event, tenantSlug, primaryColor = "#4f46e5" 
         <Link
             to={href}
             data-testid={`event-card-${event.slug}`}
-            className="group block rounded-2xl overflow-hidden border bg-card hover:-translate-y-0.5 hover:shadow-lg transition-all"
+            className="group block rounded-[var(--ms-radius)] overflow-hidden border bg-card shadow-[var(--ms-shadow)] hover:-translate-y-0.5 hover:shadow-lg transition-all"
         >
             <div className="aspect-[4/3] relative overflow-hidden bg-muted">
                 <img

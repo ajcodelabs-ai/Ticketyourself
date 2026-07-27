@@ -239,40 +239,70 @@ def compute_totals(
     }
 
 
+def locality_pricing_map(event: dict) -> dict:
+    return {
+        lp["locality_id"]: lp
+        for lp in (event.get("locality_pricing") or [])
+    }
+
+
+def locality_fee_cents(pricing_map: dict, locality_id: str | None) -> tuple[int, int]:
+    """service_fee_cents/admin_fee_cents configured for a locality, or (0, 0)
+    when the locality has no pricing entry (e.g. events without a venue)."""
+    lp = pricing_map.get(locality_id) if locality_id else None
+    if not lp:
+        return 0, 0
+    return int(lp.get("service_fee_cents") or 0), int(lp.get("admin_fee_cents") or 0)
+
+
 def compute_totals_with_seats(
     *,
     event: dict,
     venue: dict,
     seat_ids: list[str],
 ) -> dict:
-    """Per-locality pricing for seat-numbered events."""
+    """Per-locality pricing for seat-numbered events.
+
+    Per seat the buyer pays entrada + c.servicio + c.admin.
+    Platform fee (`TYS_FEE_PERCENT`) applies only to the entrada portion.
+    """
     from services.seats import seats_by_id
 
     if not seat_ids:
         raise HTTPException(422, "No seleccionaste asientos.")
-    pricing_map = {
-        lp["locality_id"]: int(lp.get("price_cents") or 0)
-        for lp in (event.get("locality_pricing") or [])
-    }
+    pricing_map = locality_pricing_map(event)
     by_id = seats_by_id(venue)
     subtotal = 0
+    entrada_subtotal = 0
+    service_subtotal = 0
+    admin_subtotal = 0
     missing_loc = []
     for sid in seat_ids:
         seat = by_id.get(sid)
         if not seat:
             raise HTTPException(422, f"Asiento {sid} no existe en el venue.")
         loc_id = seat.get("locality_id")
-        if loc_id not in pricing_map:
+        lp = pricing_map.get(loc_id)
+        if not lp:
             missing_loc.append(loc_id or "(sin localidad)")
             continue
-        subtotal += pricing_map[loc_id]
+        entrada = int(lp.get("price_cents") or 0)
+        service, admin = locality_fee_cents(pricing_map, loc_id)
+        entrada_subtotal += entrada
+        service_subtotal += service
+        admin_subtotal += admin
+        subtotal += entrada + service + admin
     if missing_loc:
         raise HTTPException(422, f"El evento no tiene precio para: {set(missing_loc)}")
-    fees = int(round(subtotal * DEFAULT_FEE_PERCENT / 100))
-    avg_unit = subtotal // max(1, len(seat_ids))
+    fees = int(round(entrada_subtotal * DEFAULT_FEE_PERCENT / 100))
+    avg_unit = entrada_subtotal // max(1, len(seat_ids))
     return {
+        # unit_price_cents = average entrada only (excludes service/admin)
         "unit_price_cents": avg_unit,
         "subtotal_cents": subtotal,
+        "entrada_cents": entrada_subtotal,
+        "service_fee_cents": service_subtotal,
+        "admin_fee_cents": admin_subtotal,
         "fees_cents": fees,
         "total_cents": subtotal + fees,
         "donation_amount_cents": 0,
@@ -385,7 +415,21 @@ async def create_order_skeleton(
         updated_at=now,
     )
 
+    access_type = (event.get("access_params") or {}).get("access_type", "open")
     async with AsyncSessionLocal() as session:
+        if access_type == "verified_list":
+            from services.access_control import relock_and_check_guest_cap
+
+            try:
+                await relock_and_check_guest_cap(
+                    session,
+                    event_id=event["id"],
+                    email=(buyer.get("email") or "").strip().lower() or None,
+                    cedula=(buyer.get("document_id") or "").strip() or None,
+                    quantity=quantity,
+                )
+            except ValueError as exc:
+                raise HTTPException(403, str(exc)) from exc
         session.add(row)
         await session.commit()
         await session.refresh(row)
@@ -499,12 +543,13 @@ async def issue_tickets_for_order(order: dict) -> list[dict]:
 async def _assign_seats_if_needed(order: dict, tickets: list[dict]) -> None:
     if not order.get("seat_ids"):
         return
-    from db_helpers import get_event_by_id, get_venue_by_id
+    from db_helpers import get_event_by_id
+    from services.event_venue import resolve_event_venue
 
     event_doc = await get_event_by_id(order["event_id"])
     if not event_doc or not event_doc.get("venue_id"):
         return
-    venue_doc = await get_venue_by_id(event_doc["venue_id"])
+    venue_doc = await resolve_event_venue(event_doc)
     if not venue_doc:
         return
     from services.seats import assign_seats_to_tickets
