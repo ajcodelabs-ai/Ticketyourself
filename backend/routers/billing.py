@@ -93,11 +93,11 @@ async def create_checkout_session(
             mode = "payment"
     except Exception as e:
         # logger.error, not .exception — see the customer-create catch above.
-        logger.error(
-            "Stripe checkout create failed (mode=%s): %s",
-            plan["billing_period"],
-            type(e).__name__,
-        )
+        # Also: log the exception type only, not anything derived from
+        # `plan` (a row_to_dict() output — CodeQL's taint tracking flags
+        # values from that helper broadly, since other call sites of it in
+        # this file convert rows that do carry PII).
+        logger.error("Stripe checkout create failed: %s", type(e).__name__)
         raise HTTPException(
             502,
             (
