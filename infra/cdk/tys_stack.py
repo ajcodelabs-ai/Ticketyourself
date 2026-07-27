@@ -16,6 +16,8 @@ from aws_cdk import (
     aws_secretsmanager as secretsmanager,
     aws_certificatemanager as acm,
     aws_logs as logs,
+    aws_events as events,
+    aws_events_targets as events_targets,
 )
 from constructs import Construct
 
@@ -93,6 +95,98 @@ class TysStack(Stack):
 
         CfnOutput(self, "Url", value=f"http://{eip.attr_public_ip}")
         CfnOutput(self, "Ssm", value=f"aws ssm start-session --target {instance.instance_id}")
+
+        # ── Auto on/off schedule (cost saving) ───────────────────────────
+        # 08:00-21:00 America/Guayaquil (UTC-5, no DST — fixed offset), daily.
+        instance_arn = self.format_arn(service="ec2", resource="instance", resource_name=instance.instance_id)
+
+        start_rule = events.Rule(
+            self,
+            "StartInstanceSchedule",
+            schedule=events.Schedule.cron(minute="0", hour="13"),
+            description="Start TYS staging EC2 daily at 08:00 America/Guayaquil",
+        )
+        start_rule.add_target(
+            events_targets.AwsApi(
+                service="EC2",
+                action="startInstances",
+                parameters={"InstanceIds": [instance.instance_id]},
+                policy_statement=iam.PolicyStatement(
+                    actions=["ec2:StartInstances"],
+                    resources=[instance_arn],
+                ),
+            )
+        )
+
+        stop_rule = events.Rule(
+            self,
+            "StopInstanceSchedule",
+            schedule=events.Schedule.cron(minute="0", hour="2"),
+            description="Stop TYS staging EC2 daily at 21:00 America/Guayaquil",
+        )
+        stop_rule.add_target(
+            events_targets.AwsApi(
+                service="EC2",
+                action="stopInstances",
+                parameters={"InstanceIds": [instance.instance_id]},
+                policy_statement=iam.PolicyStatement(
+                    actions=["ec2:StopInstances"],
+                    resources=[instance_arn],
+                ),
+            )
+        )
+
+        # ── GitHub Actions deploy role (OIDC, no static keys) ────────────
+        # Only TysStaging creates the account-wide OIDC provider — IAM allows
+        # exactly one provider per URL per account. If TysProduction ever
+        # needs its own deploy role, import this provider by ARN instead of
+        # creating a second one.
+        github_oidc_provider = iam.OpenIdConnectProvider(
+            self,
+            "GithubOidcProvider",
+            url="https://token.actions.githubusercontent.com",
+            client_ids=["sts.amazonaws.com"],
+        )
+
+        github_deploy_role = iam.Role(
+            self,
+            "GithubDeployRole",
+            role_name="tys-staging-github-deploy",
+            max_session_duration=Duration.hours(1),
+            assumed_by=iam.FederatedPrincipal(
+                github_oidc_provider.open_id_connect_provider_arn,
+                conditions={
+                    "StringEquals": {
+                        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                    },
+                    # Restricted to pushes on the `staging` branch specifically —
+                    # not "any workflow in this repo".
+                    "StringLike": {
+                        "token.actions.githubusercontent.com:sub": "repo:ajcodelabs-ai/Ticketyourself:ref:refs/heads/staging",
+                    },
+                },
+                assume_role_action="sts:AssumeRoleWithWebIdentity",
+            ),
+        )
+        github_deploy_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ssm:SendCommand"],
+                resources=[
+                    instance_arn,
+                    f"arn:aws:ssm:{self.region}::document/AWS-RunShellScript",
+                ],
+            )
+        )
+        github_deploy_role.add_to_policy(
+            iam.PolicyStatement(
+                # GetCommandInvocation has no resource-level permissions in IAM
+                # (AWS requires "*" here); SendCommand above is what's scoped.
+                actions=["ssm:GetCommandInvocation"],
+                resources=["*"],
+            )
+        )
+
+        CfnOutput(self, "GithubDeployRoleArn", value=github_deploy_role.role_arn)
 
     # ═══════════════════════════════════════════════════════════════════
     #  PRODUCTION
