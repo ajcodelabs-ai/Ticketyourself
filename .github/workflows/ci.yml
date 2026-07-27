@@ -155,16 +155,15 @@ jobs:
         working-directory: backend
         run: isort --check-only .
 
-      # Blocking: only real-bug codes (syntax errors, undefined names, bad
-      # comparisons) — not the full pre-existing style backlog.
-      - name: flake8 (real bugs — blocking)
+      # Single pass: full report always logged (informational — pre-existing
+      # style backlog isn't blocking), but fails the build if any of the
+      # real-bug codes (syntax errors, undefined names, bad comparisons)
+      # show up, without walking the tree twice.
+      - name: flake8
         working-directory: backend
-        run: flake8 . --select=E9,F63,F7,F82
-
-      # Informational: full lint report, visible in logs but never fails the build.
-      - name: flake8 (full report — informational)
-        working-directory: backend
-        run: flake8 . --exit-zero
+        run: |
+          flake8 . --exit-zero | tee /tmp/flake8-full.txt
+          ! grep -qE ': (E9|F63|F7|F82)' /tmp/flake8-full.txt
 
   frontend-lint:
     name: Frontend lint & typecheck
