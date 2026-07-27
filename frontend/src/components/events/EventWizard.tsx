@@ -355,7 +355,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     useEffect(() => {
         if (!currentEvent?.venue_id) return;
         update("venue_name", currentEvent.venue_name || "");
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentEvent?.venue_name, currentEvent?.venue_id]);
 
     // When building payload, use the latest form state via ref to avoid stale
@@ -555,7 +554,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         const toUpload = list.slice(0, remaining);
         let uploaded = 0;
         for (const f of toUpload) {
-            // eslint-disable-next-line no-await-in-loop
             const r = await uploadImage(f, "gallery");
             if (r) uploaded += 1;
         }
