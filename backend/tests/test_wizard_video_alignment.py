@@ -10,7 +10,12 @@ import pytest
 from fastapi import HTTPException
 
 from routers.events import CustomQuestion, LocalityPriceIn
-from services.order_service import compute_totals_with_seats, DEFAULT_FEE_PERCENT
+from services.order_service import (
+    compute_totals_with_seats,
+    locality_fee_cents,
+    locality_pricing_map,
+    DEFAULT_FEE_PERCENT,
+)
 
 
 def test_locality_price_in_includes_fees():
@@ -99,3 +104,25 @@ def test_compute_totals_with_seats_missing_seat_raises():
             compute_totals_with_seats(event=event, venue=venue, seat_ids=["missing"])
     finally:
         seats_mod.seats_by_id = original
+
+
+def test_locality_fee_cents_applies_to_ticket_type_bound_to_locality():
+    """A TicketType with venue_locality_id set must pick up the same
+    service/admin fees configured on locality_pricing — used by the GA
+    ticket_type_selections purchase path in routers/orders.py, not just by
+    compute_totals_with_seats's per-seat path."""
+    event = {
+        "locality_pricing": [
+            {"locality_id": "vip", "price_cents": 5000, "service_fee_cents": 300, "admin_fee_cents": 150},
+        ]
+    }
+    pricing_map = locality_pricing_map(event)
+    service, admin = locality_fee_cents(pricing_map, "vip")
+    assert (service, admin) == (300, 150)
+
+
+def test_locality_fee_cents_zero_for_ticket_type_without_locality():
+    event = {"locality_pricing": [{"locality_id": "vip", "price_cents": 5000, "service_fee_cents": 300}]}
+    pricing_map = locality_pricing_map(event)
+    assert locality_fee_cents(pricing_map, None) == (0, 0)
+    assert locality_fee_cents(pricing_map, "unknown-locality") == (0, 0)

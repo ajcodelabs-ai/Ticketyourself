@@ -22,7 +22,12 @@ def upgrade() -> None:
     op.create_table(
         "microsite_revisions",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("microsite_id", sa.String(36), sa.ForeignKey("microsites.id"), nullable=False),
+        sa.Column(
+            "microsite_id",
+            sa.String(36),
+            sa.ForeignKey("microsites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("label", sa.String(120), nullable=True),
         sa.Column("snapshot", JSONB, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),

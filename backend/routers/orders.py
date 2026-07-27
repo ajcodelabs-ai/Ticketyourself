@@ -239,7 +239,17 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             tt_map = {r.id: row_to_dict(r) for r in result.scalars().all()}
         if len(tt_map) != len(tt_ids):
             raise HTTPException(422, "Uno o más tipos de ticket no son válidos para este evento.")
+        # A función may override per-locality pricing; fall back to the
+        # event's own locality_pricing when it doesn't set its own (mirrors
+        # the seat-based branch above).
+        pricing_event = event
+        if function and function.get("locality_pricing"):
+            pricing_event = {**event, "locality_pricing": function["locality_pricing"]}
+        pricing_map = order_service.locality_pricing_map(pricing_event)
         subtotal = 0
+        entrada_subtotal = 0
+        service_subtotal = 0
+        admin_subtotal = 0
         items_override = []
         for sel in payload.ticket_type_selections:
             tt = tt_map[sel.ticket_type_id]
@@ -273,8 +283,12 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                     raise HTTPException(
                         409, f"No hay suficiente aforo de '{tt['name']}' para esta función."
                     )
-            sel_subtotal = unit * sel.quantity
+            service, admin = order_service.locality_fee_cents(pricing_map, tt.get("venue_locality_id"))
+            sel_subtotal = (unit + service + admin) * sel.quantity
             subtotal += sel_subtotal
+            entrada_subtotal += unit * sel.quantity
+            service_subtotal += service * sel.quantity
+            admin_subtotal += admin * sel.quantity
             items_override.append({
                 "ticket_type_id": tt["id"],
                 "ticket_type": tt["name"],
@@ -283,10 +297,13 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                 "subtotal_cents": sel_subtotal,
             })
         quantity = sum(s.quantity for s in payload.ticket_type_selections)
-        fees = int(round(subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
+        fees = int(round(entrada_subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
         totals = {
-            "unit_price_cents": subtotal // max(1, quantity),
+            "unit_price_cents": entrada_subtotal // max(1, quantity),
             "subtotal_cents": subtotal,
+            "entrada_cents": entrada_subtotal,
+            "service_fee_cents": service_subtotal,
+            "admin_fee_cents": admin_subtotal,
             "fees_cents": fees,
             "total_cents": subtotal + fees,
             "donation_amount_cents": 0,

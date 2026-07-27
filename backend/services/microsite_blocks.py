@@ -3,8 +3,40 @@ Block layout helpers for the microsite page builder.
 Blocks are stored as an ordered JSON array; legacy microsites without blocks
 are inferred from template + sections_enabled at read time.
 """
+import re
 import uuid
 from typing import Any
+
+import nh3
+
+_ALLOWED_TAGS = {
+    "p", "br", "strong", "em", "b", "i", "u", "ul", "ol", "li",
+    "h1", "h2", "h3", "h4", "a", "blockquote",
+}
+_ALLOWED_ATTRIBUTES = {"a": {"href", "target"}}
+
+
+def sanitize_html(html: str | None) -> str:
+    """Server-side defense in depth: strips scripts/handlers/unsafe URLs
+    regardless of what the client's sanitizer already did."""
+    if not html:
+        return ""
+    return nh3.clean(
+        html,
+        tags=_ALLOWED_TAGS,
+        attributes=_ALLOWED_ATTRIBUTES,
+        link_rel="noopener noreferrer",
+    )
+
+
+_SAFE_HREF_RE = re.compile(r"^(#|https?://|mailto:|tel:)", re.IGNORECASE)
+
+
+def safe_href(href: str | None) -> str | None:
+    if not href:
+        return None
+    href = href.strip()
+    return href if _SAFE_HREF_RE.match(href) else None
 
 BLOCK_TYPES = (
     "hero",
@@ -201,12 +233,42 @@ def _validate_block_props(block_type: str, props: dict) -> dict:
         cols = merged.get("columns")
         if not isinstance(cols, int) or cols < 1 or cols > 4:
             merged["columns"] = 3
-    if block_type in ("faq", "testimonials"):
+    if block_type == "faq":
         items = merged.get("items")
         if not isinstance(items, list):
             merged["items"] = []
         else:
-            merged["items"] = items[:20]
+            cleaned_items = []
+            for item in items[:20]:
+                if not isinstance(item, dict):
+                    continue
+                cleaned_items.append(
+                    {
+                        "id": str(item.get("id") or new_block_id()),
+                        "question": str(item.get("question") or "")[:200],
+                        "answer_html": sanitize_html(str(item.get("answer_html") or "")[:2000]),
+                    }
+                )
+            merged["items"] = cleaned_items
+    if block_type == "testimonials":
+        items = merged.get("items")
+        if not isinstance(items, list):
+            merged["items"] = []
+        else:
+            cleaned_items = []
+            for item in items[:20]:
+                if not isinstance(item, dict):
+                    continue
+                cleaned_items.append(
+                    {
+                        "id": str(item.get("id") or new_block_id()),
+                        "name": str(item.get("name") or "")[:80],
+                        "role": str(item.get("role") or "")[:80],
+                        "quote": str(item.get("quote") or "")[:500],
+                        "avatar_url": str(item.get("avatar_url") or "")[:500] or None,
+                    }
+                )
+            merged["items"] = cleaned_items
     if block_type == "image":
         caption = merged.get("caption")
         if isinstance(caption, str) and len(caption) > 200:
@@ -238,7 +300,7 @@ def _validate_block_props(block_type: str, props: dict) -> dict:
                     "fontWeight": layer.get("fontWeight")
                     if layer.get("fontWeight") in ("normal", "medium", "semibold", "bold")
                     else None,
-                    "href": str(layer.get("href") or "")[:500] or None,
+                    "href": safe_href(str(layer.get("href") or "")[:500]),
                     "imageUrl": str(layer.get("imageUrl") or "")[:500] or None,
                 }
                 if role in ("title", "subtitle", "cta"):

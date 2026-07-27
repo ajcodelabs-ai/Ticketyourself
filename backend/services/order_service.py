@@ -239,6 +239,22 @@ def compute_totals(
     }
 
 
+def locality_pricing_map(event: dict) -> dict:
+    return {
+        lp["locality_id"]: lp
+        for lp in (event.get("locality_pricing") or [])
+    }
+
+
+def locality_fee_cents(pricing_map: dict, locality_id: str | None) -> tuple[int, int]:
+    """service_fee_cents/admin_fee_cents configured for a locality, or (0, 0)
+    when the locality has no pricing entry (e.g. events without a venue)."""
+    lp = pricing_map.get(locality_id) if locality_id else None
+    if not lp:
+        return 0, 0
+    return int(lp.get("service_fee_cents") or 0), int(lp.get("admin_fee_cents") or 0)
+
+
 def compute_totals_with_seats(
     *,
     event: dict,
@@ -254,10 +270,7 @@ def compute_totals_with_seats(
 
     if not seat_ids:
         raise HTTPException(422, "No seleccionaste asientos.")
-    pricing_map = {
-        lp["locality_id"]: lp
-        for lp in (event.get("locality_pricing") or [])
-    }
+    pricing_map = locality_pricing_map(event)
     by_id = seats_by_id(venue)
     subtotal = 0
     entrada_subtotal = 0
@@ -274,8 +287,7 @@ def compute_totals_with_seats(
             missing_loc.append(loc_id or "(sin localidad)")
             continue
         entrada = int(lp.get("price_cents") or 0)
-        service = int(lp.get("service_fee_cents") or 0)
-        admin = int(lp.get("admin_fee_cents") or 0)
+        service, admin = locality_fee_cents(pricing_map, loc_id)
         entrada_subtotal += entrada
         service_subtotal += service
         admin_subtotal += admin
@@ -403,7 +415,21 @@ async def create_order_skeleton(
         updated_at=now,
     )
 
+    access_type = (event.get("access_params") or {}).get("access_type", "open")
     async with AsyncSessionLocal() as session:
+        if access_type == "verified_list":
+            from services.access_control import relock_and_check_guest_cap
+
+            try:
+                await relock_and_check_guest_cap(
+                    session,
+                    event_id=event["id"],
+                    email=(buyer.get("email") or "").strip().lower() or None,
+                    cedula=(buyer.get("document_id") or "").strip() or None,
+                    quantity=quantity,
+                )
+            except ValueError as exc:
+                raise HTTPException(403, str(exc)) from exc
         session.add(row)
         await session.commit()
         await session.refresh(row)

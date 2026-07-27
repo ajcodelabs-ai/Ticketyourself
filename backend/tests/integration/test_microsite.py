@@ -278,6 +278,64 @@ class TestMicrositeMe:
         faq = next(b for b in d["blocks"] if b["type"] == "faq")
         assert faq["props"]["items"][0]["question"] == "¿Cómo compro?"
 
+    def test_put_blocks_faq_answer_html_is_sanitized(self, demo_token):
+        blocks = [
+            {
+                "id": "faq-1",
+                "type": "faq",
+                "enabled": True,
+                "props": {
+                    "title": "FAQ",
+                    "items": [
+                        {
+                            "id": "q1",
+                            "question": "¿Es seguro?",
+                            "answer_html": '<p onclick="evil()">Sí</p><script>alert(1)</script>',
+                        }
+                    ],
+                },
+            },
+        ]
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"blocks": blocks},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        faq = next(b for b in d["blocks"] if b["type"] == "faq")
+        answer_html = faq["props"]["items"][0]["answer_html"]
+        assert "<script" not in answer_html
+        assert "onclick" not in answer_html
+        assert "Sí" in answer_html
+
+    def test_put_content_about_body_html_is_sanitized(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={
+                "content": {
+                    "about_body_html": '<p>Bienvenidos</p><img src=x onerror="alert(1)">'
+                }
+            },
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        about_html = d["content"]["about_body_html"]
+        assert "onerror" not in about_html
+        assert "<img" not in about_html
+        assert "Bienvenidos" in about_html
+
+    def test_put_content_hero_cta_href_rejects_javascript_protocol(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"content": {"hero_cta_href": "javascript:alert(1)"}},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["content"].get("hero_cta_href") != "javascript:alert(1)"
+
     def test_put_seo(self, demo_token):
         r = requests.put(
             f"{API}/microsite/me",

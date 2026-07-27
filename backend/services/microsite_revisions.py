@@ -62,10 +62,35 @@ async def _prune_old_revisions(session: AsyncSession, microsite_id: str) -> None
 
 
 def apply_snapshot(row: Microsite, snapshot: dict) -> None:
+    """Restores a historical snapshot onto `row`.
+
+    Re-runs the same sanitizers the normal PUT path applies — a revision
+    saved before those sanitizers existed (or via any older code path) could
+    carry raw HTML/hrefs, and restoring it must not reintroduce them.
+    """
+    from services.microsite_blocks import safe_href, sanitize_html, validate_blocks
+    from services.microsite_seo import validate_custom_css
+
     row.template = snapshot.get("template")
-    row.branding = dict(snapshot.get("branding") or {})
-    row.content = dict(snapshot.get("content") or {})
+
+    branding = dict(snapshot.get("branding") or {})
+    try:
+        branding["custom_css"] = validate_custom_css(branding.get("custom_css"))
+    except ValueError:
+        branding["custom_css"] = ""
+    row.branding = branding
+
+    content = dict(snapshot.get("content") or {})
+    if "about_body_html" in content:
+        content["about_body_html"] = sanitize_html(content.get("about_body_html"))
+    if "hero_cta_href" in content:
+        content["hero_cta_href"] = safe_href(content.get("hero_cta_href"))
+    row.content = content
+
     row.social_links = dict(snapshot.get("social_links") or {})
     row.sections_enabled = dict(snapshot.get("sections_enabled") or {})
-    row.blocks = list(snapshot.get("blocks") or [])
+    try:
+        row.blocks = validate_blocks(list(snapshot.get("blocks") or []))
+    except ValueError:
+        row.blocks = []
     row.seo = dict(snapshot.get("seo") or {})

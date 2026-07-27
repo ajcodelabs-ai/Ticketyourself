@@ -509,7 +509,9 @@ async def link_venue_to_event(
     org = await _require_approved_organizer(user)
     async with AsyncSessionLocal() as session:
         row = await session.scalar(
-            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+            select(Event)
+            .where(Event.id == event_id, Event.organizer_id == org["id"])
+            .with_for_update()
         )
         if not row:
             raise HTTPException(404, "Evento no encontrado")
@@ -536,6 +538,11 @@ async def link_venue_to_event(
         else:
             layout = snapshot_from_venue(venue)
             venue_capacity = layout.get("capacity_calculated") or 0
+            if sold > 0 and venue_capacity < sold:
+                raise HTTPException(
+                    409,
+                    f"El venue tiene capacidad para {venue_capacity} pero el evento ya vendió {sold} ticket(s).",
+                )
             row.source_venue_id = body.venue_id
             row.venue_layout = layout
             flag_modified(row, "venue_layout")
@@ -635,7 +642,9 @@ async def put_event_venue_layout(
     org = await _require_approved_organizer(user)
     async with AsyncSessionLocal() as session:
         row = await session.scalar(
-            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+            select(Event)
+            .where(Event.id == event_id, Event.organizer_id == org["id"])
+            .with_for_update()
         )
         if not row:
             raise HTTPException(404, "Evento no encontrado")

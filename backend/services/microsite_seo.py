@@ -12,7 +12,8 @@ MAX_META_DESCRIPTION = 160
 MAX_CUSTOM_CSS = 8000
 
 _UNSAFE_CSS = re.compile(
-    r"(<script|javascript:|expression\s*\(|@import|behavior\s*:)",
+    r"(<\s*script|javascript\s*:|expression\s*\(|@\s*import|behavior\s*:|"
+    r"position\s*:\s*fixed|-moz-binding|vbscript\s*:)",
     re.IGNORECASE,
 )
 
@@ -41,12 +42,18 @@ def validate_seo(raw: dict | None) -> dict:
     return out
 
 
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
 def validate_custom_css(css: str | None) -> str:
     if not css:
         return ""
     css = css.strip()
     if len(css) > MAX_CUSTOM_CSS:
         raise ValueError(f"custom_css exceeds {MAX_CUSTOM_CSS} characters")
-    if _UNSAFE_CSS.search(css):
+    # Strip comments first — CSS comments can split keywords (e.g. `exp/**/ression(`)
+    # to dodge a naive substring match.
+    stripped = _CSS_COMMENT.sub("", css)
+    if _UNSAFE_CSS.search(stripped):
         raise ValueError("custom_css contains disallowed patterns")
     return css

@@ -29,6 +29,8 @@ from services.microsite_factory import (
 from services.microsite_blocks import (
     blocks_for_template,
     resolve_blocks,
+    safe_href,
+    sanitize_html,
     sections_from_blocks,
     validate_blocks,
 )
@@ -315,8 +317,13 @@ async def update_my_microsite(payload: MicrositeUpdate, user=Depends(get_current
         if payload.content:
             new_content = dict(row.content or {})
             for k, v in payload.content.model_dump(exclude_unset=True).items():
-                if v is not None:
-                    new_content[k] = v
+                if v is None:
+                    continue
+                if k == "about_body_html":
+                    v = sanitize_html(v)
+                elif k == "hero_cta_href":
+                    v = safe_href(v)
+                new_content[k] = v
             row.content = new_content
             flag_modified(row, "content")
         if payload.social_links:

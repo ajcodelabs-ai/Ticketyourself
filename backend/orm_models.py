@@ -578,7 +578,9 @@ class MicrositeRevision(Base):
     __tablename__ = "microsite_revisions"
 
     id = Column(String(36), primary_key=True, default=_uuid4)
-    microsite_id = Column(String(36), ForeignKey("microsites.id"), nullable=False, index=True)
+    microsite_id = Column(
+        String(36), ForeignKey("microsites.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     label = Column(String(120), nullable=True)
     snapshot = Column(JSONB, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)

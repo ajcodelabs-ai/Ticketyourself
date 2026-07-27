@@ -128,6 +128,50 @@ async def _tickets_bought_by_guest(
     return int(await session.scalar(q) or 0)
 
 
+async def relock_and_check_guest_cap(
+    session: AsyncSession,
+    *,
+    event_id: str,
+    email: Optional[str],
+    cedula: Optional[str],
+    quantity: int,
+) -> None:
+    """Re-verifies the `verified_list` ticket cap under a row lock, held in the
+    same transaction that inserts the new order.
+
+    `check_purchase_access` alone isn't enough: it runs in its own short-lived
+    session that closes before the order is created, so two concurrent
+    purchases by the same guest can both pass the cap check before either
+    commits. Locking the guest-list entry row here — in the session that will
+    also INSERT and commit the order — serializes concurrent purchases by the
+    same guest: the second request blocks until the first's transaction
+    commits, then re-reads the up-to-date "already bought" sum.
+    """
+    if not email and not cedula:
+        return
+    conditions = []
+    if email:
+        conditions.append(func.lower(EventGuestListEntry.email) == email)
+    if cedula:
+        conditions.append(EventGuestListEntry.cedula == cedula)
+    match = await session.scalar(
+        select(EventGuestListEntry)
+        .where(EventGuestListEntry.event_id == event_id, or_(*conditions))
+        .with_for_update()
+    )
+    if not match:
+        # The initial check_purchase_access() found a matching entry; if it's
+        # gone now (revoked/edited concurrently), deny rather than let the
+        # purchase through unauthorized.
+        raise ValueError("Tu acceso a la lista de invitados ya no está disponible.")
+    max_tickets = match.max_tickets if match.max_tickets is not None else 1
+    already = await _tickets_bought_by_guest(session, event_id=event_id, email=email, cedula=cedula)
+    if already + quantity > max_tickets:
+        raise ValueError(
+            f"Tu cupo en la lista permite {max_tickets} ticket(s); ya no queda cupo disponible."
+        )
+
+
 async def consume_access_code(access_code_id: str) -> bool:
     """Increment `uses_count` for the access code under a row-level lock.
     Mirrors `discount_service.consume_promo_code`."""
