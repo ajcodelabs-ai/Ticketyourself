@@ -57,7 +57,11 @@ async def create_checkout_session(
             org_dict, user["email"]
         )
     except Exception as e:
-        logger.exception("Stripe customer create failed")
+        # logger.error, not .exception — Stripe error messages can echo back
+        # request data (e.g. the customer email that was just submitted);
+        # .exception() would dump that into the log via the auto-attached
+        # traceback. type(e).__name__ is enough to triage without it.
+        logger.error("Stripe customer create failed: %s", type(e).__name__)
         raise HTTPException(502, f"Stripe customer error: {e}")
 
     if created:
@@ -88,8 +92,11 @@ async def create_checkout_session(
             )
             mode = "payment"
     except Exception as e:
-        logger.exception(
-            "Stripe checkout create failed (mode=%s)", plan["billing_period"]
+        # logger.error, not .exception — see the customer-create catch above.
+        logger.error(
+            "Stripe checkout create failed (mode=%s): %s",
+            plan["billing_period"],
+            type(e).__name__,
         )
         raise HTTPException(
             502,
@@ -142,6 +149,7 @@ async def create_portal_session(
     try:
         url = stripe_service.create_billing_portal(org.stripe_customer_id, return_url)
     except Exception as e:
-        logger.exception("Stripe portal create failed")
+        # logger.error, not .exception — see the customer-create catch above.
+        logger.error("Stripe portal create failed: %s", type(e).__name__)
         raise HTTPException(502, f"Stripe portal error: {e}")
     return PortalResponse(portal_url=url)
