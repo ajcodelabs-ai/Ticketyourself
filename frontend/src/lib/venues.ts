@@ -4,6 +4,7 @@
  */
 import api from "@/lib/api";
 import { uuid } from "@/lib/utils";
+import { seatWorldPos } from "@/lib/seats";
 
 export const GRID = 20;
 export const VENUE_TYPES = [
@@ -90,14 +91,66 @@ export function makeCurvedRow({
     };
 }
 
-export function makeSeat({ x, y, label = "VIP-1", locality_id = null }) {
+export function makeSeat({
+    x, y, label = "VIP-1", locality_id = null, seat_radius = 12, rotation = 0, snapToGrid = true,
+}) {
     return {
         id: newId(), kind: "seat_individual",
-        x: snap(x), y: snap(y),
-        rotation: 0, label,
+        x: snapToGrid ? snap(x) : Math.round(x * 10) / 10,
+        y: snapToGrid ? snap(y) : Math.round(y * 10) / 10,
+        rotation: rotation || 0,
+        label,
         locality_id: locality_id || null, z_index: 2,
-        seat_radius: 12,
+        seat_radius: seat_radius || 12,
     };
+}
+
+/**
+ * Convert a straight/curved row into N independent `seat_individual` elements
+ * at the same world positions (rotation-aware). Used when the organizer needs
+ * to select/edit/delete a subset of seats that were created as a row.
+ */
+export function explodeRowToSeats(row) {
+    if (!row || (row.kind !== "seat_row_straight" && row.kind !== "seat_row_curved")) {
+        return [];
+    }
+    const n = Math.max(0, Number(row.seats_count) || 0);
+    if (n === 0) return [];
+
+    const rotDeg = Number(row.rotation) || 0;
+    const rot = (rotDeg * Math.PI) / 180;
+    const cos = Math.cos(rot);
+    const sin = Math.sin(rot);
+    const start = Number(row.numbering_start) || 1;
+    const rtl = row.numbering_direction === "rtl";
+    const rowLabel = row.row_label || row.label || "?";
+    const radius = row.seat_radius || 10;
+
+    const seats = [];
+    for (let i = 0; i < n; i += 1) {
+        const pos = seatWorldPos(row, i);
+        const lx = pos.x - row.x;
+        const ly = pos.y - row.y;
+        const wx = row.x + lx * cos - ly * sin;
+        const wy = row.y + lx * sin + ly * cos;
+        const num = rtl ? start + n - 1 - i : start + i;
+        seats.push(
+            makeSeat({
+                x: wx,
+                y: wy,
+                label: `${rowLabel}-${num}`,
+                locality_id: row.locality_id || null,
+                seat_radius: radius,
+                rotation: rotDeg,
+                snapToGrid: false,
+            }),
+        );
+    }
+    return seats;
+}
+
+export function isSeatRowKind(kind) {
+    return kind === "seat_row_straight" || kind === "seat_row_curved";
 }
 
 export function makeTableRound({

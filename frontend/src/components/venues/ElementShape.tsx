@@ -56,10 +56,6 @@ export interface ShapeProps {
     onDragEnd?: (x: number, y: number) => void;
 }
 
-function snapVal(v: number, GRID = 20) {
-    return Math.round(v / GRID) * GRID;
-}
-
 // ── stage ────────────────────────────────────────────────────────────────
 const StageShape = forwardRef<Konva.Group, ShapeProps>(function StageShape(
     { element, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable }, ref,
@@ -79,7 +75,7 @@ const StageShape = forwardRef<Konva.Group, ShapeProps>(function StageShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(e.target.x(), e.target.y())}
         >
             <Rect
                 width={w}
@@ -115,7 +111,7 @@ const ZoneShape = forwardRef<Konva.Group, ShapeProps>(function ZoneShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(e.target.x(), e.target.y())}
         >
             <Rect
                 width={w}
@@ -165,7 +161,7 @@ const RowShape = forwardRef<Konva.Group, ShapeProps>(function RowShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(e.target.x(), e.target.y())}
         >
             {selected && (
                 <Rect x={-6} y={-6} width={w + 12} height={h + 12}
@@ -229,7 +225,7 @@ const CurvedRowShape = forwardRef<Konva.Group, ShapeProps>(function CurvedRowSha
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(e.target.x(), e.target.y())}
         >
             {selected && (
                 <Arc
@@ -289,7 +285,7 @@ const SeatShape = forwardRef<Konva.Group, ShapeProps>(function SeatShape(
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(e.target.x(), e.target.y())}
         >
             {selected && (
                 <Circle radius={r + 6} stroke="#6366F1" strokeWidth={2} dash={[4, 4]} />
@@ -327,7 +323,7 @@ const TableRoundShape = forwardRef<Konva.Group, ShapeProps>(function TableRoundS
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(e.target.x(), e.target.y())}
         >
             {selected && (
                 <Circle radius={ring + 4} stroke="#6366F1" strokeWidth={2} dash={[6, 4]} />
@@ -395,7 +391,7 @@ const TableRectShape = forwardRef<Konva.Group, ShapeProps>(function TableRectSha
             onContextMenu={onContextMenu}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
-            onDragEnd={(e) => onDragEnd?.(snapVal(e.target.x()), snapVal(e.target.y()))}
+            onDragEnd={(e) => onDragEnd?.(e.target.x(), e.target.y())}
         >
             {selected && (
                 <Rect x={-cd - cr - 4} y={-cd - cr - 4}

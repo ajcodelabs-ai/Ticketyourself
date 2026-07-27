@@ -1,12 +1,14 @@
 /**
  * Localities sidebar — list + create + assign-to-selection.
+ * Compact rows + scroll so many localities don't push the page down.
  */
 import { useState } from "react";
 import { HexColorPicker } from "react-colorful";
-import { Plus, Trash2, Wand2 } from "lucide-react";
+import { Plus, Trash2, Wand2, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
     Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
@@ -26,6 +28,7 @@ export default function LocalitiesPanel({
 }) {
     const [showNew, setShowNew] = useState(false);
     const [draft, setDraft] = useState(newLocality());
+    const [expandedId, setExpandedId] = useState(null);
 
     const handleCreate = () => {
         if (!draft.name.trim()) {
@@ -38,11 +41,13 @@ export default function LocalitiesPanel({
     };
 
     return (
-        <section className="space-y-3" data-testid="localities-panel">
-            <div className="flex items-center justify-between">
+        <section className="flex flex-col min-h-0 gap-3" data-testid="localities-panel">
+            <div className="flex items-center justify-between gap-2 shrink-0">
                 <div>
-                    <h3 className="text-sm font-semibold">Localidades</h3>
-                    <p className="text-xs text-muted-foreground">{localities.length} total</p>
+                    <h3 className="text-sm font-medium">2. Localidades</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        {localities.length} · colores y categorías de precio
+                    </p>
                 </div>
                 {!readOnly && (
                     <Button
@@ -60,26 +65,27 @@ export default function LocalitiesPanel({
                 )}
             </div>
 
-            <div className="space-y-2">
+            <div className="min-h-0 flex-1 overflow-y-auto max-h-[280px] space-y-1.5 pr-0.5">
                 {localities.length === 0 && (
-                    <p className="text-xs text-muted-foreground italic">
-                        Aún sin localidades. Creá una para empezar a colorear zonas y asientos.
+                    <p className="text-xs text-muted-foreground italic py-2">
+                        Aún sin localidades. Creá una para colorear zonas y asientos.
                     </p>
                 )}
                 {localities.map((loc) => {
                     const used = capacityByLocality(elements, loc.id);
+                    const open = expandedId === loc.id;
                     return (
                         <div
                             key={loc.id}
-                            className="border rounded-md p-2.5 space-y-2"
+                            className="rounded-lg border bg-background"
                             data-testid={`locality-row-${loc.id}`}
                         >
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 p-2">
                                 <Popover>
                                     <PopoverTrigger asChild>
                                         <button
                                             disabled={readOnly}
-                                            className="h-6 w-6 rounded-md ring-1 ring-slate-300 shrink-0 disabled:opacity-50"
+                                            className="h-6 w-6 rounded-md ring-1 ring-border shrink-0 disabled:opacity-50"
                                             style={{ background: loc.color }}
                                             aria-label="Cambiar color"
                                             data-testid={`locality-color-${loc.id}`}
@@ -94,7 +100,7 @@ export default function LocalitiesPanel({
                                             {LOCALITY_PALETTE.map((c) => (
                                                 <button
                                                     key={c}
-                                                    className="h-5 w-5 rounded ring-1 ring-slate-200"
+                                                    className="h-5 w-5 rounded ring-1 ring-border"
                                                     style={{ background: c }}
                                                     onClick={() => onUpdate(loc.id, { color: c })}
                                                 />
@@ -106,9 +112,42 @@ export default function LocalitiesPanel({
                                     value={loc.name}
                                     onChange={(e) => onUpdate(loc.id, { name: e.target.value })}
                                     disabled={readOnly}
-                                    className="h-8 text-sm"
+                                    className="h-7 text-sm min-w-0 flex-1"
                                     data-testid={`locality-name-${loc.id}`}
                                 />
+                                <Badge
+                                    variant="secondary"
+                                    className="text-[10px] font-normal shrink-0 tabular-nums"
+                                    title={used === 0 ? "Sin asientos asignados" : `${used} asientos`}
+                                >
+                                    {used}
+                                </Badge>
+                                {!readOnly && selection.length > 0 && (
+                                    <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-7 w-7 shrink-0"
+                                        title={`Asignar a selección (${selection.length})`}
+                                        onClick={() => onAssign(loc.id)}
+                                        data-testid={`locality-assign-${loc.id}`}
+                                    >
+                                        <Wand2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                )}
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-7 w-7 shrink-0"
+                                    title="Detalle"
+                                    onClick={() => setExpandedId(open ? null : loc.id)}
+                                    aria-expanded={open}
+                                >
+                                    <ChevronDown
+                                        className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                                            open ? "rotate-180" : ""
+                                        }`}
+                                    />
+                                </Button>
                                 {!readOnly && (
                                     <Button
                                         size="icon"
@@ -121,28 +160,25 @@ export default function LocalitiesPanel({
                                     </Button>
                                 )}
                             </div>
-                            <div className="flex items-center justify-between text-xs">
-                                <span className={used === 0 ? "text-muted-foreground italic" : "text-muted-foreground"}>
-                                    {used === 0 ? "Sin asignar" : `${used} asientos asignados`}
-                                </span>
-                                {!readOnly && selection.length > 0 && (
-                                    <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        className="h-6 text-xs"
-                                        onClick={() => onAssign(loc.id)}
-                                        data-testid={`locality-assign-${loc.id}`}
-                                    >
-                                        <Wand2 className="h-3 w-3 mr-1" />
-                                        Asignar a selección ({selection.length})
-                                    </Button>
-                                )}
-                            </div>
-                            <details className="text-xs">
-                                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                                    Detalle
-                                </summary>
-                                <div className="pt-2 space-y-1.5">
+                            {open && (
+                                <div className="px-2 pb-2 pt-0 space-y-1.5 border-t">
+                                    <p className="text-[11px] text-muted-foreground pt-1.5">
+                                        {used === 0
+                                            ? "Sin asientos asignados"
+                                            : `${used} asientos asignados`}
+                                        {!readOnly && selection.length > 0 && (
+                                            <>
+                                                {" · "}
+                                                <button
+                                                    type="button"
+                                                    className="text-foreground underline-offset-2 hover:underline"
+                                                    onClick={() => onAssign(loc.id)}
+                                                >
+                                                    Asignar selección ({selection.length})
+                                                </button>
+                                            </>
+                                        )}
+                                    </p>
                                     <Input
                                         placeholder="Descripción"
                                         value={loc.description || ""}
@@ -151,7 +187,7 @@ export default function LocalitiesPanel({
                                         className="h-7 text-xs"
                                     />
                                     <div className="flex items-center gap-1.5">
-                                        <span className="text-muted-foreground">USD</span>
+                                        <span className="text-[11px] text-muted-foreground shrink-0">USD</span>
                                         <Input
                                             type="number"
                                             placeholder="Precio sugerido"
@@ -171,7 +207,7 @@ export default function LocalitiesPanel({
                                         />
                                     </div>
                                 </div>
-                            </details>
+                            )}
                         </div>
                     );
                 })}
@@ -200,7 +236,7 @@ export default function LocalitiesPanel({
                                     <button
                                         key={c}
                                         className={`h-7 w-7 rounded ring-2 ${
-                                            draft.color === c ? "ring-slate-900" : "ring-slate-200"
+                                            draft.color === c ? "ring-foreground" : "ring-border"
                                         }`}
                                         style={{ background: c }}
                                         onClick={() => setDraft({ ...draft, color: c })}

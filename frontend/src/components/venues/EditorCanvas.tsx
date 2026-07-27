@@ -422,30 +422,26 @@ export default function EditorCanvas({
         const snap = dragSnapshot.current?.snap;
         const multi = snap && Object.keys(snap).length > 1;
 
-        if (multi && onBatchUpdate) {
+        if (multi) {
+            // Snap the *delta* (via the dragged anchor), then apply the same
+            // offset to every selected element. Snapping each absolute x/y
+            // independently destroys relative spacing (e.g. seats from an
+            // exploded row with 30px gaps on a 20px grid).
             const origin = snap[el.id] || { startX: el.x, startY: el.y };
-            const dx = x - origin.startX;
-            const dy = y - origin.startY;
+            const dx = snapVal(x) - origin.startX;
+            const dy = snapVal(y) - origin.startY;
             const patches: Record<string, Record<string, unknown>> = {};
             Object.entries(snap).forEach(([id, info]) => {
                 patches[id] = {
-                    x: snapVal(info.startX + dx),
-                    y: snapVal(info.startY + dy),
+                    x: Math.round((info.startX + dx) * 10) / 10,
+                    y: Math.round((info.startY + dy) * 10) / 10,
                 };
             });
-            onBatchUpdate(patches);
-        } else if (multi) {
-            const origin = snap[el.id] || { startX: el.x, startY: el.y };
-            const dx = x - origin.startX;
-            const dy = y - origin.startY;
-            Object.entries(snap).forEach(([id, info]) => {
-                if (id === el.id) return;
-                onUpdate(id, {
-                    x: snapVal(info.startX + dx),
-                    y: snapVal(info.startY + dy),
-                });
-            });
-            onUpdate(el.id, { x: snapVal(x), y: snapVal(y) });
+            if (onBatchUpdate) {
+                onBatchUpdate(patches);
+            } else {
+                Object.entries(patches).forEach(([id, patch]) => onUpdate(id, patch));
+            }
         } else {
             onUpdate(el.id, { x: snapVal(x), y: snapVal(y) });
         }

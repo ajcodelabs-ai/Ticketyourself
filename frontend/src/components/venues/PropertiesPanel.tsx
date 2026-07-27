@@ -7,7 +7,7 @@ import {
     Trash2, AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
     AlignStartVertical, AlignCenterVertical, AlignEndVertical,
     AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
-    ArrowUpToLine, ArrowDownToLine, Copy,
+    ArrowUpToLine, ArrowDownToLine, Copy, Ungroup,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,24 +30,25 @@ export default function PropertiesPanel({
     onBringFront,
     onSendBack,
     onDuplicate,
+    onExplodeRows,
     readOnly,
 }) {
     const selectedElements = elements.filter((e) => selection.includes(e.id));
 
     if (selectedElements.length === 0) {
         return (
-            <section className="space-y-2" data-testid="properties-panel-empty">
-                <h3 className="text-sm font-semibold">Propiedades</h3>
-                <p className="text-xs text-muted-foreground">
-                    Seleccioná un elemento en el canvas para editarlo.
-                </p>
-                <ul className="text-xs text-muted-foreground space-y-1 list-disc pl-4">
+            <section className="space-y-3" data-testid="properties-panel-empty">
+                <div>
+                    <h3 className="text-sm font-medium">1. Propiedades</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        Seleccioná un elemento en el canvas para editarlo.
+                    </p>
+                </div>
+                <ul className="text-xs text-muted-foreground space-y-1.5 rounded-lg border border-dashed p-3">
                     <li>Click = seleccionar · Ctrl/Cmd+Click = multi</li>
-                    <li>Drag en zona vacía = selección por marquee</li>
-                    <li>Drag elemento = mover (snap 20px)</li>
-                    <li>Delete / Backspace = eliminar</li>
-                    <li>Ctrl+A / Ctrl+D / Ctrl+C / Ctrl+V</li>
-                    <li>Ctrl+Z / Ctrl+Shift+Z = undo/redo</li>
+                    <li>Drag en vacío = marquee · Drag elemento = mover</li>
+                    <li>Fila = objeto completo → convertí a individuales para editar asientos sueltos</li>
+                    <li>Delete = eliminar · Ctrl+Z = deshacer</li>
                     <li>Click derecho = menú contextual</li>
                 </ul>
             </section>
@@ -57,9 +58,12 @@ export default function PropertiesPanel({
     if (selectedElements.length > 1) {
         return (
             <section className="space-y-3" data-testid="properties-panel-multi">
-                <h3 className="text-sm font-semibold">
-                    {selectedElements.length} elementos seleccionados
-                </h3>
+                <div>
+                    <h3 className="text-sm font-medium">1. Propiedades</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        <strong className="text-foreground">{selectedElements.length}</strong> elementos seleccionados
+                    </p>
+                </div>
                 <div className="space-y-1.5">
                     <Label className="text-xs">Alinear</Label>
                     <div className="grid grid-cols-3 gap-1">
@@ -82,7 +86,7 @@ export default function PropertiesPanel({
                     <Button variant="outline" size="sm" onClick={onDuplicate} data-testid="multi-duplicate">
                         <Copy className="h-3.5 w-3.5 mr-1.5" /> Duplicar
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => selection.forEach(onDelete)}
+                    <Button variant="outline" size="sm" onClick={() => onDelete(selection)}
                             disabled={readOnly} data-testid="multi-delete"
                             className="text-red-600 hover:bg-red-50">
                         <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Eliminar
@@ -108,10 +112,13 @@ export default function PropertiesPanel({
 
     return (
         <section className="space-y-3" data-testid="properties-panel">
-            <header className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">{titleByKind[el.kind] || el.kind}</h3>
+            <header className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                    <h3 className="text-sm font-medium">1. {titleByKind[el.kind] || el.kind}</h3>
+                    <p className="text-xs text-muted-foreground truncate">{el.label || "Sin etiqueta"}</p>
+                </div>
                 {!readOnly && (
-                    <div className="flex gap-0.5">
+                    <div className="flex gap-0.5 shrink-0">
                         <Button variant="ghost" size="icon" className="h-7 w-7"
                                 onClick={onBringFront} title="Traer al frente">
                             <ArrowUpToLine className="h-3.5 w-3.5" />
@@ -205,6 +212,25 @@ export default function PropertiesPanel({
                             </SelectContent>
                         </Select>
                     </Field>
+                    {!readOnly && onExplodeRows && (
+                        <div className="rounded-lg border bg-secondary/30 p-3 space-y-2">
+                            <p className="text-xs text-muted-foreground">
+                                La fila se selecciona completa. Para editar o borrar solo algunos
+                                asientos, convertíla en individuales.
+                            </p>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => onExplodeRows([el.id])}
+                                data-testid="prop-explode-row"
+                            >
+                                <Ungroup className="h-3.5 w-3.5 mr-1.5" />
+                                Convertir en asientos individuales
+                            </Button>
+                        </div>
+                    )}
                 </>
             )}
 
