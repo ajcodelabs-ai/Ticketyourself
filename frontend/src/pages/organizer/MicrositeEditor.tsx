@@ -75,6 +75,7 @@ export default function MicrositeEditor() {
     const [sidePanel, setSidePanel] = useState("blocks");
     const previewRef = useRef(null);
     const saveTimer = useRef(null);
+    const pendingPartial = useRef<any>({});
 
     useEffect(() => {
         if (!previewRef.current || typeof ResizeObserver === "undefined") return;
@@ -123,13 +124,15 @@ export default function MicrositeEditor() {
             }
             return merged;
         });
+        pendingPartial.current = deepMerge(pendingPartial.current, partial);
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(async () => {
+            const payload = pendingPartial.current;
+            pendingPartial.current = {};
             try {
                 setSaving(true);
-                const payload = { ...partial };
-                if (partial.blocks) {
-                    payload.sections_enabled = sectionsFromBlocks(partial.blocks);
+                if (payload.blocks) {
+                    payload.sections_enabled = sectionsFromBlocks(payload.blocks);
                 }
                 const { data } = await api.put("/microsite/me", payload);
                 if (!data.blocks?.length) data.blocks = resolveBlocks(data);

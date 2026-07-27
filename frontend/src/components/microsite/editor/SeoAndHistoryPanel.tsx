@@ -141,6 +141,7 @@ export function SeoPanel({
                     onChange={(e) => onUpdateBranding({ custom_css: e.target.value })}
                     rows={6}
                     disabled={!customCssAllowed}
+                    maxLength={8000}
                     placeholder={
                         customCssAllowed
                             ? "/* .ms-hero { ... } */"

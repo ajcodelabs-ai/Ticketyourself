@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import {
     Upload, Loader2, Eye, ExternalLink, Check, RotateCcw,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -174,8 +175,12 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
         if (!eventId) return;
         setPreviewing(true);
         try {
+            // The preview PDF endpoint reads the persisted design, so we save it
+            // first — this design edit lands in the DB even if the rest of the
+            // wizard form is never submitted.
             const field = slot === "courtesy" ? "courtesy_ticket_design" : "ticket_design";
             await api.put(`/events/me/${eventId}`, { [field]: safeDesign });
+            toast.message("Diseño guardado para generar la vista previa");
 
             const base = import.meta.env.VITE_BACKEND_URL || "";
             const token = localStorage.getItem("tys_access_token");
@@ -200,9 +205,18 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
     return (
         <div className="space-y-5" data-testid={`ticket-design-panel-${slot}`}>
             <div>
-                <div className="text-sm font-medium mb-1">Plantilla</div>
+                <div className="flex items-center gap-2 mb-1">
+                    <div className="text-sm font-medium">Plantilla</div>
+                    {hasDesign && !selectedTemplateId && (
+                        <Badge variant="secondary" data-testid={`td-custom-badge-${slot}`}>
+                            Diseño personalizado (heredado)
+                        </Badge>
+                    )}
+                </div>
                 <p className="text-xs text-muted-foreground mb-3">
-                    Cada una ya trae logo, datos del evento y QR. Después solo personalizás color y logo.
+                    {hasDesign && !selectedTemplateId
+                        ? "Este evento tiene un diseño hecho antes de las plantillas. Elegir una plantilla lo reemplaza por completo."
+                        : "Cada una ya trae logo, datos del evento y QR. Después solo personalizás color y logo."}
                 </p>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid={`td-templates-${slot}`}>
                     {TICKET_TEMPLATES.map((tpl) => {

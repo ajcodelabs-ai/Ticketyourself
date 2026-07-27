@@ -5,6 +5,7 @@ import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { GripVertical, ImagePlus, Sparkles } from "lucide-react";
 import InlineEditable from "@/components/microsite/editor/InlineEditable";
 import { assetUrl } from "@/lib/microsite";
+import { isSafeHref } from "@/lib/sanitizeHtml";
 import {
     layerInlineStyle,
     layerTypographyClasses,
@@ -19,7 +20,7 @@ import { cn } from "@/lib/utils";
 type LayerPreview = Pick<HeroLayer, "colStart" | "colSpan" | "row">;
 
 function scrollOrNavigate(href: string | undefined) {
-    if (!href) return;
+    if (!href || !isSafeHref(href)) return;
     if (href.startsWith("#")) {
         document.querySelector(href)?.scrollIntoView({ behavior: "smooth" });
         return;

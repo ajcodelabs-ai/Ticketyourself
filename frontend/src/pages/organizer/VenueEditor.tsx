@@ -449,7 +449,7 @@ export default function VenueEditor() {
     };
 
     // ── Save / Publish ─────────────────────────────────────────────────
-    const persist = async ({ silent = false } = {}) => {
+    const persist = async ({ silent = false, navigateAway = true } = {}) => {
         if (!venue || saveLockRef.current) return;
         saveLockRef.current = true;
         setSaving(true);
@@ -470,11 +470,9 @@ export default function VenueEditor() {
                 }));
                 dirtyRef.current = false;
                 setDirty(false);
-                if (!silent) {
-                    toast.success("Mapa del evento guardado");
-                    if (returnTo) {
-                        navigate(returnTo, { replace: true });
-                    }
+                if (!silent) toast.success("Mapa del evento guardado");
+                if (!silent && navigateAway && returnTo) {
+                    navigate(returnTo, { replace: true });
                 }
             } else {
                 const body = {
@@ -807,7 +805,7 @@ export default function VenueEditor() {
                                 </a>
                             </Button>
                         )}
-                        <Button size="sm" variant="outline" onClick={() => persist()}
+                        <Button size="sm" variant="outline" onClick={() => persist({ navigateAway: false })}
                                 disabled={saving} data-testid="venue-save-btn">
                             <Save className="h-3.5 w-3.5 mr-1" /> Guardar
                         </Button>

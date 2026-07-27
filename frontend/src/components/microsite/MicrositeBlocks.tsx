@@ -13,7 +13,7 @@ import {
     Phone,
     MapPin,
 } from "lucide-react";
-import { sanitizeHtml } from "@/lib/sanitizeHtml";
+import { sanitizeHtml, isSafeHref } from "@/lib/sanitizeHtml";
 import api from "@/lib/api";
 import { assetUrl } from "@/lib/microsite";
 import EventCard from "@/components/events/EventCard";
@@ -28,8 +28,8 @@ import { Quote } from "lucide-react";
 import InlineEditable from "@/components/microsite/editor/InlineEditable";
 import GridOverlay from "@/components/microsite/editor/GridOverlay";
 import HeroLayerItem from "@/components/microsite/editor/HeroLayerItem";
+import { patchHeroLayer } from "@/lib/heroLayerActions";
 import {
-    applyHeroLayerPatch,
     normalizeLayer,
     resolveHeroLayers,
     type HeroLayer,
@@ -96,23 +96,8 @@ export function HeroBlockView({
     const allLayers = resolveHeroLayers(storedLayers, content, variant, align);
 
     const handleLayerUpdate = (layerId: string, patch: Partial<HeroLayer>) => {
-        const target = allLayers.find((l) => l.id === layerId);
-        if (target?.role === "title" && patch.content !== undefined) {
-            editorCtx?.onUpdateContent?.({ hero_title: patch.content });
-        }
-        if (target?.role === "subtitle" && patch.content !== undefined) {
-            editorCtx?.onUpdateContent?.({ hero_subtitle: patch.content });
-        }
-        if (target?.role === "cta") {
-            if (patch.content !== undefined) {
-                editorCtx?.onUpdateContent?.({ hero_cta_text: patch.content });
-            }
-            if (patch.href !== undefined) {
-                editorCtx?.onUpdateContent?.({ hero_cta_href: patch.href });
-            }
-        }
-
-        const next = applyHeroLayerPatch(storedLayers, content, variant, align, layerId, patch);
+        const ctx = { content, variant, align, storedLayers, layers: allLayers };
+        const next = patchHeroLayer(ctx, layerId, patch, editorCtx?.onUpdateContent);
         editorCtx?.onUpdateBlockProps?.(block.id, { layers: next });
     };
 
@@ -373,11 +358,7 @@ function FeaturedEventView({ tenantSlug, blockId, events }) {
             <div className="max-w-3xl mx-auto rounded-[var(--ms-radius)] border bg-card overflow-hidden shadow-[var(--ms-shadow)]">
                 {event.poster_url && (
                     <img
-                        src={
-                            event.poster_url.startsWith("http")
-                                ? event.poster_url
-                                : `${import.meta.env.VITE_BACKEND_URL || ""}${event.poster_url}`
-                        }
+                        src={assetUrl(event.poster_url)}
                         alt={event.title}
                         className="w-full aspect-[16/9] object-cover"
                     />
@@ -492,6 +473,7 @@ export function SocialBlockView({
                             k === "whatsapp" && !v.startsWith("http")
                                 ? `https://wa.me/${v.replace(/[^0-9]/g, "")}`
                                 : v;
+                        if (!isSafeHref(href)) return null;
                         return (
                             <a
                                 key={k}

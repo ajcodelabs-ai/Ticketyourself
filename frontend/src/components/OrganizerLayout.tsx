@@ -73,7 +73,10 @@ export default function OrganizerLayout({ children }) {
     const { user, organizer, logout } = useAuth();
     const [mobileOpen, setMobileOpen] = useState(false);
     const location = useLocation();
-    const isFullWidthPage = location.pathname.startsWith("/app/microsite");
+    const isFullWidthPage =
+        location.pathname.startsWith("/app/microsite") ||
+        /^\/app\/venues\/[^/]+\/editor$/.test(location.pathname) ||
+        /^\/app\/eventos\/[^/]+\/mapa$/.test(location.pathname);
 
     // logout() already navigates to the right entry point for the user's
     // role — a hardcoded navigate("/login") afterwards would be redundant.
