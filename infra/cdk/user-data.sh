@@ -11,13 +11,20 @@ if ! command -v git &>/dev/null; then
   dnf install -y git
 fi
 
-# ponytail: docker compose v2 comes bundled with `dnf install docker` on AL2023
+# The `docker compose` plugin does NOT come bundled with `dnf install docker`
+# on Amazon Linux 2023, despite what an earlier version of this script assumed.
+if ! docker compose version &>/dev/null; then
+  mkdir -p /usr/local/lib/docker/cli-plugins
+  curl -SL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-aarch64 \
+    -o /usr/local/lib/docker/cli-plugins/docker-compose
+  chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+fi
 
 cd /home/ec2-user
 if [ -d Ticketyourself ]; then
   cd Ticketyourself && git pull
 else
-  git clone --branch main https://github.com/ajcodelabs/Ticketyourself Ticketyourself
+  git clone --branch staging https://github.com/ajcodelabs/Ticketyourself Ticketyourself
 fi
 
 ENV_FILE="/home/ec2-user/Ticketyourself/.env.prod"
