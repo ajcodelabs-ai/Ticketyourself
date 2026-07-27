@@ -81,9 +81,21 @@ export function AuthProvider({ children }) {
         return () => window.removeEventListener("tys:unauthorized", handler);
     }, [setSession]);
 
+    // `allowRole`, when given, is checked BEFORE any token/session is
+    // persisted — a wrong-role login (e.g. an organizer on /admin/login)
+    // never touches localStorage or React state, so there's no window where
+    // a rejected session is briefly live (readable by this tab's own UI, or
+    // broadcast to other open tabs via the storage event).
     const login = useCallback(
-        async (email, password) => {
+        async (email, password, allowRole) => {
             const { data } = await api.post("/auth/login", { email, password });
+            if (allowRole && !allowRole(data.user?.role)) {
+                const err: Error & { roleRejected?: boolean } = new Error(
+                    "Role not allowed for this login form",
+                );
+                err.roleRejected = true;
+                throw err;
+            }
             if (data.access_token) {
                 tokenStore.set({
                     access_token: data.access_token,
@@ -112,6 +124,10 @@ export function AuthProvider({ children }) {
     );
 
     const logout = useCallback(async () => {
+        // Capture before clearing — super_admin has its own login entry
+        // point (/admin/login), so logging out from the admin panel must
+        // land there, not on the organizer form.
+        const wasAdmin = user?.role === "super_admin";
         try {
             await api.post("/auth/logout");
         } catch (err) {
@@ -121,17 +137,25 @@ export function AuthProvider({ children }) {
         }
         tokenStore.clear();
         setSession(null);
-        navigate("/login", { replace: true });
-    }, [navigate, setSession]);
+        navigate(wasAdmin ? "/admin/login" : "/login", { replace: true });
+    }, [navigate, setSession, user]);
 
-    const refreshOrganizer = useCallback(async () => {
+    // Swallows errors by default (most callers just want a best-effort UI
+    // sync after an action that already succeeded on its own). Callers that
+    // need to know the refresh actually landed before proceeding — e.g. any
+    // flow that navigates somewhere gated on the fresh organizer state —
+    // should pass `{ throwOnError: true }` instead of treating a resolved
+    // promise as success.
+    const refreshOrganizer = useCallback(async ({ throwOnError = false } = {}) => {
         try {
             const { data } = await api.get("/organizers/me");
             setOrganizer(data);
+            return data;
         } catch (err) {
             // Organizer profile is optional (e.g. super-admin user).
             // Surface to dev console without spamming the user.
             console.warn("refreshOrganizer failed:", err?.message);
+            if (throwOnError) throw err;
         }
     }, []);
 

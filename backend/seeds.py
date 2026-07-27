@@ -1016,19 +1016,30 @@ async def _seed_demo_venues() -> None:
     demo_slugs = ("teatro-demo", "auditorio-pequeno")
 
     async with AsyncSessionLocal() as session:
-        # Skip seed when an existing demo venue is referenced by events (avoid breaking those FKs).
-        bound = await session.scalar(
-            select(func.count(Event.id)).where(Event.venue_id.isnot(None))
-        ) or 0
-        if bound:
-            existing_count = await session.scalar(
-                select(sa_func.count(Venue.id)).where(
+        # Skip seed when any event / seat assignment / hold already references a
+        # demo venue (avoid FK violation on DELETE).
+        from orm_models import EventSeatAssignment, SeatHold
+
+        demo_venue_ids = (
+            await session.scalars(
+                select(Venue.id).where(
                     Venue.organizer_id == organizer["id"],
                     Venue.slug.in_(list(demo_slugs)),
                 )
             )
-            if (existing_count or 0) >= 2:
-                return
+        ).all()
+        if demo_venue_ids:
+            for Model in [Event, EventSeatAssignment, SeatHold]:
+                ref_count = (
+                    await session.scalar(
+                        select(func.count(Model.id)).where(
+                            Model.venue_id.in_(demo_venue_ids)
+                        )
+                    )
+                    or 0
+                )
+                if ref_count:
+                    return
 
         await session.execute(
             sa_delete(Venue).where(

@@ -47,6 +47,7 @@ export default function AppRoutes() {
             )}
             {/* ── Login/Registro — funcionan desde cualquier dominio ───── */}
             <Route path="/login" element={<Public><LazyPage page={Pages.Login} /></Public>} />
+            <Route path="/admin/login" element={<Public><LazyPage page={Pages.AdminLogin} /></Public>} />
             <Route path="/registro" element={<Public><LazyPage page={Pages.Register} /></Public>} />
 
             {/* ── Público del tenant (/o/:slug/*) — siempre disponibles ──── */}

@@ -22,6 +22,7 @@ import EventContentPanel from "@/components/events/EventContentPanel";
 import TicketTypesPanel from "@/components/events/TicketTypesPanel";
 import EventFunctionsPanel from "@/components/events/EventFunctionsPanel";
 import SeasonPassPanel from "@/components/events/SeasonPassPanel";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import GuestListPanel from "@/components/events/GuestListPanel";
 import TicketDesignPanel from "@/components/events/TicketDesignPanel";
 import AccessCodesPanel from "@/components/events/AccessCodesPanel";
@@ -2499,7 +2500,7 @@ const ACCESS_TYPE_OPTIONS = [
 ];
 
 function SectionAccess({ form, update, eventId }) {
-    const ap = form.access_params;
+    const ap = { ...defaultAccessParams(), ...(form.access_params || {}) };
     const visibilityLabel =
         VISIBILITY_OPTIONS.find((o) => o.value === form.visibility)?.title || form.visibility;
     const accessLabel =
@@ -2578,12 +2579,33 @@ function SectionAccess({ form, update, eventId }) {
                         </p>
                     </div>
                     <div className="rounded-xl border bg-card p-4 sm:p-5">
-                        {ap.access_type === "verified_list" && (
-                            <GuestListPanel eventId={eventId} embedded />
-                        )}
-                        {ap.access_type === "access_code" && (
-                            <AccessCodesPanel eventId={eventId} embedded />
-                        )}
+                        {/* `key` remounts the boundary (resetting hasError) whenever the
+                            access type changes, instead of leaving a transient crash
+                            permanently stuck behind the fallback for the rest of the wizard. */}
+                        <ErrorBoundary
+                            key={`guest-list-${ap.access_type}`}
+                            fallback={
+                                <p className="text-xs text-muted-foreground p-3">
+                                    Error al cargar el panel. Reintenta más tarde.
+                                </p>
+                            }
+                        >
+                            {ap.access_type === "verified_list" && (
+                                <GuestListPanel eventId={eventId} embedded />
+                            )}
+                        </ErrorBoundary>
+                        <ErrorBoundary
+                            key={`access-codes-${ap.access_type}`}
+                            fallback={
+                                <p className="text-xs text-muted-foreground p-3">
+                                    Error al cargar el panel. Reintenta más tarde.
+                                </p>
+                            }
+                        >
+                            {ap.access_type === "access_code" && (
+                                <AccessCodesPanel eventId={eventId} embedded />
+                            )}
+                        </ErrorBoundary>
                     </div>
                 </section>
             )}

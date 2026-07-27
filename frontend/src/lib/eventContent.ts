@@ -1,3 +1,5 @@
+import { uuid } from "@/lib/utils";
+
 export function defaultEventContent() {
     return {
         policies_html: "",
@@ -17,7 +19,7 @@ export function normalizeEventContent(raw) {
 
 export function newAgendaItem() {
     return {
-        id: crypto.randomUUID(),
+        id: uuid(),
         time: "",
         title: "",
         description: "",
@@ -26,7 +28,7 @@ export function newAgendaItem() {
 
 export function newFaqItem() {
     return {
-        id: crypto.randomUUID(),
+        id: uuid(),
         question: "",
         answer_html: "",
     };

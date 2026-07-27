@@ -115,6 +115,8 @@ export default function VenueEditor() {
                     const v = await venueApi.get(id);
                     if (mounted) {
                         setVenue(v);
+                        // The venue list already asked "plantilla o en blanco?" before
+                        // creating this venue — don't ask again here.
                         setEmptyOverlayDismissed(searchParams.get("blank") === "1");
                     }
                 }
