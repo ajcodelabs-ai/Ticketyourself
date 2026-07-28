@@ -57,13 +57,15 @@ EOF
 fi
 
 # ── HTTPS: nginx + Let's Encrypt wildcard cert via GoDaddy DNS-01 ─────────
-# Idempotent — skips entirely if the wildcard cert already exists (e.g. this
-# ran once already and the instance rebooted without a full user-data rerun).
-if [ ! -d "/etc/letsencrypt/live/$WILDCARD_DOMAIN" ]; then
-  dnf install -y nginx python3-pip
-  systemctl enable --now nginx
-  pip3 install certbot certbot-nginx certbot-dns-godaddy
+# Only cert issuance is guarded by existence (it's the slow, external-API
+# step). nginx install/conf/timer below run every boot unconditionally —
+# a rebuilt instance can inherit an existing cert via a persisted EBS
+# volume while still needing nginx itself reinstalled/reconfigured.
+dnf install -y nginx python3-pip
+systemctl enable --now nginx
+pip3 install certbot certbot-nginx certbot-dns-godaddy
 
+if [ ! -d "/etc/letsencrypt/live/$WILDCARD_DOMAIN" ]; then
   aws secretsmanager get-secret-value --secret-id "__GODADDY_SECRET_ARN__" --region us-east-1 \
     --query SecretString --output text > /tmp/godaddy_secret.json
   GODADDY_KEY=$(python3 -c "import json; print(json.load(open('/tmp/godaddy_secret.json'))['key'])")
@@ -79,8 +81,9 @@ EOF
   certbot certonly --authenticator dns-godaddy --dns-godaddy-credentials /root/godaddy.ini \
     --dns-godaddy-propagation-seconds 60 -d "$WILDCARD_DOMAIN" -d "*.$WILDCARD_DOMAIN" \
     --non-interactive --agree-tos -m admin@ticketyourself.com
+fi
 
-  cat > /etc/nginx/conf.d/tys-staging.conf <<-EOF
+cat > /etc/nginx/conf.d/tys-staging.conf <<-EOF
 server {
     listen 80;
     server_name $DOMAIN *.$WILDCARD_DOMAIN;
@@ -111,17 +114,21 @@ server {
     }
 }
 EOF
-  nginx -t && systemctl reload nginx
+nginx -t && systemctl reload nginx
 
-  cat > /etc/systemd/system/certbot-renew.service <<-EOF
+# --deploy-hook only fires after a successful renewal, so nginx keeps
+# serving the old (soon-to-expire) cert from memory until it's reloaded —
+# without this, TLS silently starts failing ~90 days after issuance even
+# though certbot itself reports success.
+cat > /etc/systemd/system/certbot-renew.service <<-EOF
 [Unit]
 Description=Certbot Renewal
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/certbot renew --quiet
+ExecStart=/usr/local/bin/certbot renew --quiet --deploy-hook "systemctl reload nginx"
 EOF
-  cat > /etc/systemd/system/certbot-renew.timer <<-EOF
+cat > /etc/systemd/system/certbot-renew.timer <<-EOF
 [Unit]
 Description=Run certbot renew twice daily
 
@@ -133,6 +140,5 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
-  systemctl daemon-reload
-  systemctl enable --now certbot-renew.timer
-fi
+systemctl daemon-reload
+systemctl enable --now certbot-renew.timer

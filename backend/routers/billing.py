@@ -62,7 +62,11 @@ async def create_checkout_session(
         # .exception() would dump that into the log via the auto-attached
         # traceback. type(e).__name__ is enough to triage without it.
         logger.error("Stripe customer create failed: %s", type(e).__name__)
-        raise HTTPException(502, f"Stripe customer error: {e}")
+        # Same reasoning as the log line above: `e` can echo back request
+        # data, so it must not reach the client either.
+        raise HTTPException(
+            502, "No pudimos conectar con Stripe. Intentá de nuevo en unos minutos."
+        )
 
     if created:
         org.stripe_customer_id = customer_id
@@ -98,12 +102,15 @@ async def create_checkout_session(
         # values from that helper broadly, since other call sites of it in
         # this file convert rows that do carry PII).
         logger.error("Stripe checkout create failed: %s", type(e).__name__)
+        # Same reasoning as the log line above: `e` can echo back request
+        # data, so it must not reach the client either.
         raise HTTPException(
             502,
             (
-                f"Stripe checkout error: {e}. Si esto se repite con `sk_test_emergent`, "
-                "el wrapper de Emergent puede no soportar `mode=subscription`; usá el "
-                "endpoint /api/stripe/_simulate_webhook para testear el flujo."
+                "No pudimos iniciar el checkout con Stripe. Si esto se repite con "
+                "`sk_test_emergent`, el wrapper de Emergent puede no soportar "
+                "`mode=subscription`; usá el endpoint /api/stripe/_simulate_webhook "
+                "para testear el flujo."
             ),
         )
 
@@ -151,5 +158,10 @@ async def create_portal_session(
     except Exception as e:
         # logger.error, not .exception — see the customer-create catch above.
         logger.error("Stripe portal create failed: %s", type(e).__name__)
-        raise HTTPException(502, f"Stripe portal error: {e}")
+        # Same reasoning as the log line above: `e` can echo back request
+        # data, so it must not reach the client either.
+        raise HTTPException(
+            502,
+            "No pudimos abrir el portal de facturación de Stripe. Intentá de nuevo en unos minutos.",
+        )
     return PortalResponse(portal_url=url)
