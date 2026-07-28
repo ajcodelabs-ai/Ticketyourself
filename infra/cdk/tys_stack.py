@@ -64,8 +64,21 @@ class TysStack(Stack):
             ],
         )
 
+        # GoDaddy API credentials for certbot's DNS-01 challenge (wildcard TLS
+        # cert). Created empty — fill in after first deploy with:
+        #   aws secretsmanager put-secret-value --secret-id <arn> \
+        #     --secret-string '{"key":"...","secret":"..."}'
+        godaddy_secret = secretsmanager.Secret(
+            self,
+            "GodaddyApiSecret",
+            description="GoDaddy API key/secret for certbot DNS-01 (tys-staging wildcard TLS)",
+        )
+        godaddy_secret.grant_read(role)
+
         with open("user-data.sh") as f:
-            user_data = ec2.UserData.custom(f.read())
+            user_data = ec2.UserData.custom(
+                f.read().replace("__GODADDY_SECRET_ARN__", godaddy_secret.secret_arn)
+            )
 
         instance = ec2.Instance(
             self,
