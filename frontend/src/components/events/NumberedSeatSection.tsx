@@ -222,7 +222,7 @@ export default function NumberedSeatSection({
                 )}
             </h2>
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
-                <div>
+                <div className="min-w-0">
                     <SeatPickerCanvas
                         venue={event.venue}
                         seatsStatus={seatsStatus}

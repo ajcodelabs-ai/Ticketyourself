@@ -70,6 +70,12 @@ test.describe("Event wizard", () => {
     await page.waitForTimeout(300);
 
     await page.getByTestId("wiz-seated-toggle").click();
+    await page.waitForTimeout(300);
+
+    // General-admission mode also requires a venue name before `whereOk`
+    // passes — otherwise the step short-circuits to "warn" and the price
+    // check below never runs.
+    await page.getByTestId("wiz-venue-name").fill("Test Venue");
     await page.waitForTimeout(500);
 
     const errorSvg = page.getByTestId("tab-localidades").locator(".lucide-triangle-alert");
@@ -91,6 +97,8 @@ test.describe("Event wizard", () => {
 
     // "free" is the default pricing type for a brand-new event.
     await expect(page.getByTestId("wiz-pricing-type")).toContainText("Gratis");
+
+    await page.getByTestId("tab-fechas").click();
     await expect(page.getByTestId("info-cuando-block")).toContainText(
       "compra (o reserva si es gratuito)",
     );
@@ -101,8 +109,10 @@ test.describe("Event wizard", () => {
     await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
 
     await page.getByTestId("tab-access").click();
-    await expect(page.getByTestId("access-control-block")).toContainText("página del evento");
-    await expect(page.getByTestId("access-control-block")).toContainText("QR");
+    // The gating explanation is the section's intro copy, not the
+    // Visibilidad sub-block — check the section as a whole.
+    await expect(page.getByTestId("section-access")).toContainText("el evento en el microsite");
+    await expect(page.getByTestId("section-access")).toContainText("QR");
   });
 
   test("Selecting Lista verificada does not crash the wizard (feedback #8)", async ({ page }) => {
@@ -114,15 +124,17 @@ test.describe("Event wizard", () => {
     // Draft save requires a start date — fill it so the POST actually
     // succeeds and the wizard gets a real eventId (otherwise GuestListPanel
     // short-circuits to its "save the event first" placeholder and the
-    // crash this test guards against never gets exercised).
+    // crash this test guards against never gets exercised). The field lives
+    // in the "fechas" tab, not "general".
+    await page.getByTestId("tab-fechas").click();
     const startsAt = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 16);
     await page.getByTestId("wiz-starts").fill(startsAt);
     await page.getByTestId("wizard-save-draft").click();
     await expect(page).toHaveURL(/\/app\/eventos\/.+\/editar/, { timeout: 10_000 });
 
     await page.getByTestId("tab-access").click();
-    await page.getByTestId("access-type").click();
-    await page.locator('[role="option"]').filter({ hasText: "Lista verificada" }).click();
+    // Access type is a grid of ChoiceCards, not a dropdown.
+    await page.getByTestId("access-type-verified_list").click();
 
     // Before the fix, a bad guest-list response shape (or an undefined
     // access_params on the form) threw during render and blanked the page.
