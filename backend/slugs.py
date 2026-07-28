@@ -6,7 +6,16 @@ from typing import Optional
 
 # Subdomains reserved for infra/product surfaces — never allocatable as an
 # organizer slug, since <slug>.<PUBLIC_DOMAIN> is the tenant resolution path.
-RESERVED_SUBDOMAINS = {"www", "api", "admin", "app", "static", "assets", "staging"}
+RESERVED_SUBDOMAINS = {
+    "www",
+    "api",
+    "admin",
+    "app",
+    "static",
+    "assets",
+    "staging",
+    "tys-staging",
+}
 
 
 def normalize_slug(value: str) -> str:

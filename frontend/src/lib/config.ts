@@ -15,7 +15,7 @@ export function publicMicrositeHost(slug) {
     return `${slug}.${PUBLIC_DOMAIN}`;
 }
 
-const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "app", "static", "assets", "staging"]);
+const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "app", "static", "assets", "staging", "tys-staging"]);
 
 export function extractSubdomainFromHostname(hostname?: string): string | null {
     const h = hostname ?? (typeof window !== "undefined" ? window.location.hostname : "");
