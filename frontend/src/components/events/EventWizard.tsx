@@ -1386,8 +1386,8 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
 function CuandoBlock({ form, update, disabled }) {
     const startsValid = !!form.starts_at;
     return (
-        <>
-            <section className="space-y-3" data-testid="info-cuando-block">
+        <div data-testid="info-cuando-block" className="contents">
+            <section className="space-y-3">
                 <div>
                     <h4 className="text-sm font-medium">1. Fecha y duración</h4>
                     <p className="text-xs text-muted-foreground">
@@ -1471,7 +1471,8 @@ function CuandoBlock({ form, update, disabled }) {
                         2. Ventana de venta
                     </h4>
                     <p className="text-xs text-muted-foreground">
-                        Cuándo se habilita y se cierra la compra. Se calcula desde la fecha de inicio.
+                        Cuándo se habilita y se cierra la compra (o reserva si es gratuito). Se
+                        calcula desde la fecha de inicio.
                     </p>
                 </div>
                 <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
@@ -1543,7 +1544,7 @@ function CuandoBlock({ form, update, disabled }) {
                     )}
                 </div>
             </section>
-        </>
+        </div>
     );
 }
 
