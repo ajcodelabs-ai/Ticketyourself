@@ -40,6 +40,7 @@ import {
 } from "@/lib/events";
 import { previewMicrositePath } from "@/lib/config";
 import { PAYMENT_METHOD_META } from "@/lib/orders";
+import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
 
 const FALLBACK_IMG = "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200";
 
@@ -250,10 +251,9 @@ export default function EventPublic() {
 
             {/* ── Active payment methods (skipped for free events) ─────── */}
             {event.pricing_type !== "free" && (() => {
-                const pm = event.payment_methods || {};
-                const active = ["stripe", "transfer", "cash"].filter(
-                    (k) => pm[k]?.enabled,
-                );
+                const active = resolveEnabledPaymentCodes(event.payment_methods, {
+                    includeLegacyStripe: true,
+                });
                 if (active.length === 0) return null;
                 return (
                     <section
@@ -266,7 +266,10 @@ export default function EventPublic() {
                             </h3>
                             <div className="flex flex-wrap gap-2">
                                 {active.map((m) => {
-                                    const meta = PAYMENT_METHOD_META[m];
+                                    const meta = PAYMENT_METHOD_META[m] || {
+                                        label: m,
+                                        icon: "•",
+                                    };
                                     return (
                                         <div
                                             key={m}

@@ -168,14 +168,32 @@ def created_event(demo_token):
     return r.json()
 
 
+class TestPaymentMethodCatalog:
+    def test_list_catalog(self):
+        r = new_session().get(f"{API}/payment-methods")
+        assert r.status_code == 200, r.text
+        codes = {m["code"] for m in r.json()}
+        assert codes == {"nuvei", "deuna", "transfer", "cash"}
+
+    def test_reject_unknown_enabled_code(self, demo_token, created_event):
+        s = new_session()
+        s.headers.update(bearer(demo_token))
+        r = s.put(
+            f"{API}/events/me/{created_event['id']}",
+            json={"payment_methods": {"enabled_codes": ["bitcoin"]}},
+        )
+        assert r.status_code == 422, r.text
+
+
 class TestEventFase5Fields:
     def test_create_applies_default_fields(self, created_event):
         for k in ("gallery_urls", "payment_methods", "discounts", "access_params"):
             assert k in created_event, f"missing {k}"
         assert created_event["gallery_urls"] == []
-        assert created_event["payment_methods"]["stripe"]["enabled"] is True
-        assert created_event["payment_methods"]["transfer"]["enabled"] is False
-        assert created_event["payment_methods"]["cash"]["enabled"] is False
+        pm = created_event["payment_methods"]
+        assert pm.get("enabled_codes") == ["nuvei"]
+        assert pm["transfer"]["enabled"] is False
+        assert pm["cash"]["enabled"] is False
         assert created_event["discounts"]["disability_law"]["enabled"] is False
         assert created_event["discounts"]["presale"]["enabled"] is False
         assert created_event["visibility"] == "public"
@@ -188,7 +206,7 @@ class TestEventFase5Fields:
         eid = created_event["id"]
         body = {
             "payment_methods": {
-                "stripe": {"enabled": True},
+                "enabled_codes": ["nuvei", "transfer"],
                 "transfer": {
                     "enabled": True,
                     "bank_name": "Pichincha",
@@ -224,6 +242,7 @@ class TestEventFase5Fields:
         r = s.put(f"{API}/events/me/{eid}", json=body)
         assert r.status_code == 200, f"update failed: {r.text}"
         upd = r.json()
+        assert "transfer" in upd["payment_methods"]["enabled_codes"]
         assert upd["payment_methods"]["transfer"]["enabled"] is True
         assert upd["payment_methods"]["transfer"]["bank_name"] == "Pichincha"
         assert upd["discounts"]["presale"]["enabled"] is True
@@ -310,7 +329,14 @@ class TestSeedEventsFase5:
         assert r.status_code == 200, f"public event {slug} not found"
         ev = r.json()
         assert ev.get("gallery_urls") == []
-        assert ev["payment_methods"]["stripe"]["enabled"] is True
+        pm = ev["payment_methods"]
+        codes = pm.get("enabled_codes")
+        if codes is not None:
+            assert len(codes) >= 1
+        else:
+            assert pm.get("stripe", {}).get("enabled") or pm.get("transfer", {}).get(
+                "enabled"
+            )
         assert "discounts" in ev
         assert "access_params" in ev
         assert ev["visibility"] == "public"

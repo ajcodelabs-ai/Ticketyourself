@@ -17,9 +17,10 @@ export function OrgArea({ children }) {
     );
 }
 
-// Blocks the real dashboard until the organizer finished onboarding: approved
-// by an admin AND paid for the selected plan. Anyone else gets bounced to
-// /onboarding, which renders the right step for their current status.
+// Soft-gate: pending organizers can configure venues/events/microsite drafts.
+// Publishing stays blocked server-side until TYS approves.
+// Approved organizers still need an active subscription before entering /app.
+// Rejected / suspended always bounce to /onboarding.
 function RequireActiveOrganizer({ children }) {
     const { loading, organizer } = useAuth();
 
@@ -33,8 +34,11 @@ function RequireActiveOrganizer({ children }) {
             </div>
         );
     }
-    const isActive = organizer?.status === "approved" && organizer?.subscription_status !== "none";
-    if (!isActive) {
+    const status = organizer?.status;
+    const canAccess =
+        status === "pending" ||
+        (status === "approved" && organizer?.subscription_status !== "none");
+    if (!canAccess) {
         return <Navigate to="/onboarding" replace />;
     }
     return children;

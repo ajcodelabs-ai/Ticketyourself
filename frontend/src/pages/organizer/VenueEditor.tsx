@@ -21,7 +21,7 @@ import { toast } from "sonner";
 import EditorToolbar from "@/components/venues/EditorToolbar";
 import EditorCanvas from "@/components/venues/EditorCanvas";
 import PropertiesPanel from "@/components/venues/PropertiesPanel";
-import LocalitiesPanel from "@/components/venues/LocalitiesPanel";
+import AssignLocalityPanel from "@/components/venues/AssignLocalityPanel";
 import ZoneConfigDialog from "@/components/venues/ZoneConfigDialog";
 import RowConfigDialog from "@/components/venues/RowConfigDialog";
 import CurvedRowConfigDialog from "@/components/venues/CurvedRowConfigDialog";
@@ -30,6 +30,7 @@ import ContextMenu from "@/components/venues/ContextMenu";
 import PublishPendingDialog from "@/components/PublishPendingDialog";
 import VenueEmptyCanvasOverlay from "@/components/venues/VenueEmptyCanvasOverlay";
 import { useAuth } from "@/contexts/AuthContext";
+import api from "@/lib/api";
 import {
     venuesApi, adminVenueTemplatesApi, eventVenueLayoutApi, makeStage, makeZone, makeRow, makeCurvedRow, makeSeat,
     makeTableRound, makeTableRect, computeCapacity, newId, bumpLabel,
@@ -82,6 +83,7 @@ export default function VenueEditor() {
     const [contextMenu, setContextMenu] = useState(null);
     const [publishPendingOpen, setPublishPendingOpen] = useState(false);
     const [emptyOverlayDismissed, setEmptyOverlayDismissed] = useState(false);
+    const [pricingById, setPricingById] = useState({});
     const clipboardRef = useRef([]);
 
     const dirtyRef = useRef(false);
@@ -103,11 +105,19 @@ export default function VenueEditor() {
         (async () => {
             try {
                 if (isEventScope && eventId) {
-                    const layout = await eventVenueLayoutApi.get(eventId);
+                    const [layout, eventDoc] = await Promise.all([
+                        eventVenueLayoutApi.get(eventId),
+                        api.get(`/events/me/${eventId}`).then((r) => r.data).catch(() => null),
+                    ]);
                     if (!mounted) return;
+                    const pricingMap = {};
+                    for (const lp of eventDoc?.locality_pricing || []) {
+                        if (lp?.locality_id) pricingMap[lp.locality_id] = lp;
+                    }
+                    setPricingById(pricingMap);
                     setVenue({
                         id: layout.venue_id || eventId,
-                        name: layout.venue_name || "Mapa del evento",
+                        name: layout.venue_name || eventDoc?.venue_name || "Mapa del evento",
                         slug: layout.venue_slug,
                         status: "published",
                         canvas: layout.canvas || { width: 1000, height: 600 },
@@ -117,7 +127,7 @@ export default function VenueEditor() {
                         lock_status: layout.lock_status || { locked: false },
                         is_event_snapshot: true,
                         source_venue_id: layout.source_venue_id,
-                        source_venue_name: layout.venue_name,
+                        source_venue_name: layout.venue_name || eventDoc?.venue_name,
                     });
                     historyRef.current = [];
                     futureRef.current = [];
@@ -289,19 +299,7 @@ export default function VenueEditor() {
     };
     const onTransform = (elemId, patch) => updateElement(elemId, patch);
 
-    // ── Localities ─────────────────────────────────────────────────────
-    const addLocality = (loc) => mutateVenue((v) => ({ ...v, localities: [...(v.localities || []), loc] }));
-    const updateLocality = (locId, patch) => mutateVenue((v) => ({
-        ...v,
-        localities: (v.localities || []).map((l) => (l.id === locId ? { ...l, ...patch } : l)),
-    }));
-    const deleteLocality = (locId) => {
-        if (elements.some((e) => e.locality_id === locId)) {
-            toast.error("Esta localidad tiene elementos asignados. Reasignalos antes.");
-            return;
-        }
-        mutateVenue((v) => ({ ...v, localities: (v.localities || []).filter((l) => l.id !== locId) }));
-    };
+    // ── Localities (assign-only on event map; CRUD lives in event Localidades tab) ──
     const assignLocalityToSelection = (locId) => {
         const affected = elements.filter((e) => selection.includes(e.id) && elementAcceptsLocality(e.kind));
         if (affected.length === 0) {
@@ -315,7 +313,31 @@ export default function VenueEditor() {
                     ? { ...e, locality_id: locId } : e,
             ),
         }));
-        toast.success(`Localidad asignada a ${affected.length} elemento(s).`);
+        toast.success(`${affected.length} elemento(s) asignados a '${localitiesById[locId]?.name || "localidad"}'.`);
+    };
+
+    const clearLocalityAssignments = (locId) => {
+        const n = elements.filter((e) => e.locality_id === locId).length;
+        if (n === 0) return;
+        mutateVenue((v) => ({
+            ...v,
+            elements: v.elements.map((e) =>
+                e.locality_id === locId ? { ...e, locality_id: null } : e,
+            ),
+        }));
+        toast.success(`Se quitó la asignación de ${n} elemento(s).`);
+    };
+
+    const clearAllLocalityAssignments = () => {
+        const n = elements.filter((e) => e.locality_id).length;
+        if (n === 0) return;
+        const ok = window.confirm("¿Quitar todas las asignaciones de localidades del mapa?");
+        if (!ok) return;
+        mutateVenue((v) => ({
+            ...v,
+            elements: v.elements.map((e) => ({ ...e, locality_id: null })),
+        }));
+        toast.success("Mapa sin asignaciones");
     };
 
     // ── Multi-select operations ────────────────────────────────────────
@@ -475,13 +497,18 @@ export default function VenueEditor() {
                     navigate(returnTo, { replace: true });
                 }
             } else {
+                // Master venue = shape only (no localities / no locality_id).
+                const shapeElements = (venue.elements || []).map((e) => ({
+                    ...e,
+                    locality_id: null,
+                }));
                 const body = {
                     name: venue.name,
                     type: venue.type,
                     description: venue.description,
                     canvas: venue.canvas,
-                    elements: venue.elements,
-                    localities: venue.localities || [],
+                    elements: shapeElements,
+                    localities: [],
                 };
                 const updated = await venueApi.update(venue.id, body);
                 setVenue(updated);
@@ -515,13 +542,18 @@ export default function VenueEditor() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [venue]);
 
-    const applyTemplateLayout = async ({ elements: els, localities: locs, capacity_calculated }) => {
+    const applyTemplateLayout = async ({ elements: els, localities: _locs, capacity_calculated }) => {
         if (!venue || locked) return;
+        // Templates only contribute shape — strip locality assignments.
+        const shapeElements = JSON.parse(JSON.stringify(els || [])).map((e) => ({
+            ...e,
+            locality_id: null,
+        }));
         const next = {
             ...venue,
-            elements: JSON.parse(JSON.stringify(els || [])),
-            localities: JSON.parse(JSON.stringify(locs || [])),
-            capacity_calculated: capacity_calculated ?? computeCapacity(els || []),
+            elements: shapeElements,
+            localities: [],
+            capacity_calculated: capacity_calculated ?? computeCapacity(shapeElements),
         };
         setVenue(next);
         dirtyRef.current = true;
@@ -535,7 +567,7 @@ export default function VenueEditor() {
                 description: next.description,
                 canvas: next.canvas,
                 elements: next.elements,
-                localities: next.localities || [],
+                localities: [],
             };
             const updated = await venueApi.update(venue.id, body);
             setVenue(updated);
@@ -716,7 +748,11 @@ export default function VenueEditor() {
         } else if (action === "send-back") {
             sendToBack();
         } else if (action === "locality") {
-            toast.message("Usá el panel de Localidades para asignar.");
+            if (!isEventScope) {
+                toast.message("Las localidades se configuran al crear el evento.");
+            } else {
+                toast.message("Usá el panel de Localidades para asignar.");
+            }
         }
     };
 
@@ -743,10 +779,10 @@ export default function VenueEditor() {
                         {isEventScope ? (
                             <div className="min-w-0">
                                 <div className="font-semibold text-lg truncate" data-testid="event-map-title">
-                                    {venue.name}
+                                    Asignar Localidades al Mapa
                                 </div>
                                 <p className="text-xs text-muted-foreground">
-                                    Copia del evento · origen {venue.source_venue_name || venue.name}
+                                    Forma de {venue.source_venue_name || venue.name}
                                     {" · "}
                                     <strong className="text-foreground">{capacity}</strong> cap.
                                     {" · "}
@@ -878,6 +914,7 @@ export default function VenueEditor() {
                 onRedo={redo}
                 canUndo={history.length > 0}
                 canRedo={future.length > 0}
+                hideCreateTools={isEventScope}
             />
 
             <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-3">
@@ -922,7 +959,7 @@ export default function VenueEditor() {
                         <PropertiesPanel
                             selection={selection}
                             elements={elements}
-                            localities={localities}
+                            localities={isEventScope ? localities : []}
                             onUpdate={updateElement}
                             onDelete={deleteElement}
                             onAlign={align}
@@ -934,32 +971,34 @@ export default function VenueEditor() {
                             readOnly={locked}
                         />
                     </div>
-                    <div className="rounded-xl border bg-card p-4 flex flex-col min-h-0">
-                        <LocalitiesPanel
-                            localities={localities}
-                            elements={elements}
-                            selection={selection}
-                            onAdd={addLocality}
-                            onUpdate={updateLocality}
-                            onDelete={deleteLocality}
-                            onAssign={assignLocalityToSelection}
-                            readOnly={locked}
-                        />
-                    </div>
+                    {isEventScope && (
+                        <div className="rounded-xl border bg-card p-4 flex flex-col min-h-0">
+                            <AssignLocalityPanel
+                                localities={localities}
+                                elements={elements}
+                                selection={selection}
+                                pricingById={pricingById}
+                                onAssign={assignLocalityToSelection}
+                                onClearLocality={clearLocalityAssignments}
+                                onClearAll={clearAllLocalityAssignments}
+                                readOnly={locked}
+                            />
+                        </div>
+                    )}
                 </aside>
             </div>
 
             <ZoneConfigDialog open={!!pendingZone} onClose={() => { setPendingZone(null); setTool("select"); }}
-                              onConfirm={confirmZone} localities={localities} />
+                              onConfirm={confirmZone} localities={isEventScope ? localities : []} />
             <RowConfigDialog open={!!pendingRow} onClose={() => { setPendingRow(null); setTool("select"); }}
-                             onConfirm={confirmRow} localities={localities}
+                             onConfirm={confirmRow} localities={isEventScope ? localities : []}
                              nextRowLabel={nextRowLabel(elements)} />
             <CurvedRowConfigDialog open={!!pendingCurved} onClose={() => { setPendingCurved(null); setTool("select"); }}
-                                    onConfirm={confirmCurved} localities={localities}
+                                    onConfirm={confirmCurved} localities={isEventScope ? localities : []}
                                     nextRowLabel={nextRowLabel(elements)} />
             <TableConfigDialog open={!!pendingTable} kind={pendingTable?.kind}
                                 onClose={() => { setPendingTable(null); setTool("select"); }}
-                                onConfirm={confirmTable} localities={localities} />
+                                onConfirm={confirmTable} localities={isEventScope ? localities : []} />
 
             <ContextMenu
                 open={!!contextMenu}
@@ -967,7 +1006,10 @@ export default function VenueEditor() {
                 y={contextMenu?.screenY || 0}
                 onClose={() => setContextMenu(null)}
                 onAction={handleContextAction}
-                hasLocality={!!elements.find((e) => e.id === contextMenu?.elementId && e.kind !== "stage")}
+                hasLocality={
+                    isEventScope
+                    && !!elements.find((e) => e.id === contextMenu?.elementId && e.kind !== "stage")
+                }
                 canExplode={isSeatRowKind(
                     elements.find((e) => e.id === contextMenu?.elementId)?.kind,
                 )}

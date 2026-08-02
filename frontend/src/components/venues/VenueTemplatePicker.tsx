@@ -6,6 +6,7 @@ import { LayoutTemplate, PenLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { VENUE_TYPES } from "@/lib/venues";
+import VenueTemplateThumb from "@/components/venues/VenueTemplateThumb";
 
 function typeLabel(value) {
     return VENUE_TYPES.find((t) => t.value === value)?.label || value;
@@ -28,6 +29,9 @@ export default function VenueTemplatePicker({
         type?: string;
         capacity_calculated?: number;
         description?: string;
+        canvas?: Record<string, unknown>;
+        elements?: unknown[];
+        localities?: unknown[];
     }>;
     loading?: boolean;
     usingId?: string | null;
@@ -79,6 +83,10 @@ export default function VenueTemplatePicker({
                                 key={tpl.id}
                                 className="rounded-xl border bg-card p-4 space-y-3"
                             >
+                                <VenueTemplateThumb
+                                    template={tpl}
+                                    height={compact ? 110 : 140}
+                                />
                                 <div className="flex items-start gap-3">
                                     <div className="h-9 w-9 rounded-lg bg-secondary text-muted-foreground grid place-items-center shrink-0">
                                         <LayoutTemplate className="h-4 w-4" />

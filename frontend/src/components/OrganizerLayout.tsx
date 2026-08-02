@@ -145,6 +145,21 @@ export default function OrganizerLayout({ children }) {
                 data-testid="org-main"
             >
                 <div className={isFullWidthPage ? "w-full max-w-none" : "max-w-6xl mx-auto"}>
+                    {organizer?.status === "pending" && (
+                        <div
+                            data-testid="org-pending-banner"
+                            className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+                        >
+                            Tu cuenta está en revisión por TYS. Podés configurar todo, pero no
+                            publicar eventos, venues ni el microsite hasta la aprobación.{" "}
+                            <Link
+                                to="/onboarding"
+                                className="font-medium underline underline-offset-2"
+                            >
+                                Ver documentos / estado
+                            </Link>
+                        </div>
+                    )}
                     {children}
                 </div>
             </main>

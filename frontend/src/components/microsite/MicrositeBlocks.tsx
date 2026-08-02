@@ -281,8 +281,17 @@ export function EventsBlockView({
     }
 
     const now = Date.now();
-    const upcoming = events.filter((e) => new Date(e.starts_at).getTime() > now);
-    const past = events.filter((e) => new Date(e.starts_at).getTime() <= now);
+    const byPriorityThenDate = (a, b) => {
+        const pd = (Number(b.priority) || 0) - (Number(a.priority) || 0);
+        if (pd !== 0) return pd;
+        return new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime();
+    };
+    const upcoming = events
+        .filter((e) => new Date(e.starts_at).getTime() > now)
+        .sort(byPriorityThenDate);
+    const past = events
+        .filter((e) => new Date(e.starts_at).getTime() <= now)
+        .sort(byPriorityThenDate);
     const isList = layout === "list";
     const cols = isList ? "grid-cols-1 max-w-2xl mx-auto" : "sm:grid-cols-2 lg:grid-cols-3";
 
@@ -342,7 +351,16 @@ function FeaturedEventView({ tenantSlug, blockId, events }) {
             </section>
         );
     }
-    const event = events?.[0] || null;
+    const now = Date.now();
+    const byPriorityThenDate = (a, b) => {
+        const pd = (Number(b.priority) || 0) - (Number(a.priority) || 0);
+        if (pd !== 0) return pd;
+        return new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime();
+    };
+    const upcoming = (events || [])
+        .filter((e) => new Date(e.starts_at).getTime() > now)
+        .sort(byPriorityThenDate);
+    const event = upcoming[0] || events?.[0] || null;
     if (!event) return null;
 
     const formatted = new Intl.DateTimeFormat("es-EC", {

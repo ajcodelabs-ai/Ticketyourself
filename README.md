@@ -7,7 +7,7 @@ Plataforma SaaS de ticketing multi-tenant: eventos, venta de entradas (Stripe, t
 1. [Inicio en 2 minutos](#inicio-en-2-minutos)
 2. [Servicios, URLs y demos](#servicios-urls-y-demos)
 3. [Desarrollo](#desarrollo)
-   - [Base de datos local](#base-de-datos-local)
+  - [Base de datos local](#base-de-datos-local)
 4. [Arquitectura](#arquitectura)
 5. [Documentación adicional](#documentación-adicional)
 
@@ -40,6 +40,8 @@ make clean   # detener + borrar volúmenes (reset DB)
 
 ---
 
+
+
 ## Servicios, URLs y demos
 
 Base local: **web** `http://localhost:3000` · **API** `http://localhost:8000`
@@ -56,13 +58,15 @@ Base local: **web** `http://localhost:3000` · **API** `http://localhost:8000`
 | PostgreSQL                                | `postgresql://tys:tys_dev@localhost:5432/tys_dev`                    |
 
 
+
+
 ### Guía rápida por rol
 
 
 | Quiero…                    | URL                                                                                                                      | Login                       |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
 | Comprar entradas (público) | [http://localhost:3000/o/demo-org/e/concierto-acustico-demo](http://localhost:3000/o/demo-org/e/concierto-acustico-demo) | —                           |
-| Panel organizador          | [http://localhost:3000/app/dashboard](http://localhost:3000/app/dashboard)                                               | `demo@ticketyourself.com`   |
+| Panel organizador          | [http://localhost:3000/app/dashboard](http://localhost:3000/app/dashboard)                                               | lo                          |
 | Validar QR en puerta       | [http://localhost:3000/app/eventos/{event_id}/validacion](http://localhost:3000/app/eventos/{event_id}/validacion)       | `demo@ticketyourself.com`   |
 | Super admin                | [http://localhost:3000/admin/organizadores](http://localhost:3000/admin/organizadores)                                   | `admin@ticketyourself.com`  |
 | Registro (elegir plan)     | [http://localhost:3000/registro](http://localhost:3000/registro)                                                         | —                           |
@@ -70,6 +74,8 @@ Base local: **web** `http://localhost:3000` · **API** `http://localhost:8000`
 
 
 > `{event_id}`: ábrelo en el panel en **Eventos** y míralo en la URL del navegador.
+
+
 
 ### Credenciales demo
 
@@ -84,6 +90,8 @@ Se insertan al arrancar el backend (seeds idempotentes).
 | Organizador rechazado | `rechazado@ticketyourself.com` | `Organizer123!` | Dashboard bloqueado                           |
 
 
+
+
 ### URLs por zona
 
 **Marketing** (sin login)
@@ -95,8 +103,6 @@ Se insertan al arrancar el backend (seeds idempotentes).
 | Login            | [http://localhost:3000/login](http://localhost:3000/login)       |
 | Registro + plan  | [http://localhost:3000/registro](http://localhost:3000/registro) |
 | Planes (ancla)   | [http://localhost:3000/#planes](http://localhost:3000/#planes)   |
-
-
 
 
 **Super admin** — `admin@ticketyourself.com`
@@ -113,8 +119,6 @@ Se insertan al arrancar el backend (seeds idempotentes).
 | Reportes      | [http://localhost:3000/admin/reportes](http://localhost:3000/admin/reportes)           |
 
 
-
-
 **Organizador / staff** — `demo@ticketyourself.com`
 
 
@@ -129,8 +133,6 @@ Se insertan al arrancar el backend (seeds idempotentes).
 | Validación QR | [http://localhost:3000/app/eventos/{event_id}/validacion](http://localhost:3000/app/eventos/{event_id}/validacion) |
 
 
-
-
 **Público / venta** — tenant `demo-org`
 
 
@@ -142,17 +144,17 @@ Se insertan al arrancar el backend (seeds idempotentes).
 | Preview venue      | [http://localhost:3000/o/demo-org/venues/teatro-demo/preview](http://localhost:3000/o/demo-org/venues/teatro-demo/preview)             |
 
 
-
-
 **Mobile** (escáner QR, opcional)
 
 Ver [mobile/](mobile/). Variable `EXPO_PUBLIC_BACKEND_URL=http://localhost:8000` (usa IP LAN en dispositivo físico).
 
-
-
 ---
 
+
+
 ## Desarrollo
+
+
 
 ### Docker + Make (recomendado)
 
@@ -204,20 +206,22 @@ stripe listen --forward-to http://localhost:8000/api/stripe/webhook
 | `make env-local` / `make env-prod` / `make env-backend-local`  | Crear `.env` desde plantillas           |
 
 
+
+
 ### Base de datos local
 
 Con `make up`, PostgreSQL queda expuesto en el host. El backend **dentro de Docker** habla con la base vía PgBouncer; herramientas externas (psql, DBeaver, TablePlus, etc.) se conectan **directo a Postgres** en el puerto publicado.
 
-**Credenciales por defecto** (sobreescribibles en `.env` con `POSTGRES_*`):
+**Credenciales por defecto** (sobreescribibles en `.env` con `POSTGRES_`*):
 
 
-| Campo    | Valor     |
-| -------- | --------- |
+| Campo    | Valor       |
+| -------- | ----------- |
 | Host     | `localhost` |
-| Puerto   | `5432`    |
-| Usuario  | `tys`     |
-| Password | `tys_dev` |
-| Base     | `tys_dev` |
+| Puerto   | `5432`      |
+| Usuario  | `tys`       |
+| Password | `tys_dev`   |
+| Base     | `tys_dev`   |
 
 
 **Cadenas de conexión**
@@ -282,7 +286,11 @@ Requisitos: Python 3.11+, Node 18+ / Yarn 1.x, PostgreSQL 14+.
 
 ---
 
+
+
 ## Arquitectura
+
+
 
 ### Stack
 
@@ -295,6 +303,8 @@ Requisitos: Python 3.11+, Node 18+ / Yarn 1.x, PostgreSQL 14+.
 | Base de datos | PostgreSQL 16                                      |
 | Pagos / email | Stripe · Resend                                    |
 | DevOps        | Docker Compose · Make                              |
+
+
 
 
 ### Estructura del repo
@@ -325,6 +335,8 @@ Orden de resolución del tenant:
 5. Default `demo-org` en preview
 
 ---
+
+
 
 ## Documentación adicional
 

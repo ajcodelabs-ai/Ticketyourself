@@ -3,20 +3,40 @@
  *
  * Uses GET /api/admin/organizers-rich (returns revenue, tickets_emitted,
  * events_published, last_login + plan + subscription_status). Adds sort
- * indicators on clickable headers + multi-status filters.
+ * indicators on clickable headers + multi-status filters + inline/bulk
+ * approve & reject without opening the detail page.
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import {
     flexRender,
     getCoreRowModel,
     useReactTable,
 } from "@tanstack/react-table";
-import { ArrowUpDown, ArrowDown, ArrowUp, Search } from "lucide-react";
+import {
+    ArrowUpDown,
+    ArrowDown,
+    ArrowUp,
+    Search,
+    CheckCircle2,
+    XCircle,
+} from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import {
     Select,
     SelectContent,
@@ -32,6 +52,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import api, { formatApiError } from "@/lib/api";
 import { formatCents } from "@/lib/orders";
 import { useAdminOrganizers } from "@/hooks/queries/useAdminOrganizers";
 
@@ -97,6 +118,7 @@ function formatLastLogin(iso) {
 }
 
 export default function AdminOrganizers() {
+    const queryClient = useQueryClient();
     const [params, setParams] = useSearchParams();
     const [status, setStatus] = useState(params.get("status") || "__all");
     const [subStatus, setSubStatus] = useState(
@@ -106,15 +128,20 @@ export default function AdminOrganizers() {
     const [search, setSearch] = useState(params.get("search") || "");
     const [sort, setSort] = useState("revenue");
     const [direction, setDirection] = useState("desc");
+    const [selected, setSelected] = useState(() => new Set());
+    const [acting, setActing] = useState(false);
+    const [rejectTarget, setRejectTarget] = useState(null); // { ids: string[], label: string }
+    const [rejectComment, setRejectComment] = useState("");
 
-    const { data, isLoading } = useAdminOrganizers({
+    const filters = {
         status,
         subscription_status: subStatus,
         activity,
         search: search.trim(),
         sort,
         direction,
-    });
+    };
+    const { data, isLoading } = useAdminOrganizers(filters);
     const items = data?.items ?? [];
     const total = data?.total ?? 0;
 
@@ -128,6 +155,15 @@ export default function AdminOrganizers() {
         setParams(next, { replace: true });
     }, [status, subStatus, activity, search, setParams]);
 
+    // Drop selections that disappeared after filter/refetch.
+    useEffect(() => {
+        const visible = new Set(items.map((o) => o.id));
+        setSelected((prev) => {
+            const next = new Set([...prev].filter((id) => visible.has(id)));
+            return next.size === prev.size ? prev : next;
+        });
+    }, [items]);
+
     const toggleSort = (col) => {
         if (sort === col) {
             setDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -137,8 +173,116 @@ export default function AdminOrganizers() {
         }
     };
 
+    const refreshList = async () => {
+        await queryClient.invalidateQueries({ queryKey: ["admin", "organizers"] });
+    };
+
+    const approveIds = async (ids) => {
+        if (!ids.length) return;
+        setActing(true);
+        let ok = 0;
+        try {
+            for (const id of ids) {
+                await api.post(`/admin/organizers/${id}/approve`, {});
+                ok += 1;
+            }
+            toast.success(
+                ok === 1 ? "Organizador aprobado" : `${ok} organizadores aprobados`,
+            );
+            setSelected(new Set());
+            await refreshList();
+        } catch (err) {
+            toast.error(
+                formatApiError(err?.response?.data?.detail) ||
+                    `Error al aprobar (${ok} OK antes del fallo)`,
+            );
+            await refreshList();
+        } finally {
+            setActing(false);
+        }
+    };
+
+    const openReject = (ids, label) => {
+        setRejectTarget({ ids, label });
+        setRejectComment("");
+    };
+
+    const confirmReject = async () => {
+        if (!rejectTarget?.ids?.length) return;
+        if (rejectComment.trim().length < 2) {
+            toast.error("El comentario es obligatorio para rechazar");
+            return;
+        }
+        setActing(true);
+        let ok = 0;
+        try {
+            for (const id of rejectTarget.ids) {
+                await api.post(`/admin/organizers/${id}/reject`, {
+                    comment: rejectComment.trim(),
+                });
+                ok += 1;
+            }
+            toast.success(
+                ok === 1 ? "Organizador rechazado" : `${ok} organizadores rechazados`,
+            );
+            setRejectTarget(null);
+            setRejectComment("");
+            setSelected(new Set());
+            await refreshList();
+        } catch (err) {
+            toast.error(
+                formatApiError(err?.response?.data?.detail) ||
+                    `Error al rechazar (${ok} OK antes del fallo)`,
+            );
+            await refreshList();
+        } finally {
+            setActing(false);
+        }
+    };
+
+    const toggleOne = (id, checked) => {
+        setSelected((prev) => {
+            const next = new Set(prev);
+            if (checked) next.add(id);
+            else next.delete(id);
+            return next;
+        });
+    };
+
+    const allVisibleIds = items.map((o) => o.id);
+    const allSelected =
+        allVisibleIds.length > 0 && allVisibleIds.every((id) => selected.has(id));
+    const someSelected = allVisibleIds.some((id) => selected.has(id));
+
+    const toggleAll = (checked) => {
+        setSelected(checked ? new Set(allVisibleIds) : new Set());
+    };
+
+    const selectedPending = items.filter(
+        (o) => selected.has(o.id) && o.status === "pending",
+    );
+
     const columns = useMemo(
         () => [
+            {
+                id: "select",
+                header: () => (
+                    <Checkbox
+                        checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                        onCheckedChange={(v) => toggleAll(!!v)}
+                        aria-label="Seleccionar todos"
+                        data-testid="admin-orgs-select-all"
+                    />
+                ),
+                cell: ({ row }) => (
+                    <Checkbox
+                        checked={selected.has(row.original.id)}
+                        onCheckedChange={(v) => toggleOne(row.original.id, !!v)}
+                        aria-label={`Seleccionar ${row.original.company_name}`}
+                        data-testid={`admin-org-select-${row.original.slug}`}
+                    />
+                ),
+            },
             {
                 id: "company_name",
                 header: "Empresa",
@@ -245,21 +389,56 @@ export default function AdminOrganizers() {
             {
                 id: "actions",
                 header: "Acciones",
-                cell: ({ row }) => (
-                    <div className="text-right">
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            asChild
-                            data-testid={`org-view-${row.original.slug}`}
-                        >
-                            <Link to={`/admin/organizadores/${row.original.id}`}>Ver</Link>
-                        </Button>
-                    </div>
-                ),
+                cell: ({ row }) => {
+                    const o = row.original;
+                    const isPending = o.status === "pending";
+                    return (
+                        <div className="flex items-center justify-end gap-1">
+                            {isPending && (
+                                <>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        disabled={acting}
+                                        onClick={() => approveIds([o.id])}
+                                        data-testid={`org-approve-${o.slug}`}
+                                        className="text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50"
+                                        title="Aprobar"
+                                    >
+                                        <CheckCircle2 className="h-4 w-4" />
+                                        <span className="sr-only">Aprobar</span>
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        disabled={acting}
+                                        onClick={() =>
+                                            openReject([o.id], o.company_name || o.slug)
+                                        }
+                                        data-testid={`org-reject-${o.slug}`}
+                                        className="text-red-700 hover:text-red-800 hover:bg-red-50"
+                                        title="Rechazar"
+                                    >
+                                        <XCircle className="h-4 w-4" />
+                                        <span className="sr-only">Rechazar</span>
+                                    </Button>
+                                </>
+                            )}
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                asChild
+                                data-testid={`org-view-${o.slug}`}
+                            >
+                                <Link to={`/admin/organizadores/${o.id}`}>Ver</Link>
+                            </Button>
+                        </div>
+                    );
+                },
             },
         ],
-        [],
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- table cells close over latest handlers
+        [selected, acting, allSelected, someSelected],
     );
 
     const table = useReactTable({
@@ -277,6 +456,8 @@ export default function AdminOrganizers() {
             <ArrowDown className="h-3 w-3" />
         );
     };
+
+    const colSpan = 12;
 
     return (
         <div data-testid="admin-organizers-page" className="space-y-5">
@@ -349,12 +530,62 @@ export default function AdminOrganizers() {
                 </CardContent>
             </Card>
 
+            {selected.size > 0 && (
+                <div
+                    data-testid="admin-orgs-bulk-bar"
+                    className="sticky top-2 z-10 flex flex-wrap items-center gap-3 rounded-xl border bg-background px-4 py-3 shadow-sm"
+                >
+                    <span className="text-sm font-medium">
+                        {selected.size} seleccionado(s)
+                        {selectedPending.length > 0 && selectedPending.length !== selected.size
+                            ? ` · ${selectedPending.length} pendiente(s)`
+                            : null}
+                    </span>
+                    <div className="flex flex-wrap gap-2 ml-auto">
+                        <Button
+                            size="sm"
+                            disabled={acting || selectedPending.length === 0}
+                            onClick={() => approveIds(selectedPending.map((o) => o.id))}
+                            data-testid="admin-orgs-bulk-approve"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                        >
+                            <CheckCircle2 className="h-4 w-4 mr-1" />
+                            Aprobar pendientes
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="destructive"
+                            disabled={acting || selectedPending.length === 0}
+                            onClick={() =>
+                                openReject(
+                                    selectedPending.map((o) => o.id),
+                                    `${selectedPending.length} organizador(es)`,
+                                )
+                            }
+                            data-testid="admin-orgs-bulk-reject"
+                        >
+                            <XCircle className="h-4 w-4 mr-1" />
+                            Rechazar pendientes
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={acting}
+                            onClick={() => setSelected(new Set())}
+                        >
+                            Limpiar
+                        </Button>
+                    </div>
+                </div>
+            )}
+
             <Card>
                 <CardContent className="pt-4">
                     <div className="overflow-x-auto">
                         <Table data-testid="admin-organizers-table">
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead className="w-10" />
                                     <SortHeader
                                         col="company_name"
                                         sort={sort}
@@ -430,13 +661,13 @@ export default function AdminOrganizers() {
                             <TableBody>
                                 {isLoading ? (
                                     <TableRow>
-                                        <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                                        <TableCell colSpan={colSpan} className="text-center py-8 text-muted-foreground">
                                             Cargando…
                                         </TableCell>
                                     </TableRow>
                                 ) : table.getRowModel().rows.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                                        <TableCell colSpan={colSpan} className="text-center py-8 text-muted-foreground">
                                             Sin resultados.
                                         </TableCell>
                                     </TableRow>
@@ -471,6 +702,54 @@ export default function AdminOrganizers() {
                     </div>
                 </CardContent>
             </Card>
+
+            <Dialog
+                open={!!rejectTarget}
+                onOpenChange={(open) => {
+                    if (!open && !acting) {
+                        setRejectTarget(null);
+                        setRejectComment("");
+                    }
+                }}
+            >
+                <DialogContent data-testid="admin-orgs-reject-dialog">
+                    <DialogHeader>
+                        <DialogTitle>Rechazar organizador</DialogTitle>
+                        <DialogDescription>
+                            {rejectTarget
+                                ? `Se rechazará: ${rejectTarget.label}. El comentario se envía por correo.`
+                                : null}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <Textarea
+                        value={rejectComment}
+                        onChange={(e) => setRejectComment(e.target.value)}
+                        placeholder="Motivo del rechazo (obligatorio)"
+                        rows={4}
+                        data-testid="admin-orgs-reject-comment"
+                    />
+                    <DialogFooter>
+                        <Button
+                            variant="ghost"
+                            disabled={acting}
+                            onClick={() => {
+                                setRejectTarget(null);
+                                setRejectComment("");
+                            }}
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            disabled={acting || rejectComment.trim().length < 2}
+                            onClick={confirmReject}
+                            data-testid="admin-orgs-reject-confirm"
+                        >
+                            Rechazar
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

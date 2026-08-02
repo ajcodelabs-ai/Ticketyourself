@@ -158,6 +158,11 @@ class VenuePut(BaseModel):
     localities: List[Locality] = []
 
 
+class FromTemplateBody(BaseModel):
+    """Optional rename when cloning a platform template into an org venue."""
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+
+
 class LocalityIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     color: str = "#6366F1"
@@ -306,20 +311,22 @@ async def _venue_count(organizer_id: str, session: AsyncSession) -> int:
 
 
 def _clone_venue_elements(original: Venue) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Regenerate locality + element ids for a copy."""
-    loc_map: Dict[str, str] = {}
-    new_locs: List[Dict[str, Any]] = []
-    for loc in (original.localities or []):
-        new_id = str(uuid.uuid4())
-        loc_map[loc["id"]] = new_id
-        new_locs.append({**loc, "id": new_id})
+    """Copy map shape only. Localities/prices belong to events, not venues."""
     new_elements: List[Dict[str, Any]] = []
     for el in (original.elements or []):
-        ne = {**el, "id": str(uuid.uuid4())}
-        if ne.get("locality_id"):
-            ne["locality_id"] = loc_map.get(ne["locality_id"])
+        ne = {**el, "id": str(uuid.uuid4()), "locality_id": None}
         new_elements.append(ne)
-    return new_elements, new_locs
+    return new_elements, []
+
+
+def _strip_venue_localities(elements: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Ensure master venues never keep locality assignments."""
+    out: List[Dict[str, Any]] = []
+    for el in elements or []:
+        next_el = dict(el)
+        next_el["locality_id"] = None
+        out.append(next_el)
+    return out
 
 
 def _is_locked(active_events: List[Dict[str, Any]]) -> bool:
@@ -452,6 +459,7 @@ async def list_platform_templates(
 @router.post("/from-template/{template_id}", status_code=201)
 async def create_from_template(
     template_id: str,
+    payload: FromTemplateBody = FromTemplateBody(),
     org: Dict[str, Any] = Depends(require_organizer),
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -471,8 +479,9 @@ async def create_from_template(
     if not original:
         raise HTTPException(404, "Plantilla no encontrada")
 
-    name = original.name
-    new_slug = await _unique_slug(org["id"], normalize_slug(name), session)
+    custom_name = (payload.name or "").strip()
+    venue_name = custom_name or original.name
+    new_slug = await _unique_slug(org["id"], normalize_slug(venue_name), session)
     now = _now()
     new_elements, new_locs = _clone_venue_elements(original)
 
@@ -480,7 +489,7 @@ async def create_from_template(
         id=str(uuid.uuid4()),
         organizer_id=org["id"],
         tenant_slug=org["slug"],
-        name=name,
+        name=venue_name,
         slug=new_slug,
         description=original.description,
         type=original.type,
@@ -544,23 +553,19 @@ async def update_venue(
 
     _validate_elements(body.elements)
 
-    elements = [e.model_dump() for e in body.elements]
-    elements = _clamp_elements(elements, body.canvas.model_dump())
-    localities = [loc.model_dump() for loc in body.localities]
-
-    # Locality references must exist
-    loc_ids = {loc["id"] for loc in localities}
-    for el in elements:
-        if el.get("locality_id") and el["locality_id"] not in loc_ids:
-            raise HTTPException(
-                422,
-                f"Locality {el['locality_id']} referenced by an element no longer exists.",
-            )
+    # Venues are shape-only: strip locality assignments and ignore body.localities.
+    # Names/colors/prices live on the event (venue_layout.localities + locality_pricing).
+    elements = _strip_venue_localities(
+        _clamp_elements([e.model_dump() for e in body.elements], body.canvas.model_dump())
+    )
+    localities: List[Dict[str, Any]] = []
 
     if locked:
         old_elements = row.elements or []
-        old_locs = row.localities or []
-        if _structural_diff(old_elements, elements) or _locality_structural_diff(old_locs, localities):
+        # Ignore locality_id when comparing structural edits on the master venue.
+        old_cmp = [{**e, "locality_id": None} for e in old_elements]
+        new_cmp = [{**e, "locality_id": None} for e in elements]
+        if _structural_diff(old_cmp, new_cmp):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 {

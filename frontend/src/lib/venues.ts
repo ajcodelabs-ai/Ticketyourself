@@ -276,8 +276,10 @@ export const venuesApi = {
     archive: (id) => api.post(`/venues/me/${id}/archive`).then((r) => r.data),
     lockStatus: (id) => api.get(`/venues/me/${id}/lock-status`).then((r) => r.data),
     listTemplates: () => api.get("/venues/me/templates").then((r) => r.data),
-    fromTemplate: (templateId) =>
-        api.post(`/venues/me/from-template/${templateId}`).then((r) => r.data),
+    fromTemplate: (templateId, { name } = {}) =>
+        api
+            .post(`/venues/me/from-template/${templateId}`, name ? { name } : {})
+            .then((r) => r.data),
     publicGet: (tenant, slug) => api.get(`/public/venues/${tenant}/${slug}`).then((r) => r.data),
 };
 

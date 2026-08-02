@@ -1,9 +1,12 @@
 """Event-scoped venue layout (snapshot) helpers.
 
-When an event links a master venue, we deep-copy canvas/elements/localities into
-`event.venue_layout`. Runtime (purchase, holds, public map) resolves that
-snapshot first so two events can share the same master Teatro without sharing
-edits.
+When an event links a master venue, we deep-copy only the *shape* (canvas +
+elements) into `event.venue_layout`. Locality names, colors and prices belong
+to the event — they are created later in the Localidades tab — so master
+venue localities and element locality_id assignments are not copied.
+
+Runtime (purchase, holds, public map) resolves that snapshot first so two
+events can share the same master Teatro without sharing edits.
 """
 from __future__ import annotations
 
@@ -37,14 +40,25 @@ def compute_capacity(elements: List[Dict[str, Any]]) -> int:
     return total
 
 
+def _strip_locality_assignments(elements: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Clear locality_id on elements so the event assigns its own localities."""
+    cleaned: List[Dict[str, Any]] = []
+    for el in elements or []:
+        next_el = dict(el)
+        if "locality_id" in next_el:
+            next_el["locality_id"] = None
+        cleaned.append(next_el)
+    return cleaned
+
+
 def snapshot_from_venue(venue: Dict[str, Any]) -> Dict[str, Any]:
-    """Deep-copy layout fields from a venue dict, preserving element/locality ids."""
+    """Deep-copy map shape only. Localities start empty — they are event-owned."""
     venue_id = venue.get("id")
-    elements = copy.deepcopy(venue.get("elements") or [])
+    elements = _strip_locality_assignments(copy.deepcopy(venue.get("elements") or []))
     return {
         "canvas": copy.deepcopy(venue.get("canvas") or {}),
         "elements": elements,
-        "localities": copy.deepcopy(venue.get("localities") or []),
+        "localities": [],
         "capacity_calculated": int(
             venue.get("capacity_calculated") or compute_capacity(elements) or 0
         ),

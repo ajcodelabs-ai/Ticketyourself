@@ -44,17 +44,21 @@ def _sample_venue():
     }
 
 
-def test_snapshot_preserves_element_and_locality_ids():
+def test_snapshot_copies_shape_only_without_localities():
     venue = _sample_venue()
     snap = snapshot_from_venue(venue)
     assert snap["source_venue_id"] == "venue-master-1"
     assert snap["elements"][0]["id"] == "el-row-a"
-    assert snap["localities"][0]["id"] == "loc-platea"
+    # Shape only: master locality assignments are stripped; event owns localities.
+    assert snap["elements"][0]["locality_id"] is None
+    assert snap["localities"] == []
     assert snap["capacity_calculated"] == 5
     assert "snapshotted_at" in snap
     # Deep copy: mutating snapshot must not touch master
     snap["elements"][0]["seats_count"] = 99
     assert venue["elements"][0]["seats_count"] == 5
+    assert venue["elements"][0]["locality_id"] == "loc-platea"
+    assert venue["localities"][0]["id"] == "loc-platea"
 
 
 def test_layout_as_venue_and_resolve_prefers_snapshot():

@@ -11,7 +11,8 @@ from db_helpers import get_event_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import (
     ActivationEvent, DocumentType, Event, EventCapacityReservation, EventSeatAssignment,
     Microsite, MicrositeAsset, Organizer, OrganizerAdminComment, OrganizerDocument,
-    RequiredDocumentSet, SeatHold, SubscriptionPlan, Tenant, Ticket, TicketOrder, TicketScan, User,
+    PaymentMethodCatalog, RequiredDocumentSet, SeatHold, SubscriptionPlan, Tenant,
+    Ticket, TicketOrder, TicketScan, User,
 )
 from security import hash_password, verify_password
 from services.required_documents import DEFAULTS as REQUIRED_DOC_DEFAULTS
@@ -177,6 +178,70 @@ DEMO_SEAT_PREVIEW_ORDER_ID = "11111111-1111-4111-8111-111111111111"
 
 async def _create_indexes() -> None:
     pass  # All indexes are managed by Alembic migrations
+
+
+PAYMENT_METHOD_CATALOG = [
+    {
+        "code": "nuvei",
+        "name": "Nuvei",
+        "kind": "gateway",
+        "sort_order": 10,
+        "description": "Pago digital con tarjeta (integración en preparación).",
+    },
+    {
+        "code": "deuna",
+        "name": "DeUna",
+        "kind": "gateway",
+        "sort_order": 20,
+        "description": "Pago digital DeUna (integración en preparación).",
+    },
+    {
+        "code": "transfer",
+        "name": "Transferencia",
+        "kind": "manual",
+        "sort_order": 30,
+        "description": "Transferencia bancaria con confirmación manual.",
+    },
+    {
+        "code": "cash",
+        "name": "Efectivo",
+        "kind": "manual",
+        "sort_order": 40,
+        "description": "Pago en efectivo en el punto de cobro del organizador.",
+    },
+]
+
+
+async def _seed_payment_method_catalog() -> None:
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as session:
+        for item in PAYMENT_METHOD_CATALOG:
+            existing = await session.scalar(
+                select(PaymentMethodCatalog).where(PaymentMethodCatalog.code == item["code"])
+            )
+            if existing is None:
+                session.add(
+                    PaymentMethodCatalog(
+                        id=str(uuid.uuid4()),
+                        code=item["code"],
+                        name=item["name"],
+                        kind=item["kind"],
+                        sort_order=item["sort_order"],
+                        is_active=True,
+                        description=item["description"],
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            else:
+                existing.name = item["name"]
+                existing.kind = item["kind"]
+                existing.sort_order = item["sort_order"]
+                existing.is_active = True
+                existing.description = item["description"]
+                existing.updated_at = now
+        await session.commit()
+        logger.info("Seeded payment_method_catalog (%d methods)", len(PAYMENT_METHOD_CATALOG))
 
 
 async def _seed_admin() -> None:
@@ -798,7 +863,8 @@ async def _seed_demo_events() -> None:
     from sqlalchemy.orm.attributes import flag_modified as _flag_modified
 
     _demo_payment_methods_full = {
-        "stripe": {"enabled": True},
+        "enabled_codes": ["nuvei", "deuna", "transfer", "cash"],
+        "stripe": {"enabled": False},
         "transfer": {
             "enabled": True,
             "bank_name": "Banco Pichincha",
@@ -813,9 +879,17 @@ async def _seed_demo_events() -> None:
             "contact": "+593 98 765 4321",
         },
     }
+    # Legacy stripe-only shape (no enabled_codes) — keeps Stripe checkout tests
+    # working via dual-read; not offered in the new organizer wizard UI.
     _demo_payment_methods_stripe = {
         "stripe": {"enabled": True},
-        "transfer": {"enabled": False, "bank_name": "", "account_number": "", "account_holder": "", "instructions": ""},
+        "transfer": {
+            "enabled": False,
+            "bank_name": "",
+            "account_number": "",
+            "account_holder": "",
+            "instructions": "",
+        },
         "cash": {"enabled": False, "location": "", "schedule": "", "contact": ""},
     }
     _demo_discounts = {
@@ -1050,14 +1124,7 @@ async def _seed_demo_venues() -> None:
         await session.flush()
 
     now = datetime.now(timezone.utc)
-    # ── 1. Teatro Demo ────────────────────────────────────────────────────
-    loc_platea = {"id": str(uuid.uuid4()), "name": "Platea", "color": "#3B82F6",
-                  "description": "Filas frontales", "default_price_cents": 2500}
-    loc_tribuna = {"id": str(uuid.uuid4()), "name": "Tribuna", "color": "#10B981",
-                   "description": "Filas posteriores", "default_price_cents": 1500}
-    loc_general = {"id": str(uuid.uuid4()), "name": "General", "color": "#6B7280",
-                   "description": "Gradería", "default_price_cents": 1000}
-
+    # ── 1. Teatro Demo (shape only — localities belong to events) ─────────
     teatro_elements = [
         {
             "id": str(uuid.uuid4()), "kind": "stage",
@@ -1068,7 +1135,7 @@ async def _seed_demo_venues() -> None:
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 300, "y": 180, "rotation": 0, "label": "Fila A",
-            "locality_id": loc_platea["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 10, "seat_spacing": 30, "seat_radius": 11,
             "row_label": "A", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
@@ -1076,7 +1143,7 @@ async def _seed_demo_venues() -> None:
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 270, "y": 240, "rotation": 0, "label": "Fila B",
-            "locality_id": loc_platea["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 12, "seat_spacing": 30, "seat_radius": 11,
             "row_label": "B", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
@@ -1084,7 +1151,7 @@ async def _seed_demo_venues() -> None:
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 270, "y": 300, "rotation": 0, "label": "Fila C",
-            "locality_id": loc_tribuna["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 12, "seat_spacing": 30, "seat_radius": 11,
             "row_label": "C", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
@@ -1092,7 +1159,7 @@ async def _seed_demo_venues() -> None:
         {
             "id": str(uuid.uuid4()), "kind": "unnumbered_zone",
             "x": 200, "y": 540, "rotation": 0, "label": "Gradería",
-            "locality_id": loc_general["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "width": 800, "height": 150, "capacity": 50, "color": None,
         },
     ]
@@ -1111,7 +1178,7 @@ async def _seed_demo_venues() -> None:
             type="theater",
             canvas={"width": 1200, "height": 800, "background_color": "#FAFAFA", "grid_size": 20},
             elements=teatro_elements,
-            localities=[loc_platea, loc_tribuna, loc_general],
+            localities=[],
             capacity_calculated=teatro_cap,
             status="published",
             is_template=False,
@@ -1121,13 +1188,7 @@ async def _seed_demo_venues() -> None:
         ))
         await session.commit()
 
-    # ── 2. Auditorio Pequeño (Phase 6b: showcases all new element kinds) ──
-    loc_aud_gen = {"id": str(uuid.uuid4()), "name": "General", "color": "#6366F1",
-                   "description": "Asientos numerados generales", "default_price_cents": 1500}
-    loc_aud_vip = {"id": str(uuid.uuid4()), "name": "VIP", "color": "#F59E0B",
-                   "description": "Asientos VIP frente al escenario", "default_price_cents": 5000}
-    loc_aud_mesa = {"id": str(uuid.uuid4()), "name": "Mesa", "color": "#10B981",
-                    "description": "Sillas en mesa", "default_price_cents": 3000}
+    # ── 2. Auditorio Pequeño (shape only — Phase 6b element kinds) ────────
     aud_elements = [
         {
             "id": str(uuid.uuid4()), "kind": "stage",
@@ -1135,11 +1196,10 @@ async def _seed_demo_venues() -> None:
             "locality_id": None, "z_index": 0,
             "width": 320, "height": 60, "color": "#9CA3AF",
         },
-        # 2 filas rectas
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 240, "y": 160, "rotation": 0, "label": "Fila A",
-            "locality_id": loc_aud_gen["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 10, "seat_spacing": 28, "seat_radius": 10,
             "row_label": "A", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
@@ -1147,52 +1207,48 @@ async def _seed_demo_venues() -> None:
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 240, "y": 200, "rotation": 0, "label": "Fila B",
-            "locality_id": loc_aud_gen["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 10, "seat_spacing": 28, "seat_radius": 10,
             "row_label": "B", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
         },
-        # 1 fila curva
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_curved",
             "x": 400, "y": 360, "rotation": 0, "label": "Fila C (curva)",
-            "locality_id": loc_aud_gen["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 10, "seat_spacing": 26, "seat_radius": 10,
             "curve_radius": 220, "curve_arc_degrees": 80,
             "row_label": "C", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
         },
-        # 2 mesas redondas
         {
             "id": str(uuid.uuid4()), "kind": "table_round",
             "x": 180, "y": 460, "rotation": 0, "label": "Mesa 1",
-            "locality_id": loc_aud_mesa["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "table_radius": 40, "chairs_count": 6,
             "chair_radius": 10, "chair_distance": 22,
         },
         {
             "id": str(uuid.uuid4()), "kind": "table_round",
             "x": 320, "y": 460, "rotation": 0, "label": "Mesa 2",
-            "locality_id": loc_aud_mesa["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "table_radius": 40, "chairs_count": 6,
             "chair_radius": 10, "chair_distance": 22,
         },
-        # 1 mesa rectangular
         {
             "id": str(uuid.uuid4()), "kind": "table_rect",
             "x": 480, "y": 440, "rotation": 0, "label": "Mesa larga",
-            "locality_id": loc_aud_mesa["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "width": 160, "height": 60,
             "chairs_per_side": {"top": 2, "bottom": 2, "left": 0, "right": 0},
             "chair_radius": 10, "chair_distance": 20,
         },
-        # 4 asientos individuales VIP cerca del escenario
         *[
             {
                 "id": str(uuid.uuid4()), "kind": "seat_individual",
                 "x": 240 + i * 60, "y": 115, "rotation": 0,
                 "label": f"VIP-{i + 1}",
-                "locality_id": loc_aud_vip["id"], "z_index": 2,
+                "locality_id": None, "z_index": 2,
                 "seat_radius": 12,
             }
             for i in range(4)
@@ -1220,7 +1276,7 @@ async def _seed_demo_venues() -> None:
             type="auditorium",
             canvas={"width": 800, "height": 600, "background_color": "#FAFAFA", "grid_size": 20},
             elements=aud_elements,
-            localities=[loc_aud_gen, loc_aud_vip, loc_aud_mesa],
+            localities=[],
             capacity_calculated=aud_cap,
             status="published",
             is_template=False,
@@ -1313,18 +1369,7 @@ def _build_venue_template_layout(build_key: str):
 
 
 def _build_template_teatro_clasico():
-    loc_platea = {
-        "id": str(uuid.uuid4()), "name": "Platea", "color": "#3B82F6",
-        "description": "Filas centrales", "default_price_cents": 2500,
-    }
-    loc_tribuna = {
-        "id": str(uuid.uuid4()), "name": "Tribuna", "color": "#10B981",
-        "description": "Filas posteriores", "default_price_cents": 1500,
-    }
-    loc_general = {
-        "id": str(uuid.uuid4()), "name": "General", "color": "#6B7280",
-        "description": "Gradería", "default_price_cents": 1000,
-    }
+    """Shape-only template. Localities are configured per event."""
     elements = [
         {
             "id": str(uuid.uuid4()), "kind": "stage",
@@ -1335,7 +1380,7 @@ def _build_template_teatro_clasico():
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 320, "y": 200, "rotation": 0, "label": "Fila A",
-            "locality_id": loc_platea["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 12, "seat_spacing": 28, "seat_radius": 11,
             "row_label": "A", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
@@ -1343,7 +1388,7 @@ def _build_template_teatro_clasico():
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 300, "y": 260, "rotation": 0, "label": "Fila B",
-            "locality_id": loc_platea["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 14, "seat_spacing": 28, "seat_radius": 11,
             "row_label": "B", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
@@ -1351,7 +1396,7 @@ def _build_template_teatro_clasico():
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 280, "y": 320, "rotation": 0, "label": "Fila C",
-            "locality_id": loc_tribuna["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 16, "seat_spacing": 28, "seat_radius": 11,
             "row_label": "C", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
@@ -1359,7 +1404,7 @@ def _build_template_teatro_clasico():
         {
             "id": str(uuid.uuid4()), "kind": "unnumbered_zone",
             "x": 220, "y": 520, "rotation": 0, "label": "Gradería",
-            "locality_id": loc_general["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "width": 760, "height": 140, "capacity": 80, "color": None,
         },
     ]
@@ -1367,18 +1412,12 @@ def _build_template_teatro_clasico():
         (e.get("seats_count") or 0) if e["kind"] == "seat_row_straight" else (e.get("capacity") or 0)
         for e in elements
     )
-    return [loc_platea, loc_tribuna, loc_general], elements, capacity
+    return [], elements, capacity
+
 
 
 def _build_template_auditorio():
-    loc_general = {
-        "id": str(uuid.uuid4()), "name": "General", "color": "#6366F1",
-        "description": "Asientos numerados", "default_price_cents": 1500,
-    }
-    loc_vip = {
-        "id": str(uuid.uuid4()), "name": "VIP", "color": "#F59E0B",
-        "description": "Primera fila premium", "default_price_cents": 4500,
-    }
+    """Shape-only template. Localities are configured per event."""
     elements = [
         {
             "id": str(uuid.uuid4()), "kind": "stage",
@@ -1391,7 +1430,7 @@ def _build_template_auditorio():
                 "id": str(uuid.uuid4()), "kind": "seat_individual",
                 "x": 220 + i * 55, "y": 130, "rotation": 0,
                 "label": f"VIP-{i + 1}",
-                "locality_id": loc_vip["id"], "z_index": 2,
+                "locality_id": None, "z_index": 2,
                 "seat_radius": 12,
             }
             for i in range(8)
@@ -1399,7 +1438,7 @@ def _build_template_auditorio():
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 180, "y": 220, "rotation": 0, "label": "Fila A",
-            "locality_id": loc_general["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 14, "seat_spacing": 26, "seat_radius": 10,
             "row_label": "A", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
@@ -1407,7 +1446,7 @@ def _build_template_auditorio():
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 180, "y": 280, "rotation": 0, "label": "Fila B",
-            "locality_id": loc_general["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 14, "seat_spacing": 26, "seat_radius": 10,
             "row_label": "B", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
@@ -1415,7 +1454,7 @@ def _build_template_auditorio():
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_straight",
             "x": 180, "y": 340, "rotation": 0, "label": "Fila C",
-            "locality_id": loc_general["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 14, "seat_spacing": 26, "seat_radius": 10,
             "row_label": "C", "numbering_start": 1,
             "numbering_direction": "ltr", "numbering_style": "numeric",
@@ -1423,7 +1462,7 @@ def _build_template_auditorio():
         {
             "id": str(uuid.uuid4()), "kind": "seat_row_curved",
             "x": 500, "y": 460, "rotation": 0, "label": "Fila D (curva)",
-            "locality_id": loc_general["id"], "z_index": 1,
+            "locality_id": None, "z_index": 1,
             "seats_count": 12, "seat_spacing": 24, "seat_radius": 10,
             "curve_radius": 200, "curve_arc_degrees": 70,
             "row_label": "D", "numbering_start": 1,
@@ -1437,7 +1476,54 @@ def _build_template_auditorio():
             capacity += e.get("seats_count", 0)
         elif k == "seat_individual":
             capacity += 1
-    return [loc_general, loc_vip], elements, capacity
+    return [], elements, capacity
+
+
+def _event_localities_for_teatro_layout(layout: dict):
+    """Attach event-owned localities + assignments to a Teatro Demo shape snapshot."""
+    loc_platea = {
+        "id": str(uuid.uuid4()), "name": "Platea", "color": "#3B82F6",
+        "description": "Filas frontales", "default_price_cents": 2500,
+    }
+    loc_tribuna = {
+        "id": str(uuid.uuid4()), "name": "Tribuna", "color": "#10B981",
+        "description": "Filas posteriores", "default_price_cents": 1500,
+    }
+    loc_general = {
+        "id": str(uuid.uuid4()), "name": "General", "color": "#6B7280",
+        "description": "Gradería", "default_price_cents": 1000,
+    }
+    for el in layout.get("elements") or []:
+        rl = (el.get("row_label") or "").upper()
+        kind = el.get("kind")
+        if kind == "seat_row_straight" and rl in ("A", "B"):
+            el["locality_id"] = loc_platea["id"]
+        elif kind == "seat_row_straight" and rl == "C":
+            el["locality_id"] = loc_tribuna["id"]
+        elif kind == "unnumbered_zone":
+            el["locality_id"] = loc_general["id"]
+        else:
+            el["locality_id"] = None
+    locs = [loc_platea, loc_tribuna, loc_general]
+    layout["localities"] = locs
+    pricing = [
+        {
+            "locality_id": loc_platea["id"], "price_cents": 2500,
+            "vxs_cents": 0, "service_fee_cents": 0, "admin_fee_cents": 0,
+            "max_tickets_per_purchase": None,
+        },
+        {
+            "locality_id": loc_tribuna["id"], "price_cents": 1500,
+            "vxs_cents": 0, "service_fee_cents": 0, "admin_fee_cents": 0,
+            "max_tickets_per_purchase": None,
+        },
+        {
+            "locality_id": loc_general["id"], "price_cents": 1000,
+            "vxs_cents": 0, "service_fee_cents": 0, "admin_fee_cents": 0,
+            "max_tickets_per_purchase": None,
+        },
+    ]
+    return layout, pricing
 
 
 async def _seed_demo_numbered_event() -> None:
@@ -1464,32 +1550,28 @@ async def _seed_demo_numbered_event() -> None:
     from db_helpers import row_to_dict as _rtd
     venue = _rtd(_venue_row)
 
-    # Resolve locality ids by name
-    loc_by_name = {loc["name"]: loc["id"] for loc in venue.get("localities", [])}
-    pricing = []
-    if "Platea" in loc_by_name:
-        pricing.append({"locality_id": loc_by_name["Platea"], "price_cents": 2500,
-                        "max_tickets_per_purchase": None})
-    if "Tribuna" in loc_by_name:
-        pricing.append({"locality_id": loc_by_name["Tribuna"], "price_cents": 1500,
-                        "max_tickets_per_purchase": None})
-    if "General" in loc_by_name:
-        pricing.append({"locality_id": loc_by_name["General"], "price_cents": 1000,
-                        "max_tickets_per_purchase": None})
-
     from sqlalchemy.orm.attributes import flag_modified as _flag_modified
+    from services.event_venue import snapshot_from_venue as _snap_venue_early
+    _layout_seed, pricing = _event_localities_for_teatro_layout(_snap_venue_early(venue))
+
 
     now = datetime.now(timezone.utc)
     slug = "funcion-especial-demo-numerado"
     _pm_num = {
-        "stripe": {"enabled": True},
+        "enabled_codes": ["nuvei", "deuna", "transfer", "cash"],
+        "stripe": {"enabled": False},
         "transfer": {
             "enabled": True, "bank_name": "Banco Pichincha",
             "account_number": "2100123456",
             "account_holder": "Eventos Demo S.A.",
             "instructions": "Envianos el comprobante al WhatsApp +593 98 765 4321.",
         },
-        "cash": {"enabled": False, "location": "", "schedule": "", "contact": ""},
+        "cash": {
+            "enabled": True,
+            "location": "Av. Amazonas N32-45, oficina 3, Quito",
+            "schedule": "Lun-Vie 9:00-18:00",
+            "contact": "+593 98 765 4321",
+        },
     }
     _disc_num = {
         "disability_law": {"enabled": False, "percent": 50},
@@ -1531,8 +1613,7 @@ async def _seed_demo_numbered_event() -> None:
             row.visibility = "public"
             row.status = "published"
             row.poster_url = "https://images.unsplash.com/photo-1503095396549-807759245b35?w=800"
-            from services.event_venue import snapshot_from_venue as _snap_venue
-            _layout = _snap_venue(venue)
+            _layout = _layout_seed
             row.venue_id = venue["id"]
             row.source_venue_id = venue["id"]
             row.venue_layout = _layout
@@ -1550,8 +1631,7 @@ async def _seed_demo_numbered_event() -> None:
             _flag_modified(row, "discounts")
             _flag_modified(row, "access_params")
         else:
-            from services.event_venue import snapshot_from_venue as _snap_venue
-            _layout = _snap_venue(venue)
+            _layout = _layout_seed
             event_id = str(uuid.uuid4())
             session.add(Event(
                 id=event_id,
@@ -1603,13 +1683,14 @@ async def _seed_demo_numbered_event() -> None:
     # ── Pre-sold + pre-held seats for visual demo ─────────────────────────
     # Find the first seat-row element ("Fila A") and pre-sell seats A-1 / A-2,
     # then put A-3 on hold. Find Fila C (Tribuna) and pre-sell C-5.
+    _layout_els = _layout_seed.get("elements") or []
     fila_a = next(
-        (e for e in venue["elements"]
+        (e for e in _layout_els
          if e.get("kind") == "seat_row_straight" and (e.get("row_label") or "").upper() == "A"),
         None,
     )
     fila_c = next(
-        (e for e in venue["elements"]
+        (e for e in _layout_els
          if e.get("kind") == "seat_row_straight" and (e.get("row_label") or "").upper() == "C"),
         None,
     )
@@ -1707,6 +1788,7 @@ async def run_seeds() -> None:
     await _cleanup_ephemeral_orders()
     await _seed_admin()
     await _seed_plans()
+    await _seed_payment_method_catalog()
     await _seed_document_types()
     await _seed_required_documents()
     await _seed_demo_organizers()

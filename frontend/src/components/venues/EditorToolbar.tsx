@@ -64,15 +64,18 @@ function ToolBtn({ id, label, short, icon: Icon, isActive, onTool }) {
 }
 
 export default function EditorToolbar({
-    tool, onTool, onUndo, onRedo, canUndo, canRedo,
+    tool, onTool, onUndo, onRedo, canUndo, canRedo, hideCreateTools = false,
 }) {
+    const groups = hideCreateTools
+        ? TOOL_GROUPS.filter((g) => g.id === "select")
+        : TOOL_GROUPS;
     return (
         <TooltipProvider delayDuration={150}>
             <div
                 className="bg-card border rounded-xl shadow-sm p-1.5 flex items-center gap-1 flex-wrap"
                 data-testid="venue-toolbar"
             >
-                {TOOL_GROUPS.map((group, gi) => (
+                {groups.map((group, gi) => (
                     <div key={group.id} className="flex items-center gap-0.5">
                         {gi > 0 && <span className="w-px h-7 bg-border mx-1" aria-hidden />}
                         {group.tools.map((t) => (

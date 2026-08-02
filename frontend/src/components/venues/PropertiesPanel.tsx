@@ -316,7 +316,7 @@ export default function PropertiesPanel({
                 </div>
             )}
 
-            {el.kind !== "stage" && (
+            {el.kind !== "stage" && localities.length > 0 && (
                 <Field label="Localidad">
                     <Select value={el.locality_id || "__none"} disabled={readOnly}
                             onValueChange={(v) => onUpdate(el.id, { locality_id: v === "__none" ? null : v })}>

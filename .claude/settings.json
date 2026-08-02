@@ -32,7 +32,8 @@
       "Bash(curl -s -X PUT http://localhost:8000/api/venues/me/__TRACKED_VAR__ -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json' --data-binary @/private/tmp/claude-501/-Users-juanpa-ajcodelabs-Ticketyourself/6d318003-ae4f-4fca-a4a8-c7227abcc44e/scratchpad/venue_reverted.json)",
       "Bash(SCRATCH=/private/tmp/claude-501/-Users-juanpa-ajcodelabs-Ticketyourself/6d318003-ae4f-4fca-a4a8-c7227abcc44e/scratchpad *)",
       "Bash(awk '/^function SectionMedia/{print NR\": \"$0} /^function Section/{print NR\": \"$0}' /Users/juanpa/ajcodelabs/Ticketyourself/frontend/src/components/events/EventWizard.tsx)",
-      "Bash(grep -n \"^    Info,$\" /Users/juanpa/ajcodelabs/Ticketyourself/frontend/src/components/events/EventWizard.tsx)"
+      "Bash(grep -n \"^    Info,$\" /Users/juanpa/ajcodelabs/Ticketyourself/frontend/src/components/events/EventWizard.tsx)",
+      "mcp__plugin_playwright_playwright__browser_navigate"
     ],
     "additionalDirectories": [
       "/tmp",

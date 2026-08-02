@@ -53,28 +53,30 @@ export default function ZoneConfigDialog({ open, onClose, onConfirm, localities 
                             data-testid="zone-dialog-capacity"
                         />
                     </div>
-                    <div className="space-y-1">
-                        <Label className="text-xs">Localidad</Label>
-                        <Select value={locality_id} onValueChange={setLocality}>
-                            <SelectTrigger data-testid="zone-dialog-locality">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="__none">Sin localidad</SelectItem>
-                                {localities.map((loc) => (
-                                    <SelectItem key={loc.id} value={loc.id}>
-                                        <span className="inline-flex items-center gap-2">
-                                            <span
-                                                className="h-3 w-3 rounded-sm"
-                                                style={{ background: loc.color }}
-                                            />
-                                            {loc.name}
-                                        </span>
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
+                    {localities.length > 0 && (
+                        <div className="space-y-1">
+                            <Label className="text-xs">Localidad</Label>
+                            <Select value={locality_id} onValueChange={setLocality}>
+                                <SelectTrigger data-testid="zone-dialog-locality">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__none">Sin localidad</SelectItem>
+                                    {localities.map((loc) => (
+                                        <SelectItem key={loc.id} value={loc.id}>
+                                            <span className="inline-flex items-center gap-2">
+                                                <span
+                                                    className="h-3 w-3 rounded-sm"
+                                                    style={{ background: loc.color }}
+                                                />
+                                                {loc.name}
+                                            </span>
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
                 </div>
                 <DialogFooter>
                     <Button variant="ghost" onClick={onClose}>Cancelar</Button>

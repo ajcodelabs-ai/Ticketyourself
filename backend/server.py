@@ -24,6 +24,7 @@ from routers import billing as billing_router  # noqa: E402
 from routers import dev as dev_router  # noqa: E402
 from routers import microsite as microsite_router  # noqa: E402
 from routers import organizers as organizers_router  # noqa: E402
+from routers import payment_methods as payment_methods_router  # noqa: E402
 from routers import plans as plans_router  # noqa: E402
 from routers import stripe_webhook as stripe_webhook_router  # noqa: E402
 from routers import tenants as tenants_router  # noqa: E402
@@ -54,6 +55,7 @@ app.include_router(tenants_router.router)
 app.include_router(auth_router.router)
 app.include_router(plans_router.router)
 app.include_router(plans_router.admin_router)
+app.include_router(payment_methods_router.router)
 app.include_router(organizers_router.router)
 app.include_router(organizers_router.admin_router)
 app.include_router(billing_router.router)

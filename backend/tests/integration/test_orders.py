@@ -125,12 +125,13 @@ class TestPaidEventPurchase:
     def paid_order(self):
         payload = {
             "tenant_slug": DEMO_TENANT,
-            "event_slug": PAID_EVENT_SLUG,
+            "event_slug": EVENT_STRIPE_ONLY_SLUG,
             "quantity": 2,
             "buyer": {
                 "name": "Juan TEST",
                 "email": f"juan_{int(time.time())}@example.com",
             },
+            "payment_method": "stripe",
             "origin_url": BASE_URL,
         }
         r = new_session().post(f"{API}/public/orders", json=payload)
@@ -322,12 +323,13 @@ class TestRefundAndResend:
             f"{API}/public/orders",
             json={
                 "tenant_slug": DEMO_TENANT,
-                "event_slug": PAID_EVENT_SLUG,
+                "event_slug": EVENT_STRIPE_ONLY_SLUG,
                 "quantity": 1,
                 "buyer": {
                     "name": "Refund TEST",
                     "email": f"rf_{int(time.time()*1000)}@example.com",
                 },
+                "payment_method": "stripe",
                 "origin_url": BASE_URL,
             },
         )
@@ -341,7 +343,7 @@ class TestRefundAndResend:
     def test_refund_changes_status_and_decrements_sold(
         self, demo_client, demo_event_ids
     ):
-        ev_id = demo_event_ids[PAID_EVENT_SLUG]
+        ev_id = demo_event_ids[EVENT_STRIPE_ONLY_SLUG]
         stats_before = demo_client.get(f"{API}/events/me/{ev_id}/stats").json()
         sold_before = stats_before["sold"]
 
@@ -366,7 +368,7 @@ class TestRefundAndResend:
         assert stats_after["sold"] == sold_before
 
     def test_resend_email_for_paid_order(self, demo_client, demo_event_ids):
-        ev_id = demo_event_ids[PAID_EVENT_SLUG]
+        ev_id = demo_event_ids[EVENT_STRIPE_ONLY_SLUG]
         on = self._new_paid_order()
         lo = demo_client.get(f"{API}/events/me/{ev_id}/orders?limit=20").json()
         order = next(o for o in lo["items"] if o["order_number"] == on)
@@ -485,12 +487,42 @@ def test_create_order_with_transfer_returns_pending_manual():
     assert data["payment_instructions"]["account_number"]
 
 
-@pytest.mark.skip(reason="cash payment method not enabled on seeded events")
 def test_create_order_with_cash_returns_pending_manual():
     data = _create_manual_order("cash")
     assert data["status"] == "pending_manual_payment"
     assert data["payment_method"] == "cash"
     assert data["payment_instructions"]["location"]
+
+
+def test_create_order_nuvei_returns_pending_gateway_stub():
+    data = _create_manual_order("nuvei")
+    assert data["status"] == "pending_gateway"
+    assert data["payment_method"] == "nuvei"
+    assert "Integración pendiente" in (data.get("message") or "")
+
+
+def test_create_order_deuna_returns_pending_gateway_stub():
+    data = _create_manual_order("deuna")
+    assert data["status"] == "pending_gateway"
+    assert data["payment_method"] == "deuna"
+    assert data.get("message")
+
+
+def test_nuvei_rejected_when_not_enabled():
+    """Stripe-only seed event must reject nuvei."""
+    r = new_session().post(
+        f"{API}/public/orders",
+        json={
+            "tenant_slug": DEMO_TENANT,
+            "event_slug": EVENT_STRIPE_ONLY_SLUG,
+            "quantity": 1,
+            "buyer": unique_buyer("nuvei-reject"),
+            "payment_method": "nuvei",
+            "origin_url": BASE_URL,
+        },
+        timeout=15,
+    )
+    assert r.status_code == 400, r.text
 
 
 def test_get_instructions_endpoint():
