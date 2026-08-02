@@ -151,6 +151,11 @@ const STEPS = [
     { id: "params", label: "Parámetros" },
 ];
 
+const MEDIA_SUBSTEPS = [
+    { id: "images", label: "Imágenes", num: "3.1" },
+    { id: "ticket", label: "Diseño de ticket", num: "3.2" },
+];
+
 /** Legacy ?tab= values → current step ids (deep-links / bookmarks). */
 const TAB_ALIASES = {
     info: "general",
@@ -831,15 +836,14 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                         </TabsContent>
                         <TabsContent value="media">
                             <div className="space-y-5" data-testid="media-substeps">
-                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                    <div>
-                                        <p className="text-xs text-muted-foreground">
-                                            Media · paso{" "}
-                                            <strong className="text-foreground">
-                                                {mediaSubStep === "images" ? "1" : "2"} de 2
-                                            </strong>
-                                        </p>
-                                    </div>
+                                {/* Mobile only: substep picker (desktop uses sidebar 3.1 / 3.2) */}
+                                <div className="lg:hidden flex flex-wrap items-center justify-between gap-3">
+                                    <p className="text-xs text-muted-foreground">
+                                        Media · paso{" "}
+                                        <strong className="text-foreground">
+                                            {mediaSubStep === "images" ? "1" : "2"} de 2
+                                        </strong>
+                                    </p>
                                     <div
                                         className="inline-flex rounded-lg border bg-card p-0.5"
                                         role="tablist"
@@ -857,7 +861,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             }`}
                                             data-testid="media-substep-images"
                                         >
-                                            1. Imágenes
+                                            3.1 Imágenes
                                         </button>
                                         <button
                                             type="button"
@@ -871,7 +875,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             }`}
                                             data-testid="media-substep-ticket"
                                         >
-                                            2. Diseño de ticket
+                                            3.2 Diseño de ticket
                                             {form.ticket_design?.elements?.length > 0 && (
                                                 <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" />
                                             )}
@@ -898,7 +902,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                                 onClick={() => setMediaSubStep("ticket")}
                                                 data-testid="media-goto-ticket"
                                             >
-                                                Continuar a diseño de ticket
+                                                Continuar a 3.2 Diseño de ticket
                                                 <ChevronRight className="h-4 w-4 ml-1" />
                                             </Button>
                                         </div>
@@ -918,7 +922,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                                 data-testid="media-goto-images"
                                             >
                                                 <ChevronLeft className="h-4 w-4 mr-1" />
-                                                Volver a imágenes
+                                                Volver a 3.1 Imágenes
                                             </Button>
                                         </div>
                                     </div>
@@ -1005,23 +1009,80 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                     st === "error" ? "text-red-600 dark:text-red-400" :
                                     "text-muted-foreground"
                                 );
+                                const goMediaSub = (subId) => {
+                                    setMediaSubStep(subId);
+                                    if (activeStep !== "media") handleTabChange("media");
+                                };
+                                const imagesOk = !!poster;
+                                const ticketOk = !!form.ticket_design?.elements?.length;
+
                                 return (
-                                    <TabsTrigger
-                                        key={s.id}
-                                        value={s.id}
-                                        className={`w-full justify-start gap-2 px-2.5 py-2 text-left rounded-lg
-                                                   data-[state=active]:bg-primary data-[state=active]:text-primary-foreground
-                                                   ${rowBg}`}
-                                        data-testid={`tab-${s.id}`}
-                                    >
-                                        <StepIcon status={st} size="md" />
-                                        <span className={`text-[11px] shrink-0 ${numColor}`}>
-                                            {i + 1}.
-                                        </span>
-                                        <span className="text-xs leading-tight">
-                                            {s.label}
-                                        </span>
-                                    </TabsTrigger>
+                                    <div key={s.id} className="w-full space-y-0.5">
+                                        <TabsTrigger
+                                            value={s.id}
+                                            className={`w-full justify-start gap-2 px-2.5 py-2 text-left rounded-lg
+                                                       data-[state=active]:bg-primary data-[state=active]:text-primary-foreground
+                                                       ${rowBg}`}
+                                            data-testid={`tab-${s.id}`}
+                                            onClick={() => {
+                                                if (s.id === "media") setMediaSubStep("images");
+                                            }}
+                                        >
+                                            <StepIcon status={st} size="md" />
+                                            <span className={`text-[11px] shrink-0 ${numColor}`}>
+                                                {i + 1}.
+                                            </span>
+                                            <span className="text-xs leading-tight">
+                                                {s.label}
+                                            </span>
+                                        </TabsTrigger>
+
+                                        {s.id === "media" && (
+                                            <div
+                                                className="pl-3 ml-2 border-l border-border/70 space-y-0.5"
+                                                data-testid="media-sidebar-substeps"
+                                            >
+                                                {MEDIA_SUBSTEPS.map((sub) => {
+                                                    const subActive =
+                                                        isActive && mediaSubStep === sub.id;
+                                                    const subDone =
+                                                        sub.id === "images" ? imagesOk : ticketOk;
+                                                    return (
+                                                        <button
+                                                            key={sub.id}
+                                                            type="button"
+                                                            onClick={() => goMediaSub(sub.id)}
+                                                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition ${
+                                                                subActive
+                                                                    ? "bg-primary/15 text-primary font-medium"
+                                                                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                                                            }`}
+                                                            data-testid={`tab-media-${sub.id}`}
+                                                            aria-current={subActive ? "step" : undefined}
+                                                        >
+                                                            <span
+                                                                className={`h-3.5 w-3.5 shrink-0 rounded-full border flex items-center justify-center ${
+                                                                    subDone
+                                                                        ? "border-emerald-500 bg-emerald-500/15 text-emerald-600"
+                                                                        : "border-muted-foreground/40"
+                                                                }`}
+                                                            >
+                                                                {subDone && (
+                                                                    <Check className="h-2.5 w-2.5" />
+                                                                )}
+                                                            </span>
+                                                            <span className="tabular-nums shrink-0 opacity-70">
+                                                                {sub.num}
+                                                            </span>
+                                                            <span className="leading-tight truncate">
+                                                                {sub.label}
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
                                 );
                             })}
                         </TabsList>

@@ -53,6 +53,13 @@ export default function DateTimePicker({
     placeholder = "Elegí fecha y hora",
     "data-testid": testId,
     className,
+}: {
+    value?: string;
+    onChange?: (value: string) => void;
+    disabled?: boolean;
+    placeholder?: string;
+    "data-testid"?: string;
+    className?: string;
 }) {
     const [open, setOpen] = useState(false);
     const parsed = useMemo(() => parseLocalInput(value), [value]);
