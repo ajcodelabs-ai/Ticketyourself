@@ -32,7 +32,11 @@ export default function RichTextEditor({
     });
 
     useEffect(() => {
-        if (!editor) return;
+        // isDestroyed guard: React.StrictMode (see index.tsx) mounts every
+        // component twice in dev — useEditor()'s first instance is torn down
+        // before this effect's real run, and calling .getHTML() on a
+        // destroyed editor throws (its ProseMirror schema is already gone).
+        if (!editor || editor.isDestroyed) return;
         const current = editor.getHTML();
         const next = value || "";
         if (next !== current && next !== "<p></p>") {
@@ -41,10 +45,10 @@ export default function RichTextEditor({
     }, [editor, value]);
 
     useEffect(() => {
-        if (editor) editor.setEditable(!disabled);
+        if (editor && !editor.isDestroyed) editor.setEditable(!disabled);
     }, [editor, disabled]);
 
-    if (!editor) return null;
+    if (!editor || editor.isDestroyed) return null;
 
     const ToolBtn = ({ onClick, active = false, children, title }) => (
         <Button

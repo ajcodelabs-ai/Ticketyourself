@@ -1,10 +1,11 @@
 """Plans router — fully migrated to PostgreSQL."""
+
 import uuid
 from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select, update, delete
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import log_audit
@@ -72,6 +73,7 @@ async def get_plan(code: str, session: AsyncSession = Depends(get_db)):
 
 # ── Admin CRUD ────────────────────────────────────────────────────────────────
 
+
 @admin_router.get("", response_model=List[PlanOut])
 async def admin_list_plans(session: AsyncSession = Depends(get_db)):
     result = await session.execute(
@@ -112,7 +114,9 @@ async def admin_update_plan(
     admin=Depends(require_role("super_admin")),
     session: AsyncSession = Depends(get_db),
 ):
-    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    updates = {
+        k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None
+    }
     if not updates:
         raise HTTPException(400, "No fields to update")
     updates["updated_at"] = datetime.now(timezone.utc)
@@ -126,7 +130,9 @@ async def admin_update_plan(
     for key, val in updates.items():
         setattr(row, key, val)
     await session.flush()
-    await log_audit(admin["id"], "plan.updated", "plan", row.id, {"fields": list(updates.keys())})
+    await log_audit(
+        admin["id"], "plan.updated", "plan", row.id, {"fields": list(updates.keys())}
+    )
     return _to_out(row)
 
 
@@ -143,9 +149,12 @@ async def admin_delete_plan(
     if not plan:
         raise HTTPException(404, "Plan not found")
 
-    subscribed = await session.scalar(
-        select(func.count(Organizer.id)).where(Organizer.plan_id == plan.id)
-    ) or 0
+    subscribed = (
+        await session.scalar(
+            select(func.count(Organizer.id)).where(Organizer.plan_id == plan.id)
+        )
+        or 0
+    )
     if subscribed > 0:
         raise HTTPException(
             409,

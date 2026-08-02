@@ -1,4 +1,5 @@
 """Activation funnel endpoints (organizer events + admin aggregate)."""
+
 import logging
 from typing import Literal, Optional
 

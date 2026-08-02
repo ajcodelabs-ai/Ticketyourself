@@ -7,6 +7,7 @@ Email service with dual-mode delivery:
 The mock log is intentionally simple so we can browse the actual rendered HTML
 during testing without setting up a real provider.
 """
+
 import asyncio
 import logging
 import os
@@ -38,7 +39,9 @@ def _is_real_resend() -> bool:
     return bool(_API_KEY)
 
 
-async def _send_resend(to: str, subject: str, html: str, text: Optional[str] = None) -> dict:
+async def _send_resend(
+    to: str, subject: str, html: str, text: Optional[str] = None
+) -> dict:
     params = {
         "from": DEFAULT_SENDER,
         "to": [to],
@@ -74,7 +77,9 @@ async def _send_mock(to: str, subject: str, html: str) -> dict:
     return {"id": f"mock_{ts}", "mock_file": str(fname)}
 
 
-async def send_email(to: str, subject: str, html: str, text: Optional[str] = None) -> dict:
+async def send_email(
+    to: str, subject: str, html: str, text: Optional[str] = None
+) -> dict:
     """
     Public entrypoint. Returns a dict {"id": "...", "mock_file"?: "..."}.
     Never raises — errors are logged. Callers should NOT block their flow on emails.
@@ -320,8 +325,7 @@ def render_purchase_html(
     primary_color: str,
     frontend_base: str,
 ) -> str:
-    rows = "".join(
-        f"""
+    rows = "".join(f"""
         <tr>
           <td style="padding:10px 0;border-bottom:1px solid #e6e6f0;">
             <div style="font-weight:600;color:#1f1f33;">{ t.get('holder', {}).get('name','Asistente') }</div>
@@ -334,9 +338,7 @@ def render_purchase_html(
             </a>
           </td>
         </tr>
-        """
-        for t in tickets
-    )
+        """ for t in tickets)
 
     qty = order["quantity_total"]
     total = f"${(order['total_cents'] / 100):.2f} {order.get('currency', 'USD')}"
@@ -424,7 +426,9 @@ def render_season_pass_html(
     frontend_base: str,
 ) -> str:
     total = f"${(purchase['total_cents'] / 100):.2f} {purchase.get('currency', 'USD')}"
-    redeem_url = f"{frontend_base}/o/{organizer['slug']}/abono/{purchase['purchase_token']}"
+    redeem_url = (
+        f"{frontend_base}/o/{organizer['slug']}/abono/{purchase['purchase_token']}"
+    )
 
     return f"""
 <table cellpadding="0" cellspacing="0" border="0" width="100%"
@@ -573,9 +577,15 @@ async def send_manual_payment_instructions(
     frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
     link = f"{frontend}/o/{organizer.get('slug','')}/orden/{order['order_number']}/instrucciones"
     html = render_manual_instructions_html(
-        order=order, event=event, organizer=organizer, instructions=instructions, link=link
+        order=order,
+        event=event,
+        organizer=organizer,
+        instructions=instructions,
+        link=link,
     )
-    subject = f"Tu reserva para {event.get('title','el evento')} — Instrucciones de pago"
+    subject = (
+        f"Tu reserva para {event.get('title','el evento')} — Instrucciones de pago"
+    )
     return await send_email(to=order["buyer"]["email"], subject=subject, html=html)
 
 
@@ -585,7 +595,8 @@ async def send_manual_payment_rejected(
     frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
     event_link = (
         f"{frontend}/o/{organizer.get('slug','')}/e/{event.get('slug','')}"
-        if event else frontend
+        if event
+        else frontend
     )
     html = f"""
 <!doctype html>

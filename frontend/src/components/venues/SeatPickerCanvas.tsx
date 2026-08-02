@@ -250,7 +250,7 @@ export default function SeatPickerCanvas({
                         const localityColor = localitiesById[seat.locality_id]?.color || "#94A3B8";
                         const isSelected = selectedIds.includes(seat.seat_id);
                         let fill = localityColor;
-                        let opacity = 1;
+                        const opacity = 1;
                         if (seat.status === "sold") {
                             fill = SEAT_STATUS_COLORS.sold;
                         } else if (seat.status === "held") {

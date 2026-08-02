@@ -2,21 +2,22 @@
 Ticket Yourself (TYS) — Backend
 Fase 1: landing pública + auth + organizer onboarding + super-admin panel.
 """
-from dotenv import load_dotenv
+
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 # IMPORTANT: load env BEFORE importing anything that reads env at module scope.
 load_dotenv(Path(__file__).parent / ".env")
 
 import logging  # noqa: E402
-import re  # noqa: E402
 import os  # noqa: E402
+import re  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
 from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 
 from database import close_db  # noqa: E402
-from seeds import run_seeds  # noqa: E402
 from routers import activation as activation_router  # noqa: E402
 from routers import admin as admin_router  # noqa: E402
 from routers import auth as auth_router  # noqa: E402
@@ -28,6 +29,7 @@ from routers import payment_methods as payment_methods_router  # noqa: E402
 from routers import plans as plans_router  # noqa: E402
 from routers import stripe_webhook as stripe_webhook_router  # noqa: E402
 from routers import tenants as tenants_router  # noqa: E402
+from seeds import run_seeds  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,16 +69,16 @@ app.include_router(microsite_router.asset_router)
 app.include_router(activation_router.router)
 app.include_router(activation_router.admin_router)
 app.include_router(dev_router.router)
-from routers import events as events_router  # noqa: E402
-from routers import functions as functions_router  # noqa: E402
-from routers import season_passes as season_passes_router  # noqa: E402
-from routers import orders as orders_router  # noqa: E402
-from routers import tickets as tickets_router  # noqa: E402
-from routers import dashboard as dashboard_router  # noqa: E402
 from routers import admin_dashboard as admin_dashboard_router  # noqa: E402
 from routers import admin_exports as admin_exports_router  # noqa: E402
-from routers import venues as venues_router  # noqa: E402
 from routers import admin_venue_templates as admin_venue_templates_router  # noqa: E402
+from routers import dashboard as dashboard_router  # noqa: E402
+from routers import events as events_router  # noqa: E402
+from routers import functions as functions_router  # noqa: E402
+from routers import orders as orders_router  # noqa: E402
+from routers import season_passes as season_passes_router  # noqa: E402
+from routers import tickets as tickets_router  # noqa: E402
+from routers import venues as venues_router  # noqa: E402
 
 app.include_router(events_router.router)
 # functions_router.public_router must be registered BEFORE events_router's
@@ -99,8 +101,9 @@ app.include_router(admin_exports_router.router)
 app.include_router(venues_router.router)
 app.include_router(venues_router.public_router)
 app.include_router(admin_venue_templates_router.router)
-from routers import staff as staff_router  # noqa: E402
 from routers import guest_lists as guest_lists_router  # noqa: E402
+from routers import staff as staff_router  # noqa: E402
+
 app.include_router(staff_router.auth_router)
 app.include_router(staff_router.router)
 app.include_router(functions_router.router)
@@ -115,12 +118,14 @@ app.include_router(guest_lists_router.public_router)
 frontend_url = os.environ.get("FRONTEND_URL", "")
 public_domain = os.environ["PUBLIC_DOMAIN"]
 explicit_allowed = [
-    o for o in (
+    o
+    for o in (
         frontend_url,
         "http://localhost:3000",
         f"http://{public_domain}:3000",
         f"https://{public_domain}:3000",
-    ) if o
+    )
+    if o
 ]
 cors_regex = (
     r"^https?://([a-zA-Z0-9-]+\.)?(preview\.emergentagent\.com|"

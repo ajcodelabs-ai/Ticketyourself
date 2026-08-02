@@ -15,7 +15,16 @@ export default defineConfig({
     test: {
         environment: "jsdom",
         globals: true,
-        // e2e/ holds Playwright specs, run separately via `yarn test:e2e`.
+        // No unit test files exist yet (only e2e/ Playwright specs, run separately
+        // via `yarn test:e2e`) — don't fail CI until the suite is non-empty.
+        passWithNoTests: true,
         exclude: [...configDefaults.exclude, "e2e/**"],
+        coverage: {
+            provider: "v8",
+            reporter: ["text", "lcov"],
+            reportsDirectory: "./coverage",
+            include: ["src/**/*.{ts,tsx}"],
+            exclude: [...configDefaults.exclude, "e2e/**", "src/**/*.d.ts"],
+        },
     },
 });

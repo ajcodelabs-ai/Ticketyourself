@@ -16,11 +16,12 @@ PUT    /api/staff/{id}                    — update staff (organizer)
 DELETE /api/staff/{id}                    — delete staff (organizer)
 PUT    /api/staff/{id}/events             — replace event assignments (organizer)
 """
+
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +45,7 @@ auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
+
 
 class StaffLoginRequest(BaseModel):
     email: str
@@ -115,6 +117,7 @@ def _staff_out(row: StaffMember, assignments: list = None) -> dict:
 
 # ── Staff login (public) ──────────────────────────────────────────────────────
 
+
 @auth_router.post("/staff-login")
 async def staff_login(
     body: StaffLoginRequest,
@@ -153,6 +156,7 @@ async def staff_login(
 
 # ── Current staff profile ─────────────────────────────────────────────────────
 
+
 @router.get("/me")
 async def get_my_profile(
     staff: dict = Depends(get_current_staff),
@@ -185,6 +189,7 @@ async def get_my_events(
 
 
 # ── Organizer CRUD ────────────────────────────────────────────────────────────
+
 
 async def _get_organizer(user: dict, session: AsyncSession) -> Organizer:
     result = await session.execute(
@@ -227,12 +232,14 @@ async def create_staff(
     await session.flush()
 
     for event_id in body.event_ids:
-        session.add(StaffEventAssignment(
-            id=str(uuid.uuid4()),
-            staff_id=staff.id,
-            event_id=event_id,
-            organizer_id=org.id,
-        ))
+        session.add(
+            StaffEventAssignment(
+                id=str(uuid.uuid4()),
+                staff_id=staff.id,
+                event_id=event_id,
+                organizer_id=org.id,
+            )
+        )
 
     result = await session.execute(
         select(StaffEventAssignment).where(StaffEventAssignment.staff_id == staff.id)
@@ -247,7 +254,8 @@ async def list_staff(
 ):
     org = await _get_organizer(user, session)
     result = await session.execute(
-        select(StaffMember).where(StaffMember.organizer_id == org.id)
+        select(StaffMember)
+        .where(StaffMember.organizer_id == org.id)
         .order_by(StaffMember.created_at.desc())
     )
     members = result.scalars().all()
@@ -319,12 +327,14 @@ async def update_staff(
             )
         )
         for event_id in body.event_ids:
-            session.add(StaffEventAssignment(
-                id=str(uuid.uuid4()),
-                staff_id=staff.id,
-                event_id=event_id,
-                organizer_id=org.id,
-            ))
+            session.add(
+                StaffEventAssignment(
+                    id=str(uuid.uuid4()),
+                    staff_id=staff.id,
+                    event_id=event_id,
+                    organizer_id=org.id,
+                )
+            )
 
     assigns = await session.execute(
         select(StaffEventAssignment).where(StaffEventAssignment.staff_id == staff_id)

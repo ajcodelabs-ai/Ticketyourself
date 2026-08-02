@@ -4,6 +4,7 @@ Used by the ticket-design PDF renderer to draw organizer-uploaded
 backgrounds/logos, which are referenced by API URL (so the same value also
 works as an <img src> in the browser-side designer canvas).
 """
+
 from __future__ import annotations
 
 import io
@@ -16,9 +17,11 @@ async def open_event_asset(url: str) -> io.BytesIO | None:
     asset_id = (url or "").rstrip("/").rsplit("/", 1)[-1]
     if not asset_id:
         return None
-    from services.path_safety import resolve_path_under
-    from orm_models import EventAsset
     from sqlalchemy import select
+
+    from database import AsyncSessionLocal
+    from orm_models import EventAsset
+    from services.path_safety import resolve_path_under
 
     async with AsyncSessionLocal() as session:
         row = await session.scalar(select(EventAsset).where(EventAsset.id == asset_id))

@@ -1,4 +1,5 @@
 """Stripe webhook + simulator (dev only) — Phase 2: organizers/tenants via PostgreSQL."""
+
 import logging
 import os
 from datetime import datetime, timezone
@@ -8,12 +9,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
+import stripe_service
 from audit import log_audit
 from database import AsyncSessionLocal
 from db_helpers import row_to_dict
 from models import SimulateWebhookBody
 from orm_models import BillingIntent, Organizer, SubscriptionPlan, Tenant, TicketOrder
-import stripe_service
 
 logger = logging.getLogger("tys.webhook")
 
@@ -29,7 +30,9 @@ async def _activate_tenant(slug: str) -> None:
         await session.commit()
 
 
-async def _apply_checkout_completed(session_id: str, *, organizer_id: Optional[str] = None) -> None:
+async def _apply_checkout_completed(
+    session_id: str, *, organizer_id: Optional[str] = None
+) -> None:
     """
     Marks billing_intent as completed and updates the organizer's
     subscription_status/plan based on the matching billing_intent.
@@ -51,30 +54,41 @@ async def _apply_checkout_completed(session_id: str, *, organizer_id: Optional[s
         )
         plan = plan_result.scalar_one_or_none()
 
-        org_result = await session.execute(select(Organizer).where(Organizer.id == org_id))
+        org_result = await session.execute(
+            select(Organizer).where(Organizer.id == org_id)
+        )
         org = org_result.scalar_one_or_none()
         if org:
             org.plan_id = intent_row.plan_id
             org.plan_code = intent_row.plan_code
             org.subscription_status = "active"
             if plan and plan.billing_period == "monthly":
-                org.current_period_end = datetime.now(timezone.utc).replace(microsecond=0)
+                org.current_period_end = datetime.now(timezone.utc).replace(
+                    microsecond=0
+                )
 
         intent_row.status = "completed"
         intent_row.completed_at = datetime.now(timezone.utc)
         await session.commit()
 
-    logger.info("Applied checkout.completed for org %s plan %s", org_id, intent_row.plan_code)
+    logger.info(
+        "Applied checkout.completed for org %s plan %s", org_id, intent_row.plan_code
+    )
 
 
 async def _apply_subscription_status(
-    *, organizer_id: Optional[str], subscription_status: str, subscription_id: Optional[str] = None
+    *,
+    organizer_id: Optional[str],
+    subscription_status: str,
+    subscription_id: Optional[str] = None,
 ) -> None:
     if not organizer_id:
         logger.warning("subscription update without organizer_id")
         return
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Organizer).where(Organizer.id == organizer_id))
+        result = await session.execute(
+            select(Organizer).where(Organizer.id == organizer_id)
+        )
         org = result.scalar_one_or_none()
         if org:
             org.subscription_status = subscription_status
@@ -106,10 +120,16 @@ async def _handle_event(
                 )
             else:
                 _order_row = await _pg.scalar(
-                    select(TicketOrder).where(TicketOrder.stripe_session_id == session_id)
+                    select(TicketOrder).where(
+                        TicketOrder.stripe_session_id == session_id
+                    )
                 )
         if not _order_row:
-            logger.warning("Order not found for order_number=%s session_id=%s", order_number, session_id)
+            logger.warning(
+                "Order not found for order_number=%s session_id=%s",
+                order_number,
+                session_id,
+            )
             return
         order = row_to_dict(_order_row)
         from services import order_service
@@ -126,17 +146,21 @@ async def _handle_event(
         )
         # Fire-and-forget: email must not delay webhook response to Stripe
         import asyncio
+
         async def _send_confirmation():
             try:
                 from db_helpers import get_event_by_id, get_organizer_by_id
+
                 _event = await get_event_by_id(order["event_id"])
                 _org = await get_organizer_by_id(order["organizer_id"]) or {}
                 from services.email_service import send_purchase_confirmation
+
                 await send_purchase_confirmation(
                     order=finalized, event=_event, organizer=_org, tickets=tickets
                 )
             except Exception:  # noqa: BLE001
                 logger.exception("Failed sending purchase confirmation")
+
         asyncio.create_task(_send_confirmation())
         return
 
@@ -152,15 +176,26 @@ async def _handle_event(
             org_id = _intent_row.organizer_id
             async with AsyncSessionLocal() as pg:
                 org_result = await pg.execute(
-                    select(Organizer.slug, Organizer.status).where(Organizer.id == org_id)
+                    select(Organizer.slug, Organizer.status).where(
+                        Organizer.id == org_id
+                    )
                 )
                 org_row = org_result.first()
             if org_row and org_row.status == "approved":
                 await _activate_tenant(org_row.slug)
-            await log_audit(None, f"stripe.{event_type}", "organizer", org_id, {"source": source, "session_id": session_id})  # noqa: E501
+            await log_audit(
+                None,
+                f"stripe.{event_type}",
+                "organizer",
+                org_id,
+                {"source": source, "session_id": session_id},
+            )  # noqa: E501
             try:
                 from services.activation import log_funnel_event
-                await log_funnel_event(organizer_id=org_id, event_name="subscription_active")
+
+                await log_funnel_event(
+                    organizer_id=org_id, event_name="subscription_active"
+                )
             except Exception:  # noqa: BLE001
                 pass
     elif event_type == "checkout.session.expired":
@@ -173,25 +208,41 @@ async def _handle_event(
             if not _order_row or _order_row.status == "paid":
                 return
             from services.order_service import release_reservation
+
             await release_reservation(_order_row.id)
             _order_row.status = "cancelled"
             _order_row.updated_at = datetime.now(timezone.utc)
             await _pg.commit()
-            logger.info("Order %s cancelled due to expired checkout session", _order_row.order_number)
+            logger.info(
+                "Order %s cancelled due to expired checkout session",
+                _order_row.order_number,
+            )
     elif event_type == "customer.subscription.updated":
         await _apply_subscription_status(
             organizer_id=organizer_id,
             subscription_status=subscription_status or "active",
             subscription_id=subscription_id,
         )
-        await log_audit(None, f"stripe.{event_type}", "organizer", organizer_id or "", {"source": source, "status": subscription_status})
+        await log_audit(
+            None,
+            f"stripe.{event_type}",
+            "organizer",
+            organizer_id or "",
+            {"source": source, "status": subscription_status},
+        )
     elif event_type == "customer.subscription.deleted":
         await _apply_subscription_status(
             organizer_id=organizer_id,
             subscription_status="canceled",
             subscription_id=subscription_id,
         )
-        await log_audit(None, f"stripe.{event_type}", "organizer", organizer_id or "", {"source": source})
+        await log_audit(
+            None,
+            f"stripe.{event_type}",
+            "organizer",
+            organizer_id or "",
+            {"source": source},
+        )
     elif event_type == "invoice.paid":
         await _apply_subscription_status(
             organizer_id=organizer_id,
@@ -230,7 +281,11 @@ async def stripe_webhook(request: Request):
     obj = event["data"]["object"]
     md = obj.get("metadata", {}) if isinstance(obj, dict) else {}
     organizer_id = md.get("organizer_id")
-    session_id = obj.get("id") if et in ("checkout.session.completed", "checkout.session.expired") else None
+    session_id = (
+        obj.get("id")
+        if et in ("checkout.session.completed", "checkout.session.expired")
+        else None
+    )
     subscription_id = (
         obj.get("subscription") if et == "checkout.session.completed" else obj.get("id")
     )

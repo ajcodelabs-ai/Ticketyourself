@@ -3,6 +3,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, or_, select, update as sa_update
 
@@ -30,6 +31,25 @@ logger = logging.getLogger("tys.seed")
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_DEMO_TZ = ZoneInfo("America/Guayaquil")
+
+
+def _demo_datetime(
+    base_utc: datetime, days: int, hour: int, minute: int = 0
+) -> datetime:
+    """UTC instant for `hour:minute` America/Guayaquil, `days` days after `base_utc`.
+
+    Demo events are meant to start at sensible local times (a concert at
+    9pm, a conference at 9am) — `.replace(hour=X)` directly on a UTC-aware
+    datetime sets the *UTC* hour, not the local one, so every seeded event
+    was displaying 5 hours earlier than intended (Ecuador has no DST, so
+    it's a fixed UTC-5 year-round).
+    """
+    local = (base_utc + timedelta(days=days)).astimezone(_DEMO_TZ)
+    local = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return local.astimezone(timezone.utc)
 
 
 PLANS = [
@@ -813,8 +833,8 @@ async def _seed_demo_events() -> None:
             "venue_name": "Teatro Bolívar",
             "venue_address": "Pasaje Royal 175 y Junín",
             "venue_city": "Quito",
-            "starts_at": (now + timedelta(days=30)).replace(hour=21, minute=0),
-            "ends_at": (now + timedelta(days=30)).replace(hour=23, minute=30),
+            "starts_at": _demo_datetime(now, 30, 21, 0),
+            "ends_at": _demo_datetime(now, 30, 23, 30),
             "pricing_type": "paid",
             "base_price_cents": 1500,
             "capacity": 100,
@@ -832,8 +852,8 @@ async def _seed_demo_events() -> None:
             "venue_name": "Hotel Quito",
             "venue_address": "González Suárez N27-142",
             "venue_city": "Quito",
-            "starts_at": (now + timedelta(days=45)).replace(hour=9, minute=0),
-            "ends_at": (now + timedelta(days=45)).replace(hour=18, minute=0),
+            "starts_at": _demo_datetime(now, 45, 9, 0),
+            "ends_at": _demo_datetime(now, 45, 18, 0),
             "pricing_type": "paid",
             "base_price_cents": 5000,
             "capacity": 50,
@@ -851,8 +871,8 @@ async def _seed_demo_events() -> None:
             "venue_name": "Centro Cultural Metropolitano",
             "venue_address": "García Moreno y Espejo",
             "venue_city": "Quito",
-            "starts_at": (now + timedelta(days=15)).replace(hour=18, minute=30),
-            "ends_at": (now + timedelta(days=15)).replace(hour=20, minute=30),
+            "starts_at": _demo_datetime(now, 15, 18, 30),
+            "ends_at": _demo_datetime(now, 15, 20, 30),
             "pricing_type": "free",
             "base_price_cents": 0,
             "capacity": None,
@@ -1603,8 +1623,8 @@ async def _seed_demo_numbered_event() -> None:
             row.venue_address = "Pasaje Royal 175 y Junín"
             row.venue_city = "Quito"
             row.venue_country = "Ecuador"
-            row.starts_at = (now + timedelta(days=20)).replace(hour=20, minute=0)
-            row.ends_at = (now + timedelta(days=20)).replace(hour=22, minute=30)
+            row.starts_at = _demo_datetime(now, 20, 20, 0)
+            row.ends_at = _demo_datetime(now, 20, 22, 30)
             row.timezone = "America/Guayaquil"
             row.pricing_type = "paid"
             row.base_price_cents = 1000
@@ -1649,8 +1669,8 @@ async def _seed_demo_numbered_event() -> None:
                 venue_address="Pasaje Royal 175 y Junín",
                 venue_city="Quito",
                 venue_country="Ecuador",
-                starts_at=(now + timedelta(days=20)).replace(hour=20, minute=0),
-                ends_at=(now + timedelta(days=20)).replace(hour=22, minute=30),
+                starts_at=_demo_datetime(now, 20, 20, 0),
+                ends_at=_demo_datetime(now, 20, 22, 30),
                 timezone="America/Guayaquil",
                 sales_start=None,
                 sales_end=None,

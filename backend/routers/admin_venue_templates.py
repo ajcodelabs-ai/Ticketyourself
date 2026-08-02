@@ -4,6 +4,7 @@ Templates live under the seeded demo-org organizer for FK consistency but are
 excluded from the organizer's normal venue list. All organizers can clone them
 via POST /api/venues/me/from-template/{id}.
 """
+
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict

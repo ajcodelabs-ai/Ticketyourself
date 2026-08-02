@@ -1,11 +1,21 @@
 """Slug normalisation utility."""
+
 import re
 import unicodedata
 from typing import Optional
 
 # Subdomains reserved for infra/product surfaces — never allocatable as an
 # organizer slug, since <slug>.<PUBLIC_DOMAIN> is the tenant resolution path.
-RESERVED_SUBDOMAINS = {"www", "api", "admin", "app", "static", "assets", "staging"}
+RESERVED_SUBDOMAINS = {
+    "www",
+    "api",
+    "admin",
+    "app",
+    "static",
+    "assets",
+    "staging",
+    "tys-staging",
+}
 
 
 def normalize_slug(value: str) -> str:
@@ -28,7 +38,9 @@ def is_valid_slug(slug: str) -> bool:
     return re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) is not None
 
 
-async def find_unique_slug(base: str, collection, *, exclude_id: Optional[str] = None) -> str:
+async def find_unique_slug(
+    base: str, collection, *, exclude_id: Optional[str] = None
+) -> str:
     """
     Devuelve un slug único en `collection` (MongoDB). Si base ya está
     tomado, sufija -2, -3, etc.

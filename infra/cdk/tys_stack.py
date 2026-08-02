@@ -16,6 +16,8 @@ from aws_cdk import (
     aws_secretsmanager as secretsmanager,
     aws_certificatemanager as acm,
     aws_logs as logs,
+    aws_events as events,
+    aws_events_targets as events_targets,
 )
 from constructs import Construct
 
@@ -62,8 +64,21 @@ class TysStack(Stack):
             ],
         )
 
+        # GoDaddy API credentials for certbot's DNS-01 challenge (wildcard TLS
+        # cert). Created empty — fill in after first deploy with:
+        #   aws secretsmanager put-secret-value --secret-id <arn> \
+        #     --secret-string '{"key":"...","secret":"..."}'
+        godaddy_secret = secretsmanager.Secret(
+            self,
+            "GodaddyApiSecret",
+            description="GoDaddy API key/secret for certbot DNS-01 (tys-staging wildcard TLS)",
+        )
+        godaddy_secret.grant_read(role)
+
         with open("user-data.sh") as f:
-            user_data = ec2.UserData.custom(f.read())
+            user_data = ec2.UserData.custom(
+                f.read().replace("__GODADDY_SECRET_ARN__", godaddy_secret.secret_arn)
+            )
 
         instance = ec2.Instance(
             self,
@@ -93,6 +108,95 @@ class TysStack(Stack):
 
         CfnOutput(self, "Url", value=f"http://{eip.attr_public_ip}")
         CfnOutput(self, "Ssm", value=f"aws ssm start-session --target {instance.instance_id}")
+
+        # ── Auto on/off schedule (cost saving) ───────────────────────────
+        # 08:00-21:00 America/Guayaquil (UTC-5, no DST — fixed offset), daily.
+        instance_arn = self.format_arn(service="ec2", resource="instance", resource_name=instance.instance_id)
+
+        def schedule_ec2_action(rule_id: str, hour: str, api_action: str, iam_action: str, description: str) -> None:
+            rule = events.Rule(
+                self,
+                rule_id,
+                schedule=events.Schedule.cron(minute="0", hour=hour),
+                description=description,
+            )
+            rule.add_target(
+                events_targets.AwsApi(
+                    service="EC2",
+                    action=api_action,
+                    parameters={"InstanceIds": [instance.instance_id]},
+                    policy_statement=iam.PolicyStatement(
+                        actions=[f"ec2:{iam_action}"],
+                        resources=[instance_arn],
+                    ),
+                )
+            )
+
+        schedule_ec2_action(
+            "StartInstanceSchedule", "13", "startInstances", "StartInstances",
+            "Start TYS staging EC2 daily at 08:00 America/Guayaquil",
+        )
+        schedule_ec2_action(
+            "StopInstanceSchedule", "2", "stopInstances", "StopInstances",
+            "Stop TYS staging EC2 daily at 21:00 America/Guayaquil",
+        )
+
+        # ── GitHub Actions deploy role (OIDC, no static keys) ────────────
+        # Only TysStaging creates the account-wide OIDC provider — IAM allows
+        # exactly one provider per URL per account. If TysProduction ever
+        # needs its own deploy role, import this provider by ARN instead of
+        # creating a second one.
+        github_oidc_provider = iam.OpenIdConnectProvider(
+            self,
+            "GithubOidcProvider",
+            url="https://token.actions.githubusercontent.com",
+            client_ids=["sts.amazonaws.com"],
+        )
+
+        github_deploy_role = iam.Role(
+            self,
+            "GithubDeployRole",
+            role_name="tys-staging-github-deploy",
+            max_session_duration=Duration.hours(1),
+            assumed_by=iam.FederatedPrincipal(
+                github_oidc_provider.open_id_connect_provider_arn,
+                conditions={
+                    "StringEquals": {
+                        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                    },
+                    # Restricted to pushes on the `staging` branch specifically —
+                    # not "any workflow in this repo".
+                    "StringLike": {
+                        "token.actions.githubusercontent.com:sub": "repo:ajcodelabs-ai/Ticketyourself:ref:refs/heads/staging",
+                    },
+                },
+                assume_role_action="sts:AssumeRoleWithWebIdentity",
+            ),
+        )
+        github_deploy_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ssm:SendCommand", "ec2:StartInstances"],
+                resources=[
+                    instance_arn,
+                    f"arn:aws:ssm:{self.region}::document/AWS-RunShellScript",
+                ],
+            )
+        )
+        github_deploy_role.add_to_policy(
+            iam.PolicyStatement(
+                # None of these Describe*/GetCommandInvocation actions support
+                # resource-level permissions in IAM (AWS requires "*" here);
+                # SendCommand/StartInstances above are what's actually scoped.
+                actions=[
+                    "ssm:GetCommandInvocation",
+                    "ssm:DescribeInstanceInformation",
+                    "ec2:DescribeInstances",
+                ],
+                resources=["*"],
+            )
+        )
+
+        CfnOutput(self, "GithubDeployRoleArn", value=github_deploy_role.role_arn)
 
     # ═══════════════════════════════════════════════════════════════════
     #  PRODUCTION

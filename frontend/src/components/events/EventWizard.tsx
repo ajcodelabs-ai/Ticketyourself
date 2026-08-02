@@ -372,7 +372,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     useEffect(() => {
         if (!currentEvent?.venue_id) return;
         update("venue_name", currentEvent.venue_name || "");
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentEvent?.venue_name, currentEvent?.venue_id]);
 
     // When building payload, use the latest form state via ref to avoid stale
@@ -730,7 +729,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         const toUpload = list.slice(0, remaining);
         let uploaded = 0;
         for (const f of toUpload) {
-            // eslint-disable-next-line no-await-in-loop
             const r = await uploadImage(f, "gallery");
             if (r) uploaded += 1;
         }
@@ -1748,8 +1746,8 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
 function CuandoBlock({ form, update, disabled }) {
     const startsValid = !!form.starts_at;
     return (
-        <>
-            <section className="space-y-3" data-testid="info-cuando-block">
+        <div data-testid="info-cuando-block" className="contents">
+            <section className="space-y-3">
                 <div>
                     <h4 className="text-sm font-medium">1. Fecha y duración</h4>
                     <p className="text-xs text-muted-foreground">
@@ -1833,7 +1831,8 @@ function CuandoBlock({ form, update, disabled }) {
                         2. Ventana de venta
                     </h4>
                     <p className="text-xs text-muted-foreground">
-                        Cuándo se habilita y se cierra la compra. Se calcula desde la fecha de inicio.
+                        Cuándo se habilita y se cierra la compra (o reserva si es gratuito). Se
+                        calcula desde la fecha de inicio.
                     </p>
                 </div>
                 <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
@@ -1905,7 +1904,7 @@ function CuandoBlock({ form, update, disabled }) {
                     )}
                 </div>
             </section>
-        </>
+        </div>
     );
 }
 
@@ -2300,6 +2299,17 @@ function SectionMedia({
 
 // ── Section: Ticket design (M4) ─────────────────────────────────────────────
 function SectionTicketDesign({ form, update, eventId }) {
+    // Whether the courtesy panel is shown is a local UI choice, independent
+    // from whether it has any elements yet (a freshly-enabled design starts
+    // empty). Persistence-wise, "off" is saved as an empty-elements design —
+    // the generic PUT diff can't clear a field back to `null`, but the
+    // renderer already treats empty elements the same as "no design" (falls
+    // back to inheriting the main one).
+    // Declared before the `!eventId` early return below — hooks must run
+    // unconditionally on every render (Rules of Hooks).
+    const [showCourtesy, setShowCourtesy] = useState(
+        () => !!form.courtesy_ticket_design?.elements?.length,
+    );
     if (!eventId) {
         return (
             <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground" data-testid="section-ticket-design">
@@ -2310,15 +2320,6 @@ function SectionTicketDesign({ form, update, eventId }) {
             </div>
         );
     }
-    // Whether the courtesy panel is shown is a local UI choice, independent
-    // from whether it has any elements yet (a freshly-enabled design starts
-    // empty). Persistence-wise, "off" is saved as an empty-elements design —
-    // the generic PUT diff can't clear a field back to `null`, but the
-    // renderer already treats empty elements the same as "no design" (falls
-    // back to inheriting the main one).
-    const [showCourtesy, setShowCourtesy] = useState(
-        () => !!form.courtesy_ticket_design?.elements?.length,
-    );
     const hasMainDesign = !!form.ticket_design?.elements?.length;
 
     return (

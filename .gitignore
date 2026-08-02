@@ -18,6 +18,10 @@ node_modules/
 
 # Testing
 /coverage
+frontend/coverage/
+backend/coverage.xml
+backend/.coverage
+backend/.coverage.*
 
 # Next.js
 /.next/
@@ -53,8 +57,11 @@ venv/
 .venv/
 .pytest_cache/
 
-# Backend dev artifacts
+# Backend dev artifacts (runtime-created upload/asset directories)
 backend/email_log/
+backend/uploads/
+backend/event_assets/
+backend/microsite_assets/
 
 # Development tools
 chainlit.md

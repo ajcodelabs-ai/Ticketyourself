@@ -288,9 +288,13 @@ export default function DiscountRulesPanel({
     return (
         <div className="space-y-4" data-testid="discount-rules-panel">
             <div className="flex flex-wrap items-start justify-between gap-3">
-                <p className="text-xs text-muted-foreground max-w-md">
-                    Configura descuentos por porcentaje, valor fijo o promociones 2x1.
-                </p>
+                <div className="text-xs text-muted-foreground max-w-md space-y-1">
+                    <p>Configura descuentos por porcentaje, valor fijo o promociones 2x1.</p>
+                    <p>
+                        Stacking máximo:{" "}
+                        <strong className="text-foreground">1 código + 1 automático/cantidad</strong>.
+                    </p>
+                </div>
                 <Button size="sm" onClick={openNew} data-testid="disc-rule-add">
                     <Plus className="h-4 w-4 mr-1.5" /> Nuevo descuento
                 </Button>

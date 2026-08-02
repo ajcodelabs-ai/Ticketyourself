@@ -12,12 +12,13 @@ creation. Purchase payment: Stripe only (or instant-free when price_cents=0,
 mirroring the free-ticket-event pattern) — no transfer/cash for the pass
 itself.
 """
+
 import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import HTTPException
 import stripe
+from fastapi import HTTPException
 
 from database import AsyncSessionLocal
 from db_helpers import row_to_dict
@@ -35,6 +36,7 @@ async def _next_pass_order_number() -> str:
     """Shares ticket_order_seq with ticket orders — same atomic sequence,
     different prefix so the two are visually distinguishable."""
     from sqlalchemy import text
+
     async with AsyncSessionLocal() as session:
         result = await session.execute(text("SELECT nextval('ticket_order_seq')"))
         seq = result.scalar()
@@ -52,7 +54,11 @@ def compute_pass_availability(season_pass: dict) -> dict:
 
 # ── Purchase the pass itself ─────────────────────────────────────────────────
 async def create_purchase_skeleton(
-    *, season_pass: dict, event: dict, organizer: dict, buyer: dict,
+    *,
+    season_pass: dict,
+    event: dict,
+    organizer: dict,
+    buyer: dict,
 ) -> dict:
     from orm_models import SeasonPassPurchase
 
@@ -92,19 +98,26 @@ async def create_purchase_skeleton(
 
 
 def create_pass_checkout_session(
-    *, purchase: dict, season_pass: dict, event: dict, success_url: str, cancel_url: str,
+    *,
+    purchase: dict,
+    season_pass: dict,
+    event: dict,
+    success_url: str,
+    cancel_url: str,
 ) -> dict:
-    line_items = [{
-        "price_data": {
-            "currency": purchase.get("currency", "usd").lower(),
-            "product_data": {
-                "name": f"{event['title']} · {season_pass['name']} ({purchase['credits_total']} créditos)",
-                "description": purchase["buyer"]["email"],
+    line_items = [
+        {
+            "price_data": {
+                "currency": purchase.get("currency", "usd").lower(),
+                "product_data": {
+                    "name": f"{event['title']} · {season_pass['name']} ({purchase['credits_total']} créditos)",
+                    "description": purchase["buyer"]["email"],
+                },
+                "unit_amount": purchase["total_cents"],
             },
-            "unit_amount": purchase["total_cents"],
-        },
-        "quantity": 1,
-    }]
+            "quantity": 1,
+        }
+    ]
     session = stripe.checkout.Session.create(
         mode="payment",
         payment_method_types=["card"],
@@ -123,11 +136,16 @@ def create_pass_checkout_session(
 
 
 async def finalize_paid_purchase(
-    *, purchase: dict, stripe_session_id: str | None = None,
+    *,
+    purchase: dict,
+    stripe_session_id: str | None = None,
 ) -> dict:
     """Idempotent: already-paid purchases return as-is."""
-    from orm_models import SeasonPassPurchase as SPModel, SeasonPass as SPassModel
-    from sqlalchemy import select, update as _sa_update
+    from sqlalchemy import select
+    from sqlalchemy import update as _sa_update
+
+    from orm_models import SeasonPass as SPassModel
+    from orm_models import SeasonPassPurchase as SPModel
 
     if purchase["status"] == "paid":
         return purchase
@@ -156,18 +174,27 @@ async def finalize_paid_purchase(
 
     logger.info(
         "Season pass purchase paid: %s event=%s credits=%d",
-        refreshed["order_number"], refreshed["event_id"], refreshed["credits_total"],
+        refreshed["order_number"],
+        refreshed["event_id"],
+        refreshed["credits_total"],
     )
     return refreshed
 
 
 # ── Redeem one credit against a función ──────────────────────────────────────
 async def redeem_credit(
-    *, purchase: dict, season_pass: dict, event: dict, organizer: dict,
-    function: dict, ticket_type: dict | None,
+    *,
+    purchase: dict,
+    season_pass: dict,
+    event: dict,
+    organizer: dict,
+    function: dict,
+    ticket_type: dict | None,
 ) -> tuple[dict, dict, list[dict]]:
-    from orm_models import SeasonPassPurchase as SPModel, SeasonPassRedemption
     from sqlalchemy import select
+
+    from orm_models import SeasonPassPurchase as SPModel
+    from orm_models import SeasonPassRedemption
 
     if purchase["status"] != "paid":
         raise HTTPException(422, "Este abono todavía no está pagado.")
@@ -178,7 +205,9 @@ async def redeem_credit(
     starts = season_pass.get("redemption_starts_at")
     ends = season_pass.get("redemption_ends_at")
     if starts and now < starts:
-        raise HTTPException(409, "Todavía no se abrió la ventana de redención de este abono.")
+        raise HTTPException(
+            409, "Todavía no se abrió la ventana de redención de este abono."
+        )
     if ends and now > ends:
         raise HTTPException(409, "La ventana de redención de este abono ya cerró.")
     if function.get("status") != "active":
@@ -187,23 +216,36 @@ async def redeem_credit(
     items_override = None
     if ticket_type:
         if not ticket_type.get("active", True):
-            raise HTTPException(409, f"El tipo '{ticket_type['name']}' ya no está disponible.")
-        items_override = [{
-            "ticket_type_id": ticket_type["id"],
-            "ticket_type": ticket_type["name"],
-            "quantity": 1,
-            "unit_price_cents": 0,
-            "subtotal_cents": 0,
-        }]
+            raise HTTPException(
+                409, f"El tipo '{ticket_type['name']}' ya no está disponible."
+            )
+        items_override = [
+            {
+                "ticket_type_id": ticket_type["id"],
+                "ticket_type": ticket_type["name"],
+                "quantity": 1,
+                "unit_price_cents": 0,
+                "subtotal_cents": 0,
+            }
+        ]
 
     from services import order_service
+
     totals = {
-        "unit_price_cents": 0, "subtotal_cents": 0, "fees_cents": 0,
-        "total_cents": 0, "donation_amount_cents": 0,
+        "unit_price_cents": 0,
+        "subtotal_cents": 0,
+        "fees_cents": 0,
+        "total_cents": 0,
+        "donation_amount_cents": 0,
     }
     order = await order_service.create_order_skeleton(
-        event=event, organizer=organizer, quantity=1, buyer=purchase["buyer"],
-        totals=totals, payment_method="season_pass", function=function,
+        event=event,
+        organizer=organizer,
+        quantity=1,
+        buyer=purchase["buyer"],
+        totals=totals,
+        payment_method="season_pass",
+        function=function,
         items_override=items_override,
     )
     finalized, tickets = await order_service.finalize_paid_order(order=order)
@@ -212,20 +254,24 @@ async def redeem_credit(
         row = await session.scalar(select(SPModel).where(SPModel.id == purchase["id"]))
         row.credits_used = row.credits_used + 1
         row.updated_at = now
-        session.add(SeasonPassRedemption(
-            id=str(uuid.uuid4()),
-            season_pass_purchase_id=purchase["id"],
-            function_id=function["id"],
-            order_id=finalized["id"],
-            redeemed_at=now,
-        ))
+        session.add(
+            SeasonPassRedemption(
+                id=str(uuid.uuid4()),
+                season_pass_purchase_id=purchase["id"],
+                function_id=function["id"],
+                order_id=finalized["id"],
+                redeemed_at=now,
+            )
+        )
         await session.commit()
         await session.refresh(row)
         refreshed_purchase = row_to_dict(row)
 
     logger.info(
         "Season pass credit redeemed: purchase=%s function=%s order=%s credits_left=%d",
-        purchase["order_number"], function["id"], finalized["order_number"],
+        purchase["order_number"],
+        function["id"],
+        finalized["order_number"],
         refreshed_purchase["credits_total"] - refreshed_purchase["credits_used"],
     )
     return refreshed_purchase, finalized, tickets
