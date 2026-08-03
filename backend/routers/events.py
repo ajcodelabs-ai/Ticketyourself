@@ -214,9 +214,16 @@ class EventAccessParams(BaseModel):
     # avoid the two values drifting apart; see EventBase.visibility instead.
     access_type: Literal["open", "link_only", "verified_list", "access_code"] = "open"
     max_per_purchase: int = Field(default=10, ge=1, le=100)
+    min_per_purchase: int = Field(default=1, ge=1, le=100)
     max_per_email: Optional[int] = Field(default=None, ge=1)
     refund_window_hours: int = Field(default=24, ge=0)
     show_buyer_name_on_ticket: bool = True
+
+    @model_validator(mode="after")
+    def _check_min_max(self):
+        if self.min_per_purchase > self.max_per_purchase:
+            raise ValueError("min_per_purchase no puede ser mayor que max_per_purchase")
+        return self
 
 
 class AgendaItem(BaseModel):

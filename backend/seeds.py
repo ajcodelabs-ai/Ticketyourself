@@ -1016,6 +1016,7 @@ async def _seed_demo_events() -> None:
     _demo_access_params = {
         "access_type": "open",
         "max_per_purchase": 10,
+        "min_per_purchase": 1,
         "max_per_email": None,
         "refund_window_hours": 24,
         "show_buyer_name_on_ticket": True,
@@ -1966,6 +1967,7 @@ async def _seed_demo_numbered_event() -> None:
     _ap_num = {
         "access_type": "open",
         "max_per_purchase": 10,
+        "min_per_purchase": 1,
         "max_per_email": None,
         "refund_window_hours": 24,
         "show_buyer_name_on_ticket": True,

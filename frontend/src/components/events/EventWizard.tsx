@@ -3,13 +3,13 @@
  *
  * 8 sections (sidebar stepper):
  *  1. General — info principal · descripción · keywords · contenido avanzado
- *  2. Fechas y ventas — Cuándo (duration + sales presets) · Funciones
+ *  2. Fechas y ventas — fechas · ventana de venta · límites/eTicket · Funciones
  *  3. Media — portada · principal · miniatura · gallery · Diseño de ticket
  *  4. Localidades — Dónde · precios/aforo · tipos de ticket · abono (si aplica)
  *  5. Formas de pago
  *  6. Descuentos
  *  7. Accesos — visibilidad · quién puede comprar · lista/códigos
- *  8. Parámetros — preguntas · límites · envío de eTicket
+ *  8. Parámetros — preguntas al comprador (asociadas a localidades)
  *
  * Used in both create (/app/eventos/nuevo) and edit (/app/eventos/:id/editar).
  */
@@ -18,6 +18,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import EventVenueSection from "@/components/events/EventVenueSection";
 import DiscountRulesPanel from "@/components/events/DiscountRulesPanel";
+import CustomQuestionsPanel from "@/components/events/CustomQuestionsPanel";
 import EventContentPanel from "@/components/events/EventContentPanel";
 import TicketTypesPanel from "@/components/events/TicketTypesPanel";
 import EventFunctionsPanel from "@/components/events/EventFunctionsPanel";
@@ -68,9 +69,7 @@ import {
     Link2,
     Users,
     KeyRound,
-    MessageSquareText,
     Ticket,
-    Mail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,6 +97,7 @@ import {
     TooltipProvider,
 } from "@/components/ui/tooltip";
 import api, { formatApiError } from "@/lib/api";
+import { usePlanFeatures } from "@/hooks/queries/usePlanFeatures";
 import {
     defaultPaymentMethods,
     normalizePaymentMethodsForForm,
@@ -183,6 +183,7 @@ function defaultAccessParams() {
     return {
         access_type: "open",
         max_per_purchase: 10,
+        min_per_purchase: 1,
         max_per_email: null,
         refund_window_hours: 24,
         show_buyer_name_on_ticket: true,
@@ -279,7 +280,13 @@ function makeInitial(d) {
         venue_id: d.venue_id || null,
         payment_methods: normalizePaymentMethodsForForm(d.payment_methods),
         discounts: d.discounts || defaultDiscounts(),
-        access_params: d.access_params || defaultAccessParams(),
+        access_params: {
+            ...defaultAccessParams(),
+            ...(d.access_params || {}),
+            min_per_purchase:
+                d.access_params?.min_per_purchase
+                ?? defaultAccessParams().min_per_purchase,
+        },
         content: normalizeEventContent(d.content),
         ticket_delivery_mode: d.ticket_delivery_mode || "al_momento",
         ticket_delivery_hours: d.ticket_delivery_hours != null ? String(d.ticket_delivery_hours) : "",
@@ -1238,8 +1245,9 @@ function evalStepStatus(form, poster, currentEvent, pendingVenueId = null) {
     // Accesos: visibility / access_type always have defaults
     s.access = form.visibility && form.access_params?.access_type ? "ok" : "warn";
 
-    // Parámetros: purchase limits + delivery
-    s.params = (form.access_params?.max_per_purchase ?? 0) > 0 ? "ok" : "warn";
+    // Parámetros: custom checkout questions (optional)
+    const qCount = (form.custom_questions || []).filter((q) => q.label?.trim()).length;
+    s.params = qCount > 0 ? "ok" : undefined;
 
     return s;
 }
@@ -1665,13 +1673,14 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
         || form.sales_window_preset_start;
     const modeLabel =
         form.multi_function_mode === "subevent" ? "Subeventos" : "Funciones";
+    const maxPer = form.access_params?.max_per_purchase ?? 10;
 
     return (
         <div className="space-y-6" data-testid="section-fechas">
             <div>
                 <h3 className="font-semibold text-base">Fechas y ventas</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Cuándo ocurre el evento y cuándo se pueden comprar tickets.
+                    Cuándo ocurre el evento, ventana de venta y límites de compra.
                     {form.starts_at && (
                         <>
                             {" · Inicio: "}
@@ -1686,12 +1695,18 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
                             <strong className="text-foreground">{durationLabel}</strong>
                         </>
                     )}
-                    {" · "}
+                    {" · Máx. "}
+                    <strong className="text-foreground">{maxPer}</strong>
+                    {"/orden · "}
                     <strong className="text-foreground">{modeLabel}</strong>
                 </p>
             </div>
 
-            <CuandoBlock form={form} update={update} disabled={disabled} />
+            {/* TicketShow layout: fechas | configuración de ventas */}
+            <div className="grid lg:grid-cols-2 gap-6 items-start">
+                <CuandoBlock form={form} update={update} disabled={disabled} />
+                <SalesConfigBlock form={form} update={update} disabled={disabled} />
+            </div>
 
             <section className="space-y-3">
                 <div>
@@ -1746,12 +1761,12 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
 function CuandoBlock({ form, update, disabled }) {
     const startsValid = !!form.starts_at;
     return (
-        <div data-testid="info-cuando-block" className="contents">
+        <div data-testid="info-cuando-block" className="space-y-6">
             <section className="space-y-3">
                 <div>
-                    <h4 className="text-sm font-medium">1. Fecha y duración</h4>
+                    <h4 className="text-sm font-medium">1. Fechas del evento</h4>
                     <p className="text-xs text-muted-foreground">
-                        Inicio del evento, cuánto dura y zona horaria.
+                        Inicio, duración y zona horaria.
                     </p>
                 </div>
                 <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
@@ -1828,11 +1843,10 @@ function CuandoBlock({ form, update, disabled }) {
                 <div>
                     <h4 className="text-sm font-medium flex items-center gap-2">
                         <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                        2. Ventana de venta
+                        Ventana de venta
                     </h4>
                     <p className="text-xs text-muted-foreground">
-                        Cuándo se habilita y se cierra la compra (o reserva si es gratuito). Se
-                        calcula desde la fecha de inicio.
+                        Cuándo se habilita y se cierra la compra (o reserva si es gratuito).
                     </p>
                 </div>
                 <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
@@ -1842,7 +1856,7 @@ function CuandoBlock({ form, update, disabled }) {
                         </p>
                     )}
                     <div className="grid sm:grid-cols-2 gap-3">
-                        <Field label="Inicio de venta">
+                        <Field label="Inicio de ventas">
                             <Select
                                 value={form.sales_window_preset_start}
                                 onValueChange={(v) => update("sales_window_preset_start", v)}
@@ -1860,7 +1874,7 @@ function CuandoBlock({ form, update, disabled }) {
                                 </SelectContent>
                             </Select>
                         </Field>
-                        <Field label="Fin de venta">
+                        <Field label="Fin de ventas">
                             <Select
                                 value={form.sales_window_preset_end}
                                 onValueChange={(v) => update("sales_window_preset_end", v)}
@@ -1881,23 +1895,23 @@ function CuandoBlock({ form, update, disabled }) {
                     </div>
 
                     {form.sales_window_preset_start === "custom" && (
-                        <Field label="Inicio de venta — fecha personalizada">
+                        <Field label="Inicio de ventas — fecha personalizada">
                             <DateTimePicker
                                 value={form.sales_start_custom}
                                 onChange={(v) => update("sales_start_custom", v)}
                                 disabled={disabled}
-                                placeholder="Inicio de venta"
+                                placeholder="Inicio de ventas"
                                 data-testid="wiz-sales-start-custom"
                             />
                         </Field>
                     )}
                     {form.sales_window_preset_end === "custom" && (
-                        <Field label="Fin de venta — fecha personalizada">
+                        <Field label="Fin de ventas — fecha personalizada">
                             <DateTimePicker
                                 value={form.sales_end_custom}
                                 onChange={(v) => update("sales_end_custom", v)}
                                 disabled={disabled}
-                                placeholder="Fin de venta"
+                                placeholder="Fin de ventas"
                                 data-testid="wiz-sales-end-custom"
                             />
                         </Field>
@@ -1905,6 +1919,232 @@ function CuandoBlock({ form, update, disabled }) {
                 </div>
             </section>
         </div>
+    );
+}
+
+function SalesConfigBlock({ form, update, disabled }) {
+    const ap = form.access_params || defaultAccessParams();
+    const deliveryMode = form.ticket_delivery_mode || "al_momento";
+    const eticketEnabled = deliveryMode !== "manual";
+
+    const setEticketEnabled = (on) => {
+        if (on) {
+            update(
+                "ticket_delivery_mode",
+                deliveryMode === "manual" ? "al_momento" : deliveryMode,
+            );
+        } else {
+            update("ticket_delivery_mode", "manual");
+        }
+    };
+
+    return (
+        <section className="space-y-3" data-testid="sales-config-block">
+            <div>
+                <h4 className="text-sm font-medium flex items-center gap-2">
+                    <Ticket className="h-4 w-4 text-muted-foreground" />
+                    2. Configuración de ventas
+                </h4>
+                <p className="text-xs text-muted-foreground">
+                    Límites por orden y envío del eTicket.
+                </p>
+            </div>
+            <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
+                <div className="grid sm:grid-cols-2 gap-3">
+                    <Field
+                        label={
+                            <LabelWithTip
+                                text="Máx. por orden"
+                                tip={
+                                    <>
+                                        Tope por <strong>transacción</strong>, sumando todos los
+                                        tipos de ticket. No se acumula entre compras distintas del
+                                        mismo comprador — para eso usá &quot;Máx. por persona /
+                                        email&quot;.
+                                    </>
+                                }
+                            />
+                        }
+                    >
+                        <Input
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={ap.max_per_purchase}
+                            onChange={(e) =>
+                                update(
+                                    "access_params.max_per_purchase",
+                                    parseInt(e.target.value || "1", 10),
+                                )
+                            }
+                            disabled={disabled}
+                            data-testid="access-max-purchase"
+                        />
+                    </Field>
+                    <Field
+                        label={
+                            <LabelWithTip
+                                text="Mín. por orden"
+                                tip="Cantidad mínima de tickets en una misma compra."
+                            />
+                        }
+                    >
+                        <Input
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={ap.min_per_purchase ?? 1}
+                            onChange={(e) =>
+                                update(
+                                    "access_params.min_per_purchase",
+                                    parseInt(e.target.value || "1", 10),
+                                )
+                            }
+                            disabled={disabled}
+                            data-testid="access-min-purchase"
+                        />
+                    </Field>
+                </div>
+
+                <Field
+                    label={
+                        <LabelWithTip
+                            text="Máx. por persona / email"
+                            tip={
+                                <>
+                                    Tope acumulado entre <strong>todas las compras</strong> de un
+                                    mismo email a este evento.
+                                </>
+                            }
+                        />
+                    }
+                >
+                    <Input
+                        type="number"
+                        min="1"
+                        value={ap.max_per_email || ""}
+                        onChange={(e) =>
+                            update(
+                                "access_params.max_per_email",
+                                e.target.value ? parseInt(e.target.value, 10) : null,
+                            )
+                        }
+                        placeholder="Sin límite"
+                        disabled={disabled}
+                        data-testid="access-max-email"
+                    />
+                </Field>
+
+                <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                    <div className="text-sm min-w-0">
+                        <div className="font-medium">E-Ticket</div>
+                        <div className="text-xs text-muted-foreground">
+                            Enviar QR por email al comprador
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs text-muted-foreground">
+                            {eticketEnabled ? "Habilitado" : "Manual"}
+                        </span>
+                        <Switch
+                            checked={eticketEnabled}
+                            onCheckedChange={setEticketEnabled}
+                            disabled={disabled}
+                            data-testid="access-eticket-enabled"
+                        />
+                    </div>
+                </div>
+
+                {eticketEnabled && (
+                    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                        <Field label="Cuándo se envía el eTicket">
+                            <Select
+                                value={deliveryMode}
+                                onValueChange={(v) => update("ticket_delivery_mode", v)}
+                                disabled={disabled}
+                            >
+                                <SelectTrigger data-testid="access-delivery-mode">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="al_momento">
+                                        Al momento de la compra
+                                    </SelectItem>
+                                    <SelectItem value="horas_antes">
+                                        X horas antes del evento
+                                    </SelectItem>
+                                    <SelectItem value="fecha_especifica">
+                                        En una fecha específica
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </Field>
+                        {deliveryMode === "horas_antes" && (
+                            <Field label="Horas antes del evento">
+                                <Input
+                                    type="number"
+                                    min="1"
+                                    max="720"
+                                    value={form.ticket_delivery_hours}
+                                    onChange={(e) =>
+                                        update("ticket_delivery_hours", e.target.value)
+                                    }
+                                    placeholder="24"
+                                    disabled={disabled}
+                                    data-testid="access-delivery-hours"
+                                />
+                            </Field>
+                        )}
+                        {deliveryMode === "fecha_especifica" && (
+                            <Field label="Fecha y hora de envío">
+                                <Input
+                                    type="datetime-local"
+                                    value={form.ticket_delivery_at}
+                                    onChange={(e) =>
+                                        update("ticket_delivery_at", e.target.value)
+                                    }
+                                    disabled={disabled}
+                                    data-testid="access-delivery-at"
+                                />
+                            </Field>
+                        )}
+                    </div>
+                )}
+
+                <Field label="Reembolsos hasta X horas antes del evento">
+                    <Input
+                        type="number"
+                        min="0"
+                        value={ap.refund_window_hours}
+                        onChange={(e) =>
+                            update(
+                                "access_params.refund_window_hours",
+                                parseInt(e.target.value || "0", 10),
+                            )
+                        }
+                        disabled={disabled}
+                        data-testid="access-refund-window"
+                    />
+                </Field>
+
+                <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                    <div className="text-sm min-w-0">
+                        <div className="font-medium">Mostrar nombre del comprador en el ticket</div>
+                        <div className="text-xs text-muted-foreground">
+                            Útil para tickets nominativos
+                        </div>
+                    </div>
+                    <Switch
+                        checked={ap.show_buyer_name_on_ticket}
+                        onCheckedChange={(v) =>
+                            update("access_params.show_buyer_name_on_ticket", v)
+                        }
+                        disabled={disabled}
+                        data-testid="access-show-name"
+                    />
+                </div>
+            </div>
+        </section>
     );
 }
 
@@ -2922,23 +3162,49 @@ const ACCESS_TYPE_OPTIONS = [
         icon: Users,
         title: "Lista verificada",
         description: "Solo quienes estén en la lista (email o cédula).",
+        requiredFeature: "verified_lists",
+        upgradeLabel: "Plan Enterprise",
     },
     {
         value: "access_code",
         icon: KeyRound,
         title: "Código de acceso",
         description: "El comprador ingresa un código para poder comprar.",
+        requiredFeature: "access_codes",
+        upgradeLabel: "Plan Enterprise",
     },
 ];
 
 function SectionAccess({ form, update, eventId }) {
+    const { data: planFeatures } = usePlanFeatures();
     const ap = { ...defaultAccessParams(), ...(form.access_params || {}) };
     const visibilityLabel =
         VISIBILITY_OPTIONS.find((o) => o.value === form.visibility)?.title || form.visibility;
     const accessLabel =
         ACCESS_TYPE_OPTIONS.find((o) => o.value === ap.access_type)?.title || ap.access_type;
+
+    // Fail closed while features load: gated options stay disabled until we
+    // know the plan allows them (avoids a save that hits the backend 403).
+    const accessAllowed = (opt) =>
+        !opt.requiredFeature || Boolean(planFeatures?.[opt.requiredFeature]);
+
+    const currentAccessOpt = ACCESS_TYPE_OPTIONS.find((o) => o.value === ap.access_type);
     const needsListOrCode =
-        ap.access_type === "verified_list" || ap.access_type === "access_code";
+        (ap.access_type === "verified_list" || ap.access_type === "access_code") &&
+        accessAllowed(currentAccessOpt);
+
+    // Downgrade / stale selection: if the current access type isn't on this
+    // plan, reset to "open" so Guardar never sends a blocked value.
+    useEffect(() => {
+        if (!planFeatures) return;
+        const opt = ACCESS_TYPE_OPTIONS.find((o) => o.value === ap.access_type);
+        if (!opt?.requiredFeature || planFeatures[opt.requiredFeature]) return;
+        update("access_params.access_type", "open");
+        toast.message("Acceso ajustado a tu plan", {
+            description: `«${opt.title}» requiere ${opt.upgradeLabel}. Se cambió a Abierto.`,
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to plan + selected type
+    }, [planFeatures, ap.access_type]);
 
     return (
         <div className="space-y-6" data-testid="section-access">
@@ -2984,17 +3250,22 @@ function SectionAccess({ form, update, eventId }) {
                     </p>
                 </div>
                 <div className="grid sm:grid-cols-2 gap-3" data-testid="access-type">
-                    {ACCESS_TYPE_OPTIONS.map((opt) => (
-                        <ChoiceCard
-                            key={opt.value}
-                            icon={opt.icon}
-                            title={opt.title}
-                            description={opt.description}
-                            selected={ap.access_type === opt.value}
-                            onSelect={() => update("access_params.access_type", opt.value)}
-                            testid={`access-type-${opt.value}`}
-                        />
-                    ))}
+                    {ACCESS_TYPE_OPTIONS.map((opt) => {
+                        const allowed = accessAllowed(opt);
+                        return (
+                            <ChoiceCard
+                                key={opt.value}
+                                icon={opt.icon}
+                                title={opt.title}
+                                description={opt.description}
+                                selected={ap.access_type === opt.value}
+                                onSelect={() => update("access_params.access_type", opt.value)}
+                                testid={`access-type-${opt.value}`}
+                                disabled={!allowed}
+                                badge={!allowed ? opt.upgradeLabel : undefined}
+                            />
+                        );
+                    })}
                 </div>
             </section>
 
@@ -3045,13 +3316,23 @@ function SectionAccess({ form, update, eventId }) {
     );
 }
 
-function ChoiceCard({ icon: Icon, title, description, selected, onSelect, testid, disabled = false }) {
+function ChoiceCard({
+    icon: Icon,
+    title,
+    description,
+    selected,
+    onSelect,
+    testid,
+    disabled = false,
+    badge = undefined,
+}) {
     return (
         <button
             type="button"
             onClick={onSelect}
             disabled={disabled}
             data-testid={testid}
+            aria-disabled={disabled || undefined}
             className={`rounded-xl border bg-card p-4 text-left transition w-full ${
                 selected
                     ? "border-foreground/30 ring-1 ring-foreground/10"
@@ -3067,11 +3348,16 @@ function ChoiceCard({ icon: Icon, title, description, selected, onSelect, testid
                     <Icon className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                         <div className="font-medium text-sm">{title}</div>
-                        {selected && (
+                        {selected && !disabled && (
                             <Badge variant="secondary" className="text-[10px] font-normal">
                                 Activo
+                            </Badge>
+                        )}
+                        {badge && (
+                            <Badge variant="outline" className="text-[10px] font-normal">
+                                {badge}
                             </Badge>
                         )}
                     </div>
@@ -3086,366 +3372,31 @@ function ChoiceCard({ icon: Icon, title, description, selected, onSelect, testid
 
 // ── Section: Parámetros ─────────────────────────────────────────────────────
 function SectionParams({ form, update, venueLocalities = [] }) {
-    const ap = form.access_params;
-    const deliveryMode = form.ticket_delivery_mode || "al_momento";
     const questionsCount = (form.custom_questions || []).filter((q) => q.label?.trim()).length;
-
-    const deliveryLabel = {
-        al_momento: "Al momento de la compra",
-        horas_antes: "X horas antes",
-        fecha_especifica: "Fecha específica",
-        manual: "Manual",
-    }[deliveryMode] || deliveryMode;
 
     return (
         <div className="space-y-6" data-testid="section-params">
             <div>
-                <h3 className="font-semibold text-base">Parámetros</h3>
+                <h3 className="font-semibold text-base">Parámetros del evento</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Preguntas en la compra, límites y cuándo se envía el eTicket.
+                    Campos extra que se solicitarán al cliente durante la compra (nombre, talla, etc.).
                     {questionsCount > 0 && (
                         <>
                             {" · "}
-                            <strong className="text-foreground">{questionsCount}</strong> pregunta
+                            <strong className="text-foreground">{questionsCount}</strong> parámetro
                             {questionsCount !== 1 ? "s" : ""}
                         </>
                     )}
-                    {" · Envío: "}
-                    <strong className="text-foreground">{deliveryLabel}</strong>
                 </p>
             </div>
 
-            <section className="space-y-3" data-testid="access-questions-block">
-                <div className="flex flex-wrap items-end justify-between gap-2">
-                    <div>
-                        <h4 className="text-sm font-medium flex items-center gap-2">
-                            <MessageSquareText className="h-4 w-4 text-muted-foreground" />
-                            1. Preguntas al comprador
-                        </h4>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                            Campos extra en checkout (cédula, talla, etc.). Las respuestas quedan en cada orden.
-                        </p>
-                    </div>
-                </div>
+            <section data-testid="access-questions-block">
                 <CustomQuestionsPanel
                     questions={form.custom_questions || []}
                     onChange={(next) => update("custom_questions", next)}
                     venueLocalities={venueLocalities}
                 />
             </section>
-
-            <section className="space-y-3" data-testid="access-purchase-block">
-                <div>
-                    <h4 className="text-sm font-medium flex items-center gap-2">
-                        <Ticket className="h-4 w-4 text-muted-foreground" />
-                        2. Límites de compra
-                    </h4>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                        Topes por transacción y por comprador. Opcional.
-                    </p>
-                </div>
-                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
-                    <div className="grid sm:grid-cols-2 gap-3">
-                        <Field
-                            label={
-                                <LabelWithTip
-                                    text="Máx. tickets por compra"
-                                    tip={
-                                        <>
-                                            Tope por <strong>transacción</strong>, sumando todos los
-                                            tipos de ticket. No se acumula entre compras distintas del
-                                            mismo comprador — para eso usá &quot;Máx. por persona / email&quot;.
-                                        </>
-                                    }
-                                />
-                            }
-                        >
-                            <Input
-                                type="number"
-                                min="1"
-                                max="100"
-                                value={ap.max_per_purchase}
-                                onChange={(e) =>
-                                    update(
-                                        "access_params.max_per_purchase",
-                                        parseInt(e.target.value || "1", 10),
-                                    )
-                                }
-                                data-testid="access-max-purchase"
-                            />
-                        </Field>
-                        <Field
-                            label={
-                                <LabelWithTip
-                                    text="Máx. por persona / email"
-                                    tip={
-                                        <>
-                                            Tope acumulado entre <strong>todas las compras</strong> de un
-                                            mismo email a este evento. Si además configuraste un &quot;Máx.
-                                            por comprador&quot; dentro de un tipo de ticket (paso Localidades),
-                                            ese límite se aplica adicionalmente.
-                                        </>
-                                    }
-                                />
-                            }
-                        >
-                            <Input
-                                type="number"
-                                min="1"
-                                value={ap.max_per_email || ""}
-                                onChange={(e) =>
-                                    update(
-                                        "access_params.max_per_email",
-                                        e.target.value ? parseInt(e.target.value, 10) : null,
-                                    )
-                                }
-                                placeholder="Sin límite"
-                                data-testid="access-max-email"
-                            />
-                        </Field>
-                    </div>
-
-                    <Field label="Reembolsos hasta X horas antes del evento">
-                        <Input
-                            type="number"
-                            min="0"
-                            value={ap.refund_window_hours}
-                            onChange={(e) =>
-                                update(
-                                    "access_params.refund_window_hours",
-                                    parseInt(e.target.value || "0", 10),
-                                )
-                            }
-                            data-testid="access-refund-window"
-                        />
-                    </Field>
-
-                    <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                        <div className="text-sm min-w-0">
-                            <div className="font-medium">Mostrar nombre del comprador en el ticket</div>
-                            <div className="text-xs text-muted-foreground">
-                                Útil para tickets nominativos
-                            </div>
-                        </div>
-                        <Switch
-                            checked={ap.show_buyer_name_on_ticket}
-                            onCheckedChange={(v) =>
-                                update("access_params.show_buyer_name_on_ticket", v)
-                            }
-                            data-testid="access-show-name"
-                        />
-                    </div>
-                </div>
-            </section>
-
-            <section className="space-y-3" data-testid="access-delivery-block">
-                <div>
-                    <h4 className="text-sm font-medium flex items-center gap-2">
-                        <Mail className="h-4 w-4 text-muted-foreground" />
-                        3. Envío del eTicket (QR)
-                    </h4>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                        Cuándo se envían los QR por email al comprador.
-                    </p>
-                </div>
-                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
-                    <Field label="Modo de envío">
-                        <Select
-                            value={deliveryMode}
-                            onValueChange={(v) => update("ticket_delivery_mode", v)}
-                        >
-                            <SelectTrigger data-testid="access-delivery-mode">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="al_momento">
-                                    Al momento de la compra
-                                </SelectItem>
-                                <SelectItem value="horas_antes">
-                                    X horas antes del evento
-                                </SelectItem>
-                                <SelectItem value="fecha_especifica">
-                                    En una fecha específica
-                                </SelectItem>
-                                <SelectItem value="manual">
-                                    Manual — el organizador los envía
-                                </SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </Field>
-                    {deliveryMode === "horas_antes" && (
-                        <Field label="Horas antes del evento">
-                            <Input
-                                type="number"
-                                min="1"
-                                max="720"
-                                value={form.ticket_delivery_hours}
-                                onChange={(e) =>
-                                    update("ticket_delivery_hours", e.target.value)
-                                }
-                                placeholder="24"
-                                data-testid="access-delivery-hours"
-                            />
-                        </Field>
-                    )}
-                    {deliveryMode === "fecha_especifica" && (
-                        <Field label="Fecha y hora de envío">
-                            <Input
-                                type="datetime-local"
-                                value={form.ticket_delivery_at}
-                                onChange={(e) =>
-                                    update("ticket_delivery_at", e.target.value)
-                                }
-                                data-testid="access-delivery-at"
-                            />
-                        </Field>
-                    )}
-                </div>
-            </section>
-        </div>
-    );
-}
-
-// ── §4.2.8 — Preguntas adicionales al comprador ─────────────────────────────
-function newCustomQuestion() {
-    return {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        label: "",
-        type: "text",
-        required: false,
-        options: [],
-        locality_ids: null,
-    };
-}
-
-function CustomQuestionsPanel({ questions, onChange, venueLocalities = [] }) {
-    const add = () => onChange([...questions, newCustomQuestion()]);
-    const remove = (id) => onChange(questions.filter((q) => q.id !== id));
-    const upd = (id, patch) =>
-        onChange(questions.map((q) => (q.id === id ? { ...q, ...patch } : q)));
-
-    const toggleLocality = (q, locId) => {
-        const current = Array.isArray(q.locality_ids) ? q.locality_ids : [];
-        const next = current.includes(locId)
-            ? current.filter((id) => id !== locId)
-            : [...current, locId];
-        // empty selection = all localities
-        upd(q.id, { locality_ids: next.length ? next : null });
-    };
-
-    return (
-        <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3" data-testid="custom-questions-panel">
-            <div className="flex items-start justify-between gap-3">
-                <p className="text-xs text-muted-foreground">
-                    Se muestran al momento de la compra. Vacío = no se pide nada extra.
-                </p>
-                <Button size="sm" onClick={add} data-testid="cq-add" className="shrink-0">
-                    <Plus className="h-4 w-4 mr-1.5" /> Nueva pregunta
-                </Button>
-            </div>
-
-            {questions.length === 0 ? (
-                <div className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
-                    Sin preguntas todavía. Agregá una para pedir datos en el checkout.
-                </div>
-            ) : (
-                <ul className="space-y-2" data-testid="cq-list">
-                    {questions.map((q) => (
-                        <li
-                            key={q.id}
-                            className="rounded-lg border p-3 space-y-2 bg-background"
-                            data-testid={`cq-row-${q.id}`}
-                        >
-                            <div className="grid sm:grid-cols-[1fr_140px] gap-2">
-                                <Input
-                                    value={q.label}
-                                    onChange={(e) => upd(q.id, { label: e.target.value })}
-                                    placeholder="Ej: ¿Restricción alimentaria?"
-                                    data-testid={`cq-label-${q.id}`}
-                                />
-                                <Select
-                                    value={q.type}
-                                    onValueChange={(v) => upd(q.id, { type: v })}
-                                >
-                                    <SelectTrigger data-testid={`cq-type-${q.id}`}>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="text">Texto libre</SelectItem>
-                                        <SelectItem value="number">Número</SelectItem>
-                                        <SelectItem value="select">Opción múltiple</SelectItem>
-                                        <SelectItem value="checkbox">Sí / No</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            {q.type === "select" && (
-                                <Input
-                                    value={(q.options || []).join(", ")}
-                                    onChange={(e) =>
-                                        upd(q.id, {
-                                            options: e.target.value
-                                                .split(",")
-                                                .map((s) => s.trim())
-                                                .filter(Boolean),
-                                        })
-                                    }
-                                    placeholder="Opciones separadas por coma: Vegetariano, Vegano, Ninguna"
-                                    data-testid={`cq-options-${q.id}`}
-                                />
-                            )}
-                            {venueLocalities.length > 0 && (
-                                <div
-                                    className="rounded-md border p-2 space-y-1.5"
-                                    data-testid={`cq-localities-${q.id}`}
-                                >
-                                    <div className="text-xs font-medium text-muted-foreground">
-                                        Localidades (vacío = todas)
-                                    </div>
-                                    <div className="flex flex-wrap gap-x-3 gap-y-1">
-                                        {venueLocalities.map((loc) => {
-                                            const checked = Array.isArray(q.locality_ids)
-                                                && q.locality_ids.includes(loc.id);
-                                            return (
-                                                <label
-                                                    key={loc.id}
-                                                    className="flex items-center gap-1.5 text-xs"
-                                                >
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={checked}
-                                                        onChange={() => toggleLocality(q, loc.id)}
-                                                        data-testid={`cq-loc-${q.id}-${loc.id}`}
-                                                    />
-                                                    {loc.name}
-                                                </label>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-                            <div className="flex items-center justify-between">
-                                <label className="flex items-center gap-2 text-sm">
-                                    <Switch
-                                        checked={!!q.required}
-                                        onCheckedChange={(v) => upd(q.id, { required: v })}
-                                        data-testid={`cq-required-${q.id}`}
-                                    />
-                                    Obligatoria
-                                </label>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => remove(q.id)}
-                                    className="text-red-600 hover:bg-red-50"
-                                    data-testid={`cq-remove-${q.id}`}
-                                >
-                                    <Trash2 className="h-4 w-4" />
-                                </Button>
-                            </div>
-                        </li>
-                    ))}
-                </ul>
-            )}
         </div>
     );
 }
