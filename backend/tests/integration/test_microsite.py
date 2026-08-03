@@ -246,7 +246,11 @@ class TestMicrositeMe:
         r = requests.put(
             f"{API}/microsite/me",
             headers=bearer(demo_token),
-            json={"blocks": [{"id": "x", "type": "invalido", "enabled": True, "props": {}}]},
+            json={
+                "blocks": [
+                    {"id": "x", "type": "invalido", "enabled": True, "props": {}}
+                ]
+            },
         )
         assert r.status_code == 422
 
@@ -258,7 +262,13 @@ class TestMicrositeMe:
                 "enabled": True,
                 "props": {
                     "title": "FAQ",
-                    "items": [{"id": "q1", "question": "¿Cómo compro?", "answer_html": "<p>Online</p>"}],
+                    "items": [
+                        {
+                            "id": "q1",
+                            "question": "¿Cómo compro?",
+                            "answer_html": "<p>Online</p>",
+                        }
+                    ],
                 },
             },
             {

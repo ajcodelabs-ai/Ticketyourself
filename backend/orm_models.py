@@ -5,6 +5,7 @@ All 21 collections mapped to PostgreSQL tables.
 IDs are UUID stored as TEXT (keeps API contracts identical to MongoDB version).
 Complex nested data (canvas, config, payment_methods, etc.) is stored as JSONB.
 """
+
 import uuid as _uuid
 from datetime import datetime, timezone
 
@@ -145,7 +146,9 @@ class Organizer(Base):
     approved_by = Column(String(36), nullable=True)  # user id or "system"
 
     admin_comments = relationship(
-        "OrganizerAdminComment", back_populates="organizer", cascade="all, delete-orphan"
+        "OrganizerAdminComment",
+        back_populates="organizer",
+        cascade="all, delete-orphan",
     )
     documents = relationship(
         "OrganizerDocument", back_populates="organizer", cascade="all, delete-orphan"
@@ -157,7 +160,10 @@ class OrganizerAdminComment(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     organizer_id = Column(
-        String(36), ForeignKey("organizers.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("organizers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     admin_id = Column(String(36), nullable=False)  # user id or "system"
     admin_email = Column(String(254), nullable=True)
@@ -172,7 +178,10 @@ class OrganizerDocument(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     organizer_id = Column(
-        String(36), ForeignKey("organizers.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("organizers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     doc_type = Column(String(30), nullable=False)
     original_filename = Column(String(255), nullable=False)
@@ -187,16 +196,20 @@ class OrganizerDocument(Base):
 
 class RequiredDocumentSet(Base):
     """Admin-configurable: which doc_types are mandatory per org_type."""
+
     __tablename__ = "required_document_sets"
 
     org_type = Column(String(20), primary_key=True)  # "individual" | "company"
     doc_types = Column(JSONB, nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
     updated_by = Column(String(36), nullable=True)
 
 
 class DocumentType(Base):
     """Admin-extensible catalog of document types organizers can upload."""
+
     __tablename__ = "document_types"
 
     code = Column(String(40), primary_key=True)  # slug of label, e.g. "pasaporte"
@@ -210,10 +223,14 @@ class DocumentType(Base):
 # ─────────────────────────────────────────────────────────────────────────────
 class Venue(Base):
     __tablename__ = "venues"
-    __table_args__ = (UniqueConstraint("organizer_id", "slug", name="uq_venue_org_slug"),)
+    __table_args__ = (
+        UniqueConstraint("organizer_id", "slug", name="uq_venue_org_slug"),
+    )
 
     id = Column(String(36), primary_key=True, default=_uuid4)
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     tenant_slug = Column(String(60), ForeignKey("tenants.slug"), nullable=False)
     name = Column(String(200), nullable=False)
     slug = Column(String(120), nullable=False)
@@ -240,10 +257,14 @@ class Venue(Base):
 # ─────────────────────────────────────────────────────────────────────────────
 class Event(Base):
     __tablename__ = "events"
-    __table_args__ = (UniqueConstraint("organizer_id", "slug", name="uq_event_org_slug"),)
+    __table_args__ = (
+        UniqueConstraint("organizer_id", "slug", name="uq_event_org_slug"),
+    )
 
     id = Column(String(36), primary_key=True, default=_uuid4)
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     tenant_slug = Column(String(60), ForeignKey("tenants.slug"), nullable=False)
     title = Column(String(300), nullable=False)
     slug = Column(String(160), nullable=False)
@@ -367,7 +388,10 @@ class TicketType(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     event_id = Column(
-        String(36), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("events.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False)
     name = Column(String(200), nullable=False)
@@ -404,7 +428,9 @@ class TicketOrder(Base):
     id = Column(String(36), primary_key=True, default=_uuid4)
     order_number = Column(String(20), unique=True, nullable=False)
     event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     tenant_slug = Column(String(100), nullable=True)
 
     # Buyer — full dict in JSONB; buyer_email indexed for lookup
@@ -454,7 +480,9 @@ class TicketOrder(Base):
     function_id = Column(String(36), ForeignKey("event_functions.id"), nullable=True)
     tickets_sent_at = Column(DateTime(timezone=True), nullable=True)
 
-    tickets = relationship("Ticket", back_populates="order", cascade="all, delete-orphan")
+    tickets = relationship(
+        "Ticket", back_populates="order", cascade="all, delete-orphan"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -465,7 +493,10 @@ class Ticket(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     order_id = Column(
-        String(36), ForeignKey("ticket_orders.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("ticket_orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
     organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False)
@@ -512,9 +543,13 @@ class TicketScan(Base):
     __tablename__ = "ticket_scans"
 
     id = Column(String(36), primary_key=True, default=_uuid4)
-    ticket_id = Column(String(36), ForeignKey("tickets.id"), nullable=True, index=True)  # nullable for not_found/invalid scans
+    ticket_id = Column(
+        String(36), ForeignKey("tickets.id"), nullable=True, index=True
+    )  # nullable for not_found/invalid scans
     event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
-    result = Column(String(20), nullable=False)  # valid | already_used | invalid | not_found | revoked
+    result = Column(
+        String(20), nullable=False
+    )  # valid | already_used | invalid | not_found | revoked
     scanned_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     scanned_by = Column(String(100), nullable=True)
     reason = Column(Text, nullable=True)
@@ -557,7 +592,9 @@ class EventCapacityReservation(Base):
     # Scopes this reservation to a single función's own capacity pool. NULL
     # means it counts against the event-level shared pool (general/non-multi-
     # función events, or functions without their own capacity override).
-    function_id = Column(String(36), ForeignKey("event_functions.id"), nullable=True, index=True)
+    function_id = Column(
+        String(36), ForeignKey("event_functions.id"), nullable=True, index=True
+    )
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
@@ -612,7 +649,10 @@ class MicrositeRevision(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     microsite_id = Column(
-        String(36), ForeignKey("microsites.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("microsites.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     label = Column(String(120), nullable=True)
     snapshot = Column(JSONB, nullable=False)
@@ -631,7 +671,9 @@ class AuditLog(Base):
     target_type = Column(String(50), nullable=False)
     target_id = Column(String(36), nullable=False)
     metadata_ = Column("metadata", JSONB, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_now, index=True)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, index=True
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -641,10 +683,14 @@ class BillingIntent(Base):
     __tablename__ = "billing_intents"
 
     id = Column(String(36), primary_key=True, default=_uuid4)
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     plan_id = Column(String(36), nullable=True)
     plan_code = Column(String(40), nullable=False)
-    session_id = Column(String(200), nullable=True, index=True)  # Stripe checkout session ID
+    session_id = Column(
+        String(200), nullable=True, index=True
+    )  # Stripe checkout session ID
     mode = Column(String(20), nullable=True)  # subscription | payment
     status = Column(String(20), nullable=False, default="pending")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
@@ -658,12 +704,16 @@ class ActivationEvent(Base):
     __tablename__ = "activation_events"
 
     id = Column(String(36), primary_key=True, default=_uuid4)
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     event_type = Column(String(60), nullable=False)
     metadata_ = Column("metadata", JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
-    __table_args__ = (UniqueConstraint("organizer_id", "event_type", name="uq_activation_org_type"),)
+    __table_args__ = (
+        UniqueConstraint("organizer_id", "event_type", name="uq_activation_org_type"),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -673,7 +723,9 @@ class MicrositeAsset(Base):
     __tablename__ = "microsite_assets"
 
     id = Column(String(36), primary_key=True, default=_uuid4)
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     asset_type = Column(String(20), nullable=False)  # logo | banner | gallery
     file_path = Column(String(500), nullable=False)
     original_filename = Column(String(200), nullable=True)
@@ -706,9 +758,14 @@ class EventFunction(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     event_id = Column(
-        String(36), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("events.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     name = Column(String(300), nullable=False)
     description = Column(Text, nullable=True)
     starts_at = Column(DateTime(timezone=True), nullable=True)
@@ -727,7 +784,9 @@ class EventFunction(Base):
 
     capacity = Column(Integer, nullable=True)
     tickets_sold = Column(Integer, nullable=False, default=0)
-    status = Column(String(20), nullable=False, default="active")  # active | cancelled | soldout
+    status = Column(
+        String(20), nullable=False, default="active"
+    )  # active | cancelled | soldout
     sort_order = Column(Integer, nullable=False, default=0)
     # "function" = same show repeated (Multifunción/Franjas horarias) — blocked
     # from overlapping a sibling in the same venue. "subevent" = independent
@@ -736,7 +795,9 @@ class EventFunction(Base):
     # so the schedule-overlap check skips it. See _check_schedule_conflict.
     kind = Column(String(20), nullable=False, default="function")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
 
     ticket_type_overrides = relationship(
         "FunctionTicketType", back_populates="function", cascade="all, delete-orphan"
@@ -749,12 +810,17 @@ class EventFunction(Base):
 class FunctionTicketType(Base):
     __tablename__ = "function_ticket_types"
     __table_args__ = (
-        UniqueConstraint("function_id", "ticket_type_id", name="uq_function_ticket_type"),
+        UniqueConstraint(
+            "function_id", "ticket_type_id", name="uq_function_ticket_type"
+        ),
     )
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     function_id = Column(
-        String(36), ForeignKey("event_functions.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("event_functions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     ticket_type_id = Column(
         String(36), ForeignKey("ticket_types.id", ondelete="CASCADE"), nullable=False
@@ -776,18 +842,27 @@ class EventGuestListEntry(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     event_id = Column(
-        String(36), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("events.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     email = Column(String(254), nullable=True)
     cedula = Column(String(40), nullable=True)
     name = Column(String(140), nullable=True)
     notes = Column(String(300), nullable=True)
     # Max tickets this guest may buy across purchases (default 1).
     max_tickets = Column(Integer, nullable=False, default=1)
-    used_at = Column(DateTime(timezone=True), nullable=True)  # set when they complete a purchase
+    used_at = Column(
+        DateTime(timezone=True), nullable=True
+    )  # set when they complete a purchase
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -801,9 +876,14 @@ class EventAccessCode(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     event_id = Column(
-        String(36), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("events.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     code = Column(String(40), nullable=False)
     max_uses = Column(Integer, nullable=True)  # null = unlimited redemptions
     uses_count = Column(Integer, nullable=False, default=0)
@@ -811,7 +891,9 @@ class EventAccessCode(Base):
     max_tickets_per_redemption = Column(Integer, nullable=True)
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -825,7 +907,10 @@ class StaffMember(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     organizer_id = Column(
-        String(36), ForeignKey("organizers.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("organizers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     name = Column(String(140), nullable=False)
     email = Column(String(254), nullable=False)
@@ -852,7 +937,10 @@ class StaffEventAssignment(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     staff_id = Column(
-        String(36), ForeignKey("staff_members.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("staff_members.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
     organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False)
@@ -873,9 +961,14 @@ class SeasonPass(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     event_id = Column(
-        String(36), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("events.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     name = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
     price_cents = Column(Integer, nullable=False, default=0)
@@ -889,7 +982,9 @@ class SeasonPass(Base):
     redemption_ends_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(20), nullable=False, default="active")  # active | cancelled
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
 
 
 class SeasonPassPurchase(Base):
@@ -900,10 +995,15 @@ class SeasonPassPurchase(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     season_pass_id = Column(
-        String(36), ForeignKey("season_passes.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("season_passes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
-    organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False, index=True)
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
     purchase_token = Column(String(36), unique=True, nullable=False, index=True)
     order_number = Column(String(20), unique=True, nullable=False)
     buyer = Column(JSONB, nullable=False, default=dict)
@@ -920,7 +1020,9 @@ class SeasonPassPurchase(Base):
     stripe_session_id = Column(String(200), nullable=True)
     manual_payment_info = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
     paid_at = Column(DateTime(timezone=True), nullable=True)
 
 
@@ -933,9 +1035,13 @@ class SeasonPassRedemption(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid4)
     season_pass_purchase_id = Column(
-        String(36), ForeignKey("season_pass_purchases.id", ondelete="CASCADE"),
-        nullable=False, index=True,
+        String(36),
+        ForeignKey("season_pass_purchases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    function_id = Column(String(36), ForeignKey("event_functions.id"), nullable=False, index=True)
+    function_id = Column(
+        String(36), ForeignKey("event_functions.id"), nullable=False, index=True
+    )
     order_id = Column(String(36), ForeignKey("ticket_orders.id"), nullable=False)
     redeemed_at = Column(DateTime(timezone=True), nullable=False, default=_now)

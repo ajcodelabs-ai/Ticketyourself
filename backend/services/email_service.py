@@ -222,8 +222,12 @@ def render_organizer_approved_html(*, company_name: str, continue_url: str) -> s
 """.strip()
 
 
-def render_organizer_rejected_html(*, company_name: str, reason: str, continue_url: str) -> str:
-    safe_reason = (reason or "Sin detalle adicional.").replace("<", "&lt;").replace(">", "&gt;")
+def render_organizer_rejected_html(
+    *, company_name: str, reason: str, continue_url: str
+) -> str:
+    safe_reason = (
+        (reason or "Sin detalle adicional.").replace("<", "&lt;").replace(">", "&gt;")
+    )
     return f"""
 <table cellpadding="0" cellspacing="0" border="0" width="100%"
        style="background:#f4f4f9;padding:32px 0;font-family:Helvetica,Arial,sans-serif;color:#1f1f33;">
@@ -279,8 +283,12 @@ def render_organizer_rejected_html(*, company_name: str, reason: str, continue_u
 """.strip()
 
 
-async def send_organizer_approved_email(*, to: str, company_name: str, continue_url: str) -> dict:
-    html = render_organizer_approved_html(company_name=company_name, continue_url=continue_url)
+async def send_organizer_approved_email(
+    *, to: str, company_name: str, continue_url: str
+) -> dict:
+    html = render_organizer_approved_html(
+        company_name=company_name, continue_url=continue_url
+    )
     text = (
         f"Hola {company_name},\n\n"
         "Tu cuenta de organizador en Ticket Yourself fue aprobada.\n"

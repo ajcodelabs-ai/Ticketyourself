@@ -341,9 +341,7 @@ async def update_my_microsite(payload: MicrositeUpdate, user=Depends(get_current
             row.sections_enabled = new_sections
             flag_modified(row, "sections_enabled")
         if payload.blocks is not None:
-            cleaned = validate_blocks(
-                [b.model_dump() for b in payload.blocks]
-            )
+            cleaned = validate_blocks([b.model_dump() for b in payload.blocks])
             row.blocks = cleaned
             row.sections_enabled = sections_from_blocks(cleaned)
             flag_modified(row, "blocks")

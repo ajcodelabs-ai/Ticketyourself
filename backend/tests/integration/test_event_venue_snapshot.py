@@ -1,4 +1,5 @@
 """Integration: event venue_layout snapshots are independent of the master venue."""
+
 from __future__ import annotations
 
 import copy
@@ -9,13 +10,15 @@ import requests
 
 from tests.conftest import API, DEMO_TENANT
 
-
-pytestmark = pytest.mark.skipif(not API or API == "/api", reason="REACT_APP_BACKEND_URL not set")
+pytestmark = pytest.mark.skipif(
+    not API or API == "/api", reason="REACT_APP_BACKEND_URL not set"
+)
 
 
 def _create_draft_event(client: requests.Session, title: str) -> dict:
     slug = f"snap-{uuid.uuid4().hex[:8]}"
     from datetime import datetime, timedelta, timezone
+
     starts = datetime.now(timezone.utc) + timedelta(days=30)
     ends = starts + timedelta(hours=2)
     r = client.post(
@@ -144,7 +147,11 @@ class TestEventVenueSnapshot:
         ).json()
         elements = copy.deepcopy(layout["elements"])
         row = next(
-            (e for e in elements if e.get("kind") in ("seat_row_straight", "seat_row_curved")),
+            (
+                e
+                for e in elements
+                if e.get("kind") in ("seat_row_straight", "seat_row_curved")
+            ),
             None,
         )
         if not row:

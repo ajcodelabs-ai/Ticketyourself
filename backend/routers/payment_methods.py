@@ -1,4 +1,5 @@
 """Payment method catalog — public list for wizard and checkout."""
+
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends
@@ -31,6 +32,8 @@ async def list_payment_methods(session: AsyncSession = Depends(get_db)):
     result = await session.execute(
         select(PaymentMethodCatalog)
         .where(PaymentMethodCatalog.is_active.is_(True))
-        .order_by(PaymentMethodCatalog.sort_order.asc(), PaymentMethodCatalog.name.asc())
+        .order_by(
+            PaymentMethodCatalog.sort_order.asc(), PaymentMethodCatalog.name.asc()
+        )
     )
     return [PaymentMethodOut(**row_to_dict(r)) for r in result.scalars().all()]

@@ -1,4 +1,5 @@
 """Admin router: organizer management + stats — Phase 2: PostgreSQL."""
+
 import os
 import uuid
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ def _onboarding_url() -> str:
     frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
     return f"{frontend}/onboarding" if frontend else "/onboarding"
 
+
 router = APIRouter(
     prefix="/api/admin",
     tags=["admin"],
@@ -65,6 +67,7 @@ async def _load_organizer(organizer_id: str, session: AsyncSession) -> Organizer
 @router.get("/dashboard/stats-legacy", response_model=AdminStats, deprecated=True)
 async def admin_stats_legacy(session: AsyncSession = Depends(get_db)):
     """Deprecated — replaced by GET /api/admin/dashboard/stats."""
+
     def _count(status):
         return session.scalar(
             select(func.count(Organizer.id)).where(Organizer.status == status)
@@ -76,12 +79,18 @@ async def admin_stats_legacy(session: AsyncSession = Depends(get_db)):
     organizers_rejected = await _count("rejected")
     organizers_suspended = await _count("suspended")
     active_subs = await session.scalar(
-        select(func.count(Organizer.id)).where(Organizer.subscription_status == "active")
+        select(func.count(Organizer.id)).where(
+            Organizer.subscription_status == "active"
+        )
     )
 
     # Revenue estimate from active monthly subscribers
     plans_result = await session.execute(
-        select(SubscriptionPlan.id, SubscriptionPlan.price_cents, SubscriptionPlan.billing_period)
+        select(
+            SubscriptionPlan.id,
+            SubscriptionPlan.price_cents,
+            SubscriptionPlan.billing_period,
+        )
     )
     plan_price = {row.id: row for row in plans_result.all()}
 
@@ -132,7 +141,11 @@ async def list_organizers(
     total_stmt = select(func.count()).select_from(stmt.subquery())
     total = await session.scalar(total_stmt) or 0
 
-    stmt = stmt.order_by(Organizer.created_at.desc()).offset((page - 1) * limit).limit(limit)
+    stmt = (
+        stmt.order_by(Organizer.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+    )
     result = await session.execute(stmt)
     items = [_org_to_out(row) for row in result.scalars().all()]
     return OrganizersList(items=items, total=total, page=page, limit=limit)
@@ -186,8 +199,21 @@ async def approve_organizer(
 
     # Auto-create default microsite (no-op if exists)
     from routers.microsite import _get_or_create_microsite_row
-    await _get_or_create_microsite_row({"id": organizer_id, "slug": row.slug, "company_name": row.company_name or row.slug})
-    await log_audit(admin["id"], "organizer.approved", "organizer", organizer_id, {"comment": payload.comment or ""})
+
+    await _get_or_create_microsite_row(
+        {
+            "id": organizer_id,
+            "slug": row.slug,
+            "company_name": row.company_name or row.slug,
+        }
+    )
+    await log_audit(
+        admin["id"],
+        "organizer.approved",
+        "organizer",
+        organizer_id,
+        {"comment": payload.comment or ""},
+    )
 
     if row.email:
         await send_organizer_approved_email(
@@ -219,7 +245,13 @@ async def reject_organizer(
         tenant.status = "inactive"
 
     await session.flush()
-    await log_audit(admin["id"], "organizer.rejected", "organizer", organizer_id, {"reason": payload.comment})
+    await log_audit(
+        admin["id"],
+        "organizer.rejected",
+        "organizer",
+        organizer_id,
+        {"reason": payload.comment},
+    )
 
     if row.email:
         await send_organizer_rejected_email(
@@ -250,7 +282,13 @@ async def suspend_organizer(
         tenant.status = "suspended"
 
     await session.flush()
-    await log_audit(admin["id"], "organizer.suspended", "organizer", organizer_id, {"reason": payload.comment})
+    await log_audit(
+        admin["id"],
+        "organizer.suspended",
+        "organizer",
+        organizer_id,
+        {"reason": payload.comment},
+    )
 
     await session.refresh(row, ["admin_comments"])
     return _org_to_out(row)
@@ -300,7 +338,9 @@ async def get_document_types_settings(session: AsyncSession = Depends(get_db)):
     return await list_document_types(session)
 
 
-@router.post("/settings/document-types", response_model=DocumentTypeOut, status_code=201)
+@router.post(
+    "/settings/document-types", response_model=DocumentTypeOut, status_code=201
+)
 async def create_document_type_settings(
     payload: DocumentTypeCreate,
     admin=Depends(require_role("super_admin")),
@@ -308,6 +348,10 @@ async def create_document_type_settings(
 ):
     created = await create_document_type(session, payload.label, admin["id"])
     await log_audit(
-        admin["id"], "settings.document_type_created", "document_type", created["code"], {"label": payload.label}
+        admin["id"],
+        "settings.document_type_created",
+        "document_type",
+        created["code"],
+        {"label": payload.label},
     )
     return created

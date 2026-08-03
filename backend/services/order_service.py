@@ -240,10 +240,7 @@ def compute_totals(
 
 
 def locality_pricing_map(event: dict) -> dict:
-    return {
-        lp["locality_id"]: lp
-        for lp in (event.get("locality_pricing") or [])
-    }
+    return {lp["locality_id"]: lp for lp in (event.get("locality_pricing") or [])}
 
 
 def locality_fee_cents(pricing_map: dict, locality_id: str | None) -> tuple[int, int]:

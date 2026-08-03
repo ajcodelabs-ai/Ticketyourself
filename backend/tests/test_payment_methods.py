@@ -1,4 +1,5 @@
 """Unit tests for payment method catalog helpers."""
+
 from __future__ import annotations
 
 import os

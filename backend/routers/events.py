@@ -2,6 +2,7 @@
 Events — PostgreSQL implementation.
 Free / paid / donation events, single occurrence, numbered seating, tiered pricing.
 """
+
 import logging
 import mimetypes
 import re
@@ -26,9 +27,19 @@ from services.event_venue import (
     locality_structural_diff,
 )
 from orm_models import (
-    AuditLog, Event, EventAsset, EventCapacityReservation, EventSeatAssignment,
-    Organizer, SeasonPassPurchase, SeatHold, StaffEventAssignment, Tenant, Ticket,
-    TicketOrder, TicketScan,
+    AuditLog,
+    Event,
+    EventAsset,
+    EventCapacityReservation,
+    EventSeatAssignment,
+    Organizer,
+    SeasonPassPurchase,
+    SeatHold,
+    StaffEventAssignment,
+    Tenant,
+    Ticket,
+    TicketOrder,
+    TicketScan,
 )
 from security import get_current_user, require_role
 from services.path_safety import resolve_path_under
@@ -90,6 +101,7 @@ class PaymentMethodConfig(BaseModel):
     Legacy ``{stripe,transfer,cash}.enabled`` is still accepted on input and
     mapped via ``services.payment_methods.normalize_payment_methods``.
     """
+
     enabled_codes: Optional[List[str]] = None
     stripe: Dict[str, Any] = Field(default_factory=lambda: {"enabled": False})
     transfer: Dict[str, Any] = Field(
@@ -156,7 +168,9 @@ class DiscountRule(BaseModel):
             raise ValueError("quantity rules require `min_quantity`")
         if self.type == "buy_n_get_m":
             if not self.buy_quantity or not self.free_quantity:
-                raise ValueError("buy_n_get_m rules require `buy_quantity` and `free_quantity`")
+                raise ValueError(
+                    "buy_n_get_m rules require `buy_quantity` and `free_quantity`"
+                )
         elif not self.discount:
             raise ValueError("Esta regla requiere un beneficio (`discount`).")
         if (
@@ -165,7 +179,11 @@ class DiscountRule(BaseModel):
             and self.conditions.valid_until <= self.conditions.valid_from
         ):
             raise ValueError("`valid_until` debe ser posterior a `valid_from`")
-        if self.discount and self.discount.type == "percent" and self.discount.value > 100:
+        if (
+            self.discount
+            and self.discount.type == "percent"
+            and self.discount.value > 100
+        ):
             raise ValueError("Un porcentaje no puede superar 100")
         return self
 
@@ -224,8 +242,16 @@ class EventContent(BaseModel):
 # fractions [0,1] of the canvas so the same design renders correctly at any
 # output size (digital / A4 / PVC) without unit-conversion math.
 TicketDesignField = Literal[
-    "title", "starts_at", "venue", "holder_name", "holder_email",
-    "price", "seat_or_raffle", "order_number", "organizer_name", "custom",
+    "title",
+    "starts_at",
+    "venue",
+    "holder_name",
+    "holder_email",
+    "price",
+    "seat_or_raffle",
+    "order_number",
+    "organizer_name",
+    "custom",
 ]
 
 
@@ -248,7 +274,11 @@ class TicketDesignElement(BaseModel):
 
     @model_validator(mode="after")
     def _check_shape(self):
-        if self.type == "text" and self.field == "custom" and not (self.text or "").strip():
+        if (
+            self.type == "text"
+            and self.field == "custom"
+            and not (self.text or "").strip()
+        ):
             raise ValueError("Un texto personalizado requiere `text`")
         return self
 
@@ -473,12 +503,15 @@ def _publish_validation(doc: dict) -> None:
             missing.append("precios por localidad (evento numerado)")
         else:
             missing_loc = [
-                lp for lp in pricing
+                lp
+                for lp in pricing
                 if lp.get("price_cents") is None or int(lp.get("price_cents") or 0) < 0
             ]
             if missing_loc:
                 missing.append("precio válido en cada localidad")
-            has_paid_locality = any(int(lp.get("price_cents") or 0) > 0 for lp in pricing)
+            has_paid_locality = any(
+                int(lp.get("price_cents") or 0) > 0 for lp in pricing
+            )
             if has_paid_locality and doc.get("pricing_type") == "free":
                 missing.append(
                     "marcar el evento como 'Pago' en Tipo de recaudación "
@@ -536,14 +569,19 @@ async def link_venue_to_event(
         sold = row.tickets_sold or 0
         if sold > 0 and row.venue_id and row.venue_id != body.venue_id:
             raise HTTPException(
-                409, f"El evento ya tiene {sold} ticket(s) vendido(s); no se puede cambiar el venue."
+                409,
+                f"El evento ya tiene {sold} ticket(s) vendido(s); no se puede cambiar el venue.",
             )
 
         same_venue = row.venue_id == body.venue_id and bool(row.venue_layout)
         if same_venue:
             # Price-only update: keep the event's edited snapshot intact.
             layout = row.venue_layout
-            venue_capacity = (layout or {}).get("capacity_calculated") or venue.get("capacity_calculated") or 0
+            venue_capacity = (
+                (layout or {}).get("capacity_calculated")
+                or venue.get("capacity_calculated")
+                or 0
+            )
         else:
             layout = snapshot_from_venue(venue)
             venue_capacity = layout.get("capacity_calculated") or 0
@@ -587,7 +625,9 @@ async def unlink_venue_from_event(event_id: str, user=Depends(get_current_user))
         if not row:
             raise HTTPException(404, "Evento no encontrado")
         if (row.tickets_sold or 0) > 0:
-            raise HTTPException(409, "El evento ya tiene tickets vendidos; no se puede desvincular.")
+            raise HTTPException(
+                409, "El evento ya tiene tickets vendidos; no se puede desvincular."
+            )
         row.venue_id = None
         row.venue_slug = None
         row.source_venue_id = None
@@ -627,7 +667,8 @@ async def get_event_venue_layout(event_id: str, user=Depends(get_current_user)):
             "canvas": (row.venue_layout or {}).get("canvas") or {},
             "elements": (row.venue_layout or {}).get("elements") or [],
             "localities": (row.venue_layout or {}).get("localities") or [],
-            "capacity_calculated": (row.venue_layout or {}).get("capacity_calculated") or 0,
+            "capacity_calculated": (row.venue_layout or {}).get("capacity_calculated")
+            or 0,
             "snapshotted_at": (row.venue_layout or {}).get("snapshotted_at"),
             "lock_status": {
                 "locked": sold > 0,
@@ -658,16 +699,20 @@ async def put_event_venue_layout(
         if not row:
             raise HTTPException(404, "Evento no encontrado")
         if not row.venue_id:
-            raise HTTPException(409, "Vinculá un venue al evento antes de editar el mapa.")
+            raise HTTPException(
+                409, "Vinculá un venue al evento antes de editar el mapa."
+            )
         old = row.venue_layout or {}
         if not old:
-            raise HTTPException(404, "Este evento no tiene mapa; vinculá un venue primero.")
+            raise HTTPException(
+                404, "Este evento no tiene mapa; vinculá un venue primero."
+            )
 
         sold = int(row.tickets_sold or 0)
         if sold > 0:
-            if structural_diff(old.get("elements") or [], body.elements) or locality_structural_diff(
-                old.get("localities") or [], body.localities
-            ):
+            if structural_diff(
+                old.get("elements") or [], body.elements
+            ) or locality_structural_diff(old.get("localities") or [], body.localities):
                 raise HTTPException(
                     409,
                     f"Hay {sold} ticket(s) vendido(s); no se pueden cambiar elementos estructurales del mapa.",
@@ -692,7 +737,9 @@ async def put_event_venue_layout(
         # element on the map — the "Localidades" tab lets organizers price a
         # locality before running "Asignar en Mapa".
         existing_pricing = {
-            lp.get("locality_id"): lp for lp in (row.locality_pricing or []) if lp.get("locality_id")
+            lp.get("locality_id"): lp
+            for lp in (row.locality_pricing or [])
+            if lp.get("locality_id")
         }
         new_pricing = []
         for loc in body.localities or []:
@@ -700,14 +747,20 @@ async def put_event_venue_layout(
             if not lid:
                 continue
             prev = existing_pricing.get(lid) or {}
-            new_pricing.append({
-                "locality_id": lid,
-                "price_cents": int(prev.get("price_cents") if prev.get("price_cents") is not None else loc.get("default_price_cents") or 0),
-                "service_fee_cents": int(prev.get("service_fee_cents") or 0),
-                "admin_fee_cents": int(prev.get("admin_fee_cents") or 0),
-                "vxs_cents": int(prev.get("vxs_cents") or 0),
-                "max_tickets_per_purchase": prev.get("max_tickets_per_purchase"),
-            })
+            new_pricing.append(
+                {
+                    "locality_id": lid,
+                    "price_cents": int(
+                        prev.get("price_cents")
+                        if prev.get("price_cents") is not None
+                        else loc.get("default_price_cents") or 0
+                    ),
+                    "service_fee_cents": int(prev.get("service_fee_cents") or 0),
+                    "admin_fee_cents": int(prev.get("admin_fee_cents") or 0),
+                    "vxs_cents": int(prev.get("vxs_cents") or 0),
+                    "max_tickets_per_purchase": prev.get("max_tickets_per_purchase"),
+                }
+            )
         row.locality_pricing = new_pricing
         flag_modified(row, "locality_pricing")
         await session.commit()
@@ -743,7 +796,9 @@ async def list_my_events(
             stmt = stmt.where(Event.status == status)
         if search:
             stmt = stmt.where(Event.title.ilike(f"%{re.escape(search)}%"))
-        total = await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        total = (
+            await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        )
         result = await session.execute(
             stmt.order_by(Event.priority.desc(), Event.starts_at.asc())
             .offset((page - 1) * limit)
@@ -780,19 +835,25 @@ async def get_discounts_report(event_id: str, user=Depends(get_current_user)):
         event = row_to_dict(row)
         orders_result = await session.execute(
             select(TicketOrder.discounts_applied, TicketOrder.total_cents).where(
-                TicketOrder.event_id == event_id, TicketOrder.status == "paid",
+                TicketOrder.event_id == event_id,
+                TicketOrder.status == "paid",
             )
         )
         orders = orders_result.all()
 
     stats: Dict[str, Dict[str, int]] = {}
     for discounts_applied, total_cents in orders:
-        for d in (discounts_applied or []):
+        for d in discounts_applied or []:
             rule_id = d.get("rule_id")
             if not rule_id:
                 continue
             s = stats.setdefault(
-                rule_id, {"orders_count": 0, "total_discount_cents": 0, "total_revenue_cents": 0}
+                rule_id,
+                {
+                    "orders_count": 0,
+                    "total_discount_cents": 0,
+                    "total_revenue_cents": 0,
+                },
             )
             s["orders_count"] += 1
             s["total_discount_cents"] += int(d.get("amount_cents") or 0)
@@ -801,23 +862,30 @@ async def get_discounts_report(event_id: str, user=Depends(get_current_user)):
     rules = (event.get("discounts") or {}).get("rules") or []
     report = []
     for r in rules:
-        s = stats.get(r["id"], {"orders_count": 0, "total_discount_cents": 0, "total_revenue_cents": 0})
-        report.append({
-            "rule_id": r["id"],
-            "name": r["name"],
-            "type": r["type"],
-            "code": r.get("code"),
-            "influencer_name": r.get("influencer_name"),
-            "channel": r.get("channel"),
-            "enabled": r.get("enabled"),
-            "max_uses": r.get("max_uses"),
-            "uses_count": r.get("uses_count") or 0,
-            **s,
-        })
+        s = stats.get(
+            r["id"],
+            {"orders_count": 0, "total_discount_cents": 0, "total_revenue_cents": 0},
+        )
+        report.append(
+            {
+                "rule_id": r["id"],
+                "name": r["name"],
+                "type": r["type"],
+                "code": r.get("code"),
+                "influencer_name": r.get("influencer_name"),
+                "channel": r.get("channel"),
+                "enabled": r.get("enabled"),
+                "max_uses": r.get("max_uses"),
+                "uses_count": r.get("uses_count") or 0,
+                **s,
+            }
+        )
     return {"rules": report}
 
 
-def _assert_access_type_allowed(plan_code: Optional[str], access_type: Optional[str]) -> None:
+def _assert_access_type_allowed(
+    plan_code: Optional[str], access_type: Optional[str]
+) -> None:
     if access_type == "verified_list":
         assert_feature(plan_code, "verified_lists")
     elif access_type == "access_code":
@@ -828,17 +896,26 @@ async def _active_catalog_codes(session) -> set[str]:
     from orm_models import PaymentMethodCatalog
 
     rows = (
-        await session.execute(
-            select(PaymentMethodCatalog.code).where(PaymentMethodCatalog.is_active.is_(True))
+        (
+            await session.execute(
+                select(PaymentMethodCatalog.code).where(
+                    PaymentMethodCatalog.is_active.is_(True)
+                )
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return set(rows)
 
 
 async def _normalize_payment_methods_or_400(
     session, pm: Optional[PaymentMethodConfig]
 ) -> dict:
-    from services.payment_methods import default_payment_methods, normalize_payment_methods
+    from services.payment_methods import (
+        default_payment_methods,
+        normalize_payment_methods,
+    )
 
     allowed = await _active_catalog_codes(session)
     raw = pm.model_dump() if pm is not None else default_payment_methods()
@@ -852,7 +929,9 @@ async def _normalize_payment_methods_or_400(
 async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
     org = await _require_approved_organizer(user)
     if payload.access_params:
-        _assert_access_type_allowed(org.get("plan_code"), payload.access_params.access_type)
+        _assert_access_type_allowed(
+            org.get("plan_code"), payload.access_params.access_type
+        )
     async with AsyncSessionLocal() as session:
         slug = await _next_event_slug(org["id"], normalize_slug(payload.title), session)
         payment_methods = await _normalize_payment_methods_or_400(
@@ -907,15 +986,18 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             multi_function_mode=payload.multi_function_mode,
             payment_methods=payment_methods,
             discounts=(
-                payload.discounts.model_dump(exclude_none=False) if payload.discounts
+                payload.discounts.model_dump(exclude_none=False)
+                if payload.discounts
                 else EventDiscounts().model_dump()
             ),
             access_params=(
-                payload.access_params.model_dump() if payload.access_params
+                payload.access_params.model_dump()
+                if payload.access_params
                 else EventAccessParams().model_dump()
             ),
             content=(
-                payload.content.model_dump() if payload.content
+                payload.content.model_dump()
+                if payload.content
                 else EventContent().model_dump()
             ),
             poster_url=None,
@@ -937,8 +1019,13 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
 
 
 _JSONB_FIELDS = {
-    "payment_methods", "discounts", "access_params", "content", "custom_questions",
-    "ticket_design", "courtesy_ticket_design",
+    "payment_methods",
+    "discounts",
+    "access_params",
+    "content",
+    "custom_questions",
+    "ticket_design",
+    "courtesy_ticket_design",
 }
 
 
@@ -954,7 +1041,11 @@ async def update_my_event(
         if not row:
             raise HTTPException(status_code=404, detail="Event not found")
 
-        diff = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+        diff = {
+            k: v
+            for k, v in payload.model_dump(exclude_unset=True).items()
+            if v is not None
+        }
 
         # Re-dump nested JSONB fields to preserve all values (e.g. None inside rules).
         if "discounts" in diff and payload.discounts is not None:
@@ -971,10 +1062,15 @@ async def update_my_event(
         if "content" in diff and payload.content is not None:
             diff["content"] = payload.content.model_dump()
         if "custom_questions" in diff and payload.custom_questions is not None:
-            diff["custom_questions"] = [q.model_dump() for q in payload.custom_questions]
+            diff["custom_questions"] = [
+                q.model_dump() for q in payload.custom_questions
+            ]
         if "ticket_design" in diff and payload.ticket_design is not None:
             diff["ticket_design"] = payload.ticket_design.model_dump()
-        if "courtesy_ticket_design" in diff and payload.courtesy_ticket_design is not None:
+        if (
+            "courtesy_ticket_design" in diff
+            and payload.courtesy_ticket_design is not None
+        ):
             diff["courtesy_ticket_design"] = payload.courtesy_ticket_design.model_dump()
 
         # Lock critical fields once tickets are sold.
@@ -995,7 +1091,9 @@ async def update_my_event(
         new_starts = diff.get("starts_at", row.starts_at)
         new_ends = diff.get("ends_at", row.ends_at)
         if new_starts and new_ends and new_ends <= new_starts:
-            raise HTTPException(status_code=422, detail="ends_at must be after starts_at")
+            raise HTTPException(
+                status_code=422, detail="ends_at must be after starts_at"
+            )
 
         for k, v in diff.items():
             setattr(row, k, v)
@@ -1076,13 +1174,27 @@ async def delete_event(event_id: str, user=Depends(get_current_user)):
         # uploads (EventAsset) or a leftover seat-picker preview can exist —
         # clean them up explicitly instead of letting the DELETE 500.
         await session.execute(delete(TicketScan).where(TicketScan.event_id == event_id))
-        await session.execute(delete(EventSeatAssignment).where(EventSeatAssignment.event_id == event_id))
+        await session.execute(
+            delete(EventSeatAssignment).where(EventSeatAssignment.event_id == event_id)
+        )
         await session.execute(delete(SeatHold).where(SeatHold.event_id == event_id))
-        await session.execute(delete(EventCapacityReservation).where(EventCapacityReservation.event_id == event_id))
+        await session.execute(
+            delete(EventCapacityReservation).where(
+                EventCapacityReservation.event_id == event_id
+            )
+        )
         await session.execute(delete(Ticket).where(Ticket.event_id == event_id))
-        await session.execute(delete(TicketOrder).where(TicketOrder.event_id == event_id))
-        await session.execute(delete(StaffEventAssignment).where(StaffEventAssignment.event_id == event_id))
-        await session.execute(delete(SeasonPassPurchase).where(SeasonPassPurchase.event_id == event_id))
+        await session.execute(
+            delete(TicketOrder).where(TicketOrder.event_id == event_id)
+        )
+        await session.execute(
+            delete(StaffEventAssignment).where(
+                StaffEventAssignment.event_id == event_id
+            )
+        )
+        await session.execute(
+            delete(SeasonPassPurchase).where(SeasonPassPurchase.event_id == event_id)
+        )
         await session.execute(delete(EventAsset).where(EventAsset.event_id == event_id))
         await session.delete(row)
         await session.commit()
@@ -1115,16 +1227,18 @@ async def _store_event_image(
     abs_path.write_bytes(content)
 
     async with AsyncSessionLocal() as _pg_asset:
-        _pg_asset.add(EventAsset(
-            id=asset_id,
-            event_id=event_id,
-            organizer_id=organizer_id,
-            kind=kind,
-            file_path=rel_path,
-            mime_type=file.content_type,
-            size_bytes=len(content),
-            uploaded_at=datetime.now(timezone.utc),
-        ))
+        _pg_asset.add(
+            EventAsset(
+                id=asset_id,
+                event_id=event_id,
+                organizer_id=organizer_id,
+                kind=kind,
+                file_path=rel_path,
+                mime_type=file.content_type,
+                size_bytes=len(content),
+                uploaded_at=datetime.now(timezone.utc),
+            )
+        )
         await _pg_asset.commit()
     return f"/api/events/assets/{asset_id}"
 
@@ -1228,7 +1342,9 @@ async def preview_ticket_design(
             raise HTTPException(status_code=404, detail="Event not found")
         event = row_to_dict(row)
 
-    design = (event.get("courtesy_ticket_design") if slot == "courtesy" else None) or event.get("ticket_design")
+    design = (
+        event.get("courtesy_ticket_design") if slot == "courtesy" else None
+    ) or event.get("ticket_design")
     if not design or not design.get("elements"):
         raise HTTPException(422, "Todavía no hay un diseño configurado.")
 
@@ -1245,8 +1361,13 @@ async def preview_ticket_design(
         "issued_at": _now().isoformat(),
     }
     from services.pdf_service import render_ticket_pdf_from_design
+
     pdf_bytes = await render_ticket_pdf_from_design(
-        design=design, event=event, order=sample_order, ticket=sample_ticket, organizer=org,
+        design=design,
+        event=event,
+        order=sample_order,
+        ticket=sample_ticket,
+        organizer=org,
     )
     return Response(
         content=pdf_bytes,
@@ -1373,12 +1494,12 @@ async def list_public_events(
     limit: int = Query(50, ge=1, le=100),
 ):
     async with AsyncSessionLocal() as pg:
-        org_id_row = (await pg.execute(
-            select(Organizer.id).where(Organizer.slug == tenant_slug)
-        )).first()
-        tenant_row = (await pg.execute(
-            select(Tenant.status).where(Tenant.slug == tenant_slug)
-        )).first()
+        org_id_row = (
+            await pg.execute(select(Organizer.id).where(Organizer.slug == tenant_slug))
+        ).first()
+        tenant_row = (
+            await pg.execute(select(Tenant.status).where(Tenant.slug == tenant_slug))
+        ).first()
     if not org_id_row:
         return {"items": [], "total": 0}
     if not tenant_row or tenant_row[0] != "active":
@@ -1403,15 +1524,17 @@ async def list_public_events(
 
 @public_router.get("/{tenant_slug}/{event_slug}")
 async def get_public_event(
-    tenant_slug: str, event_slug: str, function_id: Optional[str] = Query(default=None),
+    tenant_slug: str,
+    event_slug: str,
+    function_id: Optional[str] = Query(default=None),
 ):
     async with AsyncSessionLocal() as pg:
-        org_row = (await pg.execute(
-            select(Organizer).where(Organizer.slug == tenant_slug)
-        )).scalar_one_or_none()
-        tenant_row = (await pg.execute(
-            select(Tenant.status).where(Tenant.slug == tenant_slug)
-        )).first()
+        org_row = (
+            await pg.execute(select(Organizer).where(Organizer.slug == tenant_slug))
+        ).scalar_one_or_none()
+        tenant_row = (
+            await pg.execute(select(Tenant.status).where(Tenant.slug == tenant_slug))
+        ).first()
     if not org_row:
         raise HTTPException(status_code=404, detail="Not found")
     if not tenant_row or tenant_row[0] != "active":
@@ -1435,11 +1558,14 @@ async def get_public_event(
     }
     if event.get("venue_id"):
         from services.seats import compute_event_seats_status
+
         venue = await resolve_event_venue(event)
         if venue:
             event["venue"] = venue
             event["seats_status"] = await compute_event_seats_status(
-                event=event, venue=venue, function_id=function_id or "",
+                event=event,
+                venue=venue,
+                function_id=function_id or "",
             )
     return event
 
@@ -1463,6 +1589,7 @@ async def _validate_active_function(event_id: str, function_id: Optional[str]) -
     if not function_id:
         return
     from orm_models import EventFunction
+
     async with AsyncSessionLocal() as pg:
         func_row = await pg.scalar(
             select(EventFunction).where(
@@ -1472,16 +1599,20 @@ async def _validate_active_function(event_id: str, function_id: Optional[str]) -
             )
         )
     if not func_row:
-        raise HTTPException(422, "La función seleccionada no existe o ya no está disponible.")
+        raise HTTPException(
+            422, "La función seleccionada no existe o ya no está disponible."
+        )
 
 
 async def _resolve_public_event(tenant_slug: str, event_slug: str) -> tuple:
     async with AsyncSessionLocal() as pg:
-        org_row = (await pg.execute(
-            select(Organizer).where(
-                Organizer.slug == tenant_slug, Organizer.status == "approved"
+        org_row = (
+            await pg.execute(
+                select(Organizer).where(
+                    Organizer.slug == tenant_slug, Organizer.status == "approved"
+                )
             )
-        )).scalar_one_or_none()
+        ).scalar_one_or_none()
     if not org_row:
         raise HTTPException(404, "Organizador no encontrado")
     organizer = row_to_dict(org_row)
@@ -1508,6 +1639,7 @@ async def _resolve_public_event(tenant_slug: str, event_slug: str) -> tuple:
 @public_router.post("/{tenant_slug}/{event_slug}/seat-holds")
 async def public_create_holds(tenant_slug: str, event_slug: str, body: SeatHoldsBody):
     from services.seats import create_seat_holds, compute_event_seats_status
+
     _, event, venue = await _resolve_public_event(tenant_slug, event_slug)
     if not body.seat_ids:
         raise HTTPException(422, "Tenés que elegir al menos un asiento.")
@@ -1517,25 +1649,36 @@ async def public_create_holds(tenant_slug: str, event_slug: str, body: SeatHolds
     function_id = body.function_id or ""
     window = event.get("seat_holds_window_minutes") or 10
     holds = await create_seat_holds(
-        event_id=event["id"], venue_id=event["venue_id"], seat_ids=body.seat_ids,
-        session_token=body.session_token, buyer_email=body.buyer_email,
-        window_minutes=window, function_id=function_id, venue=venue,
+        event_id=event["id"],
+        venue_id=event["venue_id"],
+        seat_ids=body.seat_ids,
+        session_token=body.session_token,
+        buyer_email=body.buyer_email,
+        window_minutes=window,
+        function_id=function_id,
+        venue=venue,
     )
     return {
         "holds": holds,
         "expires_at": holds[0]["expires_at"] if holds else None,
         "seats_status": await compute_event_seats_status(
-            event=event, venue=venue, function_id=function_id,
+            event=event,
+            venue=venue,
+            function_id=function_id,
         ),
     }
 
 
 @public_router.delete("/{tenant_slug}/{event_slug}/seat-holds")
-async def public_release_holds(tenant_slug: str, event_slug: str, body: SeatHoldsRelease):
+async def public_release_holds(
+    tenant_slug: str, event_slug: str, body: SeatHoldsRelease
+):
     from services.seats import release_holds_for_session
+
     _, event, _venue = await _resolve_public_event(tenant_slug, event_slug)
     deleted = await release_holds_for_session(
-        event_id=event["id"], session_token=body.session_token,
+        event_id=event["id"],
+        session_token=body.session_token,
         function_id=body.function_id,
     )
     return {"released": deleted}
@@ -1601,7 +1744,11 @@ async def admin_list_events(
                 )
             )
             for row in org_result.all():
-                org_map[row.id] = {"id": row.id, "company_name": row.company_name, "slug": row.slug}
+                org_map[row.id] = {
+                    "id": row.id,
+                    "company_name": row.company_name,
+                    "slug": row.slug,
+                }
     sales_map: Dict[str, dict] = {}
     if evt_ids:
         async with AsyncSessionLocal() as _pg_sales:
@@ -1643,14 +1790,16 @@ async def admin_force_cancel(
         now = _now()
         row.status = "cancelled"
         row.updated_at = now
-        session.add(AuditLog(
-            id=str(uuid.uuid4()),
-            actor_user_id=admin["id"],
-            action="event.force_cancelled",
-            target_type="event",
-            target_id=event_id,
-            metadata_={"comment": payload.comment},
-            created_at=now,
-        ))
+        session.add(
+            AuditLog(
+                id=str(uuid.uuid4()),
+                actor_user_id=admin["id"],
+                action="event.force_cancelled",
+                target_type="event",
+                target_id=event_id,
+                metadata_={"comment": payload.comment},
+                created_at=now,
+            )
+        )
         await session.commit()
     return {"ok": True, "status": "cancelled"}

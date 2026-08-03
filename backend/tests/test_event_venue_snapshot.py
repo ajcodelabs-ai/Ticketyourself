@@ -1,4 +1,5 @@
 """Unit tests for event-scoped venue layout snapshots."""
+
 from __future__ import annotations
 
 import os
@@ -38,7 +39,12 @@ def _sample_venue():
             },
         ],
         "localities": [
-            {"id": "loc-platea", "name": "Platea", "color": "#112233", "default_price_cents": 1500},
+            {
+                "id": "loc-platea",
+                "name": "Platea",
+                "color": "#112233",
+                "default_price_cents": 1500,
+            },
         ],
         "capacity_calculated": 5,
     }
@@ -80,6 +86,7 @@ def test_layout_as_venue_and_resolve_prefers_snapshot():
     assert as_v["id"] == "venue-master-1"
     # resolve with layout present must not need DB
     import asyncio
+
     resolved = asyncio.run(resolve_event_venue(event))
     assert resolved["is_event_snapshot"] is True
     assert resolved["elements"][0]["seats_count"] == 8

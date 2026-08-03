@@ -1,4 +1,5 @@
 """Payment method catalog helpers — dual-read of legacy + enabled_codes."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -8,6 +9,8 @@ from typing import Any
 CATALOG_CODES = ("nuvei", "deuna", "transfer", "cash")
 GATEWAY_STUB_CODES = ("nuvei", "deuna")
 MANUAL_CODES = ("transfer", "cash")
+
+
 def resolve_enabled_codes(pm: dict | None) -> list[str]:
     """Return enabled payment codes for an event's payment_methods JSON.
 

@@ -276,7 +276,7 @@ export const venuesApi = {
     archive: (id) => api.post(`/venues/me/${id}/archive`).then((r) => r.data),
     lockStatus: (id) => api.get(`/venues/me/${id}/lock-status`).then((r) => r.data),
     listTemplates: () => api.get("/venues/me/templates").then((r) => r.data),
-    fromTemplate: (templateId, { name } = {}) =>
+    fromTemplate: (templateId, { name }: { name?: string } = {}) =>
         api
             .post(`/venues/me/from-template/${templateId}`, name ? { name } : {})
             .then((r) => r.data),

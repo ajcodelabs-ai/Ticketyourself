@@ -1,4 +1,5 @@
 """Idempotent seed of admin user, plans, demo organizers + tenants."""
+
 import logging
 import os
 import uuid
@@ -10,10 +11,25 @@ from sqlalchemy import delete, func, or_, select, update as sa_update
 from database import AsyncSessionLocal
 from db_helpers import get_event_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import (
-    ActivationEvent, DocumentType, Event, EventCapacityReservation, EventSeatAssignment,
-    Microsite, MicrositeAsset, Organizer, OrganizerAdminComment, OrganizerDocument,
-    PaymentMethodCatalog, RequiredDocumentSet, SeatHold, SubscriptionPlan, Tenant,
-    Ticket, TicketOrder, TicketScan, User,
+    ActivationEvent,
+    DocumentType,
+    Event,
+    EventCapacityReservation,
+    EventSeatAssignment,
+    Microsite,
+    MicrositeAsset,
+    Organizer,
+    OrganizerAdminComment,
+    OrganizerDocument,
+    PaymentMethodCatalog,
+    RequiredDocumentSet,
+    SeatHold,
+    SubscriptionPlan,
+    Tenant,
+    Ticket,
+    TicketOrder,
+    TicketScan,
+    User,
 )
 from security import hash_password, verify_password
 from services.required_documents import DEFAULTS as REQUIRED_DOC_DEFAULTS
@@ -237,7 +253,9 @@ async def _seed_payment_method_catalog() -> None:
     async with AsyncSessionLocal() as session:
         for item in PAYMENT_METHOD_CATALOG:
             existing = await session.scalar(
-                select(PaymentMethodCatalog).where(PaymentMethodCatalog.code == item["code"])
+                select(PaymentMethodCatalog).where(
+                    PaymentMethodCatalog.code == item["code"]
+                )
             )
             if existing is None:
                 session.add(
@@ -261,7 +279,9 @@ async def _seed_payment_method_catalog() -> None:
                 existing.description = item["description"]
                 existing.updated_at = now
         await session.commit()
-        logger.info("Seeded payment_method_catalog (%d methods)", len(PAYMENT_METHOD_CATALOG))
+        logger.info(
+            "Seeded payment_method_catalog (%d methods)", len(PAYMENT_METHOD_CATALOG)
+        )
 
 
 async def _seed_admin() -> None:
@@ -271,15 +291,17 @@ async def _seed_admin() -> None:
         result = await session.execute(select(User).where(User.email == admin_email))
         existing = result.scalar_one_or_none()
         if existing is None:
-            session.add(User(
-                id=str(uuid.uuid4()),
-                email=admin_email,
-                password_hash=hash_password(admin_password),
-                role="super_admin",
-                organizer_id=None,
-                created_at=datetime.now(timezone.utc),
-                last_login=None,
-            ))
+            session.add(
+                User(
+                    id=str(uuid.uuid4()),
+                    email=admin_email,
+                    password_hash=hash_password(admin_password),
+                    role="super_admin",
+                    organizer_id=None,
+                    created_at=datetime.now(timezone.utc),
+                    last_login=None,
+                )
+            )
             await session.commit()
             logger.info("Seeded super_admin %s", admin_email)
         else:
@@ -297,13 +319,15 @@ async def _seed_plans() -> None:
                 select(SubscriptionPlan).where(SubscriptionPlan.code == plan["code"])
             )
             if result.scalar_one_or_none() is None:
-                session.add(SubscriptionPlan(
-                    id=str(uuid.uuid4()),
-                    stripe_price_id=None,
-                    created_at=now,
-                    updated_at=now,
-                    **plan,
-                ))
+                session.add(
+                    SubscriptionPlan(
+                        id=str(uuid.uuid4()),
+                        stripe_price_id=None,
+                        created_at=now,
+                        updated_at=now,
+                        **plan,
+                    )
+                )
         await session.commit()
     logger.info("Seeded %d plans", len(PLANS))
 
@@ -326,12 +350,18 @@ async def _seed_required_documents() -> None:
     """Default mandatory doc per org_type, only if the table is still empty
     (an admin may have already configured it via /admin/configuracion)."""
     async with AsyncSessionLocal() as session:
-        existing = await session.scalar(select(func.count(RequiredDocumentSet.org_type)))
+        existing = await session.scalar(
+            select(func.count(RequiredDocumentSet.org_type))
+        )
         if existing:
             return
         now = datetime.now(timezone.utc)
         for org_type, doc_types in REQUIRED_DOC_DEFAULTS.items():
-            session.add(RequiredDocumentSet(org_type=org_type, doc_types=doc_types, updated_at=now))
+            session.add(
+                RequiredDocumentSet(
+                    org_type=org_type, doc_types=doc_types, updated_at=now
+                )
+            )
         await session.commit()
     logger.info("Seeded default required-document rules")
 
@@ -363,25 +393,35 @@ async def _seed_demo_organizers() -> None:
             tenant_status = "active" if od["status"] == "approved" else "inactive"
 
             # Tenant → PG (upsert)
-            tenant_result = await session.execute(select(Tenant).where(Tenant.slug == slug))
+            tenant_result = await session.execute(
+                select(Tenant).where(Tenant.slug == slug)
+            )
             tenant_row = tenant_result.scalar_one_or_none()
             if tenant_row:
                 tenant_row.name = od["company_name"]
                 tenant_row.status = tenant_status
             else:
-                session.add(Tenant(slug=slug, name=od["company_name"],
-                                   status=tenant_status, created_at=now))
+                session.add(
+                    Tenant(
+                        slug=slug,
+                        name=od["company_name"],
+                        status=tenant_status,
+                        created_at=now,
+                    )
+                )
 
             # User → PG (flush before organizer: organizers.user_id → users.id)
-            session.add(User(
-                id=user_id,
-                email=od["user_email"].lower(),
-                password_hash=hash_password(od["user_password"]),
-                role="organizer",
-                organizer_id=organizer_id,
-                created_at=now,
-                last_login=None,
-            ))
+            session.add(
+                User(
+                    id=user_id,
+                    email=od["user_email"].lower(),
+                    password_hash=hash_password(od["user_password"]),
+                    role="organizer",
+                    organizer_id=organizer_id,
+                    created_at=now,
+                    last_login=None,
+                )
+            )
             await session.flush()
 
             # Organizer → PG
@@ -409,29 +449,47 @@ async def _seed_demo_organizers() -> None:
 
             # Admin comments → PG
             if od.get("approval_comment"):
-                session.add(OrganizerAdminComment(
-                    id=str(uuid.uuid4()), organizer_id=organizer_id,
-                    admin_id="system", admin_email="system@ticketyourself.com",
-                    comment=od["approval_comment"], created_at=now,
-                ))
+                session.add(
+                    OrganizerAdminComment(
+                        id=str(uuid.uuid4()),
+                        organizer_id=organizer_id,
+                        admin_id="system",
+                        admin_email="system@ticketyourself.com",
+                        comment=od["approval_comment"],
+                        created_at=now,
+                    )
+                )
             if od.get("rejection_reason"):
-                session.add(OrganizerAdminComment(
-                    id=str(uuid.uuid4()), organizer_id=organizer_id,
-                    admin_id="system", admin_email="system@ticketyourself.com",
-                    comment=od["rejection_reason"], created_at=now,
-                ))
+                session.add(
+                    OrganizerAdminComment(
+                        id=str(uuid.uuid4()),
+                        organizer_id=organizer_id,
+                        admin_id="system",
+                        admin_email="system@ticketyourself.com",
+                        comment=od["rejection_reason"],
+                        created_at=now,
+                    )
+                )
 
             # Documents (stub) → PG
             for doc in od.get("documents", []):
-                session.add(OrganizerDocument(
-                    id=str(uuid.uuid4()), organizer_id=organizer_id,
-                    doc_type=doc["doc_type"], file_path=None,
-                    original_filename=doc["original_filename"],
-                    mime_type="application/pdf", size_bytes=12345,
-                    uploaded_at=now, is_demo=True,
-                ))
+                session.add(
+                    OrganizerDocument(
+                        id=str(uuid.uuid4()),
+                        organizer_id=organizer_id,
+                        doc_type=doc["doc_type"],
+                        file_path=None,
+                        original_filename=doc["original_filename"],
+                        mime_type="application/pdf",
+                        size_bytes=12345,
+                        uploaded_at=now,
+                        is_demo=True,
+                    )
+                )
 
-            logger.info("Seeded demo organizer %s (%s)", od["company_name"], od["status"])
+            logger.info(
+                "Seeded demo organizer %s (%s)", od["company_name"], od["status"]
+            )
 
         await session.commit()
 
@@ -488,17 +546,27 @@ async def _reset_demo_organizers() -> None:
                 await session.delete(c)
             await session.flush()
             if od.get("approval_comment"):
-                session.add(OrganizerAdminComment(
-                    id=str(uuid.uuid4()), organizer_id=organizer_id,
-                    admin_id="system", admin_email="system@ticketyourself.com",
-                    comment=od["approval_comment"], created_at=now,
-                ))
+                session.add(
+                    OrganizerAdminComment(
+                        id=str(uuid.uuid4()),
+                        organizer_id=organizer_id,
+                        admin_id="system",
+                        admin_email="system@ticketyourself.com",
+                        comment=od["approval_comment"],
+                        created_at=now,
+                    )
+                )
             if od.get("rejection_reason"):
-                session.add(OrganizerAdminComment(
-                    id=str(uuid.uuid4()), organizer_id=organizer_id,
-                    admin_id="system", admin_email="system@ticketyourself.com",
-                    comment=od["rejection_reason"], created_at=now,
-                ))
+                session.add(
+                    OrganizerAdminComment(
+                        id=str(uuid.uuid4()),
+                        organizer_id=organizer_id,
+                        admin_id="system",
+                        admin_email="system@ticketyourself.com",
+                        comment=od["rejection_reason"],
+                        created_at=now,
+                    )
+                )
 
             tenant_result = await session.execute(
                 select(Tenant).where(Tenant.slug == od["slug"])
@@ -609,7 +677,12 @@ async def _cleanup_ephemeral_orders() -> None:
             )
         )
         orders = [
-            {"id": r.id, "event_id": r.event_id, "status": r.status, "quantity_total": r.quantity_total}
+            {
+                "id": r.id,
+                "event_id": r.event_id,
+                "status": r.status,
+                "quantity_total": r.quantity_total,
+            }
             for r in orders_result.all()
         ]
         if not orders:
@@ -620,9 +693,9 @@ async def _cleanup_ephemeral_orders() -> None:
         paid_per_event: dict[str, int] = {}
         for o in orders:
             if o.get("status") == "paid":
-                paid_per_event[o["event_id"]] = (
-                    paid_per_event.get(o["event_id"], 0) + o.get("quantity_total", 0)
-                )
+                paid_per_event[o["event_id"]] = paid_per_event.get(
+                    o["event_id"], 0
+                ) + o.get("quantity_total", 0)
         for event_id, decrement in paid_per_event.items():
             await _pg.execute(
                 sa_update(Event)
@@ -631,7 +704,9 @@ async def _cleanup_ephemeral_orders() -> None:
             )
 
         res_result = await _pg.execute(
-            delete(EventCapacityReservation).where(EventCapacityReservation.order_id.in_(order_ids))
+            delete(EventCapacityReservation).where(
+                EventCapacityReservation.order_id.in_(order_ids)
+            )
         )
         ticket_ids_result = await _pg.execute(
             select(Ticket.id).where(Ticket.order_id.in_(order_ids))
@@ -669,11 +744,15 @@ async def _cleanup_ephemeral_test_data() -> None:
     seed_slugs = {od["slug"] for od in DEMO_ORGANIZERS}
 
     async with AsyncSessionLocal() as session:
-        slug_conditions = [Organizer.slug.ilike(f"{p}%") for p in _EPHEMERAL_SLUG_PREFIXES]
-        email_conditions = [Organizer.email.ilike(f"{p}%") for p in _EPHEMERAL_EMAIL_PREFIXES]
-        stmt = select(Organizer.id, Organizer.user_id, Organizer.slug, Organizer.email).where(
-            or_(*slug_conditions, *email_conditions)
-        )
+        slug_conditions = [
+            Organizer.slug.ilike(f"{p}%") for p in _EPHEMERAL_SLUG_PREFIXES
+        ]
+        email_conditions = [
+            Organizer.email.ilike(f"{p}%") for p in _EPHEMERAL_EMAIL_PREFIXES
+        ]
+        stmt = select(
+            Organizer.id, Organizer.user_id, Organizer.slug, Organizer.email
+        ).where(or_(*slug_conditions, *email_conditions))
         result = await session.execute(stmt)
         orgs = [
             {"id": r.id, "user_id": r.user_id, "slug": r.slug, "email": r.email}
@@ -688,13 +767,22 @@ async def _cleanup_ephemeral_test_data() -> None:
         slugs = [o["slug"] for o in orgs]
 
         # Phase-6 collections now in PG
-        await session.execute(delete(Microsite).where(Microsite.organizer_id.in_(org_ids)))
-        await session.execute(delete(MicrositeAsset).where(MicrositeAsset.organizer_id.in_(org_ids)))
-        await session.execute(delete(ActivationEvent).where(ActivationEvent.organizer_id.in_(org_ids)))
+        await session.execute(
+            delete(Microsite).where(Microsite.organizer_id.in_(org_ids))
+        )
+        await session.execute(
+            delete(MicrositeAsset).where(MicrositeAsset.organizer_id.in_(org_ids))
+        )
+        await session.execute(
+            delete(ActivationEvent).where(ActivationEvent.organizer_id.in_(org_ids))
+        )
 
         # PG deletes — Venue/Event before Organizer (FK constraints)
         from orm_models import Venue as _CleanupVenue
-        await session.execute(delete(_CleanupVenue).where(_CleanupVenue.organizer_id.in_(org_ids)))
+
+        await session.execute(
+            delete(_CleanupVenue).where(_CleanupVenue.organizer_id.in_(org_ids))
+        )
         await session.execute(delete(Event).where(Event.organizer_id.in_(org_ids)))
         await session.execute(delete(Organizer).where(Organizer.id.in_(org_ids)))
         await session.execute(delete(User).where(User.id.in_(user_ids)))
@@ -789,25 +877,33 @@ async def _seed_demo_microsites() -> None:
                     _flag_modified(existing_row, "social_links")
                     _flag_modified(existing_row, "sections_enabled")
                     await _ms_pg.commit()
-                    logger.info("Reset demo microsite for %s (published=%s)", slug, existing_row.published)
+                    logger.info(
+                        "Reset demo microsite for %s (published=%s)",
+                        slug,
+                        existing_row.published,
+                    )
                 continue
-            _ms_pg.add(Microsite(
-                id=doc["id"],
-                organizer_id=organizer["id"],
-                slug=slug,
-                template=doc.get("template"),
-                branding=doc.get("branding", {}),
-                content=doc.get("content", {}),
-                social_links=doc.get("social_links", {}),
-                sections_enabled=doc.get("sections_enabled", {}),
-                blocks=doc.get("blocks", []),
-                seo=doc.get("seo", {}),
-                published=doc.get("published", False),
-                created_at=now_dt,
-                updated_at=now_dt,
-            ))
+            _ms_pg.add(
+                Microsite(
+                    id=doc["id"],
+                    organizer_id=organizer["id"],
+                    slug=slug,
+                    template=doc.get("template"),
+                    branding=doc.get("branding", {}),
+                    content=doc.get("content", {}),
+                    social_links=doc.get("social_links", {}),
+                    sections_enabled=doc.get("sections_enabled", {}),
+                    blocks=doc.get("blocks", []),
+                    seo=doc.get("seo", {}),
+                    published=doc.get("published", False),
+                    created_at=now_dt,
+                    updated_at=now_dt,
+                )
+            )
             await _ms_pg.commit()
-        logger.info("Seeded microsite for %s (published=%s)", slug, doc.get("published", False))
+        logger.info(
+            "Seeded microsite for %s (published=%s)", slug, doc.get("published", False)
+        )
 
 
 async def _seed_demo_events() -> None:
@@ -918,12 +1014,18 @@ async def _seed_demo_events() -> None:
     }
     _demo_access_params = {
         "access_type": "open",
-        "max_per_purchase": 10, "max_per_email": None,
-        "refund_window_hours": 24, "show_buyer_name_on_ticket": True,
+        "max_per_purchase": 10,
+        "max_per_email": None,
+        "refund_window_hours": 24,
+        "show_buyer_name_on_ticket": True,
     }
 
     for s in spec:
-        _pm = _demo_payment_methods_full if s["slug"] == "concierto-acustico-demo" else _demo_payment_methods_stripe
+        _pm = (
+            _demo_payment_methods_full
+            if s["slug"] == "concierto-acustico-demo"
+            else _demo_payment_methods_stripe
+        )
         now_dt = datetime.now(timezone.utc)
         async with AsyncSessionLocal() as session:
             row = await session.scalar(
@@ -960,42 +1062,44 @@ async def _seed_demo_events() -> None:
                 _flag_modified(row, "discounts")
                 _flag_modified(row, "access_params")
             else:
-                session.add(Event(
-                    id=str(uuid.uuid4()),
-                    organizer_id=organizer["id"],
-                    tenant_slug="demo-org",
-                    slug=s["slug"],
-                    title=s["title"],
-                    description=s["description"],
-                    short_description=s["short_description"],
-                    category=s["category"],
-                    venue_name=s["venue_name"],
-                    venue_address=s["venue_address"],
-                    venue_city=s["venue_city"],
-                    venue_country="Ecuador",
-                    starts_at=s["starts_at"],
-                    ends_at=s["ends_at"],
-                    timezone="America/Guayaquil",
-                    sales_start=None,
-                    sales_end=None,
-                    pricing_type=s["pricing_type"],
-                    base_price_cents=s["base_price_cents"],
-                    currency="USD",
-                    capacity=s["capacity"],
-                    visibility="public",
-                    status="published",
-                    tickets_sold=0,
-                    poster_url=s["poster_url"],
-                    banner_url=None,
-                    gallery_urls=[],
-                    locality_pricing=[],
-                    payment_methods=_pm,
-                    discounts=_demo_discounts,
-                    access_params=_demo_access_params,
-                    created_at=now_dt,
-                    updated_at=now_dt,
-                    published_at=now_dt,
-                ))
+                session.add(
+                    Event(
+                        id=str(uuid.uuid4()),
+                        organizer_id=organizer["id"],
+                        tenant_slug="demo-org",
+                        slug=s["slug"],
+                        title=s["title"],
+                        description=s["description"],
+                        short_description=s["short_description"],
+                        category=s["category"],
+                        venue_name=s["venue_name"],
+                        venue_address=s["venue_address"],
+                        venue_city=s["venue_city"],
+                        venue_country="Ecuador",
+                        starts_at=s["starts_at"],
+                        ends_at=s["ends_at"],
+                        timezone="America/Guayaquil",
+                        sales_start=None,
+                        sales_end=None,
+                        pricing_type=s["pricing_type"],
+                        base_price_cents=s["base_price_cents"],
+                        currency="USD",
+                        capacity=s["capacity"],
+                        visibility="public",
+                        status="published",
+                        tickets_sold=0,
+                        poster_url=s["poster_url"],
+                        banner_url=None,
+                        gallery_urls=[],
+                        locality_pricing=[],
+                        payment_methods=_pm,
+                        discounts=_demo_discounts,
+                        access_params=_demo_access_params,
+                        created_at=now_dt,
+                        updated_at=now_dt,
+                        published_at=now_dt,
+                    )
+                )
             await session.commit()
         logger.info("Seeded demo event %s", s["slug"])
 
@@ -1090,10 +1194,14 @@ async def _seed_demo_manual_orders() -> None:
                 ttl_minutes=order_service.MANUAL_RESERVATION_TTL_HOURS * 60,
             )
             logger.info(
-                "Seeded demo manual order %s (%s)", order["order_number"], spec["payment_method"]
+                "Seeded demo manual order %s (%s)",
+                order["order_number"],
+                spec["payment_method"],
             )
         except Exception:  # noqa: BLE001
-            logger.exception("Could not seed manual order for %s", spec["payment_method"])
+            logger.exception(
+                "Could not seed manual order for %s", spec["payment_method"]
+            )
 
 
 async def _seed_demo_venues() -> None:
@@ -1147,128 +1255,241 @@ async def _seed_demo_venues() -> None:
     # ── 1. Teatro Demo (shape only — localities belong to events) ─────────
     teatro_elements = [
         {
-            "id": str(uuid.uuid4()), "kind": "stage",
-            "x": 250, "y": 50, "rotation": 0, "label": "Escenario",
-            "locality_id": None, "z_index": 0,
-            "width": 700, "height": 80, "color": "#9CA3AF",
+            "id": str(uuid.uuid4()),
+            "kind": "stage",
+            "x": 250,
+            "y": 50,
+            "rotation": 0,
+            "label": "Escenario",
+            "locality_id": None,
+            "z_index": 0,
+            "width": 700,
+            "height": 80,
+            "color": "#9CA3AF",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 300, "y": 180, "rotation": 0, "label": "Fila A",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 10, "seat_spacing": 30, "seat_radius": 11,
-            "row_label": "A", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 300,
+            "y": 180,
+            "rotation": 0,
+            "label": "Fila A",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 10,
+            "seat_spacing": 30,
+            "seat_radius": 11,
+            "row_label": "A",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 270, "y": 240, "rotation": 0, "label": "Fila B",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 12, "seat_spacing": 30, "seat_radius": 11,
-            "row_label": "B", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 270,
+            "y": 240,
+            "rotation": 0,
+            "label": "Fila B",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 12,
+            "seat_spacing": 30,
+            "seat_radius": 11,
+            "row_label": "B",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 270, "y": 300, "rotation": 0, "label": "Fila C",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 12, "seat_spacing": 30, "seat_radius": 11,
-            "row_label": "C", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 270,
+            "y": 300,
+            "rotation": 0,
+            "label": "Fila C",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 12,
+            "seat_spacing": 30,
+            "seat_radius": 11,
+            "row_label": "C",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "unnumbered_zone",
-            "x": 200, "y": 540, "rotation": 0, "label": "Gradería",
-            "locality_id": None, "z_index": 1,
-            "width": 800, "height": 150, "capacity": 50, "color": None,
+            "id": str(uuid.uuid4()),
+            "kind": "unnumbered_zone",
+            "x": 200,
+            "y": 540,
+            "rotation": 0,
+            "label": "Gradería",
+            "locality_id": None,
+            "z_index": 1,
+            "width": 800,
+            "height": 150,
+            "capacity": 50,
+            "color": None,
         },
     ]
     teatro_cap = sum(
-        (e.get("seats_count") or 0) if e["kind"] == "seat_row_straight" else (e.get("capacity") or 0)
+        (
+            (e.get("seats_count") or 0)
+            if e["kind"] == "seat_row_straight"
+            else (e.get("capacity") or 0)
+        )
         for e in teatro_elements
     )
     async with AsyncSessionLocal() as session:
-        session.add(Venue(
-            id=str(uuid.uuid4()),
-            organizer_id=organizer["id"],
-            tenant_slug="demo-org",
-            name="Teatro Demo",
-            slug="teatro-demo",
-            description="Sala chica con escenario frontal, ideal para shows íntimos.",
-            type="theater",
-            canvas={"width": 1200, "height": 800, "background_color": "#FAFAFA", "grid_size": 20},
-            elements=teatro_elements,
-            localities=[],
-            capacity_calculated=teatro_cap,
-            status="published",
-            is_template=False,
-            created_at=now,
-            updated_at=now,
-            published_at=now,
-        ))
+        session.add(
+            Venue(
+                id=str(uuid.uuid4()),
+                organizer_id=organizer["id"],
+                tenant_slug="demo-org",
+                name="Teatro Demo",
+                slug="teatro-demo",
+                description="Sala chica con escenario frontal, ideal para shows íntimos.",
+                type="theater",
+                canvas={
+                    "width": 1200,
+                    "height": 800,
+                    "background_color": "#FAFAFA",
+                    "grid_size": 20,
+                },
+                elements=teatro_elements,
+                localities=[],
+                capacity_calculated=teatro_cap,
+                status="published",
+                is_template=False,
+                created_at=now,
+                updated_at=now,
+                published_at=now,
+            )
+        )
         await session.commit()
 
     # ── 2. Auditorio Pequeño (shape only — Phase 6b element kinds) ────────
     aud_elements = [
         {
-            "id": str(uuid.uuid4()), "kind": "stage",
-            "x": 240, "y": 40, "rotation": 0, "label": "Escenario",
-            "locality_id": None, "z_index": 0,
-            "width": 320, "height": 60, "color": "#9CA3AF",
+            "id": str(uuid.uuid4()),
+            "kind": "stage",
+            "x": 240,
+            "y": 40,
+            "rotation": 0,
+            "label": "Escenario",
+            "locality_id": None,
+            "z_index": 0,
+            "width": 320,
+            "height": 60,
+            "color": "#9CA3AF",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 240, "y": 160, "rotation": 0, "label": "Fila A",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 10, "seat_spacing": 28, "seat_radius": 10,
-            "row_label": "A", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 240,
+            "y": 160,
+            "rotation": 0,
+            "label": "Fila A",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 10,
+            "seat_spacing": 28,
+            "seat_radius": 10,
+            "row_label": "A",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 240, "y": 200, "rotation": 0, "label": "Fila B",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 10, "seat_spacing": 28, "seat_radius": 10,
-            "row_label": "B", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 240,
+            "y": 200,
+            "rotation": 0,
+            "label": "Fila B",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 10,
+            "seat_spacing": 28,
+            "seat_radius": 10,
+            "row_label": "B",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_curved",
-            "x": 400, "y": 360, "rotation": 0, "label": "Fila C (curva)",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 10, "seat_spacing": 26, "seat_radius": 10,
-            "curve_radius": 220, "curve_arc_degrees": 80,
-            "row_label": "C", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_curved",
+            "x": 400,
+            "y": 360,
+            "rotation": 0,
+            "label": "Fila C (curva)",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 10,
+            "seat_spacing": 26,
+            "seat_radius": 10,
+            "curve_radius": 220,
+            "curve_arc_degrees": 80,
+            "row_label": "C",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "table_round",
-            "x": 180, "y": 460, "rotation": 0, "label": "Mesa 1",
-            "locality_id": None, "z_index": 1,
-            "table_radius": 40, "chairs_count": 6,
-            "chair_radius": 10, "chair_distance": 22,
+            "id": str(uuid.uuid4()),
+            "kind": "table_round",
+            "x": 180,
+            "y": 460,
+            "rotation": 0,
+            "label": "Mesa 1",
+            "locality_id": None,
+            "z_index": 1,
+            "table_radius": 40,
+            "chairs_count": 6,
+            "chair_radius": 10,
+            "chair_distance": 22,
         },
         {
-            "id": str(uuid.uuid4()), "kind": "table_round",
-            "x": 320, "y": 460, "rotation": 0, "label": "Mesa 2",
-            "locality_id": None, "z_index": 1,
-            "table_radius": 40, "chairs_count": 6,
-            "chair_radius": 10, "chair_distance": 22,
+            "id": str(uuid.uuid4()),
+            "kind": "table_round",
+            "x": 320,
+            "y": 460,
+            "rotation": 0,
+            "label": "Mesa 2",
+            "locality_id": None,
+            "z_index": 1,
+            "table_radius": 40,
+            "chairs_count": 6,
+            "chair_radius": 10,
+            "chair_distance": 22,
         },
         {
-            "id": str(uuid.uuid4()), "kind": "table_rect",
-            "x": 480, "y": 440, "rotation": 0, "label": "Mesa larga",
-            "locality_id": None, "z_index": 1,
-            "width": 160, "height": 60,
+            "id": str(uuid.uuid4()),
+            "kind": "table_rect",
+            "x": 480,
+            "y": 440,
+            "rotation": 0,
+            "label": "Mesa larga",
+            "locality_id": None,
+            "z_index": 1,
+            "width": 160,
+            "height": 60,
             "chairs_per_side": {"top": 2, "bottom": 2, "left": 0, "right": 0},
-            "chair_radius": 10, "chair_distance": 20,
+            "chair_radius": 10,
+            "chair_distance": 20,
         },
         *[
             {
-                "id": str(uuid.uuid4()), "kind": "seat_individual",
-                "x": 240 + i * 60, "y": 115, "rotation": 0,
+                "id": str(uuid.uuid4()),
+                "kind": "seat_individual",
+                "x": 240 + i * 60,
+                "y": 115,
+                "rotation": 0,
                 "label": f"VIP-{i + 1}",
-                "locality_id": None, "z_index": 2,
+                "locality_id": None,
+                "z_index": 2,
                 "seat_radius": 12,
             }
             for i in range(4)
@@ -1284,26 +1505,35 @@ async def _seed_demo_venues() -> None:
             aud_cap += e.get("chairs_count", 0)
         elif e["kind"] == "table_rect":
             cps = e.get("chairs_per_side") or {}
-            aud_cap += sum(int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left"))
+            aud_cap += sum(
+                int(cps.get(s) or 0) for s in ("top", "right", "bottom", "left")
+            )
     async with AsyncSessionLocal() as session:
-        session.add(Venue(
-            id=str(uuid.uuid4()),
-            organizer_id=organizer["id"],
-            tenant_slug="demo-org",
-            name="Auditorio Pequeño",
-            slug="auditorio-pequeno",
-            description="Showcase de Fase 6b: filas rectas, fila curva, mesas redondas, mesa rectangular y asientos VIP individuales.",
-            type="auditorium",
-            canvas={"width": 800, "height": 600, "background_color": "#FAFAFA", "grid_size": 20},
-            elements=aud_elements,
-            localities=[],
-            capacity_calculated=aud_cap,
-            status="published",
-            is_template=False,
-            created_at=now,
-            updated_at=now,
-            published_at=now,
-        ))
+        session.add(
+            Venue(
+                id=str(uuid.uuid4()),
+                organizer_id=organizer["id"],
+                tenant_slug="demo-org",
+                name="Auditorio Pequeño",
+                slug="auditorio-pequeno",
+                description="Showcase de Fase 6b: filas rectas, fila curva, mesas redondas, mesa rectangular y asientos VIP individuales.",
+                type="auditorium",
+                canvas={
+                    "width": 800,
+                    "height": 600,
+                    "background_color": "#FAFAFA",
+                    "grid_size": 20,
+                },
+                elements=aud_elements,
+                localities=[],
+                capacity_calculated=aud_cap,
+                status="published",
+                is_template=False,
+                created_at=now,
+                updated_at=now,
+                published_at=now,
+            )
+        )
         await session.commit()
     logger.info("Seeded 2 demo venues for demo-org (Teatro Demo + Auditorio Pequeño)")
 
@@ -1325,7 +1555,12 @@ async def _seed_venue_templates() -> None:
             "name": "Teatro clásico",
             "description": "Escenario frontal, platea numerada y gradería general. Ideal para obras y conciertos íntimos.",
             "type": "theater",
-            "canvas": {"width": 1200, "height": 800, "background_color": "#FAFAFA", "grid_size": 20},
+            "canvas": {
+                "width": 1200,
+                "height": 800,
+                "background_color": "#FAFAFA",
+                "grid_size": 20,
+            },
             "build": "_build_template_teatro_clasico",
         },
         {
@@ -1333,7 +1568,12 @@ async def _seed_venue_templates() -> None:
             "name": "Auditorio para conferencias",
             "description": "Escenario, filas numeradas y zona VIP al frente. Pensado para charlas y presentaciones.",
             "type": "auditorium",
-            "canvas": {"width": 1000, "height": 700, "background_color": "#FAFAFA", "grid_size": 20},
+            "canvas": {
+                "width": 1000,
+                "height": 700,
+                "background_color": "#FAFAFA",
+                "grid_size": 20,
+            },
             "build": "_build_template_auditorio",
         },
     ]
@@ -1357,26 +1597,32 @@ async def _seed_venue_templates() -> None:
     async with AsyncSessionLocal() as session:
         for spec in to_create:
             localities, elements, capacity = _build_venue_template_layout(spec["build"])
-            session.add(Venue(
-                id=str(uuid.uuid4()),
-                organizer_id=organizer["id"],
-                tenant_slug=organizer["slug"],
-                name=spec["name"],
-                slug=spec["slug"],
-                description=spec["description"],
-                type=spec["type"],
-                canvas=spec["canvas"],
-                elements=elements,
-                localities=localities,
-                capacity_calculated=capacity,
-                status="draft",
-                is_template=True,
-                created_at=now,
-                updated_at=now,
-                published_at=None,
-            ))
+            session.add(
+                Venue(
+                    id=str(uuid.uuid4()),
+                    organizer_id=organizer["id"],
+                    tenant_slug=organizer["slug"],
+                    name=spec["name"],
+                    slug=spec["slug"],
+                    description=spec["description"],
+                    type=spec["type"],
+                    canvas=spec["canvas"],
+                    elements=elements,
+                    localities=localities,
+                    capacity_calculated=capacity,
+                    status="draft",
+                    is_template=True,
+                    created_at=now,
+                    updated_at=now,
+                    published_at=None,
+                )
+            )
         await session.commit()
-    logger.info("Seeded %d venue template(s): %s", len(to_create), ", ".join(s["name"] for s in to_create))
+    logger.info(
+        "Seeded %d venue template(s): %s",
+        len(to_create),
+        ", ".join(s["name"] for s in to_create),
+    )
 
 
 def _build_venue_template_layout(build_key: str):
@@ -1392,101 +1638,194 @@ def _build_template_teatro_clasico():
     """Shape-only template. Localities are configured per event."""
     elements = [
         {
-            "id": str(uuid.uuid4()), "kind": "stage",
-            "x": 280, "y": 60, "rotation": 0, "label": "Escenario",
-            "locality_id": None, "z_index": 0,
-            "width": 640, "height": 80, "color": "#9CA3AF",
+            "id": str(uuid.uuid4()),
+            "kind": "stage",
+            "x": 280,
+            "y": 60,
+            "rotation": 0,
+            "label": "Escenario",
+            "locality_id": None,
+            "z_index": 0,
+            "width": 640,
+            "height": 80,
+            "color": "#9CA3AF",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 320, "y": 200, "rotation": 0, "label": "Fila A",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 12, "seat_spacing": 28, "seat_radius": 11,
-            "row_label": "A", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 320,
+            "y": 200,
+            "rotation": 0,
+            "label": "Fila A",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 12,
+            "seat_spacing": 28,
+            "seat_radius": 11,
+            "row_label": "A",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 300, "y": 260, "rotation": 0, "label": "Fila B",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 14, "seat_spacing": 28, "seat_radius": 11,
-            "row_label": "B", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 300,
+            "y": 260,
+            "rotation": 0,
+            "label": "Fila B",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 14,
+            "seat_spacing": 28,
+            "seat_radius": 11,
+            "row_label": "B",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 280, "y": 320, "rotation": 0, "label": "Fila C",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 16, "seat_spacing": 28, "seat_radius": 11,
-            "row_label": "C", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 280,
+            "y": 320,
+            "rotation": 0,
+            "label": "Fila C",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 16,
+            "seat_spacing": 28,
+            "seat_radius": 11,
+            "row_label": "C",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "unnumbered_zone",
-            "x": 220, "y": 520, "rotation": 0, "label": "Gradería",
-            "locality_id": None, "z_index": 1,
-            "width": 760, "height": 140, "capacity": 80, "color": None,
+            "id": str(uuid.uuid4()),
+            "kind": "unnumbered_zone",
+            "x": 220,
+            "y": 520,
+            "rotation": 0,
+            "label": "Gradería",
+            "locality_id": None,
+            "z_index": 1,
+            "width": 760,
+            "height": 140,
+            "capacity": 80,
+            "color": None,
         },
     ]
     capacity = sum(
-        (e.get("seats_count") or 0) if e["kind"] == "seat_row_straight" else (e.get("capacity") or 0)
+        (
+            (e.get("seats_count") or 0)
+            if e["kind"] == "seat_row_straight"
+            else (e.get("capacity") or 0)
+        )
         for e in elements
     )
     return [], elements, capacity
-
 
 
 def _build_template_auditorio():
     """Shape-only template. Localities are configured per event."""
     elements = [
         {
-            "id": str(uuid.uuid4()), "kind": "stage",
-            "x": 200, "y": 40, "rotation": 0, "label": "Escenario",
-            "locality_id": None, "z_index": 0,
-            "width": 600, "height": 70, "color": "#9CA3AF",
+            "id": str(uuid.uuid4()),
+            "kind": "stage",
+            "x": 200,
+            "y": 40,
+            "rotation": 0,
+            "label": "Escenario",
+            "locality_id": None,
+            "z_index": 0,
+            "width": 600,
+            "height": 70,
+            "color": "#9CA3AF",
         },
         *[
             {
-                "id": str(uuid.uuid4()), "kind": "seat_individual",
-                "x": 220 + i * 55, "y": 130, "rotation": 0,
+                "id": str(uuid.uuid4()),
+                "kind": "seat_individual",
+                "x": 220 + i * 55,
+                "y": 130,
+                "rotation": 0,
                 "label": f"VIP-{i + 1}",
-                "locality_id": None, "z_index": 2,
+                "locality_id": None,
+                "z_index": 2,
                 "seat_radius": 12,
             }
             for i in range(8)
         ],
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 180, "y": 220, "rotation": 0, "label": "Fila A",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 14, "seat_spacing": 26, "seat_radius": 10,
-            "row_label": "A", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 180,
+            "y": 220,
+            "rotation": 0,
+            "label": "Fila A",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 14,
+            "seat_spacing": 26,
+            "seat_radius": 10,
+            "row_label": "A",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 180, "y": 280, "rotation": 0, "label": "Fila B",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 14, "seat_spacing": 26, "seat_radius": 10,
-            "row_label": "B", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 180,
+            "y": 280,
+            "rotation": 0,
+            "label": "Fila B",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 14,
+            "seat_spacing": 26,
+            "seat_radius": 10,
+            "row_label": "B",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_straight",
-            "x": 180, "y": 340, "rotation": 0, "label": "Fila C",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 14, "seat_spacing": 26, "seat_radius": 10,
-            "row_label": "C", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_straight",
+            "x": 180,
+            "y": 340,
+            "rotation": 0,
+            "label": "Fila C",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 14,
+            "seat_spacing": 26,
+            "seat_radius": 10,
+            "row_label": "C",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
         {
-            "id": str(uuid.uuid4()), "kind": "seat_row_curved",
-            "x": 500, "y": 460, "rotation": 0, "label": "Fila D (curva)",
-            "locality_id": None, "z_index": 1,
-            "seats_count": 12, "seat_spacing": 24, "seat_radius": 10,
-            "curve_radius": 200, "curve_arc_degrees": 70,
-            "row_label": "D", "numbering_start": 1,
-            "numbering_direction": "ltr", "numbering_style": "numeric",
+            "id": str(uuid.uuid4()),
+            "kind": "seat_row_curved",
+            "x": 500,
+            "y": 460,
+            "rotation": 0,
+            "label": "Fila D (curva)",
+            "locality_id": None,
+            "z_index": 1,
+            "seats_count": 12,
+            "seat_spacing": 24,
+            "seat_radius": 10,
+            "curve_radius": 200,
+            "curve_arc_degrees": 70,
+            "row_label": "D",
+            "numbering_start": 1,
+            "numbering_direction": "ltr",
+            "numbering_style": "numeric",
         },
     ]
     capacity = 0
@@ -1502,16 +1841,25 @@ def _build_template_auditorio():
 def _event_localities_for_teatro_layout(layout: dict):
     """Attach event-owned localities + assignments to a Teatro Demo shape snapshot."""
     loc_platea = {
-        "id": str(uuid.uuid4()), "name": "Platea", "color": "#3B82F6",
-        "description": "Filas frontales", "default_price_cents": 2500,
+        "id": str(uuid.uuid4()),
+        "name": "Platea",
+        "color": "#3B82F6",
+        "description": "Filas frontales",
+        "default_price_cents": 2500,
     }
     loc_tribuna = {
-        "id": str(uuid.uuid4()), "name": "Tribuna", "color": "#10B981",
-        "description": "Filas posteriores", "default_price_cents": 1500,
+        "id": str(uuid.uuid4()),
+        "name": "Tribuna",
+        "color": "#10B981",
+        "description": "Filas posteriores",
+        "default_price_cents": 1500,
     }
     loc_general = {
-        "id": str(uuid.uuid4()), "name": "General", "color": "#6B7280",
-        "description": "Gradería", "default_price_cents": 1000,
+        "id": str(uuid.uuid4()),
+        "name": "General",
+        "color": "#6B7280",
+        "description": "Gradería",
+        "default_price_cents": 1000,
     }
     for el in layout.get("elements") or []:
         rl = (el.get("row_label") or "").upper()
@@ -1528,18 +1876,27 @@ def _event_localities_for_teatro_layout(layout: dict):
     layout["localities"] = locs
     pricing = [
         {
-            "locality_id": loc_platea["id"], "price_cents": 2500,
-            "vxs_cents": 0, "service_fee_cents": 0, "admin_fee_cents": 0,
+            "locality_id": loc_platea["id"],
+            "price_cents": 2500,
+            "vxs_cents": 0,
+            "service_fee_cents": 0,
+            "admin_fee_cents": 0,
             "max_tickets_per_purchase": None,
         },
         {
-            "locality_id": loc_tribuna["id"], "price_cents": 1500,
-            "vxs_cents": 0, "service_fee_cents": 0, "admin_fee_cents": 0,
+            "locality_id": loc_tribuna["id"],
+            "price_cents": 1500,
+            "vxs_cents": 0,
+            "service_fee_cents": 0,
+            "admin_fee_cents": 0,
             "max_tickets_per_purchase": None,
         },
         {
-            "locality_id": loc_general["id"], "price_cents": 1000,
-            "vxs_cents": 0, "service_fee_cents": 0, "admin_fee_cents": 0,
+            "locality_id": loc_general["id"],
+            "price_cents": 1000,
+            "vxs_cents": 0,
+            "service_fee_cents": 0,
+            "admin_fee_cents": 0,
             "max_tickets_per_purchase": None,
         },
     ]
@@ -1558,6 +1915,7 @@ async def _seed_demo_numbered_event() -> None:
         return
     async with AsyncSessionLocal() as pg:
         from orm_models import Venue as _Venue
+
         venue_result = await pg.execute(
             select(_Venue).where(
                 _Venue.organizer_id == organizer["id"],
@@ -1568,12 +1926,15 @@ async def _seed_demo_numbered_event() -> None:
     if not _venue_row:
         return
     from db_helpers import row_to_dict as _rtd
+
     venue = _rtd(_venue_row)
 
     from sqlalchemy.orm.attributes import flag_modified as _flag_modified
     from services.event_venue import snapshot_from_venue as _snap_venue_early
-    _layout_seed, pricing = _event_localities_for_teatro_layout(_snap_venue_early(venue))
 
+    _layout_seed, pricing = _event_localities_for_teatro_layout(
+        _snap_venue_early(venue)
+    )
 
     now = datetime.now(timezone.utc)
     slug = "funcion-especial-demo-numerado"
@@ -1581,7 +1942,8 @@ async def _seed_demo_numbered_event() -> None:
         "enabled_codes": ["nuvei", "deuna", "transfer", "cash"],
         "stripe": {"enabled": False},
         "transfer": {
-            "enabled": True, "bank_name": "Banco Pichincha",
+            "enabled": True,
+            "bank_name": "Banco Pichincha",
             "account_number": "2100123456",
             "account_holder": "Eventos Demo S.A.",
             "instructions": "Envianos el comprobante al WhatsApp +593 98 765 4321.",
@@ -1599,8 +1961,10 @@ async def _seed_demo_numbered_event() -> None:
     }
     _ap_num = {
         "access_type": "open",
-        "max_per_purchase": 10, "max_per_email": None,
-        "refund_window_hours": 24, "show_buyer_name_on_ticket": True,
+        "max_per_purchase": 10,
+        "max_per_email": None,
+        "refund_window_hours": 24,
+        "show_buyer_name_on_ticket": True,
     }
 
     async with AsyncSessionLocal() as session:
@@ -1632,7 +1996,9 @@ async def _seed_demo_numbered_event() -> None:
             row.capacity = venue.get("capacity_calculated") or 0
             row.visibility = "public"
             row.status = "published"
-            row.poster_url = "https://images.unsplash.com/photo-1503095396549-807759245b35?w=800"
+            row.poster_url = (
+                "https://images.unsplash.com/photo-1503095396549-807759245b35?w=800"
+            )
             _layout = _layout_seed
             row.venue_id = venue["id"]
             row.source_venue_id = venue["id"]
@@ -1653,50 +2019,52 @@ async def _seed_demo_numbered_event() -> None:
         else:
             _layout = _layout_seed
             event_id = str(uuid.uuid4())
-            session.add(Event(
-                id=event_id,
-                organizer_id=organizer["id"],
-                tenant_slug="demo-org",
-                slug=slug,
-                title="Función Especial — Demo Numerado",
-                description=(
-                    "Función con asientos numerados. Elegí tus butacas directamente sobre "
-                    "el mapa del Teatro Demo. Tres localidades disponibles: Platea, Tribuna y Gradería General."
-                ),
-                short_description="Función con asientos numerados — mapa interactivo.",
-                category="theater",
-                venue_name="Teatro Demo",
-                venue_address="Pasaje Royal 175 y Junín",
-                venue_city="Quito",
-                venue_country="Ecuador",
-                starts_at=_demo_datetime(now, 20, 20, 0),
-                ends_at=_demo_datetime(now, 20, 22, 30),
-                timezone="America/Guayaquil",
-                sales_start=None,
-                sales_end=None,
-                pricing_type="paid",
-                base_price_cents=1000,
-                currency="USD",
-                capacity=venue.get("capacity_calculated") or 0,
-                visibility="public",
-                status="published",
-                tickets_sold=0,
-                poster_url="https://images.unsplash.com/photo-1503095396549-807759245b35?w=800",
-                banner_url=None,
-                gallery_urls=[],
-                venue_id=venue["id"],
-                source_venue_id=venue["id"],
-                venue_layout=_layout,
-                venue_slug=venue["slug"],
-                locality_pricing=pricing,
-                seat_holds_window_minutes=10,
-                payment_methods=_pm_num,
-                discounts=_disc_num,
-                access_params=_ap_num,
-                created_at=now,
-                updated_at=now,
-                published_at=now,
-            ))
+            session.add(
+                Event(
+                    id=event_id,
+                    organizer_id=organizer["id"],
+                    tenant_slug="demo-org",
+                    slug=slug,
+                    title="Función Especial — Demo Numerado",
+                    description=(
+                        "Función con asientos numerados. Elegí tus butacas directamente sobre "
+                        "el mapa del Teatro Demo. Tres localidades disponibles: Platea, Tribuna y Gradería General."
+                    ),
+                    short_description="Función con asientos numerados — mapa interactivo.",
+                    category="theater",
+                    venue_name="Teatro Demo",
+                    venue_address="Pasaje Royal 175 y Junín",
+                    venue_city="Quito",
+                    venue_country="Ecuador",
+                    starts_at=_demo_datetime(now, 20, 20, 0),
+                    ends_at=_demo_datetime(now, 20, 22, 30),
+                    timezone="America/Guayaquil",
+                    sales_start=None,
+                    sales_end=None,
+                    pricing_type="paid",
+                    base_price_cents=1000,
+                    currency="USD",
+                    capacity=venue.get("capacity_calculated") or 0,
+                    visibility="public",
+                    status="published",
+                    tickets_sold=0,
+                    poster_url="https://images.unsplash.com/photo-1503095396549-807759245b35?w=800",
+                    banner_url=None,
+                    gallery_urls=[],
+                    venue_id=venue["id"],
+                    source_venue_id=venue["id"],
+                    venue_layout=_layout,
+                    venue_slug=venue["slug"],
+                    locality_pricing=pricing,
+                    seat_holds_window_minutes=10,
+                    payment_methods=_pm_num,
+                    discounts=_disc_num,
+                    access_params=_ap_num,
+                    created_at=now,
+                    updated_at=now,
+                    published_at=now,
+                )
+            )
         await session.commit()
     logger.info("Seeded numbered event %s linked to %s", slug, venue["slug"])
 
@@ -1705,13 +2073,21 @@ async def _seed_demo_numbered_event() -> None:
     # then put A-3 on hold. Find Fila C (Tribuna) and pre-sell C-5.
     _layout_els = _layout_seed.get("elements") or []
     fila_a = next(
-        (e for e in _layout_els
-         if e.get("kind") == "seat_row_straight" and (e.get("row_label") or "").upper() == "A"),
+        (
+            e
+            for e in _layout_els
+            if e.get("kind") == "seat_row_straight"
+            and (e.get("row_label") or "").upper() == "A"
+        ),
         None,
     )
     fila_c = next(
-        (e for e in _layout_els
-         if e.get("kind") == "seat_row_straight" and (e.get("row_label") or "").upper() == "C"),
+        (
+            e
+            for e in _layout_els
+            if e.get("kind") == "seat_row_straight"
+            and (e.get("row_label") or "").upper() == "C"
+        ),
         None,
     )
     # Clear any prior demo holds/assignments for this event so it's idempotent
@@ -1719,9 +2095,7 @@ async def _seed_demo_numbered_event() -> None:
         await _pg_clear.execute(
             delete(EventSeatAssignment).where(EventSeatAssignment.event_id == event_id)
         )
-        await _pg_clear.execute(
-            delete(SeatHold).where(SeatHold.event_id == event_id)
-        )
+        await _pg_clear.execute(delete(SeatHold).where(SeatHold.event_id == event_id))
         await _pg_clear.commit()
 
     pre_sold_seats = []
@@ -1736,20 +2110,24 @@ async def _seed_demo_numbered_event() -> None:
         async with AsyncSessionLocal() as _pg_assign:
             for el_id, idx, label, loc_id in pre_sold_seats:
                 sid = f"{el_id}::s::{idx}"
-                _pg_assign.add(EventSeatAssignment(
-                    id=str(uuid.uuid4()),
-                    event_id=event_id,
-                    venue_id=venue["id"],
-                    seat_id=sid,
-                    ticket_id=str(uuid.uuid4()),
-                    order_id=DEMO_SEAT_PREVIEW_ORDER_ID,
-                    holder_email="demo-buyer@example.com",
-                    locality_id=loc_id,
-                    assigned_at=now,
-                ))
+                _pg_assign.add(
+                    EventSeatAssignment(
+                        id=str(uuid.uuid4()),
+                        event_id=event_id,
+                        venue_id=venue["id"],
+                        seat_id=sid,
+                        ticket_id=str(uuid.uuid4()),
+                        order_id=DEMO_SEAT_PREVIEW_ORDER_ID,
+                        holder_email="demo-buyer@example.com",
+                        locality_id=loc_id,
+                        assigned_at=now,
+                    )
+                )
                 sold_qty += 1
             await _pg_assign.execute(
-                sa_update(Event).where(Event.id == event_id).values(tickets_sold=sold_qty)
+                sa_update(Event)
+                .where(Event.id == event_id)
+                .values(tickets_sold=sold_qty)
             )
             await _pg_assign.commit()
 
@@ -1757,17 +2135,19 @@ async def _seed_demo_numbered_event() -> None:
     if fila_a:
         sid_held = f"{fila_a['id']}::s::2"
         async with AsyncSessionLocal() as _pg_hold:
-            _pg_hold.add(SeatHold(
-                id=str(uuid.uuid4()),
-                event_id=event_id,
-                venue_id=venue["id"],
-                seat_id=sid_held,
-                session_token="seed-held-session-fixed",
-                status="held",
-                held_at=now,
-                expires_at=now + timedelta(hours=1),
-                order_id=None,
-            ))
+            _pg_hold.add(
+                SeatHold(
+                    id=str(uuid.uuid4()),
+                    event_id=event_id,
+                    venue_id=venue["id"],
+                    seat_id=sid_held,
+                    session_token="seed-held-session-fixed",
+                    status="held",
+                    held_at=now,
+                    expires_at=now + timedelta(hours=1),
+                    order_id=None,
+                )
+            )
             await _pg_hold.commit()
 
 
@@ -1781,7 +2161,9 @@ async def _backfill_discount_rule_ids() -> None:
         # Only load events that have at least one discount rule
         result = await session.execute(
             select(Event).where(
-                text("jsonb_array_length(COALESCE(events.discounts->'rules', '[]'::jsonb)) > 0")
+                text(
+                    "jsonb_array_length(COALESCE(events.discounts->'rules', '[]'::jsonb)) > 0"
+                )
             )
         )
         rows = result.scalars().all()
