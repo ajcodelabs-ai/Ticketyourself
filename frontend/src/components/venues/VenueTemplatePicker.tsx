@@ -17,6 +17,7 @@ export default function VenueTemplatePicker({
     loading = false,
     usingId = null,
     disabled = false,
+    disabledReason = null,
     compact = false,
     onUseTemplate,
     onStartBlank,
@@ -36,6 +37,7 @@ export default function VenueTemplatePicker({
     loading?: boolean;
     usingId?: string | null;
     disabled?: boolean;
+    disabledReason?: string | null;
     compact?: boolean;
     onUseTemplate: (tpl: Record<string, unknown>) => void;
     onStartBlank?: () => void;
@@ -50,6 +52,15 @@ export default function VenueTemplatePicker({
             <p className="text-xs text-muted-foreground">
                 Elegí un layout listo o empezá en blanco y diseñalo en el editor.
             </p>
+
+            {disabled && disabledReason && (
+                <p
+                    className="text-xs text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2"
+                    data-testid="venue-template-disabled-reason"
+                >
+                    {disabledReason}
+                </p>
+            )}
 
             {templates.length > 0 || (showBlankOption && onStartBlank) ? (
                 <div className={`grid gap-3 ${compact ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
