@@ -78,7 +78,7 @@ function modalityOf(rule) {
     return MODALITY.percent;
 }
 
-function ruleToDraft(rule) {
+export function ruleToDraft(rule) {
     const buy = rule.buy_quantity ?? 1;
     const free = rule.free_quantity ?? 1;
     return {
@@ -108,16 +108,22 @@ function ruleToDraft(rule) {
     };
 }
 
-function draftToRule(draft) {
+export function draftToRule(draft) {
     const code = (draft.code || "").trim().toUpperCase();
     const hasCode = code.length > 0;
     const modality = draft.modality;
+    const minQuantity = draft.min_quantity || null;
 
     let type;
     if (modality === MODALITY.nxm) {
         type = "buy_n_get_m";
     } else if (hasCode) {
         type = "promo_code";
+    } else if (minQuantity) {
+        // ponytail: this panel has no UI to set/clear min_quantity, but must
+        // not silently drop the gate on a pre-existing "quantity" rule that
+        // still has one set — backend only enforces min_quantity for this type.
+        type = "quantity";
     } else {
         type = "auto";
     }
@@ -136,7 +142,7 @@ function draftToRule(draft) {
         code: hasCode ? code : null,
         max_uses: draft.max_uses || null,
         uses_count: draft.uses_count || 0,
-        min_quantity: draft.min_quantity || null,
+        min_quantity: minQuantity,
         buy_quantity,
         free_quantity,
         influencer_name: draft.influencer_name || null,

@@ -2436,6 +2436,10 @@ function SectionPayments({ form, update }) {
     const pm = form.payment_methods || defaultPayments();
     const selected = resolveEnabledPaymentCodes(pm, { includeLegacyStripe: false });
     const total = catalog.length || 4;
+    const hasFunctioningMethod = selected.some(
+        (code) => catalog.find((c) => c.code === code)?.kind !== "gateway",
+    );
+    const onlyGatewayStubsSelected = selected.length > 0 && !hasFunctioningMethod;
 
     const setCodes = (codes) => {
         update("payment_methods", withEnabledCodes(pm, codes));
@@ -2484,6 +2488,20 @@ function SectionPayments({ form, update }) {
                     </Button>
                 </div>
             </div>
+
+            {onlyGatewayStubsSelected && (
+                <div
+                    className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+                    data-testid="pay-gateway-stub-warning"
+                >
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <p>
+                        Nuvei y DeUna todavía no procesan cobros reales (integración en preparación):
+                        si publicás con solo estas formas de pago, nadie va a poder completar una
+                        compra. Activá también Transferencia o Efectivo si querés vender ya.
+                    </p>
+                </div>
+            )}
 
             {catalogLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">

@@ -288,6 +288,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         entrada_subtotal = 0
         service_subtotal = 0
         admin_subtotal = 0
+        vxs_subtotal = 0
         items_override = []
         for sel in payload.ticket_type_selections:
             tt = tt_map[sel.ticket_type_id]
@@ -329,11 +330,14 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             service, admin = order_service.locality_fee_cents(
                 pricing_map, tt.get("venue_locality_id")
             )
-            sel_subtotal = (unit + service + admin) * sel.quantity
+            loc_pricing = pricing_map.get(tt.get("venue_locality_id")) or {}
+            vxs = int(loc_pricing.get("vxs_cents") or 0)
+            sel_subtotal = (unit + service + admin + vxs) * sel.quantity
             subtotal += sel_subtotal
             entrada_subtotal += unit * sel.quantity
             service_subtotal += service * sel.quantity
             admin_subtotal += admin * sel.quantity
+            vxs_subtotal += vxs * sel.quantity
             items_override.append(
                 {
                     "ticket_type_id": tt["id"],
@@ -351,6 +355,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             "entrada_cents": entrada_subtotal,
             "service_fee_cents": service_subtotal,
             "admin_fee_cents": admin_subtotal,
+            "vxs_cents": vxs_subtotal,
             "fees_cents": fees,
             "total_cents": subtotal + fees,
             "donation_amount_cents": 0,
@@ -538,11 +543,17 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             order=order, event=event, success_url=success_url, cancel_url=cancel_url
         )
     except stripe.error.StripeError as e:
+        # logger.error, not .exception — Stripe error messages can echo back
+        # request data; type(e).__name__ is enough to triage without it, and
+        # the same reasoning means `e` must not reach the client either.
         logger.error(
-            "Stripe checkout failed for order %s: %s", order["order_number"], e
+            "Stripe checkout failed for order %s: %s",
+            order["order_number"],
+            type(e).__name__,
         )
         raise HTTPException(
-            502, f"Stripe checkout error: {e.user_message or str(e)}"
+            502,
+            "No pudimos iniciar el pago con Stripe. Intentá de nuevo en unos minutos.",
         ) from e
 
     async with AsyncSessionLocal() as _pg:
@@ -605,7 +616,11 @@ async def get_order(
                     tickets=_tickets,
                 )
         except stripe.error.StripeError as e:
-            logger.warning("Could not refresh session %s: %s", session_id, e)
+            # See the checkout-create catch above: log the exception type
+            # only, since `e` can echo back request data.
+            logger.warning(
+                "Could not refresh session %s: %s", session_id, type(e).__name__
+            )
 
     async with AsyncSessionLocal() as _pg:
         _t_result = await _pg.execute(

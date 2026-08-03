@@ -161,14 +161,9 @@ export function collectEventWizardIssues({
     }
 
     if (form?.pricing_type !== "free") {
-        const rawCodes = form?.payment_methods?.enabled_codes;
-        // Empty array is an intentional "none selected". resolveEnabledPaymentCodes
-        // otherwise falls back to ["nuvei"] for legacy payloads.
-        const enabledCodes = Array.isArray(rawCodes) && rawCodes.length === 0
-            ? []
-            : resolveEnabledPaymentCodes(form?.payment_methods, {
-                includeLegacyStripe: false,
-            });
+        const enabledCodes = resolveEnabledPaymentCodes(form?.payment_methods, {
+            includeLegacyStripe: false,
+        });
         if (!enabledCodes.length) {
             push(
                 "payments",

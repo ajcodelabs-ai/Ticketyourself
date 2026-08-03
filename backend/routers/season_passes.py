@@ -316,13 +316,17 @@ async def purchase_season_pass(
             cancel_url=cancel_url,
         )
     except stripe.error.StripeError as e:
+        # logger.error, not .exception — Stripe error messages can echo back
+        # request data; type(e).__name__ is enough to triage without it, and
+        # the same reasoning means `e` must not reach the client either.
         logger.error(
             "Stripe checkout failed for pass purchase %s: %s",
             purchase["order_number"],
-            e,
+            type(e).__name__,
         )
         raise HTTPException(
-            502, f"Stripe checkout error: {e.user_message or str(e)}"
+            502,
+            "No pudimos iniciar el pago con Stripe. Intentá de nuevo en unos minutos.",
         ) from e
 
     async with AsyncSessionLocal() as _pg:
@@ -397,7 +401,11 @@ async def get_pass_purchase(
                     organizer,
                 )
         except stripe.error.StripeError as e:
-            logger.warning("Could not refresh pass session %s: %s", session_id, e)
+            # See the checkout-create catch above: log the exception type
+            # only, since `e` can echo back request data.
+            logger.warning(
+                "Could not refresh pass session %s: %s", session_id, type(e).__name__
+            )
 
     async with AsyncSessionLocal() as pg:
         fn_result = await pg.execute(

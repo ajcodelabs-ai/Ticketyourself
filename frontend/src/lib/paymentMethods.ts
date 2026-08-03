@@ -21,7 +21,13 @@ export function resolveEnabledPaymentCodes(
                 out.push(code);
             }
         }
-        return out.length ? out : ["nuvei"];
+        // An explicit (even empty) `enabled_codes` array is respected as-is —
+        // matches backend's resolve_enabled_codes, which never re-adds a
+        // default once the key is present. Falling back to ["nuvei"] here
+        // made the UI show a payment method as available right after the
+        // organizer cleared every selection, while the backend correctly
+        // rejects the purchase.
+        return out;
     }
     const codes: string[] = [];
     if (includeLegacyStripe && pm.stripe?.enabled) codes.push("stripe");
