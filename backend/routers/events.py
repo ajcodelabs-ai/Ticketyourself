@@ -19,13 +19,6 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from database import AsyncSessionLocal
 from db_helpers import get_venue_by_id, row_to_dict
-from services.event_venue import (
-    resolve_event_venue,
-    snapshot_from_venue,
-    recalc_layout_capacity,
-    structural_diff,
-    locality_structural_diff,
-)
 from orm_models import (
     AuditLog,
     Event,
@@ -42,6 +35,13 @@ from orm_models import (
     TicketScan,
 )
 from security import get_current_user, require_role
+from services.event_venue import (
+    locality_structural_diff,
+    recalc_layout_capacity,
+    resolve_event_venue,
+    snapshot_from_venue,
+    structural_diff,
+)
 from services.path_safety import resolve_path_under
 from services.plan_features import assert_feature
 from slugs import normalize_slug
@@ -1638,7 +1638,7 @@ async def _resolve_public_event(tenant_slug: str, event_slug: str) -> tuple:
 
 @public_router.post("/{tenant_slug}/{event_slug}/seat-holds")
 async def public_create_holds(tenant_slug: str, event_slug: str, body: SeatHoldsBody):
-    from services.seats import create_seat_holds, compute_event_seats_status
+    from services.seats import compute_event_seats_status, create_seat_holds
 
     _, event, venue = await _resolve_public_event(tenant_slug, event_slug)
     if not body.seat_ids:

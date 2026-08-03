@@ -6,7 +6,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, or_, select, update as sa_update
+from sqlalchemy import delete, func, or_, select
+from sqlalchemy import update as sa_update
 
 from database import AsyncSessionLocal
 from db_helpers import get_event_by_id, get_organizer_by_slug, row_to_dict
@@ -1209,7 +1210,9 @@ async def _seed_demo_venues() -> None:
     Phase 6a — seed 2 demo venues for demo-org so the editor lands on real data.
     Idempotent: deletes existing demo venues by well-known slug, recreates.
     """
-    from sqlalchemy import delete as sa_delete, func as sa_func
+    from sqlalchemy import delete as sa_delete
+    from sqlalchemy import func as sa_func
+
     from orm_models import Venue
 
     organizer = await get_organizer_by_slug("demo-org")
@@ -1930,6 +1933,7 @@ async def _seed_demo_numbered_event() -> None:
     venue = _rtd(_venue_row)
 
     from sqlalchemy.orm.attributes import flag_modified as _flag_modified
+
     from services.event_venue import snapshot_from_venue as _snap_venue_early
 
     _layout_seed, pricing = _event_localities_for_teatro_layout(
@@ -2154,8 +2158,8 @@ async def _seed_demo_numbered_event() -> None:
 async def _backfill_discount_rule_ids() -> None:
     """One-shot migration: any event.discounts.rules[*] persisted without an `id`
     gets a fresh UUID. Idempotent — only events that need patching get a write."""
-    from sqlalchemy.orm.attributes import flag_modified as _flag_modified
     from sqlalchemy import text
+    from sqlalchemy.orm.attributes import flag_modified as _flag_modified
 
     async with AsyncSessionLocal() as session:
         # Only load events that have at least one discount rule

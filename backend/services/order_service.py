@@ -12,9 +12,9 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import stripe
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-import stripe
 
 from database import AsyncSessionLocal
 from db_helpers import row_to_dict
@@ -49,9 +49,10 @@ async def _next_order_number() -> str:
 async def _active_reservation_qty(event_id: str, function_id: str | None = None) -> int:
     """Sum of un-expired capacity reservations for an event, optionally scoped
     to a single función's own pool (when `function_id` is given)."""
+    from sqlalchemy import func, select
+
     from database import AsyncSessionLocal
     from orm_models import EventCapacityReservation
-    from sqlalchemy import select, func
 
     now = _now()
     conditions = [
@@ -116,8 +117,10 @@ async def reserve_capacity(
     function_id: str | None = None,
     session: AsyncSession | None = None,
 ) -> None:
-    from orm_models import Event as _Event, EventCapacityReservation
     from sqlalchemy import func, select
+
+    from orm_models import Event as _Event
+    from orm_models import EventCapacityReservation
 
     minutes = ttl_minutes if ttl_minutes is not None else RESERVATION_TTL_MIN
     now = _now()
@@ -167,9 +170,10 @@ async def reserve_capacity(
 
 
 async def release_reservation(order_id: str) -> None:
+    from sqlalchemy import delete
+
     from database import AsyncSessionLocal
     from orm_models import EventCapacityReservation
-    from sqlalchemy import delete
 
     async with AsyncSessionLocal() as session:
         await session.execute(
@@ -464,9 +468,10 @@ async def create_order_skeleton(
 # ── Issue tickets ───────────────────────────────────────────────────────────
 async def issue_tickets_for_order(order: dict) -> list[dict]:
     """Idempotent — only issues if the order has no tickets yet."""
+    from sqlalchemy import func, select
+
     from database import AsyncSessionLocal
     from orm_models import Ticket as TicketModel
-    from sqlalchemy import select, func
 
     async with AsyncSessionLocal() as session:
         existing_count = (
@@ -584,8 +589,9 @@ async def _adjust_function_counters(order: dict, delta: int) -> None:
     function_id = order.get("function_id")
     if not function_id:
         return
-    from orm_models import EventFunction, FunctionTicketType
     from sqlalchemy import update as _sa_update
+
+    from orm_models import EventFunction, FunctionTicketType
 
     async with AsyncSessionLocal() as session:
         await session.execute(
@@ -675,13 +681,13 @@ async def finalize_paid_order(
     Idempotent state transition: pending → paid, emit tickets, bump event.tickets_sold,
     release reservation.
     """
+    from sqlalchemy import select
+    from sqlalchemy import update as _sa_update
+
     from database import AsyncSessionLocal
-    from orm_models import (
-        TicketOrder as TOModel,
-        Ticket as TicketModel,
-        Event as _Event,
-    )
-    from sqlalchemy import select, update as _sa_update
+    from orm_models import Event as _Event
+    from orm_models import Ticket as TicketModel
+    from orm_models import TicketOrder as TOModel
 
     async with AsyncSessionLocal() as _re_read:
         fresh = await _re_read.scalar(select(TOModel).where(TOModel.id == order["id"]))
@@ -775,13 +781,13 @@ def create_ticket_checkout_session(
 
 # ── Refund ──────────────────────────────────────────────────────────────────
 async def refund_order(*, order: dict, reason: str | None = None) -> dict:
+    from sqlalchemy import select
+    from sqlalchemy import update as _sa_update
+
     from database import AsyncSessionLocal
-    from orm_models import (
-        TicketOrder as TOModel,
-        Ticket as TicketModel,
-        Event as _Event,
-    )
-    from sqlalchemy import select, update as _sa_update
+    from orm_models import Event as _Event
+    from orm_models import Ticket as TicketModel
+    from orm_models import TicketOrder as TOModel
 
     if order["status"] != "paid":
         raise HTTPException(422, "Sólo órdenes pagadas pueden reembolsarse")
@@ -848,14 +854,14 @@ async def confirm_manual_payment(
     reference: str | None = None,
 ) -> tuple[dict, list[dict]]:
     """Idempotent — already-paid orders return tickets without side effects."""
-    from database import AsyncSessionLocal
-    from orm_models import (
-        TicketOrder as TOModel,
-        Ticket as TicketModel,
-        Event as _Event,
-    )
-    from sqlalchemy import select, update as _sa_update
+    from sqlalchemy import select
+    from sqlalchemy import update as _sa_update
     from sqlalchemy.orm.attributes import flag_modified
+
+    from database import AsyncSessionLocal
+    from orm_models import Event as _Event
+    from orm_models import Ticket as TicketModel
+    from orm_models import TicketOrder as TOModel
 
     if order["status"] == "paid":
         async with AsyncSessionLocal() as session:
@@ -940,10 +946,11 @@ async def reject_manual_payment(
     reason: str,
     rejecter_user_id: str,
 ) -> dict:
-    from database import AsyncSessionLocal
-    from orm_models import TicketOrder as TOModel
     from sqlalchemy import select
     from sqlalchemy.orm.attributes import flag_modified
+
+    from database import AsyncSessionLocal
+    from orm_models import TicketOrder as TOModel
 
     if order["status"] not in ("pending_manual_payment", "pending"):
         raise HTTPException(

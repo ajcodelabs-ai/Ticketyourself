@@ -10,10 +10,11 @@ import logging
 import os
 from typing import Optional
 
+import stripe
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field
-import stripe
+from sqlalchemy import select
 
 from database import AsyncSessionLocal
 from db_helpers import (
@@ -23,12 +24,10 @@ from db_helpers import (
     get_organizer_by_slug,
     row_to_dict,
 )
-from services.event_venue import resolve_event_venue
 from orm_models import Organizer
-from services import order_service
-from services import discount_service
+from services import discount_service, order_service
+from services.event_venue import resolve_event_venue
 from services.pdf_service import render_ticket_pdf
-from sqlalchemy import select
 
 logger = logging.getLogger("tys.public_orders")
 router = APIRouter(prefix="/api/public/orders", tags=["public-orders"])
@@ -177,8 +176,9 @@ async def _load_event_or_404(tenant_slug: str, event_slug: str) -> tuple[dict, d
         raise HTTPException(404, "Organizador no encontrado")
     organizer = row_to_dict(org_row)
     async with AsyncSessionLocal() as pg:
-        from orm_models import Event
         from sqlalchemy import select as _select
+
+        from orm_models import Event
 
         event_row = await pg.scalar(
             _select(Event).where(
@@ -205,10 +205,8 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
     function = None
     function_overrides: dict = {}
     if payload.function_id:
-        from orm_models import (
-            EventFunction as _EFModel,
-            FunctionTicketType as _FTTModel,
-        )
+        from orm_models import EventFunction as _EFModel
+        from orm_models import FunctionTicketType as _FTTModel
 
         async with AsyncSessionLocal() as pg:
             func_row = await pg.scalar(
@@ -263,8 +261,9 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                 selected_locality_ids.add(loc)
     elif payload.ticket_type_selections:
         # Phase 8 — ticket types: compute totals from per-type pricing
-        from orm_models import TicketType as _TTModel
         from sqlalchemy import select as _sel
+
+        from orm_models import TicketType as _TTModel
 
         async with AsyncSessionLocal() as pg:
             tt_ids = [s.ticket_type_id for s in payload.ticket_type_selections]
@@ -572,7 +571,8 @@ async def get_order(
     background_tasks: BackgroundTasks,
     session_id: Optional[str] = Query(default=None),
 ):
-    from orm_models import TicketOrder as _TOModel, Ticket as _TModel
+    from orm_models import Ticket as _TModel
+    from orm_models import TicketOrder as _TOModel
 
     async with AsyncSessionLocal() as _pg:
         order_row = await _pg.scalar(
@@ -691,7 +691,8 @@ async def get_order_by_token(order_token: str):
     Returns order summary, tickets (with QR tokens), and event info.
     Used for the guest order history page (/orden/{token}).
     """
-    from orm_models import TicketOrder as _TOModel, Ticket as _TModel
+    from orm_models import Ticket as _TModel
+    from orm_models import TicketOrder as _TOModel
 
     async with AsyncSessionLocal() as _pg:
         _o_row = await _pg.scalar(
@@ -735,7 +736,8 @@ async def get_order_by_token(order_token: str):
 
 @router.get("/{order_number}/tickets/{ticket_id}/pdf")
 async def ticket_pdf(order_number: str, ticket_id: str):
-    from orm_models import TicketOrder as _TOModel, Ticket as _TModel
+    from orm_models import Ticket as _TModel
+    from orm_models import TicketOrder as _TOModel
 
     async with AsyncSessionLocal() as _pg:
         _o_row = await _pg.scalar(

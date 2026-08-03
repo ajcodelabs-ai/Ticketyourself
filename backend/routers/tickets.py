@@ -6,23 +6,22 @@ plus the cross-cutting `/api/tickets/validate` for QR scanning.
 import csv
 import io
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-
-from datetime import datetime, timedelta, timezone
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal, get_db
 from db_helpers import get_event_by_id, get_organizer_by_id, row_to_dict
-from services.event_venue import resolve_event_venue
 from orm_models import Organizer, Ticket, TicketOrder, TicketScan
 from security import get_current_user
 from services import order_service
+from services.event_venue import resolve_event_venue
 from services.ticket_jwt import verify_ticket_token
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("tys.tickets")
 

@@ -12,10 +12,10 @@ from fastapi import HTTPException
 
 from routers.events import CustomQuestion, LocalityPriceIn
 from services.order_service import (
+    DEFAULT_FEE_PERCENT,
     compute_totals_with_seats,
     locality_fee_cents,
     locality_pricing_map,
-    DEFAULT_FEE_PERCENT,
 )
 
 

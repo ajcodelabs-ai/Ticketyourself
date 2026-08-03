@@ -10,9 +10,8 @@ import uuid
 
 import jwt
 import requests
-from PIL import Image
-
 from conftest import API, ORG_PASSWORD, bearer
+from PIL import Image
 
 
 def _auth(token):

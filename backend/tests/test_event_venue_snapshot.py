@@ -8,13 +8,13 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://localhost:5432/test"
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
 from services.event_venue import (
-    snapshot_from_venue,
-    layout_as_venue,
-    resolve_event_venue,
-    structural_diff,
-    locality_structural_diff,
     compute_capacity,
+    layout_as_venue,
+    locality_structural_diff,
     recalc_layout_capacity,
+    resolve_event_venue,
+    snapshot_from_venue,
+    structural_diff,
 )
 
 
