@@ -384,12 +384,19 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         except ValueError as exc:
             raise HTTPException(403, str(exc))
 
-    # §4.2.6 — límite "por compra / transacción" configurado en el evento.
-    max_per_purchase = (event.get("access_params") or {}).get("max_per_purchase")
+    # §4.2.6 — límites por compra / transacción configurados en el evento.
+    access_params = event.get("access_params") or {}
+    max_per_purchase = access_params.get("max_per_purchase")
     if max_per_purchase and quantity > max_per_purchase:
         raise HTTPException(
             422,
             f"Esta compra admite un máximo de {max_per_purchase} entradas por transacción.",
+        )
+    min_per_purchase = access_params.get("min_per_purchase") or 1
+    if min_per_purchase and quantity < min_per_purchase:
+        raise HTTPException(
+            422,
+            f"Esta compra requiere al menos {min_per_purchase} entradas por transacción.",
         )
 
     # §4.2.8 — preguntas adicionales; filtrar por localidad y validar tipo number.

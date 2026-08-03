@@ -88,9 +88,9 @@ test.describe("Event wizard", () => {
   //      event has nothing to "sell".
   //   7. The access-control copy must clarify it gates the event *page*
   //      (microsite), not physical entry to the event itself.
-  //   8. The wizard must not crash when picking "Lista verificada" as the
-  //      access type (GuestListPanel used to blow up on a bad response shape
-  //      and/or a missing access_params object).
+  //   8. Access types gated by plan (lista verificada / código) must be
+  //      disabled for non-Enterprise plans so the organizer can't pick an
+  //      option that the backend will 403 on save.
   test("Free events show a reservation-window hint, not just a sale-window one (feedback #6)", async ({ page }) => {
     await page.goto("/app/eventos/nuevo");
     await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
@@ -115,31 +115,24 @@ test.describe("Event wizard", () => {
     await expect(page.getByTestId("section-access")).toContainText("QR");
   });
 
-  test("Selecting Lista verificada does not crash the wizard (feedback #8)", async ({ page }) => {
+  test("Lista verificada and Código de acceso are plan-gated for Profesional (feedback #8)", async ({ page }) => {
     await page.goto("/app/eventos/nuevo");
     await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
 
-    const title = `E2E Guest List Event ${Date.now()}`;
-    await page.getByTestId("event-title-input").fill(title);
-    // Draft save requires a start date — fill it so the POST actually
-    // succeeds and the wizard gets a real eventId (otherwise GuestListPanel
-    // short-circuits to its "save the event first" placeholder and the
-    // crash this test guards against never gets exercised). The field lives
-    // in the "fechas" tab, not "general".
-    await page.getByTestId("tab-fechas").click();
-    const startsAt = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 16);
-    await page.getByTestId("wiz-starts").fill(startsAt);
-    await page.getByTestId("wizard-save-draft").click();
-    await expect(page).toHaveURL(/\/app\/eventos\/.+\/editar/, { timeout: 10_000 });
-
     await page.getByTestId("tab-access").click();
-    // Access type is a grid of ChoiceCards, not a dropdown.
-    await page.getByTestId("access-type-verified_list").click();
+    await expect(page.getByTestId("section-access")).toBeVisible();
 
-    // Before the fix, a bad guest-list response shape (or an undefined
-    // access_params on the form) threw during render and blanked the page.
-    await expect(page.getByTestId("guest-list-panel")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId("event-wizard")).toBeVisible();
-    await expect(page.getByTestId("guest-list-add-btn")).toBeVisible();
+    // Demo organizer is on Profesional — these Enterprise-only options
+    // must render disabled with an upgrade badge, not be selectable.
+    const verified = page.getByTestId("access-type-verified_list");
+    const accessCode = page.getByTestId("access-type-access_code");
+    await expect(verified).toBeDisabled();
+    await expect(accessCode).toBeDisabled();
+    await expect(verified).toContainText("Plan Enterprise");
+    await expect(accessCode).toContainText("Plan Enterprise");
+
+    // Open / link_only remain available.
+    await expect(page.getByTestId("access-type-open")).toBeEnabled();
+    await expect(page.getByTestId("access-type-link_only")).toBeEnabled();
   });
 });

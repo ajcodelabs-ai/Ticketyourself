@@ -3,6 +3,9 @@ export const queryKeys = {
     dashboard: {
         me: ["dashboard", "me"] as const,
     },
+    plans: {
+        features: ["plans", "me", "features"] as const,
+    },
     events: {
         list: (filters: { status?: string; search?: string }) =>
             ["events", "me", filters] as const,
