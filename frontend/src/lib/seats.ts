@@ -109,17 +109,20 @@ export function selectedSeatBreakdown(selectedSeats, localityPricing) {
     let entrada = 0;
     let service = 0;
     let admin = 0;
+    let vxs = 0;
     for (const seat of selectedSeats || []) {
         const lp = byLoc[seat.locality_id] || {};
         entrada += Number(lp.price_cents || 0);
         service += Number(lp.service_fee_cents || 0);
         admin += Number(lp.admin_fee_cents || 0);
+        vxs += Number(lp.vxs_cents || 0);
     }
     return {
         entrada_cents: entrada,
         service_fee_cents: service,
         admin_fee_cents: admin,
-        subtotal_cents: entrada + service + admin,
+        vxs_cents: vxs,
+        subtotal_cents: entrada + service + admin + vxs,
     };
 }
 

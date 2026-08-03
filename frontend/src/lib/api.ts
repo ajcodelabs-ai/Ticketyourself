@@ -120,6 +120,15 @@ const FIELD_LABELS: Record<string, string> = {
     phone: "Teléfono",
     country: "País",
     slug: "URL del microsite",
+    title: "Título",
+    starts_at: "Fecha de inicio",
+    ends_at: "Fecha de fin",
+    venue_name: "Nombre del lugar",
+    duration_preset: "Duración",
+    base_price_cents: "Precio base",
+    poster_url: "Imagen principal",
+    category: "Categoría",
+    timezone: "Zona horaria",
 };
 
 // Friendlier Spanish translations for the most common Pydantic v2
@@ -168,7 +177,14 @@ export function formatApiError(detail) {
             .map((e) => (e && typeof e === "object" ? translateValidationError(e) : String(e)))
             .filter(Boolean)
             .join(" · ");
-    if (detail && typeof detail.msg === "string") return detail.msg;
+    if (detail && typeof detail === "object") {
+        if (typeof detail.message === "string" && detail.message.trim()) {
+            return detail.message;
+        }
+        if (typeof detail.msg === "string") return detail.msg;
+        if (typeof detail.detail === "string") return detail.detail;
+        if (Array.isArray(detail.detail)) return formatApiError(detail.detail);
+    }
     return String(detail);
 }
 

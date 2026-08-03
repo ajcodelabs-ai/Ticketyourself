@@ -27,7 +27,7 @@ MANUAL_RESERVATION_TTL_HOURS = 48  # transfer / cash buyers get 48h to complete
 DEFAULT_FEE_PERCENT = float(os.environ.get("TYS_FEE_PERCENT", "5"))
 MAX_QUANTITY = 10
 ORDER_PREFIX = "TYS-"
-VALID_PAYMENT_METHODS = ("stripe", "transfer", "cash", "season_pass")
+VALID_PAYMENT_METHODS = ("stripe", "nuvei", "deuna", "transfer", "cash", "season_pass")
 
 
 def _now() -> datetime:
@@ -277,6 +277,7 @@ def compute_totals_with_seats(
     entrada_subtotal = 0
     service_subtotal = 0
     admin_subtotal = 0
+    vxs_subtotal = 0
     missing_loc = []
     for sid in seat_ids:
         seat = by_id.get(sid)
@@ -289,21 +290,24 @@ def compute_totals_with_seats(
             continue
         entrada = int(lp.get("price_cents") or 0)
         service, admin = locality_fee_cents(pricing_map, loc_id)
+        vxs = int(lp.get("vxs_cents") or 0)
         entrada_subtotal += entrada
         service_subtotal += service
         admin_subtotal += admin
-        subtotal += entrada + service + admin
+        vxs_subtotal += vxs
+        subtotal += entrada + service + admin + vxs
     if missing_loc:
         raise HTTPException(422, f"El evento no tiene precio para: {set(missing_loc)}")
     fees = int(round(entrada_subtotal * DEFAULT_FEE_PERCENT / 100))
     avg_unit = entrada_subtotal // max(1, len(seat_ids))
     return {
-        # unit_price_cents = average entrada only (excludes service/admin)
+        # unit_price_cents = average entrada only (excludes service/admin/vxs)
         "unit_price_cents": avg_unit,
         "subtotal_cents": subtotal,
         "entrada_cents": entrada_subtotal,
         "service_fee_cents": service_subtotal,
         "admin_fee_cents": admin_subtotal,
+        "vxs_cents": vxs_subtotal,
         "fees_cents": fees,
         "total_cents": subtotal + fees,
         "donation_amount_cents": 0,
@@ -336,19 +340,31 @@ async def create_order_skeleton(
     if payment_method not in VALID_PAYMENT_METHODS:
         raise HTTPException(422, f"Método de pago inválido: {payment_method}")
 
+    from services.payment_methods import (
+        GATEWAY_STUB_CODES,
+        MANUAL_CODES,
+        accepts_payment_method,
+    )
+
+    # Free / season_pass paths pass through without catalog checks.
+    if payment_method not in ("season_pass",) and event.get("pricing_type") != "free":
+        if not accepts_payment_method(event, payment_method):
+            raise HTTPException(
+                400, f"El organizador no acepta pagos con '{payment_method}'"
+            )
+
     avail = await compute_availability(event, function=function)
     if avail["available"] is not None and quantity > avail["available"]:
         raise HTTPException(409, "No hay capacidad disponible para esa cantidad")
 
-    is_manual = payment_method in ("transfer", "cash")
+    is_manual = payment_method in MANUAL_CODES
+    is_gateway_stub = payment_method in GATEWAY_STUB_CODES
     if is_manual:
-        pm = (event.get("payment_methods") or {}).get(payment_method) or {}
-        if not pm.get("enabled"):
-            raise HTTPException(
-                400, f"El organizador no acepta pagos con '{payment_method}'"
-            )
         ttl = timedelta(hours=MANUAL_RESERVATION_TTL_HOURS)
         initial_status = "pending_manual_payment"
+    elif is_gateway_stub:
+        ttl = timedelta(minutes=RESERVATION_TTL_MIN)
+        initial_status = "pending_gateway"
     else:
         ttl = timedelta(minutes=RESERVATION_TTL_MIN)
         initial_status = "pending"

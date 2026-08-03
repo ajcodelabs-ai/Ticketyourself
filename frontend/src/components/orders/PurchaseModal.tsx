@@ -42,13 +42,15 @@ import PhoneInput from "@/components/ui/phone-input";
 import api, { formatApiError } from "@/lib/api";
 import { formatPriceLabel } from "@/lib/events";
 import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders";
+import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
 
 const FEE_PERCENT = 5;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function activeMethodsFor(event) {
-    const pm = event?.payment_methods || {};
-    return ["stripe", "transfer", "cash"].filter((k) => pm[k]?.enabled);
+    return resolveEnabledPaymentCodes(event?.payment_methods, {
+        includeLegacyStripe: true,
+    });
 }
 
 interface TicketTypeItem {
@@ -137,7 +139,7 @@ export default function PurchaseModal({
     const activeMethods = useMemo(() => {
         if (pricingType === "free") return [];
         const m = activeMethodsFor(event);
-        return m.length ? m : ["stripe"];
+        return m.length ? m : ["nuvei"];
     }, [event, pricingType]);
 
     // ── Phase 8: ticket types + functions ────────────────────────────────────
@@ -151,7 +153,7 @@ export default function PurchaseModal({
     // ── Classic fields ────────────────────────────────────────────────────────
     const [quantity, setQuantity] = useState(1);
     const [donation, setDonation] = useState("");
-    const [paymentMethod, setPaymentMethod] = useState("stripe");
+    const [paymentMethod, setPaymentMethod] = useState("nuvei");
     const [buyer, setBuyer] = useState({
         name: "",
         email: "",
@@ -319,7 +321,7 @@ export default function PurchaseModal({
             setDonation("");
             setBuyer({ name: "", email: "", phone: "", document_id: "" });
             setErrors({});
-            setPaymentMethod(activeMethods[0] || "stripe");
+            setPaymentMethod(activeMethods[0] || "nuvei");
             setPromoCodeInput("");
             setAppliedPromo(null);
             setPreviewTotals(null);
@@ -567,6 +569,15 @@ export default function PurchaseModal({
             if (data.status === "pending_manual_payment" && data.redirect_to) {
                 toast.success("Reserva creada. Te enviamos las instrucciones de pago por email.");
                 navigate(data.redirect_to);
+                onOpenChange(false);
+                return;
+            }
+            if (data.status === "pending_gateway") {
+                toast.message(
+                    data.message ||
+                        "Pago digital en preparación. Tu reserva quedó registrada; el cobro real aún no está disponible.",
+                );
+                if (data.redirect_to) navigate(data.redirect_to);
                 onOpenChange(false);
                 return;
             }
@@ -1190,6 +1201,12 @@ export default function PurchaseModal({
                                                 value={formatCents(seatHoldsInfo.admin_fee_cents, event.currency)}
                                             />
                                         )}
+                                        {(seatHoldsInfo.vxs_cents || 0) > 0 && (
+                                            <Row
+                                                label="VXS"
+                                                value={formatCents(seatHoldsInfo.vxs_cents, event.currency)}
+                                            />
+                                        )}
                                     </>
                                 ) : (
                                     <Row
@@ -1262,6 +1279,12 @@ export default function PurchaseModal({
                                         {totals.total > 0
                                             ? formatCents(totals.total, event.currency)
                                             : ""}
+                                    </>
+                                ) : paymentMethod === "nuvei" || paymentMethod === "deuna" ? (
+                                    <>
+                                        <TicketIcon className="h-4 w-4 mr-1.5" />
+                                        Continuar con{" "}
+                                        {PAYMENT_METHOD_META[paymentMethod]?.label || "pago digital"}
                                     </>
                                 ) : (
                                     <>

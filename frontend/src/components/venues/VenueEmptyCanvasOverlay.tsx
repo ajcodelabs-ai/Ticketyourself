@@ -31,13 +31,15 @@ export default function VenueEmptyCanvasOverlay({
         setUsingId(tpl.id);
         try {
             const elements = tpl.elements || [];
-            const localities = tpl.localities || [];
             await onApplied({
-                elements: JSON.parse(JSON.stringify(elements)),
-                localities: JSON.parse(JSON.stringify(localities)),
+                elements: JSON.parse(JSON.stringify(elements)).map((e) => ({
+                    ...e,
+                    locality_id: null,
+                })),
+                localities: [],
                 capacity_calculated: tpl.capacity_calculated,
             });
-            toast.success(`Layout "${tpl.name}" aplicado. Revisá precios y publicá cuando esté listo.`);
+            toast.success(`Layout "${tpl.name}" aplicado. Publicá cuando la forma esté lista.`);
         } catch (e) {
             toast.error(e?.response?.data?.detail || "No se pudo aplicar la plantilla");
         } finally {

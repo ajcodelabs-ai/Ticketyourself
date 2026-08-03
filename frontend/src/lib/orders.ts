@@ -5,6 +5,10 @@ import { previewMicrositePath } from "@/lib/config";
 
 export const ORDER_STATUS_META = {
     pending: { label: "Pendiente", className: "bg-amber-100 text-amber-800" },
+    pending_gateway: {
+        label: "Pago digital pendiente",
+        className: "bg-sky-100 text-sky-900",
+    },
     pending_manual_payment: {
         label: "Esperando pago manual",
         className: "bg-orange-100 text-orange-900",
@@ -16,6 +20,16 @@ export const ORDER_STATUS_META = {
 
 export const PAYMENT_METHOD_META = {
     stripe: { label: "Tarjeta", icon: "💳", description: "Procesamiento inmediato" },
+    nuvei: {
+        label: "Nuvei",
+        icon: "💳",
+        description: "Pago digital (en preparación)",
+    },
+    deuna: {
+        label: "DeUna",
+        icon: "📱",
+        description: "Pago digital (en preparación)",
+    },
     transfer: {
         label: "Transferencia bancaria",
         icon: "🏦",

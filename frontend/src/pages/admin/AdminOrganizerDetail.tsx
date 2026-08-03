@@ -6,7 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import api, { API_BASE, formatApiError } from "@/lib/api";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import api, { formatApiError } from "@/lib/api";
 import {
     ArrowLeft,
     CheckCircle2,
@@ -14,7 +20,9 @@ import {
     Pause,
     MessageCircle,
     Download,
+    Eye,
     FileText,
+    Loader2,
 } from "lucide-react";
 
 const STATUS_STYLE = {
@@ -24,6 +32,11 @@ const STATUS_STYLE = {
     suspended: "bg-zinc-200 text-zinc-700",
 };
 
+function isPreviewableMime(mime) {
+    if (!mime) return false;
+    return mime === "application/pdf" || mime.startsWith("image/");
+}
+
 export default function AdminOrganizerDetail() {
     const { id } = useParams();
     const [org, setOrg] = useState(null);
@@ -31,6 +44,7 @@ export default function AdminOrganizerDetail() {
     const [loading, setLoading] = useState(true);
     const [comment, setComment] = useState("");
     const [acting, setActing] = useState(false);
+    const [preview, setPreview] = useState(null); // { doc, url, loading, error }
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -52,6 +66,12 @@ export default function AdminOrganizerDetail() {
         load();
     }, [load]);
 
+    useEffect(() => {
+        return () => {
+            if (preview?.url) URL.revokeObjectURL(preview.url);
+        };
+    }, [preview?.url]);
+
     const act = async (action, requireComment) => {
         if (requireComment && comment.trim().length < 2) {
             toast.error("El comentario es obligatorio para esta acción");
@@ -68,6 +88,54 @@ export default function AdminOrganizerDetail() {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
         } finally {
             setActing(false);
+        }
+    };
+
+    const openPreview = async (doc) => {
+        if (preview?.url) URL.revokeObjectURL(preview.url);
+        setPreview({ doc, url: null, loading: true, error: null });
+        try {
+            const { data } = await api.get(
+                `/organizers/${id}/documents/${doc.id}/download`,
+                { responseType: "blob" },
+            );
+            const blob = data instanceof Blob ? data : new Blob([data], { type: doc.mime_type });
+            const url = URL.createObjectURL(blob);
+            setPreview({ doc, url, loading: false, error: null });
+        } catch (err) {
+            setPreview({
+                doc,
+                url: null,
+                loading: false,
+                error:
+                    formatApiError(err?.response?.data?.detail) ||
+                    "No se pudo cargar la vista previa",
+            });
+        }
+    };
+
+    const closePreview = () => {
+        if (preview?.url) URL.revokeObjectURL(preview.url);
+        setPreview(null);
+    };
+
+    const downloadDoc = async (doc) => {
+        try {
+            const { data } = await api.get(
+                `/organizers/${id}/documents/${doc.id}/download`,
+                { responseType: "blob" },
+            );
+            const blob = data instanceof Blob ? data : new Blob([data]);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = doc.original_filename || "documento";
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            toast.error(
+                formatApiError(err?.response?.data?.detail) || "No se pudo descargar",
+            );
         }
     };
 
@@ -144,26 +212,40 @@ export default function AdminOrganizerDetail() {
                             <div
                                 key={d.id}
                                 data-testid={`admin-doc-${d.id}`}
-                                className="flex items-center justify-between p-3 rounded-lg border border-border/70"
+                                className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border/70"
                             >
-                                <div className="text-sm">
-                                    <div className="font-medium">
+                                <div className="text-sm min-w-0">
+                                    <div className="font-medium truncate">
                                         {d.original_filename || "(sin nombre)"}
                                     </div>
                                     <div className="text-xs text-muted-foreground">
                                         {d.doc_type} · {d.mime_type} · {(d.size_bytes / 1024).toFixed(1)} KB
                                     </div>
                                 </div>
-                                <a
-                                    href={`${API_BASE}/organizers/${org.id}/documents/${d.id}/download`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    data-testid={`admin-doc-download-${d.id}`}
-                                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                                >
-                                    <Download className="h-4 w-4" />
-                                    Descargar
-                                </a>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    {isPreviewableMime(d.mime_type) && (
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => openPreview(d)}
+                                            data-testid={`admin-doc-preview-${d.id}`}
+                                        >
+                                            <Eye className="h-4 w-4 mr-1" />
+                                            Previsualizar
+                                        </Button>
+                                    )}
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => downloadDoc(d)}
+                                        data-testid={`admin-doc-download-${d.id}`}
+                                    >
+                                        <Download className="h-4 w-4 mr-1" />
+                                        Descargar
+                                    </Button>
+                                </div>
                             </div>
                         ))
                     )}
@@ -255,6 +337,46 @@ export default function AdminOrganizerDetail() {
                     </div>
                 </CardContent>
             </Card>
+
+            <Dialog open={!!preview} onOpenChange={(open) => !open && closePreview()}>
+                <DialogContent
+                    className="max-w-4xl w-[95vw] h-[85vh] flex flex-col"
+                    data-testid="admin-doc-preview-dialog"
+                >
+                    <DialogHeader>
+                        <DialogTitle className="truncate pr-8">
+                            {preview?.doc?.original_filename || "Documento"}
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 min-h-0 rounded-md border bg-muted/30 overflow-hidden">
+                        {preview?.loading && (
+                            <div className="h-full grid place-items-center text-sm text-muted-foreground gap-2">
+                                <Loader2 className="h-6 w-6 animate-spin" />
+                                Cargando vista previa…
+                            </div>
+                        )}
+                        {preview?.error && (
+                            <div className="h-full grid place-items-center text-sm text-destructive p-6 text-center">
+                                {preview.error}
+                            </div>
+                        )}
+                        {preview?.url && preview?.doc?.mime_type?.startsWith("image/") && (
+                            <img
+                                src={preview.url}
+                                alt={preview.doc.original_filename || "Documento"}
+                                className="max-h-full max-w-full mx-auto object-contain p-2"
+                            />
+                        )}
+                        {preview?.url && preview?.doc?.mime_type === "application/pdf" && (
+                            <iframe
+                                title={preview.doc.original_filename || "PDF"}
+                                src={preview.url}
+                                className="w-full h-full border-0"
+                            />
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

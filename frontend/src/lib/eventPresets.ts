@@ -31,12 +31,14 @@ export const SALES_START_PRESETS = [
     { key: "custom", label: "Fecha y hora personalizada", offsetMinutes: null },
 ];
 
+// Sales typically continue after the event starts (doors / late entry).
+// `offsetMinutes` is relative to starts_at: 0 = at start, positive = after start.
 export const SALES_END_PRESETS = [
     { key: "at_start", label: "Al iniciar el evento", offsetMinutes: 0 },
-    { key: "1h_before", label: "1 hora antes del evento", offsetMinutes: 60 },
-    { key: "4h_before", label: "4 horas antes del evento", offsetMinutes: 60 * 4 },
-    { key: "24h_before", label: "24 horas antes del evento", offsetMinutes: 60 * 24 },
-    { key: "1w_before", label: "1 semana antes del evento", offsetMinutes: 60 * 24 * 7 },
+    { key: "1h_after", label: "1 hora después de iniciado", offsetMinutes: 60 },
+    { key: "4h_after", label: "4 horas después de iniciado", offsetMinutes: 60 * 4 },
+    { key: "24h_after", label: "24 horas después de iniciado", offsetMinutes: 60 * 24 },
+    { key: "1w_after", label: "1 semana después de iniciado", offsetMinutes: 60 * 24 * 7 },
     { key: "custom", label: "Fecha y hora personalizada", offsetMinutes: null },
 ];
 
@@ -97,10 +99,15 @@ export function inferSalesEndPreset(startsIso, salesEndIso) {
     const startsMs = new Date(startsIso).getTime();
     const seMs = new Date(salesEndIso).getTime();
     if (!isFinite(startsMs) || !isFinite(seMs)) return "custom";
-    const mins = Math.round((startsMs - seMs) / 60000);
-    if (mins <= TOLERANCE_MIN) return "at_start";
-    const match = findByOffset(SALES_END_PRESETS, mins);
-    return match ? match.key : "custom";
+    // Positive = sales end after starts_at (current product default).
+    const minsAfter = Math.round((seMs - startsMs) / 60000);
+    if (Math.abs(minsAfter) <= TOLERANCE_MIN) return "at_start";
+    if (minsAfter > 0) {
+        const match = findByOffset(SALES_END_PRESETS, minsAfter);
+        return match ? match.key : "custom";
+    }
+    // Legacy "before start" values surface as custom so organizers can fix them.
+    return "custom";
 }
 
 /**
@@ -135,5 +142,6 @@ export function computeSalesEnd(startsIso, preset, customIso) {
     if (def.offsetMinutes === 0) return null; // at_start (defaults to event start)
     const startMs = new Date(startsIso).getTime();
     if (!isFinite(startMs)) return null;
-    return new Date(startMs - def.offsetMinutes * 60000).toISOString();
+    // Positive offsetMinutes = after starts_at.
+    return new Date(startMs + def.offsetMinutes * 60000).toISOString();
 }

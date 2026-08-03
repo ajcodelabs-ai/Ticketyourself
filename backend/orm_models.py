@@ -98,6 +98,27 @@ class SubscriptionPlan(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Payment method catalog (platform-wide)
+# ─────────────────────────────────────────────────────────────────────────────
+class PaymentMethodCatalog(Base):
+    """Selectable payment methods shown in the event wizard / checkout."""
+
+    __tablename__ = "payment_method_catalog"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    code = Column(String(40), unique=True, nullable=False, index=True)
+    name = Column(String(80), nullable=False)
+    kind = Column(String(20), nullable=False, default="manual")  # gateway | manual
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Organizers  (Phase 2)
 # ─────────────────────────────────────────────────────────────────────────────
 class Organizer(Base):
@@ -281,7 +302,7 @@ class Event(Base):
     # Event-scoped copy of canvas/elements/localities — edited independently of the master.
     # Shape: {canvas, elements, localities, capacity_calculated, snapshotted_at, source_venue_id}
     venue_layout = Column(JSONB, nullable=True)
-    # [{locality_id, price_cents, service_fee_cents, admin_fee_cents, max_tickets_per_purchase}]
+    # [{locality_id, price_cents, service_fee_cents, admin_fee_cents, vxs_cents, max_tickets_per_purchase}]
     locality_pricing = Column(JSONB, nullable=False, default=list)
     seat_holds_window_minutes = Column(Integer, nullable=False, default=10)
 
@@ -311,9 +332,21 @@ class Event(Base):
         JSONB,
         nullable=False,
         default=lambda: {
-            "stripe": {"enabled": True},
-            "transfer": {"enabled": False},
-            "cash": {"enabled": False},
+            "enabled_codes": ["nuvei"],
+            "stripe": {"enabled": False},
+            "transfer": {
+                "enabled": False,
+                "bank_name": "",
+                "account_number": "",
+                "account_holder": "",
+                "instructions": "",
+            },
+            "cash": {
+                "enabled": False,
+                "location": "",
+                "schedule": "",
+                "contact": "",
+            },
         },
     )
     discounts = Column(JSONB, nullable=False, default=dict)

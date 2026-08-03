@@ -1,0 +1,90 @@
+import { describe, expect, it } from "vitest";
+import { collectEventWizardIssues } from "@/lib/eventWizardValidation";
+import { defaultPaymentMethods } from "@/lib/paymentMethods";
+
+function baseForm(overrides = {}) {
+    return {
+        title: "Concierto demo",
+        starts_at: "2026-09-01T20:00",
+        duration_preset: "2h",
+        duration_minutes_custom: 0,
+        sales_window_preset_start: "immediate",
+        sales_window_preset_end: "at_start",
+        sales_start_custom: "",
+        sales_end_custom: "",
+        no_seating_mode: true,
+        venue_name: "Teatro",
+        pricing_type: "free",
+        base_price_dollars: "0",
+        payment_methods: defaultPaymentMethods(),
+        ...overrides,
+    };
+}
+
+describe("collectEventWizardIssues", () => {
+    it("blocks draft without title or start date", () => {
+        const issues = collectEventWizardIssues({
+            form: baseForm({ title: "", starts_at: "" }),
+            poster: null,
+            currentEvent: null,
+            mode: "draft",
+        });
+        expect(issues.map((i) => i.code)).toEqual(
+            expect.arrayContaining(["title", "starts_at"]),
+        );
+    });
+
+    it("allows draft with title + schedule only", () => {
+        const issues = collectEventWizardIssues({
+            form: baseForm({ venue_name: "", no_seating_mode: true }),
+            poster: null,
+            currentEvent: null,
+            mode: "draft",
+        });
+        expect(issues).toHaveLength(0);
+    });
+
+    it("requires poster and venue name to publish general event", () => {
+        const issues = collectEventWizardIssues({
+            form: baseForm({ venue_name: "" }),
+            poster: null,
+            currentEvent: null,
+            mode: "publish",
+            organizerStatus: "approved",
+        });
+        expect(issues.map((i) => i.code)).toEqual(
+            expect.arrayContaining(["poster", "venue_name"]),
+        );
+    });
+
+    it("flags pending organizer on publish", () => {
+        const issues = collectEventWizardIssues({
+            form: baseForm(),
+            poster: "/x.jpg",
+            currentEvent: { poster_url: "/x.jpg" },
+            mode: "publish",
+            organizerStatus: "pending",
+        });
+        expect(issues.some((i) => i.code === "organizer_pending")).toBe(true);
+    });
+
+    it("requires payment method when paid", () => {
+        const pm = defaultPaymentMethods();
+        Object.keys(pm).forEach((k) => {
+            if (pm[k] && typeof pm[k] === "object") pm[k].enabled = false;
+        });
+        if (Array.isArray(pm.enabled_codes)) pm.enabled_codes = [];
+        const issues = collectEventWizardIssues({
+            form: baseForm({
+                pricing_type: "paid",
+                base_price_dollars: "10",
+                payment_methods: pm,
+            }),
+            poster: "/x.jpg",
+            currentEvent: { poster_url: "/x.jpg" },
+            mode: "publish",
+            organizerStatus: "approved",
+        });
+        expect(issues.some((i) => i.code === "payment_methods")).toBe(true);
+    });
+});

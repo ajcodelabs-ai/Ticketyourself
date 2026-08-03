@@ -275,13 +275,13 @@ export default function Onboarding() {
                 <Card className="border-amber-300 bg-amber-50/40 tys-soft-shadow" data-testid="onboarding-review-panel">
                     <CardHeader>
                         <CardTitle className="text-lg flex items-center gap-2 text-amber-900">
-                            <Clock className="h-5 w-5" /> En revisión por el equipo TYS
+                            <Clock className="h-5 w-5" /> Documentos recibidos — podés seguir
                         </CardTitle>
                         <CardDescription>
-                            Recibimos tus documentos. Serán revisados y aprobados dentro de las
-                            próximas 48 horas laborables; te avisamos por correo en cuanto
-                            aprobemos tu cuenta para que puedas pagar el plan elegido. Si tenés
-                            alguna pregunta, no dudes en escribirnos a{" "}
+                            El equipo TYS revisará tu cuenta (normalmente en 48 h laborables) y te
+                            avisamos por correo. Mientras tanto podés configurar venues, eventos y
+                            el microsite; la publicación queda bloqueada hasta la aprobación. Si
+                            tenés dudas, escribinos a{" "}
                             <a
                                 href="mailto:soporte@ticketyourself.com"
                                 className="text-primary underline underline-offset-2"
@@ -291,7 +291,16 @@ export default function Onboarding() {
                             .
                         </CardDescription>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className="space-y-5">
+                        <div className="flex flex-wrap gap-2">
+                            <Button
+                                onClick={() => navigate("/app/dashboard")}
+                                data-testid="onboarding-continue-dashboard"
+                                className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                            >
+                                Ir al panel y empezar a configurar
+                            </Button>
+                        </div>
                         <DocumentsUploader
                             docTypes={docTypes}
                             docType={docType}
@@ -615,7 +624,7 @@ function DemoShortcut({ onActivated }) {
 function ProgressStrip({ phase }) {
     const items = [
         { id: "docs", label: "Documentos" },
-        { id: "review", label: "Revisión" },
+        { id: "review", label: "Revisión (en paralelo)" },
         { id: "plan", label: "Pago" },
     ];
     const order = ["docs", "review", "plan"];

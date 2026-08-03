@@ -20,7 +20,7 @@ export default function EventCard({ event, tenantSlug, primaryColor = "#4f46e5" 
         >
             <div className="aspect-[4/3] relative overflow-hidden bg-muted">
                 <img
-                    src={event.poster_url || FALLBACK_IMG}
+                    src={event.small_url || event.poster_url || FALLBACK_IMG}
                     alt={event.title}
                     className="w-full h-full object-cover group-hover:scale-105 transition"
                     onError={(e) => {

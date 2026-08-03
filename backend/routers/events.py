@@ -95,9 +95,15 @@ asset_router = APIRouter(prefix="/api/events/assets", tags=["events-assets"])
 
 # ── Models ───────────────────────────────────────────────────────────────────
 class PaymentMethodConfig(BaseModel):
-    """Per-event payment methods. Stripe always present; transfer & cash opt-in."""
+    """Per-event payment methods.
 
-    stripe: Dict[str, Any] = Field(default_factory=lambda: {"enabled": True})
+    Canonical shape uses ``enabled_codes`` (nuvei | deuna | transfer | cash).
+    Legacy ``{stripe,transfer,cash}.enabled`` is still accepted on input and
+    mapped via ``services.payment_methods.normalize_payment_methods``.
+    """
+
+    enabled_codes: Optional[List[str]] = None
+    stripe: Dict[str, Any] = Field(default_factory=lambda: {"enabled": False})
     transfer: Dict[str, Any] = Field(
         default_factory=lambda: {
             "enabled": False,
@@ -122,7 +128,9 @@ class DiscountConditions(BaseModel):
     max_per_buyer: Optional[int] = Field(default=None, ge=1)
     valid_from: Optional[datetime] = None
     valid_until: Optional[datetime] = None
-    payment_methods: Optional[List[Literal["stripe", "transfer", "cash"]]] = None
+    payment_methods: Optional[
+        List[Literal["stripe", "nuvei", "deuna", "transfer", "cash"]]
+    ] = None
 
 
 class DiscountBenefit(BaseModel):
@@ -522,6 +530,7 @@ class LocalityPriceIn(BaseModel):
     price_cents: int = Field(ge=0)
     service_fee_cents: int = Field(default=0, ge=0)
     admin_fee_cents: int = Field(default=0, ge=0)
+    vxs_cents: int = Field(default=0, ge=0)
     max_tickets_per_purchase: Optional[int] = Field(default=None, ge=1, le=20)
 
 
@@ -722,21 +731,20 @@ async def put_event_venue_layout(
         row.updated_at = _now()
         flag_modified(row, "venue_layout")
 
-        # Keep locality_pricing in sync for new localities (fees 0); drop orphaned.
+        # Keep locality_pricing in sync with the localities that still exist
+        # (seed new ones with fees 0; drop only localities that were deleted).
+        # Note: a locality keeps its pricing even before it's assigned to any
+        # element on the map — the "Localidades" tab lets organizers price a
+        # locality before running "Asignar en Mapa".
         existing_pricing = {
             lp.get("locality_id"): lp
             for lp in (row.locality_pricing or [])
             if lp.get("locality_id")
         }
-        active_ids = {
-            el.get("locality_id")
-            for el in (body.elements or [])
-            if el.get("locality_id")
-        }
         new_pricing = []
         for loc in body.localities or []:
             lid = loc.get("id")
-            if not lid or lid not in active_ids:
+            if not lid:
                 continue
             prev = existing_pricing.get(lid) or {}
             new_pricing.append(
@@ -749,6 +757,7 @@ async def put_event_venue_layout(
                     ),
                     "service_fee_cents": int(prev.get("service_fee_cents") or 0),
                     "admin_fee_cents": int(prev.get("admin_fee_cents") or 0),
+                    "vxs_cents": int(prev.get("vxs_cents") or 0),
                     "max_tickets_per_purchase": prev.get("max_tickets_per_purchase"),
                 }
             )
@@ -791,7 +800,9 @@ async def list_my_events(
             await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         )
         result = await session.execute(
-            stmt.order_by(Event.starts_at.asc()).offset((page - 1) * limit).limit(limit)
+            stmt.order_by(Event.priority.desc(), Event.starts_at.asc())
+            .offset((page - 1) * limit)
+            .limit(limit)
         )
         items = [row_to_dict(r) for r in result.scalars().all()]
     return {"items": items, "total": total, "page": page, "limit": limit}
@@ -881,6 +892,39 @@ def _assert_access_type_allowed(
         assert_feature(plan_code, "access_codes")
 
 
+async def _active_catalog_codes(session) -> set[str]:
+    from orm_models import PaymentMethodCatalog
+
+    rows = (
+        (
+            await session.execute(
+                select(PaymentMethodCatalog.code).where(
+                    PaymentMethodCatalog.is_active.is_(True)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return set(rows)
+
+
+async def _normalize_payment_methods_or_400(
+    session, pm: Optional[PaymentMethodConfig]
+) -> dict:
+    from services.payment_methods import (
+        default_payment_methods,
+        normalize_payment_methods,
+    )
+
+    allowed = await _active_catalog_codes(session)
+    raw = pm.model_dump() if pm is not None else default_payment_methods()
+    try:
+        return normalize_payment_methods(raw, allowed_codes=allowed or None)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("", status_code=201)
 async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
     org = await _require_approved_organizer(user)
@@ -890,6 +934,9 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
         )
     async with AsyncSessionLocal() as session:
         slug = await _next_event_slug(org["id"], normalize_slug(payload.title), session)
+        payment_methods = await _normalize_payment_methods_or_400(
+            session, payload.payment_methods
+        )
 
         # Duplicate check: same (starts_at, venue_name) in same organizer.
         if payload.venue_name:
@@ -937,11 +984,7 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             raffle_enabled=payload.raffle_enabled,
             custom_questions=[q.model_dump() for q in payload.custom_questions],
             multi_function_mode=payload.multi_function_mode,
-            payment_methods=(
-                payload.payment_methods.model_dump()
-                if payload.payment_methods
-                else PaymentMethodConfig().model_dump()
-            ),
+            payment_methods=payment_methods,
             discounts=(
                 payload.discounts.model_dump(exclude_none=False)
                 if payload.discounts
@@ -1008,7 +1051,9 @@ async def update_my_event(
         if "discounts" in diff and payload.discounts is not None:
             diff["discounts"] = payload.discounts.model_dump(exclude_none=False)
         if "payment_methods" in diff and payload.payment_methods is not None:
-            diff["payment_methods"] = payload.payment_methods.model_dump()
+            diff["payment_methods"] = await _normalize_payment_methods_or_400(
+                session, payload.payment_methods
+            )
         if "access_params" in diff and payload.access_params is not None:
             diff["access_params"] = payload.access_params.model_dump()
             _assert_access_type_allowed(
@@ -1467,8 +1512,11 @@ async def list_public_events(
             Event.visibility.in_(["public", "public_blocked"]),
         )
         total = await pg.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        # Higher priority first (microsite featured / landing order), then soonest date.
         result = await pg.execute(
-            stmt.order_by(Event.starts_at.asc()).offset((page - 1) * limit).limit(limit)
+            stmt.order_by(Event.priority.desc(), Event.starts_at.asc())
+            .offset((page - 1) * limit)
+            .limit(limit)
         )
         items = [row_to_dict(r) for r in result.scalars().all()]
     return {"items": items, "total": total}

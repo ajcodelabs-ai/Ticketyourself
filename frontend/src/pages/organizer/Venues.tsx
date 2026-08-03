@@ -23,6 +23,7 @@ import {
 import { toast } from "sonner";
 import { venuesApi, VENUE_TYPES, STATUS_LABEL } from "@/lib/venues";
 import VenueTemplatePicker from "@/components/venues/VenueTemplatePicker";
+import VenueTemplateThumb from "@/components/venues/VenueTemplateThumb";
 
 export default function Venues() {
     const navigate = useNavigate();
@@ -36,13 +37,14 @@ export default function Venues() {
     const [typeFilter, setTypeFilter] = useState("all");
     const [search, setSearch] = useState("");
     const [showNew, setShowNew] = useState(false);
-    const [createMode, setCreateMode] = useState("template"); // template | blank
+    const [createMode, setCreateMode] = useState("template"); // template | blank | name-from-template
     const [newName, setNewName] = useState("");
     const [newType, setNewType] = useState("theater");
     const [confirmDelete, setConfirmDelete] = useState(null);
     const [templates, setTemplates] = useState([]);
     const [templatesLoading, setTemplatesLoading] = useState(true);
     const [usingTemplate, setUsingTemplate] = useState(null);
+    const [pendingTemplate, setPendingTemplate] = useState(null);
 
     const reload = async () => {
         setLoading(true);
@@ -121,6 +123,18 @@ export default function Venues() {
         setShowNew(false);
         setCreateMode("template");
         setNewName("");
+        setPendingTemplate(null);
+    };
+
+    const promptTemplateName = (tpl) => {
+        if (!canCreate) {
+            toast.error(`Tu plan permite hasta ${maxV} venue(s). Archivá uno para usar una plantilla.`);
+            return;
+        }
+        setPendingTemplate(tpl);
+        setNewName(`${tpl.name} (copia)`);
+        setCreateMode("name-from-template");
+        setShowNew(true);
     };
 
     const handleDuplicate = async (v) => {
@@ -156,15 +170,19 @@ export default function Venues() {
         }
     };
 
-    const handleUseTemplate = async (tpl) => {
+    const handleUseTemplate = async () => {
+        if (!pendingTemplate || !newName.trim()) return;
         if (!canCreate) {
             toast.error(`Tu plan permite hasta ${maxV} venue(s). Archivá uno para usar una plantilla.`);
             return;
         }
-        setUsingTemplate(tpl.id);
+        setUsingTemplate(pendingTemplate.id);
         try {
-            const v = await venuesApi.fromTemplate(tpl.id);
+            const v = await venuesApi.fromTemplate(pendingTemplate.id, {
+                name: newName.trim(),
+            });
             toast.success("Venue creado desde plantilla");
+            closeCreateDialog();
             navigate(editorUrl(v.id));
         } catch (e) {
             toast.error(e?.response?.data?.detail || "No se pudo usar la plantilla");
@@ -181,7 +199,7 @@ export default function Venues() {
                 <div>
                     <h1 className="text-2xl font-bold">Venues</h1>
                     <p className="text-sm text-muted-foreground mt-0.5">
-                        Mapas y localidades para tus eventos.
+                        Mapas (solo la forma) para tus eventos.
                         {" · "}
                         <strong className="text-foreground" data-testid="venues-quota">
                             {activeCount} de {maxV === -1 ? "∞" : maxV}
@@ -228,6 +246,7 @@ export default function Venues() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             {templates.map((tpl) => (
                                 <div key={tpl.id} className="rounded-xl border bg-card p-4 space-y-3">
+                                    <VenueTemplateThumb template={tpl} height={130} />
                                     <div className="flex items-start gap-3">
                                         <div className="h-10 w-10 rounded-lg bg-secondary text-muted-foreground grid place-items-center shrink-0">
                                             <LayoutTemplate className="h-5 w-5" />
@@ -247,7 +266,7 @@ export default function Venues() {
                                         variant="outline"
                                         className="w-full"
                                         disabled={!canCreate || usingTemplate === tpl.id}
-                                        onClick={() => handleUseTemplate(tpl)}
+                                        onClick={() => promptTemplateName(tpl)}
                                         data-testid={`use-template-${tpl.slug}`}
                                     >
                                         {usingTemplate === tpl.id ? "Creando…" : "Usar plantilla"}
@@ -263,7 +282,7 @@ export default function Venues() {
                 <div>
                     <h2 className="text-sm font-medium">2. Tus venues</h2>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        Abrí el diseñador para editar el mapa y las localidades.
+                        Abrí el diseñador para editar la forma del mapa.
                     </p>
                 </div>
 
@@ -421,16 +440,58 @@ export default function Venues() {
                                 loading={templatesLoading}
                                 usingId={usingTemplate}
                                 disabled={!canCreate}
-                                onUseTemplate={(tpl) => {
-                                    closeCreateDialog();
-                                    handleUseTemplate(tpl);
-                                }}
+                                onUseTemplate={(tpl) => promptTemplateName(tpl)}
                                 onStartBlank={() => setCreateMode("blank")}
                             />
                             <DialogFooter>
                                 <Button variant="ghost" onClick={closeCreateDialog}>Cancelar</Button>
                             </DialogFooter>
                         </>
+                    ) : createMode === "name-from-template" ? (
+                        <div className="space-y-4">
+                            <p className="text-sm text-muted-foreground">
+                                Vas a clonar la plantilla{" "}
+                                <strong className="text-foreground">
+                                    {pendingTemplate?.name}
+                                </strong>
+                                . Elegí un nombre propio para tu venue (la plantilla de la
+                                plataforma no se modifica).
+                            </p>
+                            <div className="space-y-1.5">
+                                <Label>Nombre del venue *</Label>
+                                <Input
+                                    value={newName}
+                                    onChange={(e) => setNewName(e.target.value)}
+                                    placeholder="Mi teatro principal"
+                                    autoFocus
+                                    data-testid="venue-template-name"
+                                />
+                            </div>
+                            <DialogFooter className="sm:justify-between gap-2">
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    onClick={() => {
+                                        setPendingTemplate(null);
+                                        setCreateMode("template");
+                                    }}
+                                >
+                                    ← Volver
+                                </Button>
+                                <div className="flex gap-2">
+                                    <Button variant="ghost" onClick={closeCreateDialog}>
+                                        Cancelar
+                                    </Button>
+                                    <Button
+                                        onClick={handleUseTemplate}
+                                        disabled={!newName.trim() || !!usingTemplate}
+                                        data-testid="venue-template-submit"
+                                    >
+                                        {usingTemplate ? "Creando…" : "Crear y diseñar"}
+                                    </Button>
+                                </div>
+                            </DialogFooter>
+                        </div>
                     ) : (
                         <div className="space-y-4">
                             <p className="text-xs text-muted-foreground">

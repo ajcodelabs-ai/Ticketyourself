@@ -170,6 +170,159 @@ async def send_welcome_email(*, to: str, company_name: str, continue_url: str) -
     )
 
 
+# ── Organizer approval / rejection ───────────────────────────────────────────
+def render_organizer_approved_html(*, company_name: str, continue_url: str) -> str:
+    return f"""
+<table cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background:#f4f4f9;padding:32px 0;font-family:Helvetica,Arial,sans-serif;color:#1f1f33;">
+  <tr>
+    <td align="center">
+      <table cellpadding="0" cellspacing="0" border="0" width="560"
+             style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e6e6f0;">
+        <tr>
+          <td style="background:#059669;padding:24px 32px;color:#ffffff;">
+            <div style="font-size:13px;letter-spacing:2px;text-transform:uppercase;opacity:.8;">
+              Ticket Yourself
+            </div>
+            <div style="font-size:22px;font-weight:600;margin-top:4px;">
+              ¡Tu cuenta fue aprobada!
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px;line-height:1.55;font-size:15px;color:#33334a;">
+            <p style="margin:0 0 12px;">Hola {company_name},</p>
+            <p style="margin:0 0 16px;">
+              Revisamos tus documentos y tu cuenta de organizador ya está habilitada.
+              Completá el pago del plan (si aún no lo hiciste) y publicá tus eventos,
+              venues y microsite cuando quieras.
+            </p>
+            <table cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" style="background:#059669;border-radius:10px;">
+                  <a href="{continue_url}"
+                     style="display:inline-block;padding:12px 28px;color:#ffffff;text-decoration:none;
+                            font-weight:600;font-size:15px;">
+                    Continuar en TYS
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f4f4f9;padding:16px 32px;color:#8c8ca6;font-size:12px;text-align:center;">
+            Ticket Yourself · Ecuador
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+""".strip()
+
+
+def render_organizer_rejected_html(
+    *, company_name: str, reason: str, continue_url: str
+) -> str:
+    safe_reason = (
+        (reason or "Sin detalle adicional.").replace("<", "&lt;").replace(">", "&gt;")
+    )
+    return f"""
+<table cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background:#f4f4f9;padding:32px 0;font-family:Helvetica,Arial,sans-serif;color:#1f1f33;">
+  <tr>
+    <td align="center">
+      <table cellpadding="0" cellspacing="0" border="0" width="560"
+             style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e6e6f0;">
+        <tr>
+          <td style="background:#dc2626;padding:24px 32px;color:#ffffff;">
+            <div style="font-size:13px;letter-spacing:2px;text-transform:uppercase;opacity:.8;">
+              Ticket Yourself
+            </div>
+            <div style="font-size:22px;font-weight:600;margin-top:4px;">
+              Necesitamos corregir tu solicitud
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px;line-height:1.55;font-size:15px;color:#33334a;">
+            <p style="margin:0 0 12px;">Hola {company_name},</p>
+            <p style="margin:0 0 12px;">
+              Revisamos tu cuenta y por ahora no pudimos aprobarla. Motivo:
+            </p>
+            <p style="margin:0 0 16px;padding:12px 14px;background:#fef2f2;border-radius:8px;color:#7f1d1d;">
+              {safe_reason}
+            </p>
+            <p style="margin:0 0 16px;">
+              Podés corregir o reemplazar los documentos y reenviar tu solicitud desde el
+              onboarding.
+            </p>
+            <table cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" style="background:#4f46e5;border-radius:10px;">
+                  <a href="{continue_url}"
+                     style="display:inline-block;padding:12px 28px;color:#ffffff;text-decoration:none;
+                            font-weight:600;font-size:15px;">
+                    Corregir y reenviar
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f4f4f9;padding:16px 32px;color:#8c8ca6;font-size:12px;text-align:center;">
+            Ticket Yourself · Ecuador
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+""".strip()
+
+
+async def send_organizer_approved_email(
+    *, to: str, company_name: str, continue_url: str
+) -> dict:
+    html = render_organizer_approved_html(
+        company_name=company_name, continue_url=continue_url
+    )
+    text = (
+        f"Hola {company_name},\n\n"
+        "Tu cuenta de organizador en Ticket Yourself fue aprobada.\n"
+        "Completá el plan si aún no lo hiciste y publicá cuando quieras.\n\n"
+        f"Continuar: {continue_url}\n"
+    )
+    return await send_email(
+        to=to,
+        subject="Tu cuenta TYS fue aprobada",
+        html=html,
+        text=text,
+    )
+
+
+async def send_organizer_rejected_email(
+    *, to: str, company_name: str, reason: str, continue_url: str
+) -> dict:
+    html = render_organizer_rejected_html(
+        company_name=company_name, reason=reason, continue_url=continue_url
+    )
+    text = (
+        f"Hola {company_name},\n\n"
+        "No pudimos aprobar tu cuenta de organizador por ahora.\n"
+        f"Motivo: {reason}\n\n"
+        f"Corregí y reenviá desde: {continue_url}\n"
+    )
+    return await send_email(
+        to=to,
+        subject="Actualización de tu solicitud en Ticket Yourself",
+        html=html,
+        text=text,
+    )
+
+
 # ── Ticket purchase confirmation ─────────────────────────────────────────────
 def render_purchase_html(
     *,

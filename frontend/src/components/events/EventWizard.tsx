@@ -4,7 +4,7 @@
  * 8 sections (sidebar stepper):
  *  1. General — info principal · descripción · keywords · contenido avanzado
  *  2. Fechas y ventas — Cuándo (duration + sales presets) · Funciones
- *  3. Media — banner · mediana · pequeña · gallery · Diseño de ticket
+ *  3. Media — portada · principal · miniatura · gallery · Diseño de ticket
  *  4. Localidades — Dónde · precios/aforo · tipos de ticket · abono (si aplica)
  *  5. Formas de pago
  *  6. Descuentos
@@ -29,6 +29,7 @@ import AccessCodesPanel from "@/components/events/AccessCodesPanel";
 import { capacityByLocality } from "@/lib/venues";
 import ImageDropzone from "@/components/ui/ImageDropzone";
 import SortableGallery from "@/components/ui/SortableGallery";
+import DateTimePicker from "@/components/ui/DateTimePicker";
 import { defaultEventContent, normalizeEventContent } from "@/lib/eventContent";
 import {
     DURATION_PRESETS,
@@ -55,6 +56,8 @@ import {
     CreditCard,
     Landmark,
     Banknote,
+    Check,
+    Smartphone,
     Percent,
     Accessibility,
     CalendarClock,
@@ -95,8 +98,23 @@ import {
     TooltipProvider,
 } from "@/components/ui/tooltip";
 import api, { formatApiError } from "@/lib/api";
+import {
+    defaultPaymentMethods,
+    normalizePaymentMethodsForForm,
+    resolveEnabledPaymentCodes,
+    withEnabledCodes,
+} from "@/lib/paymentMethods";
+import {
+    collectEventWizardIssues,
+    stepLabelForIssue,
+} from "@/lib/eventWizardValidation";
 import { venuesApi } from "@/lib/venues";
 import { assetUrl } from "@/lib/microsite";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+    EventMediaCompositePreview,
+    MediaSlotMock,
+} from "@/components/events/EventMediaPreview";
 import {
     EVENT_CATEGORIES,
     PRICING_LABELS,
@@ -133,6 +151,11 @@ const STEPS = [
     { id: "params", label: "Parámetros" },
 ];
 
+const MEDIA_SUBSTEPS = [
+    { id: "images", label: "Imágenes", num: "3.1" },
+    { id: "ticket", label: "Diseño de ticket", num: "3.2" },
+];
+
 /** Legacy ?tab= values → current step ids (deep-links / bookmarks). */
 const TAB_ALIASES = {
     info: "general",
@@ -145,17 +168,7 @@ const TAB_ALIASES = {
 };
 
 function defaultPayments() {
-    return {
-        stripe: { enabled: true },
-        transfer: {
-            enabled: false,
-            bank_name: "",
-            account_number: "",
-            account_holder: "",
-            instructions: "",
-        },
-        cash: { enabled: false, location: "", schedule: "", contact: "" },
-    };
+    return defaultPaymentMethods();
 }
 
 function defaultDiscounts() {
@@ -264,7 +277,7 @@ function makeInitial(d) {
             ? !d.venue_id // legacy events with venue_name but no venue_id default to general
             : false,
         venue_id: d.venue_id || null,
-        payment_methods: d.payment_methods || defaultPayments(),
+        payment_methods: normalizePaymentMethodsForForm(d.payment_methods),
         discounts: d.discounts || defaultDiscounts(),
         access_params: d.access_params || defaultAccessParams(),
         content: normalizeEventContent(d.content),
@@ -280,6 +293,7 @@ function makeInitial(d) {
 
 export default function EventWizard({ initial = null, mode = "create" }) {
     const navigate = useNavigate();
+    const { organizer } = useAuth();
     const [searchParams, setSearchParams] = useSearchParams();
     const [form, setForm] = useState(() => makeInitial(initial));
     const formRef = useRef(form);
@@ -289,6 +303,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     const [currentEvent, setCurrentEvent] = useState(initial || null);
     const [venuesList, setVenuesList] = useState([]);
     const [venueLocalities, setVenueLocalities] = useState([]);
+    const [saveIssues, setSaveIssues] = useState([]);
+    const [issuesMode, setIssuesMode] = useState("draft"); // draft | publish
+
 
     // Pull the organizer's published venues once for the dropdown picker.
     useEffect(() => {
@@ -375,12 +392,15 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     const [activeStep, setActiveStep] = useState(initialStep);
     const [saving, setSaving] = useState(false);
     const [publishing, setPublishing] = useState(false);
+    // Venue chosen in Localidades before the first save (create flow steps 1→2).
+    const [pendingVenueId, setPendingVenueId] = useState<string | null>(null);
     const [eventId, setEventId] = useState(initial?.id || null);
     const [poster, setPoster] = useState(initial?.poster_url || null);
     const [banner, setBanner] = useState(initial?.banner_url || null);
     const [small, setSmall] = useState(initial?.small_url || null);
     const [gallery, setGallery] = useState(initial?.gallery_urls || []);
     const [uploadingKind, setUploadingKind] = useState(null);
+    const [mediaSubStep, setMediaSubStep] = useState("images"); // images | ticket
 
     useEffect(() => {
         if (initial) {
@@ -421,15 +441,39 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         form.sales_end_custom,
     ]);
 
-    // When a venue is selected, checkout uses the seat map — ticket types /
-    // season pass stay hidden inside the Localidades step.
-    const hasVenueSelected = !!(form.venue_id || currentEvent?.venue_id);
+    // When a venue is selected (linked or pending before first save), checkout
+    // uses the seat map — ticket types / season pass stay hidden inside Localidades.
+    const hasVenueSelected = !!(form.venue_id || currentEvent?.venue_id || pendingVenueId);
 
     const stepStatus = useMemo(
-        () => evalStepStatus(form, poster, currentEvent),
-        [form, poster, currentEvent],
+        () => evalStepStatus(form, poster, currentEvent, pendingVenueId),
+        [form, poster, currentEvent, pendingVenueId],
     );
-    const allValid = Object.values(stepStatus).every((s) => s !== "error");
+
+    const validationCtx = useMemo(
+        () => ({
+            form,
+            poster,
+            currentEvent,
+            pendingVenueId,
+            organizerStatus: organizer?.status || null,
+        }),
+        [form, poster, currentEvent, pendingVenueId, organizer?.status],
+    );
+
+    // Drop resolved issues as the organizer fills them in.
+    useEffect(() => {
+        if (!saveIssues.length) return;
+        const stillOpen = collectEventWizardIssues({
+            ...validationCtx,
+            mode: issuesMode,
+        });
+        const openCodes = new Set(stillOpen.map((i) => i.code));
+        setSaveIssues((prev) => {
+            const next = prev.filter((i) => openCodes.has(i.code));
+            return next.length === prev.length ? prev : next;
+        });
+    }, [validationCtx, issuesMode, saveIssues.length]);
 
     const update = (path, value) => {
         setForm((f) => {
@@ -445,22 +489,75 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         });
     };
 
+    const showIssues = (issues, modeLabel) => {
+        setIssuesMode(modeLabel);
+        setSaveIssues(issues);
+        const first = issues[0];
+        if (first?.step) handleTabChange(first.step);
+        const preview = issues
+            .slice(0, 3)
+            .map((i) => i.message)
+            .join(" ");
+        toast.error(
+            issues.length === 1
+                ? preview
+                : `Faltan ${issues.length} cosas para ${modeLabel === "publish" ? "publicar" : "guardar"}.`,
+            issues.length > 1 ? { description: preview } : undefined,
+        );
+    };
+
     const persist = async (publish = false) => {
-        if (publish && !allValid) {
-            toast.error("Hay secciones incompletas. Revisá los iconos rojos.");
+        const modeKey = publish ? "publish" : "draft";
+        const issues = collectEventWizardIssues({
+            ...validationCtx,
+            form: formRef.current,
+            mode: modeKey,
+        });
+        if (issues.length) {
+            showIssues(issues, modeKey);
             return null;
         }
+        setSaveIssues([]);
+
         const payload = buildPayload(formRef.current);
+        // Safety net if computeEndsAt returned empty despite duration checks.
         if (!payload.starts_at) {
-            toast.error("Definí la fecha y hora de inicio.");
+            showIssues(
+                [
+                    {
+                        step: "fechas",
+                        code: "starts_at",
+                        message: "Definí la fecha y hora de inicio en Fechas y ventas.",
+                    },
+                ],
+                modeKey,
+            );
             return null;
         }
         if (!payload.ends_at) {
-            toast.error("Elegí la duración del evento.");
+            showIssues(
+                [
+                    {
+                        step: "fechas",
+                        code: "duration",
+                        message: "Elegí la duración del evento en Fechas y ventas.",
+                    },
+                ],
+                modeKey,
+            );
             return null;
         }
         if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
-            toast.error("La duración debe ser mayor a cero.");
+            showIssues(
+                [
+                    {
+                        step: "fechas",
+                        code: "duration",
+                        message: "La duración debe ser mayor a cero.",
+                    },
+                ],
+                modeKey,
+            );
             return null;
         }
         setSaving(true);
@@ -476,9 +573,43 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                 window.history.replaceState(null, "", `/app/eventos/${data.id}/editar`);
             }
             setCurrentEvent(result);
+
+            // Create flow: link the pending map after the draft exists (shape only;
+            // localities/prices are configured next in the Localidades tab).
+            const venueToLink = pendingVenueId && !result.venue_id ? pendingVenueId : null;
+            if (venueToLink) {
+                try {
+                    const { data: linked } = await api.put(`/events/me/${result.id}/venue`, {
+                        venue_id: venueToLink,
+                        locality_pricing: [],
+                        seat_holds_window_minutes: result.seat_holds_window_minutes || 10,
+                    });
+                    result = linked;
+                    setCurrentEvent(linked);
+                    setPendingVenueId(null);
+                    update("venue_id", venueToLink);
+                    update("no_seating_mode", false);
+                } catch (linkErr) {
+                    toast.error(
+                        formatApiError(linkErr?.response?.data?.detail)
+                            || "El borrador se guardó, pero no se pudo vincular el mapa.",
+                    );
+                }
+            }
+
             if (publish) {
                 if (!result.poster_url) {
-                    toast.error("Subí un poster antes de publicar.");
+                    showIssues(
+                        [
+                            {
+                                step: "media",
+                                code: "poster",
+                                message:
+                                    "Subí la imagen principal en Media (obligatoria para publicar).",
+                            },
+                        ],
+                        "publish",
+                    );
                     return result;
                 }
                 setPublishing(true);
@@ -486,13 +617,57 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                 toast.success("Evento publicado");
                 navigate(`/app/eventos/${result.id}`);
             } else {
-                toast.success(eventId ? "Cambios guardados" : "Borrador creado");
+                const remaining = collectEventWizardIssues({
+                    form: formRef.current,
+                    poster: result.poster_url || poster,
+                    currentEvent: result,
+                    pendingVenueId: null,
+                    mode: "publish",
+                    organizerStatus: organizer?.status || null,
+                });
+                if (remaining.length) {
+                    toast.success(
+                        venueToLink
+                            ? "Borrador creado y mapa vinculado"
+                            : eventId
+                              ? "Cambios guardados"
+                              : "Borrador creado",
+                        {
+                            description: `Para publicar todavía falta: ${remaining
+                                .slice(0, 2)
+                                .map((i) => i.message.replace(/\.$/, ""))
+                                .join("; ")}${remaining.length > 2 ? "…" : "."}`,
+                        },
+                    );
+                } else {
+                    toast.success(
+                        venueToLink
+                            ? "Borrador creado y mapa vinculado — agregá las localidades"
+                            : eventId
+                              ? "Cambios guardados"
+                              : "Borrador creado",
+                    );
+                }
             }
             return result;
         } catch (e) {
             const status = e?.response?.status;
-            const msg = formatApiError(e?.response?.data?.detail) || e.message;
-            toast.error(status ? `Error ${status}: ${msg}` : msg);
+            const detail = e?.response?.data?.detail;
+            const msg = formatApiError(detail) || e.message;
+            // Map common API failures onto wizard steps when possible.
+            if (status === 422 && typeof detail === "string" && /publicar/i.test(detail)) {
+                toast.error(msg);
+                setIssuesMode("publish");
+                setSaveIssues(
+                    collectEventWizardIssues({
+                        ...validationCtx,
+                        form: formRef.current,
+                        mode: "publish",
+                    }),
+                );
+            } else {
+                toast.error(status ? `Error ${status}: ${msg}` : msg);
+            }
             return null;
         } finally {
             setSaving(false);
@@ -538,10 +713,10 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             if (r) {
                 const msg =
                     kind === "poster"
-                        ? "Imagen mediana actualizada"
+                        ? "Imagen principal actualizada"
                         : kind === "small"
-                        ? "Imagen pequeña actualizada"
-                        : "Banner actualizado";
+                        ? "Miniatura actualizada"
+                        : "Portada actualizada";
                 toast.success(msg);
             }
             return;
@@ -658,19 +833,98 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                             />
                         </TabsContent>
                         <TabsContent value="media">
-                            <div className="space-y-6">
-                                <SectionMedia
-                                    poster={poster}
-                                    banner={banner}
-                                    small={small}
-                                    gallery={gallery}
-                                    uploadingKind={uploadingKind}
-                                    onUpload={uploadImages}
-                                    onDeleteGallery={deleteGalleryAt}
-                                    onReorderGallery={reorderGallery}
-                                    eventId={eventId}
-                                />
-                                <SectionTicketDesign form={form} update={update} eventId={eventId} />
+                            <div className="space-y-5" data-testid="media-substeps">
+                                {/* Mobile only: substep picker (desktop uses sidebar 3.1 / 3.2) */}
+                                <div className="lg:hidden flex flex-wrap items-center justify-between gap-3">
+                                    <p className="text-xs text-muted-foreground">
+                                        Media · paso{" "}
+                                        <strong className="text-foreground">
+                                            {mediaSubStep === "images" ? "1" : "2"} de 2
+                                        </strong>
+                                    </p>
+                                    <div
+                                        className="inline-flex rounded-lg border bg-card p-0.5"
+                                        role="tablist"
+                                        aria-label="Subpasos de Media"
+                                    >
+                                        <button
+                                            type="button"
+                                            role="tab"
+                                            aria-selected={mediaSubStep === "images"}
+                                            onClick={() => setMediaSubStep("images")}
+                                            className={`rounded-md px-3 py-1.5 text-sm transition ${
+                                                mediaSubStep === "images"
+                                                    ? "bg-primary text-primary-foreground shadow-sm"
+                                                    : "text-muted-foreground hover:text-foreground"
+                                            }`}
+                                            data-testid="media-substep-images"
+                                        >
+                                            3.1 Imágenes
+                                        </button>
+                                        <button
+                                            type="button"
+                                            role="tab"
+                                            aria-selected={mediaSubStep === "ticket"}
+                                            onClick={() => setMediaSubStep("ticket")}
+                                            className={`rounded-md px-3 py-1.5 text-sm transition ${
+                                                mediaSubStep === "ticket"
+                                                    ? "bg-primary text-primary-foreground shadow-sm"
+                                                    : "text-muted-foreground hover:text-foreground"
+                                            }`}
+                                            data-testid="media-substep-ticket"
+                                        >
+                                            3.2 Diseño de ticket
+                                            {form.ticket_design?.elements?.length > 0 && (
+                                                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" />
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {mediaSubStep === "images" ? (
+                                    <div className="space-y-4">
+                                        <SectionMedia
+                                            poster={poster}
+                                            banner={banner}
+                                            small={small}
+                                            gallery={gallery}
+                                            uploadingKind={uploadingKind}
+                                            onUpload={uploadImages}
+                                            onDeleteGallery={deleteGalleryAt}
+                                            onReorderGallery={reorderGallery}
+                                            eventId={eventId}
+                                        />
+                                        <div className="flex justify-end border-t pt-4">
+                                            <Button
+                                                type="button"
+                                                onClick={() => setMediaSubStep("ticket")}
+                                                data-testid="media-goto-ticket"
+                                            >
+                                                Continuar a 3.2 Diseño de ticket
+                                                <ChevronRight className="h-4 w-4 ml-1" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        <SectionTicketDesign
+                                            form={form}
+                                            update={update}
+                                            eventId={eventId}
+                                        />
+                                        <div className="flex justify-between border-t pt-4">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={() => setMediaSubStep("images")}
+                                                data-testid="media-goto-images"
+                                            >
+                                                <ChevronLeft className="h-4 w-4 mr-1" />
+                                                Volver a 3.1 Imágenes
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </TabsContent>
                         <TabsContent value="localidades">
@@ -689,6 +943,8 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                     onEventUpdated={setCurrentEvent}
                                     onJumpToInfo={() => handleTabChange("general")}
                                     onReturnFromVenueCreate={venuesList}
+                                    pendingVenueId={pendingVenueId}
+                                    onPendingVenueChange={setPendingVenueId}
                                 />
                                 {!hasVenueSelected && form.no_seating_mode && (
                                     <div className="space-y-5">
@@ -751,23 +1007,80 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                     st === "error" ? "text-red-600 dark:text-red-400" :
                                     "text-muted-foreground"
                                 );
+                                const goMediaSub = (subId) => {
+                                    setMediaSubStep(subId);
+                                    if (activeStep !== "media") handleTabChange("media");
+                                };
+                                const imagesOk = !!poster;
+                                const ticketOk = !!form.ticket_design?.elements?.length;
+
                                 return (
-                                    <TabsTrigger
-                                        key={s.id}
-                                        value={s.id}
-                                        className={`w-full justify-start gap-2 px-2.5 py-2 text-left rounded-lg
-                                                   data-[state=active]:bg-primary data-[state=active]:text-primary-foreground
-                                                   ${rowBg}`}
-                                        data-testid={`tab-${s.id}`}
-                                    >
-                                        <StepIcon status={st} size="md" />
-                                        <span className={`text-[11px] shrink-0 ${numColor}`}>
-                                            {i + 1}.
-                                        </span>
-                                        <span className="text-xs leading-tight">
-                                            {s.label}
-                                        </span>
-                                    </TabsTrigger>
+                                    <div key={s.id} className="w-full space-y-0.5">
+                                        <TabsTrigger
+                                            value={s.id}
+                                            className={`w-full justify-start gap-2 px-2.5 py-2 text-left rounded-lg
+                                                       data-[state=active]:bg-primary data-[state=active]:text-primary-foreground
+                                                       ${rowBg}`}
+                                            data-testid={`tab-${s.id}`}
+                                            onClick={() => {
+                                                if (s.id === "media") setMediaSubStep("images");
+                                            }}
+                                        >
+                                            <StepIcon status={st} size="md" />
+                                            <span className={`text-[11px] shrink-0 ${numColor}`}>
+                                                {i + 1}.
+                                            </span>
+                                            <span className="text-xs leading-tight">
+                                                {s.label}
+                                            </span>
+                                        </TabsTrigger>
+
+                                        {s.id === "media" && (
+                                            <div
+                                                className="pl-3 ml-2 border-l border-border/70 space-y-0.5"
+                                                data-testid="media-sidebar-substeps"
+                                            >
+                                                {MEDIA_SUBSTEPS.map((sub) => {
+                                                    const subActive =
+                                                        isActive && mediaSubStep === sub.id;
+                                                    const subDone =
+                                                        sub.id === "images" ? imagesOk : ticketOk;
+                                                    return (
+                                                        <button
+                                                            key={sub.id}
+                                                            type="button"
+                                                            onClick={() => goMediaSub(sub.id)}
+                                                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition ${
+                                                                subActive
+                                                                    ? "bg-primary/15 text-primary font-medium"
+                                                                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                                                            }`}
+                                                            data-testid={`tab-media-${sub.id}`}
+                                                            aria-current={subActive ? "step" : undefined}
+                                                        >
+                                                            <span
+                                                                className={`h-3.5 w-3.5 shrink-0 rounded-full border flex items-center justify-center ${
+                                                                    subDone
+                                                                        ? "border-emerald-500 bg-emerald-500/15 text-emerald-600"
+                                                                        : "border-muted-foreground/40"
+                                                                }`}
+                                                            >
+                                                                {subDone && (
+                                                                    <Check className="h-2.5 w-2.5" />
+                                                                )}
+                                                            </span>
+                                                            <span className="tabular-nums shrink-0 opacity-70">
+                                                                {sub.num}
+                                                            </span>
+                                                            <span className="leading-tight truncate">
+                                                                {sub.label}
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
                                 );
                             })}
                         </TabsList>
@@ -776,6 +1089,53 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             </Tabs>
 
             {/* Footer ─────────────────────────────────────── */}
+            {saveIssues.length > 0 && (
+                <div
+                    className="rounded-xl border border-red-200 bg-red-50/90 px-4 py-3 space-y-2"
+                    data-testid="wizard-issues-panel"
+                    role="alert"
+                >
+                    <div className="flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 text-red-700 shrink-0 mt-0.5" />
+                        <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-red-900">
+                                {issuesMode === "publish"
+                                    ? "No se puede publicar todavía"
+                                    : "No se puede guardar el borrador todavía"}
+                            </p>
+                            <p className="text-xs text-red-800/80 mt-0.5">
+                                Tocá cada ítem para ir a la sección que falta completar.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            className="text-xs text-red-800/70 hover:text-red-900 underline"
+                            onClick={() => setSaveIssues([])}
+                            data-testid="wizard-issues-dismiss"
+                        >
+                            Cerrar
+                        </button>
+                    </div>
+                    <ul className="space-y-1.5 pl-6">
+                        {saveIssues.map((issue) => (
+                            <li key={issue.code}>
+                                <button
+                                    type="button"
+                                    onClick={() => handleTabChange(issue.step)}
+                                    className="text-left text-sm text-red-950 hover:underline"
+                                    data-testid={`wizard-issue-${issue.code}`}
+                                >
+                                    <span className="font-medium">
+                                        {stepLabelForIssue(issue.step, STEPS)}:
+                                    </span>{" "}
+                                    {issue.message}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
             <div className="sticky bottom-2 z-10 flex flex-wrap justify-between gap-2 bg-background/90 backdrop-blur p-3 rounded-xl border">
                 <Button variant="outline" onClick={goPrev} disabled={idx === 0}>
                     <ChevronLeft className="h-4 w-4 mr-1.5" />
@@ -822,7 +1182,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-function evalStepStatus(form, poster, currentEvent) {
+function evalStepStatus(form, poster, currentEvent, pendingVenueId = null) {
     const s: Record<string, string | undefined> = {};
 
     const titleOk = form.title?.length >= 2;
@@ -832,7 +1192,7 @@ function evalStepStatus(form, poster, currentEvent) {
         : Number(form.duration_minutes_custom || 0) > 0;
     const whereOk = form.no_seating_mode
         ? !!form.venue_name
-        : !!(form.venue_id || currentEvent?.venue_id);
+        : !!(form.venue_id || currentEvent?.venue_id || pendingVenueId);
 
     // General: title only; location lives in Localidades (DondeBlock).
     s.general = titleOk ? "ok" : "error";
@@ -863,11 +1223,11 @@ function evalStepStatus(form, poster, currentEvent) {
         ? "ok"
         : "warn";
 
-    // Payments: ok while at least one method is active (stripe is always on by default)
-    const anyPaymentOn = form.payment_methods?.stripe?.enabled !== false
-        || form.payment_methods?.transfer?.enabled
-        || form.payment_methods?.cash?.enabled;
-    s.payments = anyPaymentOn ? "ok" : "warn";
+    // Payments: at least one catalog code (free events skip this step)
+    const enabledCodes = resolveEnabledPaymentCodes(form.payment_methods, {
+        includeLegacyStripe: false,
+    });
+    s.payments = form.pricing_type === "free" || enabledCodes.length > 0 ? "ok" : "warn";
 
     // Discounts: ok only once the organizer has configured at least one rule
     const hasDiscount = form.discounts?.disability_law?.enabled
@@ -1058,7 +1418,7 @@ function SectionGeneral({ form, update, disabled }) {
                                 label={
                                     <LabelWithTip
                                         text="Prioridad"
-                                        tip="Orden en listados del microsite. Mayor número = más arriba."
+                                        tip="Si tenés varios eventos en el microsite, un número más alto aparece más arriba en el listado. Podés dejarlo en 0 si el orden por fecha te alcanza."
                                     />
                                 }
                             >
@@ -1397,11 +1757,11 @@ function CuandoBlock({ form, update, disabled }) {
                 <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
                     <div className="grid sm:grid-cols-2 gap-3">
                         <Field label="Fecha y hora de inicio *">
-                            <Input
-                                type="datetime-local"
+                            <DateTimePicker
                                 value={form.starts_at}
-                                onChange={(e) => update("starts_at", e.target.value)}
+                                onChange={(v) => update("starts_at", v)}
                                 disabled={disabled}
+                                placeholder="Elegí cuándo empieza"
                                 data-testid="wiz-starts"
                             />
                         </Field>
@@ -1522,22 +1882,22 @@ function CuandoBlock({ form, update, disabled }) {
 
                     {form.sales_window_preset_start === "custom" && (
                         <Field label="Inicio de venta — fecha personalizada">
-                            <Input
-                                type="datetime-local"
+                            <DateTimePicker
                                 value={form.sales_start_custom}
-                                onChange={(e) => update("sales_start_custom", e.target.value)}
+                                onChange={(v) => update("sales_start_custom", v)}
                                 disabled={disabled}
+                                placeholder="Inicio de venta"
                                 data-testid="wiz-sales-start-custom"
                             />
                         </Field>
                     )}
                     {form.sales_window_preset_end === "custom" && (
                         <Field label="Fin de venta — fecha personalizada">
-                            <Input
-                                type="datetime-local"
+                            <DateTimePicker
                                 value={form.sales_end_custom}
-                                onChange={(e) => update("sales_end_custom", e.target.value)}
+                                onChange={(v) => update("sales_end_custom", v)}
                                 disabled={disabled}
+                                placeholder="Fin de venta"
                                 data-testid="wiz-sales-end-custom"
                             />
                         </Field>
@@ -1665,8 +2025,10 @@ function SectionVenueLocalidades({
     onEventUpdated,
     onJumpToInfo,
     onReturnFromVenueCreate,
+    pendingVenueId = null,
+    onPendingVenueChange,
 }) {
-    const hasVenue = !!event?.venue_id;
+    const hasVenue = !!(event?.venue_id || pendingVenueId);
     const isGeneralMode = form.no_seating_mode && !hasVenue;
     const seatedMode = !form.no_seating_mode;
 
@@ -1744,9 +2106,10 @@ function SectionVenueLocalidades({
             {seatedMode && (
                 <div className="space-y-3">
                     <div>
-                        <h3 className="font-semibold text-base">2. Mapa y precios por localidad</h3>
+                        <h3 className="font-semibold text-base">2. Escenario y localidades</h3>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            Vinculá un mapa, ajustá localidades si hace falta y definí cuánto cobra cada una.
+                            El mapa es solo la forma. Nombre, color y precios son de este evento;
+                            podés usar un subconjunto de las secciones del plano.
                         </p>
                     </div>
                     <EventVenueSection
@@ -1754,6 +2117,8 @@ function SectionVenueLocalidades({
                         disabled={disabled}
                         onUpdated={onEventUpdated}
                         onReturnFromVenueCreate={onReturnFromVenueCreate}
+                        pendingVenueId={pendingVenueId}
+                        onPendingVenueChange={onPendingVenueChange}
                     />
                 </div>
             )}
@@ -1779,98 +2144,116 @@ function SectionMedia({
         <div className="space-y-5" data-testid="section-media">
             <div className="flex flex-wrap items-end justify-between gap-2">
                 <div>
-                    <h3 className="font-semibold text-base">1. Imágenes del evento</h3>
+                    <h3 className="font-semibold text-base">Imágenes del evento</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        La mediana es obligatoria para publicar. Banner, pequeña y galería son opcionales.
+                        Cada número del mapa indica dónde aparece el arte. La imagen
+                        principal es obligatoria para publicar.
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-1.5 text-[11px]">
                     <Badge variant={poster ? "default" : "outline"}>
-                        Mediana {poster ? "✓" : "requerida"}
+                        Principal {poster ? "✓" : "requerida"}
                     </Badge>
-                    <Badge variant={banner ? "secondary" : "outline"}>Banner</Badge>
-                    <Badge variant={small ? "secondary" : "outline"}>Pequeña</Badge>
+                    <Badge variant={banner ? "secondary" : "outline"}>Portada</Badge>
+                    <Badge variant={small ? "secondary" : "outline"}>Miniatura</Badge>
                     <Badge variant={gallery.length ? "secondary" : "outline"}>
                         Galería {gallery.length}/10
                     </Badge>
                 </div>
             </div>
 
-            {/* Mediana — required, first */}
+            <EventMediaCompositePreview
+                poster={poster}
+                banner={banner}
+                small={small}
+                gallery={gallery}
+                assetUrl={assetUrl}
+            />
+
+            {/* Imagen principal (poster) — required */}
             <div className="rounded-xl border bg-card p-4 sm:p-5">
                 <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
                     <div>
                         <div className="font-medium flex items-center gap-2">
-                            Mediana
+                            Imagen principal
                             <span className="text-red-500 text-sm">*</span>
                             {poster && (
                                 <Badge variant="secondary" className="text-[10px] font-normal">Lista</Badge>
                             )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            Cuadrada · microsite y ticket · recomendado 1080×1080
+                            ② Cards del microsite y ticket PDF · cuadrada · recomendado 1080×1080
                         </p>
                     </div>
                 </div>
-                <div className="max-w-xs">
-                    <ImageDropzone
-                        label=""
-                        currentUrl={assetUrl(poster)}
-                        onUpload={(f) => onUpload(f, "poster")}
-                        uploading={uploadingKind === "poster"}
-                        testid="wiz-poster"
-                        aspect="square"
-                    />
+                <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                    <div className="max-w-xs w-full">
+                        <ImageDropzone
+                            label=""
+                            currentUrl={assetUrl(poster)}
+                            onUpload={(f) => onUpload(f, "poster")}
+                            uploading={uploadingKind === "poster"}
+                            testid="wiz-poster"
+                            aspect="square"
+                        />
+                    </div>
+                    <MediaSlotMock kind="poster" src={poster} assetUrl={assetUrl} />
                 </div>
             </div>
 
-            {/* Banner + Pequeña side by side on desktop */}
+            {/* Portada + Miniatura */}
             <div className="grid lg:grid-cols-2 gap-4">
                 <div className="rounded-xl border bg-card p-4 sm:p-5">
                     <div className="mb-3">
                         <div className="font-medium flex items-center gap-2">
-                            Banner
+                            Portada / hero
                             <span className="text-xs font-normal text-muted-foreground">opcional</span>
                             {banner && (
                                 <Badge variant="secondary" className="text-[10px] font-normal">Lista</Badge>
                             )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            16:9 · header de la página · recomendado 1920×1080
+                            ① Cabecera de la página del evento · 16:9 · recomendado 1920×1080
                         </p>
                     </div>
-                    <ImageDropzone
-                        label=""
-                        currentUrl={assetUrl(banner)}
-                        onUpload={(f) => onUpload(f, "banner")}
-                        uploading={uploadingKind === "banner"}
-                        testid="wiz-banner"
-                        aspect="video"
-                    />
+                    <div className="space-y-3">
+                        <ImageDropzone
+                            label=""
+                            currentUrl={assetUrl(banner)}
+                            onUpload={(f) => onUpload(f, "banner")}
+                            uploading={uploadingKind === "banner"}
+                            testid="wiz-banner"
+                            aspect="video"
+                        />
+                        <MediaSlotMock kind="banner" src={banner} assetUrl={assetUrl} />
+                    </div>
                 </div>
 
                 <div className="rounded-xl border bg-card p-4 sm:p-5">
                     <div className="mb-3">
                         <div className="font-medium flex items-center gap-2">
-                            Pequeña
+                            Miniatura en listados
                             <span className="text-xs font-normal text-muted-foreground">opcional</span>
                             {small && (
                                 <Badge variant="secondary" className="text-[10px] font-normal">Lista</Badge>
                             )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            Miniatura · listados · recomendado 400×400
+                            ③ Thumb en listados · si no la subís, se usa la principal · recomendado 400×400
                         </p>
                     </div>
-                    <div className="max-w-[220px]">
-                        <ImageDropzone
-                            label=""
-                            currentUrl={assetUrl(small)}
-                            onUpload={(f) => onUpload(f, "small")}
-                            uploading={uploadingKind === "small"}
-                            testid="wiz-small"
-                            aspect="square"
-                        />
+                    <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                        <div className="max-w-[220px] w-full">
+                            <ImageDropzone
+                                label=""
+                                currentUrl={assetUrl(small)}
+                                onUpload={(f) => onUpload(f, "small")}
+                                uploading={uploadingKind === "small"}
+                                testid="wiz-small"
+                                aspect="square"
+                            />
+                        </div>
+                        <MediaSlotMock kind="small" src={small} assetUrl={assetUrl} />
                     </div>
                 </div>
             </div>
@@ -1880,30 +2263,34 @@ function SectionMedia({
                 <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
                     <div>
                         <div className="font-medium flex items-center gap-2">
-                            Galería
+                            Fotos extras (galería)
                             <span className="text-xs font-normal text-muted-foreground">opcional</span>
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            Hasta 10 fotos. Arrastrá para reordenar.
+                            ④ Carrusel en la página del evento. Hasta 10. Arrastrá para reordenar.
                         </p>
                     </div>
                     <span className="text-xs text-muted-foreground" data-testid="wiz-gallery-counter">
                         {gallery.length} / 10
                     </span>
                 </div>
-                <SortableGallery
-                    gallery={gallery}
-                    assetUrl={assetUrl}
-                    uploadingKind={uploadingKind}
-                    onUpload={onUpload}
-                    onDelete={onDeleteGallery}
-                    onReorder={onReorderGallery}
-                />
+                <div className="space-y-3">
+                    <MediaSlotMock kind="gallery" src={gallery} assetUrl={assetUrl} />
+                    <SortableGallery
+                        gallery={gallery}
+                        assetUrl={assetUrl}
+                        uploadingKind={uploadingKind}
+                        onUpload={onUpload}
+                        onDelete={onDeleteGallery}
+                        onReorder={onReorderGallery}
+                    />
+                </div>
             </div>
 
             {readyCount === 0 && (
                 <p className="text-xs text-muted-foreground">
-                    Tip: empezá por la <strong>Mediana</strong>; es la que más se ve en el microsite.
+                    Tip: empezá por la <strong>imagen principal</strong>; es la que más se ve
+                    en el microsite y el ticket.
                 </p>
             )}
         </div>
@@ -1926,7 +2313,7 @@ function SectionTicketDesign({ form, update, eventId }) {
     if (!eventId) {
         return (
             <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground" data-testid="section-ticket-design">
-                <p className="font-medium text-foreground">2. Diseño del ticket</p>
+                <p className="font-medium text-foreground">Diseño del ticket</p>
                 <p className="mt-1">
                     Guardá primero la información general del evento para poder diseñar el ticket.
                 </p>
@@ -1938,7 +2325,7 @@ function SectionTicketDesign({ form, update, eventId }) {
     return (
         <div className="space-y-4" data-testid="section-ticket-design">
             <div>
-                <h3 className="font-semibold text-base">2. Diseño del ticket</h3>
+                <h3 className="font-semibold text-base">Diseño del ticket</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
                     Elegí una plantilla y tu logo. Si no diseñás nada, se usa el formato estándar de TYS.
                     {hasMainDesign && (
@@ -1996,7 +2383,41 @@ function SectionTicketDesign({ form, update, eventId }) {
 }
 
 
+const PAYMENT_CARD_ICONS = {
+    nuvei: CreditCard,
+    deuna: Smartphone,
+    transfer: Landmark,
+    cash: Banknote,
+};
+
 function SectionPayments({ form, update }) {
+    const [catalog, setCatalog] = useState([]);
+    const [catalogLoading, setCatalogLoading] = useState(true);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const { data } = await api.get("/payment-methods");
+                if (!cancelled) setCatalog(Array.isArray(data) ? data : []);
+            } catch {
+                if (!cancelled) {
+                    setCatalog([
+                        { code: "nuvei", name: "Nuvei", kind: "gateway", description: "Pago digital" },
+                        { code: "deuna", name: "DeUna", kind: "gateway", description: "Pago digital" },
+                        { code: "transfer", name: "Transferencia", kind: "manual", description: "Confirmación manual" },
+                        { code: "cash", name: "Efectivo", kind: "manual", description: "Pago en persona" },
+                    ]);
+                }
+            } finally {
+                if (!cancelled) setCatalogLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
     if (form.pricing_type === "free") {
         return (
             <div
@@ -2011,213 +2432,223 @@ function SectionPayments({ form, update }) {
             </div>
         );
     }
-    const pm = form.payment_methods;
-    const extrasOn = [pm.transfer.enabled && "Transferencia", pm.cash.enabled && "Efectivo"].filter(Boolean);
+
+    const pm = form.payment_methods || defaultPayments();
+    const selected = resolveEnabledPaymentCodes(pm, { includeLegacyStripe: false });
+    const total = catalog.length || 4;
+    const hasFunctioningMethod = selected.some(
+        (code) => catalog.find((c) => c.code === code)?.kind !== "gateway",
+    );
+    const onlyGatewayStubsSelected = selected.length > 0 && !hasFunctioningMethod;
+
+    const setCodes = (codes) => {
+        update("payment_methods", withEnabledCodes(pm, codes));
+    };
+
+    const toggleCode = (code) => {
+        if (selected.includes(code)) {
+            setCodes(selected.filter((c) => c !== code));
+        } else {
+            setCodes([...selected, code]);
+        }
+    };
 
     return (
         <div className="space-y-5" data-testid="section-payments">
-            <div>
-                <h3 className="font-semibold text-base">Formas de pago</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                    Stripe siempre está activo. Activá transferencia o efectivo solo si vas a
-                    confirmar esos pagos a mano.
-                    {extrasOn.length > 0 && (
-                        <> · Activas: <strong className="text-foreground">Tarjeta</strong>
-                            {extrasOn.map((x) => (
-                                <span key={x}> · <strong className="text-foreground">{x}</strong></span>
-                            ))}
-                        </>
-                    )}
-                </p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h3 className="font-semibold text-base">Formas de pago</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        Elegí cómo podrán pagar los compradores.
+                        {" · "}
+                        <strong className="text-foreground" data-testid="pay-selected-count">
+                            {selected.length} de {total} seleccionadas
+                        </strong>
+                    </p>
+                </div>
+                <div className="flex gap-2">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCodes(catalog.map((c) => c.code))}
+                        disabled={catalogLoading || catalog.length === 0}
+                        data-testid="pay-select-all"
+                    >
+                        Seleccionar todo
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCodes([])}
+                        data-testid="pay-clear"
+                    >
+                        Limpiar
+                    </Button>
+                </div>
             </div>
 
-            <div className="space-y-3">
-                <PaymentRow
-                    icon={CreditCard}
-                    title="Tarjeta (Stripe)"
-                    description="Confirmación automática. Siempre disponible."
-                    checked
-                    disabled
-                    badge="Siempre activo"
-                    testid="pay-stripe"
-                />
-
-                <PaymentRow
-                    icon={Landmark}
-                    title="Transferencia bancaria"
-                    description="El comprador transfiere y vos confirmás el pago desde el panel."
-                    checked={pm.transfer.enabled}
-                    onChange={(v) => update("payment_methods.transfer.enabled", v)}
-                    testid="pay-transfer"
-                >
-                    {pm.transfer.enabled && (
-                        <div className="mt-4 pt-4 border-t space-y-3">
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                                Datos que ve el comprador
-                            </p>
-                            <div className="grid sm:grid-cols-2 gap-3">
-                                <Field label="Banco">
-                                    <Input
-                                        value={pm.transfer.bank_name}
-                                        onChange={(e) =>
-                                            update("payment_methods.transfer.bank_name", e.target.value)
-                                        }
-                                        placeholder="Ej: Pichincha"
-                                        data-testid="pay-transfer-bank"
-                                    />
-                                </Field>
-                                <Field label="Número de cuenta">
-                                    <Input
-                                        value={pm.transfer.account_number}
-                                        onChange={(e) =>
-                                            update(
-                                                "payment_methods.transfer.account_number",
-                                                e.target.value,
-                                            )
-                                        }
-                                        data-testid="pay-transfer-acc"
-                                    />
-                                </Field>
-                            </div>
-                            <Field label="Titular">
-                                <Input
-                                    value={pm.transfer.account_holder}
-                                    onChange={(e) =>
-                                        update(
-                                            "payment_methods.transfer.account_holder",
-                                            e.target.value,
-                                        )
-                                    }
-                                    data-testid="pay-transfer-holder"
-                                />
-                            </Field>
-                            <Field label="Instrucciones">
-                                <Textarea
-                                    value={pm.transfer.instructions}
-                                    onChange={(e) =>
-                                        update(
-                                            "payment_methods.transfer.instructions",
-                                            e.target.value,
-                                        )
-                                    }
-                                    rows={3}
-                                    placeholder="Ej: Enviá el comprobante al WhatsApp +593…"
-                                    data-testid="pay-transfer-inst"
-                                />
-                            </Field>
-                        </div>
-                    )}
-                </PaymentRow>
-
-                <PaymentRow
-                    icon={Banknote}
-                    title="Efectivo"
-                    description="Pago en persona. Entregás el ticket al confirmar."
-                    checked={pm.cash.enabled}
-                    onChange={(v) => update("payment_methods.cash.enabled", v)}
-                    testid="pay-cash"
-                >
-                    {pm.cash.enabled && (
-                        <div className="mt-4 pt-4 border-t space-y-3">
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                                Punto de cobro
-                            </p>
-                            <Field label="Lugar">
-                                <Input
-                                    value={pm.cash.location}
-                                    onChange={(e) =>
-                                        update("payment_methods.cash.location", e.target.value)
-                                    }
-                                    placeholder="Taquilla / oficina"
-                                    data-testid="pay-cash-location"
-                                />
-                            </Field>
-                            <div className="grid sm:grid-cols-2 gap-3">
-                                <Field label="Horarios">
-                                    <Input
-                                        value={pm.cash.schedule}
-                                        onChange={(e) =>
-                                            update("payment_methods.cash.schedule", e.target.value)
-                                        }
-                                        placeholder="Lun–Vie 9:00–18:00"
-                                        data-testid="pay-cash-schedule"
-                                    />
-                                </Field>
-                                <Field label="Contacto">
-                                    <Input
-                                        value={pm.cash.contact}
-                                        onChange={(e) =>
-                                            update("payment_methods.cash.contact", e.target.value)
-                                        }
-                                        placeholder="+593…"
-                                        data-testid="pay-cash-contact"
-                                    />
-                                </Field>
-                            </div>
-                        </div>
-                    )}
-                </PaymentRow>
-            </div>
-        </div>
-    );
-}
-
-function PaymentRow({
-    icon: Icon,
-    title,
-    description,
-    checked,
-    onChange = undefined,
-    disabled = false,
-    badge = null,
-    testid,
-    children = null,
-}) {
-    return (
-        <div
-            className={`rounded-xl border bg-card p-4 transition ${
-                checked ? "border-foreground/20" : "border-border"
-            }`}
-            data-testid={testid}
-        >
-            <div className="flex items-start gap-3">
+            {onlyGatewayStubsSelected && (
                 <div
-                    className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${
-                        checked ? "bg-teal-50 text-teal-800" : "bg-secondary text-muted-foreground"
-                    }`}
+                    className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+                    data-testid="pay-gateway-stub-warning"
                 >
-                    <Icon className="h-5 w-5" />
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <p>
+                        Nuvei y DeUna todavía no procesan cobros reales (integración en preparación):
+                        si publicás con solo estas formas de pago, nadie va a poder completar una
+                        compra. Activá también Transferencia o Efectivo si querés vender ya.
+                    </p>
                 </div>
-                <div className="flex-1 min-w-0 space-y-0.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                        <div className="font-medium">{title}</div>
-                        {badge && (
-                            <Badge variant="secondary" className="text-[10px] font-normal">
-                                {badge}
-                            </Badge>
-                        )}
+            )}
+
+            {catalogLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Cargando métodos…
+                </div>
+            ) : (
+                <div className="grid sm:grid-cols-2 gap-3" data-testid="pay-method-grid">
+                    {catalog.map((item) => {
+                        const Icon = PAYMENT_CARD_ICONS[item.code] || CreditCard;
+                        const on = selected.includes(item.code);
+                        return (
+                            <button
+                                key={item.code}
+                                type="button"
+                                onClick={() => toggleCode(item.code)}
+                                className={`relative text-left rounded-xl border p-4 transition ${
+                                    on
+                                        ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                                        : "hover:bg-secondary/40"
+                                }`}
+                                data-testid={`pay-${item.code}`}
+                                aria-pressed={on}
+                            >
+                                <div
+                                    className={`absolute top-3 right-3 h-5 w-5 rounded-full border flex items-center justify-center ${
+                                        on
+                                            ? "bg-primary border-primary text-primary-foreground"
+                                            : "border-muted-foreground/40"
+                                    }`}
+                                >
+                                    {on && <Check className="h-3 w-3" />}
+                                </div>
+                                <div className="flex items-start gap-3 pr-6">
+                                    <div className="rounded-lg bg-secondary p-2">
+                                        <Icon className="h-5 w-5 text-foreground" />
+                                    </div>
+                                    <div>
+                                        <div className="font-medium text-sm">{item.name}</div>
+                                        <p className="text-xs text-muted-foreground mt-0.5">
+                                            {item.description ||
+                                                (item.kind === "gateway"
+                                                    ? "Pago digital"
+                                                    : "Confirmación manual")}
+                                        </p>
+                                    </div>
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+
+            {selected.includes("transfer") && (
+                <div className="rounded-xl border p-4 space-y-3" data-testid="pay-transfer-form">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                        Datos de transferencia
+                    </p>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                        <Field label="Banco">
+                            <Input
+                                value={pm.transfer?.bank_name || ""}
+                                onChange={(e) =>
+                                    update("payment_methods.transfer.bank_name", e.target.value)
+                                }
+                                placeholder="Ej: Pichincha"
+                                data-testid="pay-transfer-bank"
+                            />
+                        </Field>
+                        <Field label="Número de cuenta">
+                            <Input
+                                value={pm.transfer?.account_number || ""}
+                                onChange={(e) =>
+                                    update("payment_methods.transfer.account_number", e.target.value)
+                                }
+                                data-testid="pay-transfer-acc"
+                            />
+                        </Field>
                     </div>
-                    <div className="text-xs text-muted-foreground">{description}</div>
+                    <Field label="Titular">
+                        <Input
+                            value={pm.transfer?.account_holder || ""}
+                            onChange={(e) =>
+                                update("payment_methods.transfer.account_holder", e.target.value)
+                            }
+                            data-testid="pay-transfer-holder"
+                        />
+                    </Field>
+                    <Field label="Instrucciones">
+                        <Textarea
+                            value={pm.transfer?.instructions || ""}
+                            onChange={(e) =>
+                                update("payment_methods.transfer.instructions", e.target.value)
+                            }
+                            rows={3}
+                            placeholder="Ej: Enviá el comprobante al WhatsApp +593…"
+                            data-testid="pay-transfer-inst"
+                        />
+                    </Field>
                 </div>
-                <Switch
-                    checked={checked}
-                    onCheckedChange={onChange}
-                    disabled={disabled}
-                    data-testid={`${testid}-switch`}
-                />
-            </div>
-            {children}
+            )}
+
+            {selected.includes("cash") && (
+                <div className="rounded-xl border p-4 space-y-3" data-testid="pay-cash-form">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                        Punto de cobro en efectivo
+                    </p>
+                    <Field label="Lugar">
+                        <Input
+                            value={pm.cash?.location || ""}
+                            onChange={(e) =>
+                                update("payment_methods.cash.location", e.target.value)
+                            }
+                            placeholder="Taquilla / oficina"
+                            data-testid="pay-cash-location"
+                        />
+                    </Field>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                        <Field label="Horarios">
+                            <Input
+                                value={pm.cash?.schedule || ""}
+                                onChange={(e) =>
+                                    update("payment_methods.cash.schedule", e.target.value)
+                                }
+                                placeholder="Lun–Vie 9:00–18:00"
+                                data-testid="pay-cash-schedule"
+                            />
+                        </Field>
+                        <Field label="Contacto">
+                            <Input
+                                value={pm.cash?.contact || ""}
+                                onChange={(e) =>
+                                    update("payment_methods.cash.contact", e.target.value)
+                                }
+                                placeholder="+593…"
+                                data-testid="pay-cash-contact"
+                            />
+                        </Field>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
 
 function enabledPaymentMethodsOf(pm) {
-    // Stripe's toggle is forced on in SectionPayments (it can't be disabled),
-    // so it's always available as a discount condition.
-    const list = ["stripe"];
-    if (pm?.transfer?.enabled) list.push("transfer");
-    if (pm?.cash?.enabled) list.push("cash");
-    return list;
+    return resolveEnabledPaymentCodes(pm, { includeLegacyStripe: false });
 }
 
 // ── Section: Discounts ──────────────────────────────────────────────────────
@@ -2230,9 +2661,9 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
             <div>
                 <h3 className="font-semibold text-base">Descuentos</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Activá beneficios fijos o creá reglas (códigos, cantidad, automáticos).
+                    Configura descuentos por porcentaje, valor fijo o promociones 2x1.
                     {rulesCount > 0 && (
-                        <> · <strong className="text-foreground">{rulesCount}</strong> regla{rulesCount !== 1 ? "s" : ""} activa{rulesCount !== 1 ? "s" : ""}</>
+                        <> · <strong className="text-foreground">{rulesCount}</strong> activo{rulesCount !== 1 ? "s" : ""}</>
                     )}
                 </p>
             </div>
@@ -2338,9 +2769,9 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
 
             <section className="space-y-3">
                 <div>
-                    <h4 className="text-sm font-medium">2. Códigos y reglas</h4>
+                    <h4 className="text-sm font-medium">2. Descuentos del evento</h4>
                     <p className="text-xs text-muted-foreground">
-                        Promo codes, descuentos por cantidad o automáticos. Máximo stacking: 1 código + 1 automático.
+                        Con o sin código. Stacking máximo: 1 código + 1 automático/promo.
                     </p>
                 </div>
                 <DiscountRulesPanel

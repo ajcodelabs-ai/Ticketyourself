@@ -153,3 +153,5 @@ infra/cdk/.venv/
 
 # Scratch files
 backend/main.py
+
+docs/

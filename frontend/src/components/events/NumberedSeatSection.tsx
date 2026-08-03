@@ -169,6 +169,7 @@ export default function NumberedSeatSection({
                 entrada_cents: breakdown.entrada_cents,
                 service_fee_cents: breakdown.service_fee_cents,
                 admin_fee_cents: breakdown.admin_fee_cents,
+                vxs_cents: breakdown.vxs_cents,
                 fees_cents: fees,
                 total_cents: total,
                 function_id: functionId || undefined,

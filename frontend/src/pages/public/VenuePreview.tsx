@@ -92,29 +92,7 @@ export default function VenuePreview() {
                     </CardContent>
                 </Card>
 
-                {(venue.localities || []).length > 0 && (
-                    <Card>
-                        <CardContent className="pt-4">
-                            <h2 className="text-sm font-semibold mb-2">Localidades</h2>
-                            <div className="flex flex-wrap gap-3">
-                                {venue.localities.map((loc) => (
-                                    <div key={loc.id} className="flex items-center gap-2 text-sm">
-                                        <span
-                                            className="h-4 w-4 rounded ring-1 ring-slate-200"
-                                            style={{ background: loc.color }}
-                                        />
-                                        <span>{loc.name}</span>
-                                        {loc.default_price_cents != null && (
-                                            <span className="text-muted-foreground">
-                                                · USD {(loc.default_price_cents / 100).toFixed(2)}
-                                            </span>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        </CardContent>
-                    </Card>
-                )}
+                {/* Localidades/precios viven en el evento, no en el mapa maestro. */}
 
                 {venue.description && (
                     <Card>

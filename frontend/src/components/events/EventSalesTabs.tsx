@@ -340,8 +340,20 @@ function Metric({ icon, label, value, sub }) {
 }
 
 // ── Orders ───────────────────────────────────────────────────────────────────
-const METHOD_LABEL = { stripe: "Tarjeta", transfer: "Transferencia", cash: "Efectivo" };
-const METHOD_ICON = { stripe: "💳", transfer: "🏦", cash: "💵" };
+const METHOD_LABEL = {
+    stripe: "Tarjeta",
+    nuvei: "Nuvei",
+    deuna: "DeUna",
+    transfer: "Transferencia",
+    cash: "Efectivo",
+};
+const METHOD_ICON = {
+    stripe: "💳",
+    nuvei: "💳",
+    deuna: "📱",
+    transfer: "🏦",
+    cash: "💵",
+};
 
 function OrdersTab({ event }) {
     const [orders, setOrders] = useState([]);

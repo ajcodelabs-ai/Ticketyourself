@@ -1,5 +1,6 @@
 """Admin router: organizer management + stats — Phase 2: PostgreSQL."""
 
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -28,7 +29,17 @@ from models import (
 from orm_models import Organizer, OrganizerAdminComment, SubscriptionPlan, Tenant
 from security import require_role
 from services.document_types import create_document_type, list_document_types
+from services.email_service import (
+    send_organizer_approved_email,
+    send_organizer_rejected_email,
+)
 from services.required_documents import get_required_documents, set_required_documents
+
+
+def _onboarding_url() -> str:
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    return f"{frontend}/onboarding" if frontend else "/onboarding"
+
 
 router = APIRouter(
     prefix="/api/admin",
@@ -204,6 +215,13 @@ async def approve_organizer(
         {"comment": payload.comment or ""},
     )
 
+    if row.email:
+        await send_organizer_approved_email(
+            to=row.email,
+            company_name=row.company_name or row.slug,
+            continue_url=_onboarding_url(),
+        )
+
     # Reload admin_comments after adding
     await session.refresh(row, ["admin_comments"])
     return _org_to_out(row)
@@ -234,6 +252,14 @@ async def reject_organizer(
         organizer_id,
         {"reason": payload.comment},
     )
+
+    if row.email:
+        await send_organizer_rejected_email(
+            to=row.email,
+            company_name=row.company_name or row.slug,
+            reason=payload.comment,
+            continue_url=_onboarding_url(),
+        )
 
     await session.refresh(row, ["admin_comments"])
     return _org_to_out(row)

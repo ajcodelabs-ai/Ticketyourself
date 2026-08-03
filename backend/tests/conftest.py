@@ -24,7 +24,7 @@ DEMO_TENANT = "demo-org"
 FREE_EVENT_SLUG = "charla-liderazgo-femenino"
 PAID_EVENT_SLUG = "funcion-especial-demo-numerado"
 EVENT_MANUAL_SLUG = "funcion-especial-demo-numerado"
-EVENT_STRIPE_ONLY_SLUG = "funcion-especial-demo-numerado"
+EVENT_STRIPE_ONLY_SLUG = "conferencia-marketing-digital"
 
 
 def login(session: requests.Session, email: str, password: str) -> str:
