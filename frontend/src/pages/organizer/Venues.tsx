@@ -92,6 +92,9 @@ export default function Venues() {
     });
 
     const canCreate = maxV === -1 || activeCount < maxV;
+    const limitReason = !canCreate
+        ? `Llegaste al límite de ${maxV} venue(s) de tu plan. Archivá uno para crear otro.`
+        : null;
 
     const editorUrl = (venueId, extraParams = {}) => {
         const base = `/app/venues/${venueId}/editor`;
@@ -240,6 +243,14 @@ export default function Venues() {
                             Empezá con un layout prediseñado y personalizalo.
                         </p>
                     </div>
+                    {!canCreate && limitReason && (
+                        <p
+                            className="text-xs text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2"
+                            data-testid="venue-templates-limit-reason"
+                        >
+                            {limitReason}
+                        </p>
+                    )}
                     {templatesLoading ? (
                         <p className="text-sm text-muted-foreground">Cargando plantillas…</p>
                     ) : (
@@ -440,6 +451,7 @@ export default function Venues() {
                                 loading={templatesLoading}
                                 usingId={usingTemplate}
                                 disabled={!canCreate}
+                                disabledReason={limitReason}
                                 onUseTemplate={(tpl) => promptTemplateName(tpl)}
                                 onStartBlank={() => setCreateMode("blank")}
                             />

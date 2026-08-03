@@ -739,6 +739,14 @@ export default function EventVenueSection({
                             ))}
                         </SelectContent>
                     </Select>
+                    {(event?.tickets_sold || 0) > 0 && (
+                        <p
+                            className="text-[11px] text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5"
+                            data-testid="venue-locked-sales-reason"
+                        >
+                            El evento ya tiene {event.tickets_sold} ticket(s) vendido(s); no se puede cambiar el mapa.
+                        </p>
+                    )}
                 </div>
 
                 {(selectedVenueMeta || linkedVenue) && (
