@@ -347,6 +347,16 @@ class TestAdminOrganizers:
             "org_type": "company",
             "phone": "+593999",
             "country": "Ecuador",
+            "is_pep": False,
+            "uafe_declaration": {
+                "funds_origin_declared": True,
+                "funds_origin_detail": "Ingresos por eventos",
+                "accepts_uafe_obligations": True,
+            },
+            "org_references": [
+                {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
+            ],
+            "country_code": "EC",
         }
         r = requests.post(f"{API}/auth/register", json=payload)
         assert r.status_code == 200
@@ -469,6 +479,16 @@ class TestActivationFunnel:
             "org_type": "company",
             "phone": "+593999000111",
             "country": "Ecuador",
+            "is_pep": False,
+            "uafe_declaration": {
+                "funds_origin_declared": True,
+                "funds_origin_detail": "Ingresos por eventos",
+                "accepts_uafe_obligations": True,
+            },
+            "org_references": [
+                {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
+            ],
+            "country_code": "EC",
         }
         r = requests.post(f"{API}/auth/register", json=payload)
         assert r.status_code in (200, 201), r.text
@@ -505,6 +525,16 @@ class TestActivationFunnel:
                 "org_type": "company",
                 "phone": "+593999000222",
                 "country": "Ecuador",
+            "is_pep": False,
+            "uafe_declaration": {
+                "funds_origin_declared": True,
+                "funds_origin_detail": "Ingresos por eventos",
+                "accepts_uafe_obligations": True,
+            },
+            "org_references": [
+                {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
+            ],
+            "country_code": "EC",
             }
             r = requests.post(f"{API}/auth/register", json=payload)
             assert r.status_code in (200, 201), r.text

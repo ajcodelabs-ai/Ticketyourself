@@ -94,6 +94,18 @@ async def update_me(
         raise HTTPException(400, "No fields to update")
 
     row = await _get_my_organizer(user, session)
+
+    if "country_code" in updates:
+        from services.registration_countries import get_country
+
+        code = updates["country_code"].upper()
+        country = await get_country(session, code)
+        if not country or not country.is_active:
+            raise HTTPException(400, f"Country '{code}' is not available")
+        updates["country_code"] = code
+        if "country" not in updates:
+            updates["country"] = country.name
+
     for key, val in updates.items():
         setattr(row, key, val)
 
@@ -123,7 +135,9 @@ async def resubmit_me(
         select(OrganizerDocument).where(OrganizerDocument.organizer_id == row.id)
     )
     present = {d.doc_type for d in docs_result.scalars().all()}
-    if not await is_satisfied(session, row.org_type, present):
+    if not await is_satisfied(
+        session, row.org_type, present, country_code=row.country_code
+    ):
         raise HTTPException(400, "Missing required documents for resubmission")
 
     row.status = "pending"
@@ -137,10 +151,14 @@ async def resubmit_me(
 
 @router.get("/required-documents", response_model=RequiredDocumentsOut)
 async def get_required_docs(
+    country: str | None = None,
     user=Depends(require_role("organizer")),
     session: AsyncSession = Depends(get_db),
 ):
-    return await get_required_documents(session)
+    row = await _get_my_organizer(user, session)
+    country_code = (country or row.country_code or "EC").upper()
+    docs = await get_required_documents(session, country_code)
+    return RequiredDocumentsOut(country_code=country_code, **docs)
 
 
 @router.get("/document-types", response_model=List[DocumentTypeOut])

@@ -23,6 +23,7 @@ from orm_models import (
     OrganizerAdminComment,
     OrganizerDocument,
     PaymentMethodCatalog,
+    RegistrationCountry,
     RequiredDocumentSet,
     SeatHold,
     SubscriptionPlan,
@@ -33,13 +34,17 @@ from orm_models import (
     User,
 )
 from security import hash_password, verify_password
+from services.registration_countries import DEFAULT_COUNTRIES
 from services.required_documents import DEFAULTS as REQUIRED_DOC_DEFAULTS
+from services.required_documents import GLOBAL_COUNTRY
 from slugs import normalize_slug
 
 DEFAULT_DOCUMENT_TYPES = {
     "ruc": "RUC",
     "id_card": "Cédula",
     "operating_permit": "Permiso de funcionamiento",
+    "bank_certificate": "Certificación bancaria",
+    "enabling_docs": "Documentos habilitantes",
     "other": "Otro",
 }
 
@@ -334,37 +339,72 @@ async def _seed_plans() -> None:
 
 
 async def _seed_document_types() -> None:
-    """Default document type catalog, only if the table is still empty (an
-    admin may have already extended it via /admin/configuracion)."""
+    """Ensure default document types exist (idempotent upsert by code)."""
     async with AsyncSessionLocal() as session:
-        existing = await session.scalar(select(func.count(DocumentType.code)))
-        if existing:
-            return
         now = datetime.now(timezone.utc)
         for code, label in DEFAULT_DOCUMENT_TYPES.items():
+            existing = await session.get(DocumentType, code)
+            if existing:
+                continue
             session.add(DocumentType(code=code, label=label, created_at=now))
         await session.commit()
     logger.info("Seeded default document types")
 
 
 async def _seed_required_documents() -> None:
-    """Default mandatory doc per org_type, only if the table is still empty
-    (an admin may have already configured it via /admin/configuracion)."""
+    """Default mandatory docs: global (*) + Ecuador-specific matrix."""
+    ec_defaults = {
+        "individual": ["id_card", "bank_certificate"],
+        "company": ["ruc", "bank_certificate", "enabling_docs"],
+    }
     async with AsyncSessionLocal() as session:
-        existing = await session.scalar(
-            select(func.count(RequiredDocumentSet.org_type))
-        )
-        if existing:
-            return
         now = datetime.now(timezone.utc)
-        for org_type, doc_types in REQUIRED_DOC_DEFAULTS.items():
+
+        async def ensure(country_code: str, org_type: str, doc_types: list) -> None:
+            row = await session.get(RequiredDocumentSet, (country_code, org_type))
+            if row:
+                return
             session.add(
                 RequiredDocumentSet(
-                    org_type=org_type, doc_types=doc_types, updated_at=now
+                    country_code=country_code,
+                    org_type=org_type,
+                    doc_types=doc_types,
+                    updated_at=now,
+                )
+            )
+
+        for org_type, doc_types in REQUIRED_DOC_DEFAULTS.items():
+            await ensure(GLOBAL_COUNTRY, org_type, doc_types)
+        for org_type, doc_types in ec_defaults.items():
+            await ensure("EC", org_type, doc_types)
+        await session.commit()
+    logger.info("Seeded default required-document rules")
+
+
+async def _seed_registration_countries() -> None:
+    """Seed registration jurisdictions (idempotent by code)."""
+    async with AsyncSessionLocal() as session:
+        now = datetime.now(timezone.utc)
+        for item in DEFAULT_COUNTRIES:
+            existing = await session.get(RegistrationCountry, item["code"])
+            if existing:
+                continue
+            session.add(
+                RegistrationCountry(
+                    code=item["code"],
+                    name=item["name"],
+                    is_active=item["is_active"],
+                    requires_compliance=item["requires_compliance"],
+                    legal_id_label=item.get("legal_id_label"),
+                    legal_id_pattern=item.get("legal_id_pattern"),
+                    form_schema=item.get("form_schema"),
+                    compliance_schema=item.get("compliance_schema"),
+                    sort_order=item.get("sort_order") or 0,
+                    updated_at=now,
                 )
             )
         await session.commit()
-    logger.info("Seeded default required-document rules")
+    logger.info("Seeded registration countries")
 
 
 async def _seed_demo_organizers() -> None:
@@ -435,6 +475,7 @@ async def _seed_demo_organizers() -> None:
                 email=od["user_email"].lower(),
                 phone=od["phone"],
                 country=od["country"],
+                country_code=od.get("country_code") or "EC",
                 slug=slug,
                 status=od["status"],
                 rejection_reason=od.get("rejection_reason"),
@@ -535,6 +576,7 @@ async def _reset_demo_organizers() -> None:
             org_row.org_type = od["org_type"]
             org_row.phone = od["phone"]
             org_row.country = od["country"]
+            org_row.country_code = od.get("country_code") or "EC"
             org_row.status = od["status"]
             org_row.rejection_reason = od.get("rejection_reason")
             org_row.plan_id = plan_id
@@ -2199,6 +2241,7 @@ async def run_seeds() -> None:
     await _seed_payment_method_catalog()
     await _seed_document_types()
     await _seed_required_documents()
+    await _seed_registration_countries()
     await _seed_demo_organizers()
     await _reset_demo_organizers()
     await _seed_demo_microsites()

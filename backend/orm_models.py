@@ -131,10 +131,17 @@ class Organizer(Base):
     org_type = Column(String(20), nullable=False)  # individual | company
     email = Column(String(254), nullable=False)
     phone = Column(String(40), nullable=False)
-    country = Column(String(40), nullable=False)
+    country = Column(String(40), nullable=False)  # display label
+    country_code = Column(String(2), nullable=False, default="EC")  # ISO-2
     slug = Column(String(60), ForeignKey("tenants.slug"), unique=True, nullable=False)
     status = Column(String(20), nullable=False, default="pending")
     rejection_reason = Column(Text, nullable=True)
+    social_links = Column(JSONB, nullable=True)
+    is_pep = Column(Boolean, nullable=False, default=False)
+    pep_details = Column(Text, nullable=True)
+    uafe_declaration = Column(JSONB, nullable=True)
+    org_references = Column(JSONB, nullable=True)  # [{name, phone, relation}, ...]
+    signup_plan_code = Column(String(40), nullable=True)
     plan_id = Column(String(36), ForeignKey("subscription_plans.id"), nullable=True)
     plan_code = Column(String(40), nullable=True)
     subscription_status = Column(String(20), nullable=False, default="none")
@@ -195,10 +202,14 @@ class OrganizerDocument(Base):
 
 
 class RequiredDocumentSet(Base):
-    """Admin-configurable: which doc_types are mandatory per org_type."""
+    """Admin-configurable: which doc_types are mandatory per country × org_type.
+
+    country_code='*' is the global fallback when a country has no specific row.
+    """
 
     __tablename__ = "required_document_sets"
 
+    country_code = Column(String(2), primary_key=True)  # ISO-2 or '*'
     org_type = Column(String(20), primary_key=True)  # "individual" | "company"
     doc_types = Column(JSONB, nullable=False)
     updated_at = Column(
@@ -216,6 +227,26 @@ class DocumentType(Base):
     label = Column(String(80), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     created_by = Column(String(36), nullable=True)
+
+
+class RegistrationCountry(Base):
+    """Admin-configurable registration jurisdiction (country) for KYC / docs."""
+
+    __tablename__ = "registration_countries"
+
+    code = Column(String(2), primary_key=True)  # ISO-2
+    name = Column(String(80), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    requires_compliance = Column(Boolean, nullable=False, default=False)
+    legal_id_label = Column(String(80), nullable=True)
+    legal_id_pattern = Column(String(120), nullable=True)
+    form_schema = Column(JSONB, nullable=True)
+    compliance_schema = Column(JSONB, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+    updated_by = Column(String(36), nullable=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

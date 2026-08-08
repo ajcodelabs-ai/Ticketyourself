@@ -37,7 +37,11 @@ export default function Onboarding() {
     // Admin-extensible catalog (/admin/configuracion) — [{ code, label }]
     const [docTypes, setDocTypes] = useState([]);
     // Admin-configurable via /admin/configuracion — { individual: [...], company: [...] }
-    const [requiredDocs, setRequiredDocs] = useState({ individual: [], company: [] });
+    const [requiredDocs, setRequiredDocs] = useState({
+        individual: [],
+        company: [],
+        country_code: null,
+    });
     const [loading, setLoading] = useState(true);
     const [docType, setDocType] = useState("");
     const [uploading, setUploading] = useState(false);
@@ -75,6 +79,7 @@ export default function Onboarding() {
             setRequiredDocs({
                 individual: requiredResp.data?.individual || [],
                 company: requiredResp.data?.company || [],
+                country_code: requiredResp.data?.country_code || organizer?.country_code,
             });
             const types = typesResp.data || [];
             setDocTypes(types);

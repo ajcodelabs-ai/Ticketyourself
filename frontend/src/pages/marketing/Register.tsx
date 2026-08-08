@@ -4,9 +4,18 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import PasswordInput from "@/components/ui/password-input";
 import PhoneInput from "@/components/ui/phone-input";
 import { isValidPhoneNumber } from "react-phone-number-input";
@@ -14,9 +23,17 @@ import PlansShowcase, { PlanCard } from "@/components/PlansShowcase";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
 import { PUBLIC_DOMAIN } from "@/lib/config";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
 
 const SIGNUP_PLAN_KEY = "tys_signup_plan";
+
+const EMPTY_SOCIAL = {
+    instagram: "",
+    facebook: "",
+    tiktok: "",
+    x: "",
+    website: "",
+};
 
 function normalizeSlug(value) {
     return (value || "")
@@ -48,6 +65,7 @@ export default function Register() {
     const planCode = searchParams.get("plan");
 
     const [plans, setPlans] = useState([]);
+    const [countries, setCountries] = useState([]);
     const [loadingPlans, setLoadingPlans] = useState(true);
     const [form, setForm] = useState({
         email: "",
@@ -57,8 +75,17 @@ export default function Register() {
         legal_id: "",
         org_type: "company",
         phone: "",
-        country: "Ecuador",
+        country_code: "EC",
         slug: "",
+        social_links: { ...EMPTY_SOCIAL },
+        is_pep: false,
+        pep_details: "",
+        uafe_declaration: {
+            funds_origin_declared: false,
+            funds_origin_detail: "",
+            accepts_uafe_obligations: false,
+        },
+        org_references: [{ name: "", phone: "", relation: "" }],
     });
     const [slugEdited, setSlugEdited] = useState(false);
     const [submitting, setSubmitting] = useState(false);
@@ -74,13 +101,34 @@ export default function Register() {
         [plans, planCode],
     );
 
+    const selectedCountry = useMemo(
+        () => countries.find((c) => c.code === form.country_code) || null,
+        [countries, form.country_code],
+    );
+
+    const requiresCompliance = Boolean(selectedCountry?.requires_compliance);
+    const socialFields =
+        selectedCountry?.form_schema?.social_fields || Object.keys(EMPTY_SOCIAL);
+    const legalLabel =
+        selectedCountry?.legal_id_label ||
+        (form.org_type === "company" ? "RUC" : "Cédula");
+
     useEffect(() => {
         (async () => {
             try {
-                const { data } = await api.get("/plans");
-                setPlans(data || []);
+                const [plansResp, countriesResp] = await Promise.all([
+                    api.get("/plans"),
+                    api.get("/auth/registration-countries"),
+                ]);
+                setPlans(plansResp.data || []);
+                const list = countriesResp.data || [];
+                setCountries(list);
+                if (list.length && !list.some((c) => c.code === "EC")) {
+                    setForm((f) => ({ ...f, country_code: list[0].code }));
+                }
             } catch {
                 setPlans([]);
+                setCountries([]);
             } finally {
                 setLoadingPlans(false);
             }
@@ -136,6 +184,43 @@ export default function Register() {
         setForm((f) => ({ ...f, [key]: val ?? "" }));
     };
 
+    const updateSocial = (key) => (e) => {
+        const val = e?.target?.value ?? "";
+        setForm((f) => ({
+            ...f,
+            social_links: { ...f.social_links, [key]: val },
+        }));
+    };
+
+    const updateUafe = (key, value) => {
+        setForm((f) => ({
+            ...f,
+            uafe_declaration: { ...f.uafe_declaration, [key]: value },
+        }));
+    };
+
+    const updateReference = (index, key, value) => {
+        setForm((f) => {
+            const next = [...f.org_references];
+            next[index] = { ...next[index], [key]: value };
+            return { ...f, org_references: next };
+        });
+    };
+
+    const addReference = () => {
+        setForm((f) => ({
+            ...f,
+            org_references: [...f.org_references, { name: "", phone: "", relation: "" }],
+        }));
+    };
+
+    const removeReference = (index) => {
+        setForm((f) => ({
+            ...f,
+            org_references: f.org_references.filter((_, i) => i !== index),
+        }));
+    };
+
     const submit = async (e) => {
         e.preventDefault();
         if (!selectedPlan) {
@@ -168,13 +253,52 @@ export default function Register() {
             return;
         }
         if (!form.legal_id.trim()) {
-            toast.error(form.org_type === "company" ? "Ingresa el RUC" : "Ingresa tu cédula");
+            toast.error(`Ingresa tu ${legalLabel}`);
             return;
+        }
+        if (selectedCountry?.legal_id_pattern) {
+            try {
+                const re = new RegExp(selectedCountry.legal_id_pattern);
+                if (!re.test(form.legal_id.trim())) {
+                    toast.error(`${legalLabel} no tiene un formato válido para ${selectedCountry.name}`);
+                    return;
+                }
+            } catch {
+                /* ignore bad pattern from admin */
+            }
         }
         if (!form.slug || !slugCheck.available) {
             toast.error("El slug elegido no está disponible");
             return;
         }
+        if (requiresCompliance) {
+            if (form.is_pep && !form.pep_details.trim()) {
+                toast.error("Describe tu condición PEP");
+                return;
+            }
+            if (!form.uafe_declaration.funds_origin_declared) {
+                toast.error("Debes declarar el origen lícito de los fondos");
+                return;
+            }
+            if (!form.uafe_declaration.funds_origin_detail.trim()) {
+                toast.error("Describe el origen de los fondos");
+                return;
+            }
+            if (!form.uafe_declaration.accepts_uafe_obligations) {
+                toast.error("Debes aceptar las obligaciones UAFE");
+                return;
+            }
+            const validRefs = form.org_references.filter((r) => r.name.trim() && r.phone.trim());
+            if (validRefs.length < 1) {
+                toast.error("Agrega al menos una referencia con nombre y teléfono");
+                return;
+            }
+        }
+
+        const social_links = Object.fromEntries(
+            Object.entries(form.social_links).filter(([, v]) => (v || "").trim()),
+        );
+
         setSubmitting(true);
         try {
             await register({
@@ -184,8 +308,17 @@ export default function Register() {
                 legal_id: form.legal_id.trim(),
                 org_type: form.org_type,
                 phone,
-                country: form.country.trim(),
+                country: selectedCountry?.name || form.country_code,
+                country_code: form.country_code,
                 slug: form.slug,
+                social_links: Object.keys(social_links).length ? social_links : null,
+                is_pep: requiresCompliance ? form.is_pep : false,
+                pep_details: requiresCompliance && form.is_pep ? form.pep_details.trim() : null,
+                uafe_declaration: requiresCompliance ? form.uafe_declaration : null,
+                org_references: requiresCompliance
+                    ? form.org_references.filter((r) => r.name.trim() && r.phone.trim())
+                    : null,
+                signup_plan_code: selectedPlan.code,
             });
             localStorage.setItem(SIGNUP_PLAN_KEY, selectedPlan.code);
             toast.success("Cuenta creada — ¡bienvenido a TYS!");
@@ -263,6 +396,27 @@ export default function Register() {
                         <PlanCard plan={selectedPlan} compact selected />
                     </div>
                     <form onSubmit={submit} className="space-y-5">
+                        <div className="space-y-2">
+                            <Label>País</Label>
+                            <Select
+                                value={form.country_code}
+                                onValueChange={(code) =>
+                                    setForm((f) => ({ ...f, country_code: code }))
+                                }
+                            >
+                                <SelectTrigger data-testid="register-country-select">
+                                    <SelectValue placeholder="Selecciona país" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {countries.map((c) => (
+                                        <SelectItem key={c.code} value={c.code}>
+                                            {c.name}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
                         <div className="grid sm:grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label htmlFor="email-input">Email</Label>
@@ -285,9 +439,6 @@ export default function Register() {
                                     placeholder="99 123 4567"
                                     required
                                 />
-                                <p className="text-xs text-muted-foreground">
-                                    Incluye el código de país (ej: Ecuador +593).
-                                </p>
                             </div>
                         </div>
 
@@ -326,7 +477,7 @@ export default function Register() {
                             >
                                 <div className="flex items-center gap-2">
                                     <RadioGroupItem value="individual" id="r-individual" />
-                                    <Label htmlFor="r-individual">Individual</Label>
+                                    <Label htmlFor="r-individual">Persona natural</Label>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <RadioGroupItem value="company" id="r-company" />
@@ -347,38 +498,18 @@ export default function Register() {
                                     data-testid="register-company-input"
                                     value={form.company_name}
                                     onChange={update("company_name")}
-                                    placeholder={
-                                        form.org_type === "company"
-                                            ? "Ej: Eventos Quito S.A."
-                                            : "Ej: Juan Pérez García"
-                                    }
                                     required
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="legal-input">
-                                    {form.org_type === "company" ? "RUC" : "Cédula"}
-                                </Label>
+                                <Label htmlFor="legal-input">{legalLabel}</Label>
                                 <Input
                                     id="legal-input"
                                     data-testid="register-legal-input"
                                     value={form.legal_id}
                                     onChange={update("legal_id")}
-                                    placeholder={
-                                        form.org_type === "company" ? "13 dígitos" : "10 dígitos"
-                                    }
-                                    inputMode="numeric"
-                                    pattern={
-                                        form.org_type === "company" ? "\\d{13}" : "\\d{10}"
-                                    }
-                                    maxLength={form.org_type === "company" ? 13 : 10}
                                     required
                                 />
-                                <p className="text-xs text-muted-foreground">
-                                    {form.org_type === "company"
-                                        ? "RUC de Ecuador (13 dígitos)."
-                                        : "Cédula de Ecuador (10 dígitos)."}
-                                </p>
                             </div>
                         </div>
 
@@ -420,14 +551,6 @@ export default function Register() {
                                 </div>
                             )}
                             <p className="text-xs" data-testid="register-slug-feedback">
-                                {!form.slug && (
-                                    <span className="text-muted-foreground">
-                                        Se autocompleta desde el nombre comercial.
-                                    </span>
-                                )}
-                                {form.slug && slugCheck.checking && (
-                                    <span className="text-muted-foreground">Verificando…</span>
-                                )}
                                 {form.slug && !slugCheck.checking && slugCheck.available === true && (
                                     <span className="text-emerald-600">✓ disponible</span>
                                 )}
@@ -436,6 +559,155 @@ export default function Register() {
                                 )}
                             </p>
                         </div>
+
+                        <div className="space-y-3 border-t border-border/60 pt-4">
+                            <Label className="text-base">Redes sociales</Label>
+                            <div className="grid sm:grid-cols-2 gap-3">
+                                {socialFields.map((key) => (
+                                    <div key={key} className="space-y-1.5">
+                                        <Label htmlFor={`social-${key}`} className="capitalize text-xs">
+                                            {key}
+                                        </Label>
+                                        <Input
+                                            id={`social-${key}`}
+                                            data-testid={`register-social-${key}`}
+                                            value={form.social_links[key] || ""}
+                                            onChange={updateSocial(key)}
+                                            placeholder={`@usuario o URL`}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {requiresCompliance && (
+                            <div
+                                className="space-y-4 border-t border-border/60 pt-4"
+                                data-testid="register-compliance-block"
+                            >
+                                <div>
+                                    <Label className="text-base">Compliance ({selectedCountry?.name})</Label>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        Declaraciones requeridas para organizadores en este país.
+                                    </p>
+                                </div>
+
+                                <div className="flex items-start gap-2">
+                                    <Checkbox
+                                        id="is-pep"
+                                        data-testid="register-is-pep"
+                                        checked={form.is_pep}
+                                        onCheckedChange={(v) =>
+                                            setForm((f) => ({ ...f, is_pep: Boolean(v) }))
+                                        }
+                                    />
+                                    <div className="space-y-1">
+                                        <Label htmlFor="is-pep" className="cursor-pointer">
+                                            Soy persona políticamente expuesta (PEP)
+                                        </Label>
+                                        {form.is_pep && (
+                                            <Textarea
+                                                data-testid="register-pep-details"
+                                                value={form.pep_details}
+                                                onChange={update("pep_details")}
+                                                placeholder="Cargo, institución y periodo"
+                                                className="mt-2"
+                                            />
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3 rounded-md border border-border/70 p-3">
+                                    <Label>Declaración UAFE</Label>
+                                    <div className="flex items-start gap-2">
+                                        <Checkbox
+                                            id="funds-origin"
+                                            checked={form.uafe_declaration.funds_origin_declared}
+                                            onCheckedChange={(v) =>
+                                                updateUafe("funds_origin_declared", Boolean(v))
+                                            }
+                                        />
+                                        <Label htmlFor="funds-origin" className="cursor-pointer font-normal">
+                                            Declaro que los fondos provienen de actividades lícitas
+                                        </Label>
+                                    </div>
+                                    <Textarea
+                                        data-testid="register-funds-detail"
+                                        value={form.uafe_declaration.funds_origin_detail}
+                                        onChange={(e) =>
+                                            updateUafe("funds_origin_detail", e.target.value)
+                                        }
+                                        placeholder="Describe el origen de los fondos"
+                                    />
+                                    <div className="flex items-start gap-2">
+                                        <Checkbox
+                                            id="uafe-accept"
+                                            checked={form.uafe_declaration.accepts_uafe_obligations}
+                                            onCheckedChange={(v) =>
+                                                updateUafe("accepts_uafe_obligations", Boolean(v))
+                                            }
+                                        />
+                                        <Label htmlFor="uafe-accept" className="cursor-pointer font-normal">
+                                            Acepto las obligaciones de prevención de lavado de activos
+                                        </Label>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <Label>Referencias</Label>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={addReference}
+                                            disabled={form.org_references.length >= 5}
+                                        >
+                                            <Plus className="h-3.5 w-3.5 mr-1" />
+                                            Agregar
+                                        </Button>
+                                    </div>
+                                    {form.org_references.map((ref, idx) => (
+                                        <div
+                                            key={idx}
+                                            className="grid sm:grid-cols-[1fr_1fr_1fr_auto] gap-2 items-end"
+                                        >
+                                            <Input
+                                                placeholder="Nombre"
+                                                value={ref.name}
+                                                onChange={(e) =>
+                                                    updateReference(idx, "name", e.target.value)
+                                                }
+                                                data-testid={`register-ref-name-${idx}`}
+                                            />
+                                            <Input
+                                                placeholder="Teléfono"
+                                                value={ref.phone}
+                                                onChange={(e) =>
+                                                    updateReference(idx, "phone", e.target.value)
+                                                }
+                                            />
+                                            <Input
+                                                placeholder="Relación"
+                                                value={ref.relation}
+                                                onChange={(e) =>
+                                                    updateReference(idx, "relation", e.target.value)
+                                                }
+                                            />
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                disabled={form.org_references.length <= 1}
+                                                onClick={() => removeReference(idx)}
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         <Button
                             type="submit"

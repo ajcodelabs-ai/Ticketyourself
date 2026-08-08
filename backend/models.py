@@ -1,7 +1,7 @@
 """Pydantic models for TYS. UUID strings as `id`; no Mongo `_id` leakage."""
 
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -50,8 +50,15 @@ class RegisterRequest(BaseModel):
     legal_id: str = Field(min_length=2, max_length=40)
     org_type: Literal["individual", "company"]
     phone: str = Field(min_length=4, max_length=40)
-    country: str = Field(min_length=2, max_length=40)
+    country: str = Field(min_length=2, max_length=40)  # display label (fallback)
+    country_code: Optional[str] = Field(default=None, min_length=2, max_length=2)
     slug: Optional[str] = Field(default=None, max_length=60)
+    social_links: Optional[Dict[str, Any]] = None
+    is_pep: bool = False
+    pep_details: Optional[str] = Field(default=None, max_length=2000)
+    uafe_declaration: Optional[Dict[str, Any]] = None
+    org_references: Optional[List[Dict[str, Any]]] = None
+    signup_plan_code: Optional[str] = Field(default=None, max_length=40)
 
 
 class LoginRequest(BaseModel):
@@ -167,9 +174,16 @@ class OrganizerOut(TimestampedModel):
     email: EmailStr
     phone: str
     country: str
+    country_code: str = "EC"
     slug: str
     status: OrgStatus
     rejection_reason: Optional[str] = None
+    social_links: Optional[Dict[str, Any]] = None
+    is_pep: bool = False
+    pep_details: Optional[str] = None
+    uafe_declaration: Optional[Dict[str, Any]] = None
+    org_references: Optional[List[Dict[str, Any]]] = None
+    signup_plan_code: Optional[str] = None
     admin_comments: List[AdminCommentOut] = Field(default_factory=list)
     plan_id: Optional[str] = None
     plan_code: Optional[str] = None
@@ -186,7 +200,32 @@ class OrganizerProfileUpdate(BaseModel):
     company_name: Optional[str] = Field(default=None, min_length=2, max_length=120)
     phone: Optional[str] = Field(default=None, min_length=4, max_length=40)
     country: Optional[str] = Field(default=None, min_length=2, max_length=40)
+    country_code: Optional[str] = Field(default=None, min_length=2, max_length=2)
     legal_id: Optional[str] = Field(default=None, min_length=2, max_length=40)
+    social_links: Optional[Dict[str, Any]] = None
+    is_pep: Optional[bool] = None
+    pep_details: Optional[str] = Field(default=None, max_length=2000)
+    uafe_declaration: Optional[Dict[str, Any]] = None
+    org_references: Optional[List[Dict[str, Any]]] = None
+
+
+class AdminOrganizerUpdate(BaseModel):
+    """Superadmin can edit registration / compliance / plan assignment."""
+
+    company_name: Optional[str] = Field(default=None, min_length=2, max_length=120)
+    phone: Optional[str] = Field(default=None, min_length=4, max_length=40)
+    country: Optional[str] = Field(default=None, min_length=2, max_length=40)
+    country_code: Optional[str] = Field(default=None, min_length=2, max_length=2)
+    legal_id: Optional[str] = Field(default=None, min_length=2, max_length=40)
+    org_type: Optional[Literal["individual", "company"]] = None
+    social_links: Optional[Dict[str, Any]] = None
+    is_pep: Optional[bool] = None
+    pep_details: Optional[str] = Field(default=None, max_length=2000)
+    uafe_declaration: Optional[Dict[str, Any]] = None
+    org_references: Optional[List[Dict[str, Any]]] = None
+    signup_plan_code: Optional[str] = Field(default=None, max_length=40)
+    plan_code: Optional[str] = Field(default=None, max_length=40)
+    subscription_status: Optional[SubStatus] = None
 
 
 # Document types are an admin-extensible catalog (services/document_types.py),
@@ -202,13 +241,23 @@ class OrganizerDocumentOut(TimestampedModel):
 
 
 class RequiredDocumentsOut(BaseModel):
+    country_code: Optional[str] = None
     individual: List[str]
     company: List[str]
 
 
 class RequiredDocumentsUpdate(BaseModel):
+    country_code: str = Field(default="*", min_length=1, max_length=2)
     individual: List[str] = Field(default_factory=list)
     company: List[str] = Field(default_factory=list)
+
+
+class RequiredDocumentSetOut(BaseModel):
+    country_code: str
+    org_type: str
+    doc_types: List[str]
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[str] = None
 
 
 class DocumentTypeOut(BaseModel):
@@ -218,6 +267,43 @@ class DocumentTypeOut(BaseModel):
 
 class DocumentTypeCreate(BaseModel):
     label: str = Field(min_length=2, max_length=80)
+
+
+class RegistrationCountryOut(TimestampedModel):
+    code: str
+    name: str
+    is_active: bool
+    requires_compliance: bool
+    legal_id_label: Optional[str] = None
+    legal_id_pattern: Optional[str] = None
+    form_schema: Optional[Dict[str, Any]] = None
+    compliance_schema: Optional[Dict[str, Any]] = None
+    sort_order: int = 0
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[str] = None
+
+
+class RegistrationCountryCreate(BaseModel):
+    code: str = Field(min_length=2, max_length=2)
+    name: str = Field(min_length=2, max_length=80)
+    is_active: bool = True
+    requires_compliance: bool = False
+    legal_id_label: Optional[str] = Field(default=None, max_length=80)
+    legal_id_pattern: Optional[str] = Field(default=None, max_length=120)
+    form_schema: Optional[Dict[str, Any]] = None
+    compliance_schema: Optional[Dict[str, Any]] = None
+    sort_order: int = 0
+
+
+class RegistrationCountryUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=80)
+    is_active: Optional[bool] = None
+    requires_compliance: Optional[bool] = None
+    legal_id_label: Optional[str] = Field(default=None, max_length=80)
+    legal_id_pattern: Optional[str] = Field(default=None, max_length=120)
+    form_schema: Optional[Dict[str, Any]] = None
+    compliance_schema: Optional[Dict[str, Any]] = None
+    sort_order: Optional[int] = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────

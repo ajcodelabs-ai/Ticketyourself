@@ -262,8 +262,11 @@ class TestRequiredDocumentSet:
     def test_tablename(self):
         assert RequiredDocumentSet.__tablename__ == "required_document_sets"
 
-    def test_pk_is_org_type(self):
-        assert RequiredDocumentSet.__table__.primary_key.columns.keys() == ["org_type"]
+    def test_pk_is_country_and_org_type(self):
+        assert RequiredDocumentSet.__table__.primary_key.columns.keys() == [
+            "country_code",
+            "org_type",
+        ]
 
 
 class TestDocumentType:

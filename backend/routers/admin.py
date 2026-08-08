@@ -14,6 +14,7 @@ from audit import log_audit
 from database import get_db
 from db_helpers import organizer_row_to_dict
 from models import (
+    AdminOrganizerUpdate,
     AdminStats,
     ApproveBody,
     CommentBody,
@@ -21,7 +22,11 @@ from models import (
     DocumentTypeOut,
     OrganizerOut,
     OrganizersList,
+    RegistrationCountryCreate,
+    RegistrationCountryOut,
+    RegistrationCountryUpdate,
     RejectBody,
+    RequiredDocumentSetOut,
     RequiredDocumentsOut,
     RequiredDocumentsUpdate,
     SuspendBody,
@@ -33,7 +38,16 @@ from services.email_service import (
     send_organizer_approved_email,
     send_organizer_rejected_email,
 )
-from services.required_documents import get_required_documents, set_required_documents
+from services.registration_countries import (
+    get_country,
+    list_countries,
+    upsert_country,
+)
+from services.required_documents import (
+    get_all_required_document_sets,
+    get_required_documents,
+    set_required_documents,
+)
 
 
 def _onboarding_url() -> str:
@@ -154,6 +168,67 @@ async def list_organizers(
 @router.get("/organizers/{organizer_id}", response_model=OrganizerOut)
 async def get_organizer(organizer_id: str, session: AsyncSession = Depends(get_db)):
     row = await _load_organizer(organizer_id, session)
+    return _org_to_out(row)
+
+
+@router.patch("/organizers/{organizer_id}", response_model=OrganizerOut)
+async def update_organizer(
+    organizer_id: str,
+    payload: AdminOrganizerUpdate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _load_organizer(organizer_id, session)
+    updates = {
+        k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None
+    }
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+
+    # Plan assignment override
+    if "plan_code" in updates:
+        plan_code = updates.pop("plan_code")
+        plan_result = await session.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
+        )
+        plan = plan_result.scalar_one_or_none()
+        if not plan:
+            raise HTTPException(404, f"Plan '{plan_code}' not found")
+        row.plan_code = plan.code
+        row.plan_id = plan.id
+        if "subscription_status" not in updates:
+            if row.subscription_status == "none":
+                row.subscription_status = "active"
+
+    if "country_code" in updates:
+        code = updates["country_code"].upper()
+        country = await get_country(session, code)
+        if not country:
+            raise HTTPException(400, f"Unknown country_code '{code}'")
+        updates["country_code"] = code
+        if "country" not in updates:
+            updates["country"] = country.name
+
+    for key, val in updates.items():
+        setattr(row, key, val)
+
+    if "company_name" in updates:
+        tenant_result = await session.execute(
+            select(Tenant).where(Tenant.slug == row.slug)
+        )
+        tenant_row = tenant_result.scalar_one_or_none()
+        if tenant_row:
+            tenant_row.name = updates["company_name"]
+
+    await session.flush()
+    await log_audit(
+        admin["id"],
+        "organizer.updated",
+        "organizer",
+        organizer_id,
+        payload.model_dump(exclude_unset=True),
+    )
+    await session.refresh(row, ["admin_comments"])
     return _org_to_out(row)
 
 
@@ -311,8 +386,19 @@ async def add_comment(
 
 
 @router.get("/settings/required-documents", response_model=RequiredDocumentsOut)
-async def get_required_documents_settings(session: AsyncSession = Depends(get_db)):
-    return await get_required_documents(session)
+async def get_required_documents_settings(
+    country: Optional[str] = Query(default="*"),
+    session: AsyncSession = Depends(get_db),
+):
+    docs = await get_required_documents(session, country)
+    return RequiredDocumentsOut(country_code=(country or "*").upper(), **docs)
+
+
+@router.get(
+    "/settings/required-documents/all", response_model=List[RequiredDocumentSetOut]
+)
+async def get_all_required_documents_settings(session: AsyncSession = Depends(get_db)):
+    return await get_all_required_document_sets(session)
 
 
 @router.put("/settings/required-documents", response_model=RequiredDocumentsOut)
@@ -321,8 +407,13 @@ async def update_required_documents_settings(
     admin=Depends(require_role("super_admin")),
     session: AsyncSession = Depends(get_db),
 ):
-    await set_required_documents(session, "individual", payload.individual, admin["id"])
-    await set_required_documents(session, "company", payload.company, admin["id"])
+    country = (payload.country_code or "*").upper()
+    await set_required_documents(
+        session, "individual", payload.individual, admin["id"], country_code=country
+    )
+    await set_required_documents(
+        session, "company", payload.company, admin["id"], country_code=country
+    )
     await log_audit(
         admin["id"],
         "settings.required_documents_updated",
@@ -330,7 +421,8 @@ async def update_required_documents_settings(
         "required_documents",
         payload.model_dump(),
     )
-    return await get_required_documents(session)
+    docs = await get_required_documents(session, country)
+    return RequiredDocumentsOut(country_code=country, **docs)
 
 
 @router.get("/settings/document-types", response_model=List[DocumentTypeOut])
@@ -355,3 +447,59 @@ async def create_document_type_settings(
         {"label": payload.label},
     )
     return created
+
+
+@router.get("/settings/registration-countries", response_model=List[RegistrationCountryOut])
+async def get_registration_countries_settings(session: AsyncSession = Depends(get_db)):
+    return await list_countries(session, active_only=False)
+
+
+@router.post(
+    "/settings/registration-countries",
+    response_model=RegistrationCountryOut,
+    status_code=201,
+)
+async def create_registration_country(
+    payload: RegistrationCountryCreate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    created = await upsert_country(
+        session, payload.code, payload.model_dump(), admin["id"]
+    )
+    await log_audit(
+        admin["id"],
+        "settings.registration_country_created",
+        "registration_country",
+        created["code"],
+        {"name": payload.name},
+    )
+    return created
+
+
+@router.put(
+    "/settings/registration-countries/{code}",
+    response_model=RegistrationCountryOut,
+)
+async def update_registration_country(
+    code: str,
+    payload: RegistrationCountryUpdate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(400, "No fields to update")
+    # Ensure row exists
+    existing = await get_country(session, code)
+    if not existing:
+        raise HTTPException(404, f"Country '{code}' not found")
+    updated = await upsert_country(session, code, data, admin["id"])
+    await log_audit(
+        admin["id"],
+        "settings.registration_country_updated",
+        "registration_country",
+        code.upper(),
+        data,
+    )
+    return updated
