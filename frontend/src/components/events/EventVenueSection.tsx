@@ -86,10 +86,14 @@ const LOCALITY_FIELD_TIPS = {
     color: "Color con el que se pintan en el mapa los asientos o zonas de esta localidad.",
     name: "Nombre que ve el comprador al elegir asientos (ej. Platea, VIP, General).",
     description: "Texto opcional para aclarar qué incluye o dónde queda esta localidad.",
-    price: "Precio base de la entrada (ITEMP). Sobre este monto se calcula el fee de la plataforma.",
-    vxs: "Valor por Servicio (VXS): cargo adicional por ticket que define el organizador. Se suma al total del comprador.",
-    service: "Costo por servicio: otro cargo operativo por ticket (si aplica). Se suma al total del comprador.",
-    admin: "Costo administrativo por ticket (si aplica). Se suma al total del comprador. Dejá $0 si no lo usás.",
+    price: "Precio base de la entrada. Sobre este monto se calcula el fee de la plataforma.",
+    service:
+        "Cargo de servicio configurable por ticket (PRD §4.2.1). Se suma al total del comprador.",
+    admin:
+        "TicketSeguro: cobertura / seguro por ticket. Se suma al total del comprador. Dejá $0 si no aplica.",
+    vxs: "Impuestos (IVA u otros) por ticket. Se suma al total del comprador.",
+    wallet:
+        "Billetera Virtual: cargo o recarga asociada al ticket. Se suma al total del comprador.",
 };
 
 function venueCreateHref(eventId: string | null | undefined) {
@@ -144,7 +148,7 @@ function MoneyField({ label, tip, value, onChange, disabled = false, testid }) {
     );
 }
 
-const emptyDraftMoney = { price: "", vxs: "", service: "", admin: "" };
+const emptyDraftMoney = { price: "", vxs: "", service: "", admin: "", wallet: "" };
 
 function LocalityFormDialog({ open, onClose, onSubmit, initial, saving }) {
     const [name, setName] = useState("");
@@ -163,6 +167,7 @@ function LocalityFormDialog({ open, onClose, onSubmit, initial, saving }) {
                 vxs: centsToInput(initial.vxs_cents) || "",
                 service: centsToInput(initial.service_fee_cents) || "",
                 admin: centsToInput(initial.admin_fee_cents) || "",
+                wallet: centsToInput(initial.wallet_fee_cents) || "",
             });
         } else {
             setName("");
@@ -185,6 +190,7 @@ function LocalityFormDialog({ open, onClose, onSubmit, initial, saving }) {
             vxs_cents: dollarsToCents(money.vxs),
             service_fee_cents: dollarsToCents(money.service),
             admin_fee_cents: dollarsToCents(money.admin),
+            wallet_fee_cents: dollarsToCents(money.wallet),
         });
     };
 
@@ -262,30 +268,37 @@ function LocalityFormDialog({ open, onClose, onSubmit, initial, saving }) {
                             testid="locality-form-price"
                         />
                         <MoneyField
-                            label="VXS"
-                            tip={LOCALITY_FIELD_TIPS.vxs}
-                            value={money.vxs}
-                            onChange={(v) => setMoney((m) => ({ ...m, vxs: v }))}
-                            testid="locality-form-vxs"
-                        />
-                        <MoneyField
-                            label="Costo x Servicio"
+                            label="Cargo de servicio"
                             tip={LOCALITY_FIELD_TIPS.service}
                             value={money.service}
                             onChange={(v) => setMoney((m) => ({ ...m, service: v }))}
                             testid="locality-form-service"
                         />
                         <MoneyField
-                            label="Costo Admin"
+                            label="TicketSeguro"
                             tip={LOCALITY_FIELD_TIPS.admin}
                             value={money.admin}
                             onChange={(v) => setMoney((m) => ({ ...m, admin: v }))}
                             testid="locality-form-admin"
                         />
+                        <MoneyField
+                            label="Impuestos"
+                            tip={LOCALITY_FIELD_TIPS.vxs}
+                            value={money.vxs}
+                            onChange={(v) => setMoney((m) => ({ ...m, vxs: v }))}
+                            testid="locality-form-vxs"
+                        />
+                        <MoneyField
+                            label="Billetera Virtual"
+                            tip={LOCALITY_FIELD_TIPS.wallet}
+                            value={money.wallet}
+                            onChange={(v) => setMoney((m) => ({ ...m, wallet: v }))}
+                            testid="locality-form-wallet"
+                        />
                     </div>
                     <p className="text-[11px] text-muted-foreground">
-                        El comprador paga: Entrada + VXS + C. Servicio + C. Admin. El fee de TicketYourself
-                        aplica solo sobre la Entrada.
+                        El comprador paga: Entrada + servicio + TicketSeguro + impuestos + billetera.
+                        El fee de TicketYourself aplica solo sobre la Entrada.
                     </p>
                 </div>
                 <DialogFooter>
@@ -424,6 +437,7 @@ export default function EventVenueSection({
                 service_fee_cents: lp.service_fee_cents || 0,
                 admin_fee_cents: lp.admin_fee_cents || 0,
                 vxs_cents: lp.vxs_cents || 0,
+                wallet_fee_cents: lp.wallet_fee_cents || 0,
                 max_per_purchase: lp.max_tickets_per_purchase ?? null,
             };
         }
@@ -434,6 +448,7 @@ export default function EventVenueSection({
                     service_fee_cents: 0,
                     admin_fee_cents: 0,
                     vxs_cents: 0,
+                    wallet_fee_cents: 0,
                     max_per_purchase: null,
                 };
             }
@@ -495,6 +510,7 @@ export default function EventVenueSection({
                 service_fee_cents: Math.max(0, parseInt(row.service_fee_cents ?? 0, 10) || 0),
                 admin_fee_cents: Math.max(0, parseInt(row.admin_fee_cents ?? 0, 10) || 0),
                 vxs_cents: Math.max(0, parseInt(row.vxs_cents ?? 0, 10) || 0),
+                wallet_fee_cents: Math.max(0, parseInt(row.wallet_fee_cents ?? 0, 10) || 0),
                 max_tickets_per_purchase:
                     row.max_per_purchase != null
                         ? Math.max(1, parseInt(row.max_per_purchase, 10) || 0) || null
@@ -549,6 +565,7 @@ export default function EventVenueSection({
             vxs_cents: p.vxs_cents,
             service_fee_cents: p.service_fee_cents,
             admin_fee_cents: p.admin_fee_cents,
+            wallet_fee_cents: p.wallet_fee_cents,
         });
         setFormOpen(true);
     };
@@ -579,6 +596,7 @@ export default function EventVenueSection({
                     service_fee_cents: values.service_fee_cents,
                     admin_fee_cents: values.admin_fee_cents,
                     vxs_cents: values.vxs_cents,
+                    wallet_fee_cents: values.wallet_fee_cents,
                     max_per_purchase: pricing[locId]?.max_per_purchase ?? null,
                 },
             };
@@ -905,26 +923,32 @@ export default function EventVenueSection({
                                                 <th className="text-left font-medium px-3 py-2">Color</th>
                                                 <th className="text-right font-medium px-3 py-2">
                                                     <span className="inline-flex items-center justify-end gap-1">
-                                                        ITEMP
+                                                        Entrada
                                                         <FieldTip text={LOCALITY_FIELD_TIPS.price} />
                                                     </span>
                                                 </th>
                                                 <th className="text-right font-medium px-3 py-2">
                                                     <span className="inline-flex items-center justify-end gap-1">
-                                                        VXS
-                                                        <FieldTip text={LOCALITY_FIELD_TIPS.vxs} />
-                                                    </span>
-                                                </th>
-                                                <th className="text-right font-medium px-3 py-2">
-                                                    <span className="inline-flex items-center justify-end gap-1">
-                                                        C. Servicio
+                                                        Servicio
                                                         <FieldTip text={LOCALITY_FIELD_TIPS.service} />
                                                     </span>
                                                 </th>
                                                 <th className="text-right font-medium px-3 py-2">
                                                     <span className="inline-flex items-center justify-end gap-1">
-                                                        C. Admin
+                                                        TicketSeguro
                                                         <FieldTip text={LOCALITY_FIELD_TIPS.admin} />
+                                                    </span>
+                                                </th>
+                                                <th className="text-right font-medium px-3 py-2">
+                                                    <span className="inline-flex items-center justify-end gap-1">
+                                                        Impuestos
+                                                        <FieldTip text={LOCALITY_FIELD_TIPS.vxs} />
+                                                    </span>
+                                                </th>
+                                                <th className="text-right font-medium px-3 py-2">
+                                                    <span className="inline-flex items-center justify-end gap-1">
+                                                        Billetera
+                                                        <FieldTip text={LOCALITY_FIELD_TIPS.wallet} />
                                                     </span>
                                                 </th>
                                                 <th className="text-right font-medium px-3 py-2">Asignados</th>
@@ -955,13 +979,16 @@ export default function EventVenueSection({
                                                             ${centsToInput(p.price_cents) || "0.00"}
                                                         </td>
                                                         <td className="px-3 py-2 text-right tabular-nums">
-                                                            ${centsToInput(p.vxs_cents) || "0.00"}
-                                                        </td>
-                                                        <td className="px-3 py-2 text-right tabular-nums">
                                                             ${centsToInput(p.service_fee_cents) || "0.00"}
                                                         </td>
                                                         <td className="px-3 py-2 text-right tabular-nums">
                                                             ${centsToInput(p.admin_fee_cents) || "0.00"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-right tabular-nums">
+                                                            ${centsToInput(p.vxs_cents) || "0.00"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-right tabular-nums">
+                                                            ${centsToInput(p.wallet_fee_cents) || "0.00"}
                                                         </td>
                                                         <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
                                                             {assigned}

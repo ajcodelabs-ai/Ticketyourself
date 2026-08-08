@@ -27,7 +27,15 @@ MANUAL_RESERVATION_TTL_HOURS = 48  # transfer / cash buyers get 48h to complete
 DEFAULT_FEE_PERCENT = float(os.environ.get("TYS_FEE_PERCENT", "5"))
 MAX_QUANTITY = 10
 ORDER_PREFIX = "TYS-"
-VALID_PAYMENT_METHODS = ("stripe", "nuvei", "deuna", "transfer", "cash", "season_pass")
+VALID_PAYMENT_METHODS = (
+    "stripe",
+    "nuvei",
+    "deuna",
+    "paypal",
+    "transfer",
+    "cash",
+    "season_pass",
+)
 
 
 def _now() -> datetime:
@@ -208,11 +216,36 @@ def validate_buyer(buyer: dict) -> dict:
 
 
 # ── Totals ──────────────────────────────────────────────────────────────────
+def _ticket_fees_per_unit(event: dict) -> dict:
+    """PRD §4.2.1 Pagado — fees for general (non-seated) events."""
+    raw = event.get("ticket_fees") or {}
+    return {
+        "service_fee_cents": int(raw.get("service_fee_cents") or 0),
+        "ticketseguro_cents": int(
+            raw.get("ticketseguro_cents") or raw.get("admin_fee_cents") or 0
+        ),
+        "tax_cents": int(raw.get("tax_cents") or raw.get("vxs_cents") or 0),
+        "wallet_fee_cents": int(raw.get("wallet_fee_cents") or 0),
+    }
+
+
 def compute_totals(
     *, event: dict, quantity: int, donation_amount_cents: int = 0
 ) -> dict:
     pricing = event.get("pricing_type", "free")
     if pricing == "free":
+        if donation_amount_cents > 0:
+            if not event.get("optional_donation_enabled"):
+                raise HTTPException(422, "Este evento no acepta aportes voluntarios")
+            if donation_amount_cents < 100:
+                raise HTTPException(422, "El aporte mínimo es $1")
+            return {
+                "unit_price_cents": donation_amount_cents,
+                "subtotal_cents": donation_amount_cents,
+                "fees_cents": 0,
+                "total_cents": donation_amount_cents,
+                "donation_amount_cents": donation_amount_cents,
+            }
         return {
             "unit_price_cents": 0,
             "subtotal_cents": 0,
@@ -232,11 +265,30 @@ def compute_totals(
             "donation_amount_cents": donation_amount_cents,
         }
     unit = event.get("base_price_cents") or 0
-    subtotal = unit * quantity
-    fees = int(round(subtotal * DEFAULT_FEE_PERCENT / 100))
+    tf = _ticket_fees_per_unit(event)
+    per_ticket_extra = (
+        tf["service_fee_cents"]
+        + tf["ticketseguro_cents"]
+        + tf["tax_cents"]
+        + tf["wallet_fee_cents"]
+    )
+    entrada = unit * quantity
+    service = tf["service_fee_cents"] * quantity
+    ticketseguro = tf["ticketseguro_cents"] * quantity
+    tax = tf["tax_cents"] * quantity
+    wallet = tf["wallet_fee_cents"] * quantity
+    subtotal = entrada + service + ticketseguro + tax + wallet
+    fees = int(round(entrada * DEFAULT_FEE_PERCENT / 100))
     return {
         "unit_price_cents": unit,
         "subtotal_cents": subtotal,
+        "entrada_cents": entrada,
+        "service_fee_cents": service,
+        "admin_fee_cents": ticketseguro,  # TicketSeguro (legacy key for UI)
+        "ticketseguro_cents": ticketseguro,
+        "vxs_cents": tax,  # Impuestos (legacy key for UI)
+        "tax_cents": tax,
+        "wallet_fee_cents": wallet,
         "fees_cents": fees,
         "total_cents": subtotal + fees,
         "donation_amount_cents": 0,
@@ -248,12 +300,28 @@ def locality_pricing_map(event: dict) -> dict:
 
 
 def locality_fee_cents(pricing_map: dict, locality_id: str | None) -> tuple[int, int]:
-    """service_fee_cents/admin_fee_cents configured for a locality, or (0, 0)
-    when the locality has no pricing entry (e.g. events without a venue)."""
+    """service_fee_cents / TicketSeguro (admin_fee_cents) for a locality, or (0, 0)."""
     lp = pricing_map.get(locality_id) if locality_id else None
     if not lp:
         return 0, 0
     return int(lp.get("service_fee_cents") or 0), int(lp.get("admin_fee_cents") or 0)
+
+
+def locality_extra_fees(pricing_map: dict, locality_id: str | None) -> dict:
+    lp = pricing_map.get(locality_id) if locality_id else None
+    if not lp:
+        return {
+            "service_fee_cents": 0,
+            "admin_fee_cents": 0,
+            "vxs_cents": 0,
+            "wallet_fee_cents": 0,
+        }
+    return {
+        "service_fee_cents": int(lp.get("service_fee_cents") or 0),
+        "admin_fee_cents": int(lp.get("admin_fee_cents") or 0),
+        "vxs_cents": int(lp.get("vxs_cents") or 0),
+        "wallet_fee_cents": int(lp.get("wallet_fee_cents") or 0),
+    }
 
 
 def compute_totals_with_seats(
@@ -264,8 +332,8 @@ def compute_totals_with_seats(
 ) -> dict:
     """Per-locality pricing for seat-numbered events.
 
-    Per seat the buyer pays entrada + c.servicio + c.admin.
-    Platform fee (`TYS_FEE_PERCENT`) applies only to the entrada portion.
+    Per seat the buyer pays entrada + cargo servicio + TicketSeguro + impuestos
+    + billetera. Platform fee (`TYS_FEE_PERCENT`) applies only to the entrada.
     """
     from services.seats import seats_by_id
 
@@ -278,6 +346,7 @@ def compute_totals_with_seats(
     service_subtotal = 0
     admin_subtotal = 0
     vxs_subtotal = 0
+    wallet_subtotal = 0
     missing_loc = []
     for sid in seat_ids:
         seat = by_id.get(sid)
@@ -289,25 +358,34 @@ def compute_totals_with_seats(
             missing_loc.append(loc_id or "(sin localidad)")
             continue
         entrada = int(lp.get("price_cents") or 0)
-        service, admin = locality_fee_cents(pricing_map, loc_id)
-        vxs = int(lp.get("vxs_cents") or 0)
+        extras = locality_extra_fees(pricing_map, loc_id)
         entrada_subtotal += entrada
-        service_subtotal += service
-        admin_subtotal += admin
-        vxs_subtotal += vxs
-        subtotal += entrada + service + admin + vxs
+        service_subtotal += extras["service_fee_cents"]
+        admin_subtotal += extras["admin_fee_cents"]
+        vxs_subtotal += extras["vxs_cents"]
+        wallet_subtotal += extras["wallet_fee_cents"]
+        subtotal += (
+            entrada
+            + extras["service_fee_cents"]
+            + extras["admin_fee_cents"]
+            + extras["vxs_cents"]
+            + extras["wallet_fee_cents"]
+        )
     if missing_loc:
         raise HTTPException(422, f"El evento no tiene precio para: {set(missing_loc)}")
     fees = int(round(entrada_subtotal * DEFAULT_FEE_PERCENT / 100))
     avg_unit = entrada_subtotal // max(1, len(seat_ids))
     return {
-        # unit_price_cents = average entrada only (excludes service/admin/vxs)
+        # unit_price_cents = average entrada only (excludes service/admin/vxs/wallet)
         "unit_price_cents": avg_unit,
         "subtotal_cents": subtotal,
         "entrada_cents": entrada_subtotal,
         "service_fee_cents": service_subtotal,
         "admin_fee_cents": admin_subtotal,
+        "ticketseguro_cents": admin_subtotal,
         "vxs_cents": vxs_subtotal,
+        "tax_cents": vxs_subtotal,
+        "wallet_fee_cents": wallet_subtotal,
         "fees_cents": fees,
         "total_cents": subtotal + fees,
         "donation_amount_cents": 0,
@@ -347,7 +425,15 @@ async def create_order_skeleton(
     )
 
     # Free / season_pass paths pass through without catalog checks.
-    if payment_method not in ("season_pass",) and event.get("pricing_type") != "free":
+    # Free + optional donation > 0 must still validate the chosen gateway.
+    needs_payment_check = payment_method not in ("season_pass",) and (
+        event.get("pricing_type") != "free"
+        or (
+            event.get("optional_donation_enabled")
+            and int(totals.get("donation_amount_cents") or 0) > 0
+        )
+    )
+    if needs_payment_check:
         if not accepts_payment_method(event, payment_method):
             raise HTTPException(
                 400, f"El organizador no acepta pagos con '{payment_method}'"
@@ -359,12 +445,16 @@ async def create_order_skeleton(
 
     is_manual = payment_method in MANUAL_CODES
     is_gateway_stub = payment_method in GATEWAY_STUB_CODES
+    is_nuvei = payment_method == "nuvei"
     if is_manual:
         ttl = timedelta(hours=MANUAL_RESERVATION_TTL_HOURS)
         initial_status = "pending_manual_payment"
     elif is_gateway_stub:
         ttl = timedelta(minutes=RESERVATION_TTL_MIN)
         initial_status = "pending_gateway"
+    elif is_nuvei:
+        ttl = timedelta(minutes=RESERVATION_TTL_MIN)
+        initial_status = "pending"
     else:
         ttl = timedelta(minutes=RESERVATION_TTL_MIN)
         initial_status = "pending"

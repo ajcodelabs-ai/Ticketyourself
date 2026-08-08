@@ -59,20 +59,24 @@ export default function AdminOrganizerDetail() {
     const [comment, setComment] = useState("");
     const [acting, setActing] = useState(false);
     const [preview, setPreview] = useState(null);
+    const [billingIntents, setBillingIntents] = useState([]);
+    const [confirmingPay, setConfirmingPay] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [orgR, docsR, countriesR, plansR] = await Promise.all([
+            const [orgR, docsR, countriesR, plansR, intentsR] = await Promise.all([
                 api.get(`/admin/organizers/${id}`),
                 api.get(`/organizers/${id}/documents`),
                 api.get("/admin/settings/registration-countries"),
                 api.get("/plans"),
+                api.get(`/admin/organizers/${id}/billing-intents`).catch(() => ({ data: [] })),
             ]);
             setOrg(orgR.data);
             setDocs(docsR.data || []);
             setCountries(countriesR.data || []);
             setPlans(plansR.data || []);
+            setBillingIntents(intentsR.data || []);
             setEdit({
                 company_name: orgR.data.company_name || "",
                 phone: orgR.data.phone || "",
@@ -142,6 +146,26 @@ export default function AdminOrganizerDetail() {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
         } finally {
             setSaving(false);
+        }
+    };
+
+    const confirmGatewayPayment = async (intentId) => {
+        setConfirmingPay(true);
+        try {
+            const { data } = await api.post(
+                `/admin/organizers/${id}/confirm-plan-payment`,
+                {
+                    intent_id: intentId,
+                    comment: "Pago Nuvei/DeUna confirmado por admin",
+                },
+            );
+            setOrg(data);
+            toast.success("Pago confirmado — plan activado");
+            await load();
+        } catch (err) {
+            toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+        } finally {
+            setConfirmingPay(false);
         }
     };
 
@@ -415,6 +439,149 @@ export default function AdminOrganizerDetail() {
                             </pre>
                         </div>
                     )}
+                </CardContent>
+            </Card>
+
+            {billingIntents.some((i) => i.status === "pending_gateway") && (
+                <Card className="border-sky-200 bg-sky-50/40" data-testid="admin-gateway-payments">
+                    <CardHeader>
+                        <CardTitle className="text-lg">Pagos de plan pendientes (Nuvei / DeUna)</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        {billingIntents
+                            .filter((i) => i.status === "pending_gateway")
+                            .map((intent) => (
+                                <div
+                                    key={intent.id}
+                                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-200 bg-white p-3"
+                                >
+                                    <div className="text-sm">
+                                        <div className="font-medium capitalize">
+                                            {intent.payment_method} · plan {intent.plan_code}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">
+                                            {new Date(intent.created_at).toLocaleString("es-EC")} ·{" "}
+                                            {intent.session_id}
+                                        </div>
+                                    </div>
+                                    <Button
+                                        size="sm"
+                                        disabled={confirmingPay}
+                                        onClick={() => confirmGatewayPayment(intent.id)}
+                                        data-testid={`admin-confirm-pay-${intent.id}`}
+                                    >
+                                        {confirmingPay && (
+                                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                        )}
+                                        Confirmar pago y activar
+                                    </Button>
+                                </div>
+                            ))}
+                    </CardContent>
+                </Card>
+            )}
+
+            <Card className="border-border/70" data-testid="admin-publish-gates">
+                <CardHeader>
+                    <CardTitle className="text-lg">Gates de publicación</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                    <div className="grid sm:grid-cols-3 gap-3">
+                        <div>
+                            <div className="text-xs uppercase text-muted-foreground">Plan</div>
+                            <div className="font-medium">{org.subscription_status}</div>
+                        </div>
+                        <div>
+                            <div className="text-xs uppercase text-muted-foreground">
+                                Verificación
+                            </div>
+                            <div className="font-medium">
+                                {org.verification_fee_status}
+                                {org.verification_fee_cents != null
+                                    ? ` · $${(org.verification_fee_cents / 100).toFixed(2)}`
+                                    : ""}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-xs uppercase text-muted-foreground">Contrato</div>
+                            <div className="font-medium">
+                                {org.contract_status}
+                                {org.contract_external_id ? (
+                                    <span className="block text-xs font-mono text-muted-foreground truncate">
+                                        {org.contract_external_id}
+                                    </span>
+                                ) : null}
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {org.verification_fee_status === "pending" && (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                    try {
+                                        await api.post(
+                                            `/admin/organizers/${id}/mark-verification-paid`,
+                                        );
+                                        toast.success("Verificación marcada como pagada");
+                                        load();
+                                    } catch (err) {
+                                        toast.error(
+                                            formatApiError(err?.response?.data?.detail) ||
+                                                err.message,
+                                        );
+                                    }
+                                }}
+                            >
+                                Marcar verificación pagada
+                            </Button>
+                        )}
+                        {org.contract_status !== "signed" && (
+                            <>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={async () => {
+                                        try {
+                                            await api.post(
+                                                `/admin/organizers/${id}/mark-contract-signed`,
+                                            );
+                                            toast.success("Contrato marcado como firmado");
+                                            load();
+                                        } catch (err) {
+                                            toast.error(
+                                                formatApiError(err?.response?.data?.detail) ||
+                                                    err.message,
+                                            );
+                                        }
+                                    }}
+                                >
+                                    Marcar contrato firmado
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={async () => {
+                                        try {
+                                            await api.post(
+                                                `/admin/organizers/${id}/resend-contract`,
+                                            );
+                                            toast.success("Contrato reenviado / regenerado");
+                                            load();
+                                        } catch (err) {
+                                            toast.error(
+                                                formatApiError(err?.response?.data?.detail) ||
+                                                    err.message,
+                                            );
+                                        }
+                                    }}
+                                >
+                                    Reenviar contrato OneShot
+                                </Button>
+                            </>
+                        )}
+                    </div>
                 </CardContent>
             </Card>
 

@@ -100,6 +100,7 @@ import api, { formatApiError } from "@/lib/api";
 import { usePlanFeatures } from "@/hooks/queries/usePlanFeatures";
 import {
     defaultPaymentMethods,
+    GATEWAY_STUB_CODES,
     normalizePaymentMethodsForForm,
     resolveEnabledPaymentCodes,
     withEnabledCodes,
@@ -219,6 +220,13 @@ function makeInitial(d) {
             unlimited_capacity: true,
             visibility: "public",
             raffle_enabled: false,
+            optional_donation_enabled: false,
+            ticket_fees: {
+                service_fee_dollars: "",
+                ticketseguro_dollars: "",
+                tax_dollars: "",
+                wallet_dollars: "",
+            },
             custom_questions: [],
             ticket_design: null,
             courtesy_ticket_design: null,
@@ -270,6 +278,29 @@ function makeInitial(d) {
         unlimited_capacity: d.capacity == null,
         visibility: d.visibility || "public",
         raffle_enabled: !!d.raffle_enabled,
+        optional_donation_enabled: !!d.optional_donation_enabled,
+        ticket_fees: {
+            service_fee_dollars:
+                d.ticket_fees?.service_fee_cents != null
+                    ? (d.ticket_fees.service_fee_cents / 100).toFixed(2)
+                    : "",
+            ticketseguro_dollars:
+                d.ticket_fees?.ticketseguro_cents != null
+                    ? (d.ticket_fees.ticketseguro_cents / 100).toFixed(2)
+                    : d.ticket_fees?.admin_fee_cents != null
+                      ? (d.ticket_fees.admin_fee_cents / 100).toFixed(2)
+                      : "",
+            tax_dollars:
+                d.ticket_fees?.tax_cents != null
+                    ? (d.ticket_fees.tax_cents / 100).toFixed(2)
+                    : d.ticket_fees?.vxs_cents != null
+                      ? (d.ticket_fees.vxs_cents / 100).toFixed(2)
+                      : "",
+            wallet_dollars:
+                d.ticket_fees?.wallet_fee_cents != null
+                    ? (d.ticket_fees.wallet_fee_cents / 100).toFixed(2)
+                    : "",
+        },
         custom_questions: d.custom_questions || [],
         ticket_design: d.ticket_design || null,
         courtesy_ticket_design: d.courtesy_ticket_design || null,
@@ -1234,7 +1265,12 @@ function evalStepStatus(form, poster, currentEvent, pendingVenueId = null) {
     const enabledCodes = resolveEnabledPaymentCodes(form.payment_methods, {
         includeLegacyStripe: false,
     });
-    s.payments = form.pricing_type === "free" || enabledCodes.length > 0 ? "ok" : "warn";
+    s.payments =
+        form.pricing_type === "free" && !form.optional_donation_enabled
+            ? "ok"
+            : enabledCodes.length > 0
+              ? "ok"
+              : "warn";
 
     // Discounts: ok only once the organizer has configured at least one rule
     const hasDiscount = form.discounts?.disability_law?.enabled
@@ -1296,11 +1332,32 @@ function buildPayload(form) {
                 : Math.round(parseFloat(form.base_price_dollars || "0") * 100),
         currency: form.currency,
         capacity:
-            form.unlimited_capacity || form.capacity === ""
+            form.pricing_type === "donation" ||
+            form.unlimited_capacity ||
+            form.capacity === ""
                 ? null
                 : parseInt(form.capacity, 10),
         visibility: form.visibility,
         raffle_enabled: form.pricing_type === "donation" ? !!form.raffle_enabled : false,
+        optional_donation_enabled:
+            form.pricing_type === "free" ? !!form.optional_donation_enabled : false,
+        ticket_fees:
+            form.pricing_type === "paid"
+                ? {
+                      service_fee_cents: Math.round(
+                          parseFloat(form.ticket_fees?.service_fee_dollars || "0") * 100,
+                      ) || 0,
+                      ticketseguro_cents: Math.round(
+                          parseFloat(form.ticket_fees?.ticketseguro_dollars || "0") * 100,
+                      ) || 0,
+                      tax_cents: Math.round(
+                          parseFloat(form.ticket_fees?.tax_dollars || "0") * 100,
+                      ) || 0,
+                      wallet_fee_cents: Math.round(
+                          parseFloat(form.ticket_fees?.wallet_dollars || "0") * 100,
+                      ) || 0,
+                  }
+                : {},
         custom_questions: (form.custom_questions || []).filter((q) => q.label?.trim()),
         ticket_design: form.ticket_design,
         courtesy_ticket_design: form.courtesy_ticket_design,
@@ -1335,13 +1392,54 @@ function StepIcon({ status, size = "sm" }: { status: string; size?: "sm" | "md" 
     return <Circle className={`${cls} text-muted-foreground/40`} />;
 }
 
+const PRICING_TYPE_OPTIONS = [
+    {
+        value: "paid",
+        title: "Pagado",
+        description: "Cobro por ticket. Cargo de servicio, fees e impuestos configurables.",
+        requiresPaid: true,
+    },
+    {
+        value: "free",
+        title: "Gratuito",
+        description: "Sin cobro. Reserva plaza y confirma por email.",
+        requiresPaid: false,
+    },
+    {
+        value: "donation",
+        title: "Por Donación",
+        description: "El comprador elige el monto. Opcional emitir tickets tipo rifa.",
+        requiresPaid: true,
+    },
+];
+
 // ── Section: General (info principal + descripción) ─────────────────────────
 function SectionGeneral({ form, update, disabled }) {
     const [keywordDraft, setKeywordDraft] = useState("");
+    const { data: planFeatures } = usePlanFeatures();
     const keywords = Array.isArray(form.keywords) ? form.keywords : [];
     const categoryLabel =
         EVENT_CATEGORIES.find((c) => c.code === form.category)?.label || form.category;
     const pricingLabel = PRICING_LABELS[form.pricing_type] || form.pricing_type;
+
+    // Fail closed while features load for paid/donation; free stays selectable
+    // as the safe default until we know the plan.
+    const allowsFree = planFeatures ? Boolean(planFeatures.allows_free_events) : true;
+    const allowsPaid = planFeatures ? Boolean(planFeatures.allows_paid_events) : false;
+    const pricingAllowed = (opt) => (opt.requiresPaid ? allowsPaid : allowsFree);
+
+    useEffect(() => {
+        if (!planFeatures) return;
+        const opt = PRICING_TYPE_OPTIONS.find((o) => o.value === form.pricing_type);
+        if (!opt || pricingAllowed(opt)) return;
+        const fallback = PRICING_TYPE_OPTIONS.find((o) => pricingAllowed(o));
+        if (!fallback || fallback.value === form.pricing_type) return;
+        update("pricing_type", fallback.value);
+        toast.message("Tipo de recaudación ajustado a tu plan", {
+            description: `«${opt.title}» no está incluido. Se cambió a ${fallback.title}.`,
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to plan + selected type
+    }, [planFeatures, form.pricing_type]);
 
     const addKeyword = () => {
         const kw = keywordDraft.trim();
@@ -1464,45 +1562,45 @@ function SectionGeneral({ form, update, disabled }) {
                                 Define el resto del wizard (cobros, localidades, donación).
                             </p>
                             <div className="grid grid-cols-3 gap-2" data-testid="wiz-pricing-type">
-                                {[
-                                    {
-                                        value: "paid",
-                                        title: "Pago",
-                                        description: "Cobrá por localidad o precio fijo.",
-                                    },
-                                    {
-                                        value: "free",
-                                        title: "Gratis",
-                                        description: "Sin cobro. Reserva / inscripción.",
-                                    },
-                                    {
-                                        value: "donation",
-                                        title: "Donación",
-                                        description: "El comprador elige el monto.",
-                                    },
-                                ].map((opt) => {
+                                {PRICING_TYPE_OPTIONS.map((opt) => {
                                     const selected = form.pricing_type === opt.value;
+                                    const allowed = pricingAllowed(opt);
+                                    const locked = disabled || !allowed;
                                     return (
                                         <button
                                             key={opt.value}
                                             type="button"
-                                            disabled={disabled}
-                                            onClick={() => update("pricing_type", opt.value)}
+                                            disabled={locked}
+                                            onClick={() => {
+                                                update("pricing_type", opt.value);
+                                                if (opt.value === "donation") {
+                                                    update("unlimited_capacity", true);
+                                                }
+                                            }}
                                             data-testid={`wiz-pricing-${opt.value}`}
+                                            aria-disabled={locked || undefined}
                                             className={`rounded-lg border p-3 text-left transition ${
                                                 selected
                                                     ? "border-foreground/30 ring-1 ring-foreground/10 bg-card"
                                                     : "border-border hover:border-foreground/20 bg-card"
-                                            } ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+                                            } ${locked ? "opacity-60 cursor-not-allowed" : ""}`}
                                         >
-                                            <div className="flex items-center gap-1.5">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
                                                 <div className="font-medium text-sm">{opt.title}</div>
-                                                {selected && (
+                                                {selected && allowed && (
                                                     <Badge
                                                         variant="secondary"
                                                         className="text-[10px] font-normal"
                                                     >
                                                         Activo
+                                                    </Badge>
+                                                )}
+                                                {!allowed && (
+                                                    <Badge
+                                                        variant="outline"
+                                                        className="text-[10px] font-normal"
+                                                    >
+                                                        Plan
                                                     </Badge>
                                                 )}
                                             </div>
@@ -1514,6 +1612,24 @@ function SectionGeneral({ form, update, disabled }) {
                                 })}
                             </div>
                         </div>
+
+                        {form.pricing_type === "free" && (
+                            <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                                <div className="min-w-0">
+                                    <div className="font-medium text-sm">Donación opcional</div>
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                        El asistente puede aportar un monto voluntario al reservar.
+                                        Si aporta, se usan las formas de pago configuradas.
+                                    </p>
+                                </div>
+                                <Switch
+                                    checked={!!form.optional_donation_enabled}
+                                    onCheckedChange={(v) => update("optional_donation_enabled", v)}
+                                    disabled={disabled}
+                                    data-testid="wiz-optional-donation"
+                                />
+                            </div>
+                        )}
 
                         {form.pricing_type === "donation" && (
                             <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
@@ -2293,37 +2409,51 @@ function SectionVenueLocalidades({
                     <div>
                         <h3 className="font-semibold text-base">2. Precio y capacidad</h3>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            Un solo precio para todo el evento (sin mapa de asientos).
+                            {form.pricing_type === "donation"
+                                ? "El comprador elige el monto. El aforo no es obligatorio."
+                                : "Un solo precio para todo el evento (sin mapa de asientos)."}
                         </p>
                     </div>
                     <div className="grid sm:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                            <Label className="text-xs">Precio (USD)</Label>
-                            {form.pricing_type === "free" ? (
-                                <p className="text-sm text-muted-foreground h-9 flex items-center">Sin costo</p>
-                            ) : (
-                                <div className="relative">
-                                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
-                                    <Input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        className="pl-6"
-                                        value={form.base_price_dollars}
-                                        onChange={(e) => update("base_price_dollars", e.target.value)}
-                                        disabled={disabled}
-                                        data-testid="wiz-price"
-                                    />
-                                </div>
-                            )}
-                        </div>
+                        {form.pricing_type !== "donation" && (
+                            <div className="space-y-1.5">
+                                <Label className="text-xs">Precio (USD)</Label>
+                                {form.pricing_type === "free" ? (
+                                    <p className="text-sm text-muted-foreground h-9 flex items-center">
+                                        Sin costo
+                                    </p>
+                                ) : (
+                                    <div className="relative">
+                                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                            $
+                                        </span>
+                                        <Input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            className="pl-6"
+                                            value={form.base_price_dollars}
+                                            onChange={(e) =>
+                                                update("base_price_dollars", e.target.value)
+                                            }
+                                            disabled={disabled}
+                                            data-testid="wiz-price"
+                                        />
+                                    </div>
+                                )}
+                            </div>
+                        )}
                         <div className="space-y-1.5">
                             <div className="flex items-center justify-between">
                                 <Label className="text-xs">Capacidad</Label>
                                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                     <Switch
-                                        checked={form.unlimited_capacity}
+                                        checked={
+                                            form.pricing_type === "donation" ||
+                                            form.unlimited_capacity
+                                        }
                                         onCheckedChange={(v) => update("unlimited_capacity", v)}
+                                        disabled={disabled || form.pricing_type === "donation"}
                                         data-testid="wiz-unlimited"
                                     />
                                     Sin límite
@@ -2332,14 +2462,65 @@ function SectionVenueLocalidades({
                             <Input
                                 type="number"
                                 min="0"
-                                value={form.unlimited_capacity ? "" : form.capacity}
+                                value={
+                                    form.pricing_type === "donation" || form.unlimited_capacity
+                                        ? ""
+                                        : form.capacity
+                                }
                                 onChange={(e) => update("capacity", e.target.value)}
-                                disabled={form.unlimited_capacity}
-                                placeholder={form.unlimited_capacity ? "Sin límite" : "ej: 100"}
+                                disabled={
+                                    form.unlimited_capacity || form.pricing_type === "donation"
+                                }
+                                placeholder={
+                                    form.pricing_type === "donation" || form.unlimited_capacity
+                                        ? "Sin límite"
+                                        : "ej: 100"
+                                }
                                 data-testid="wiz-capacity"
                             />
                         </div>
                     </div>
+                    {form.pricing_type === "paid" && (
+                        <div className="space-y-2 pt-2 border-t">
+                            <Label className="text-xs">Fees por ticket (PRD §4.2.1)</Label>
+                            <div className="grid sm:grid-cols-2 gap-3">
+                                {(
+                                    [
+                                        ["service_fee_dollars", "Cargo de servicio"],
+                                        ["ticketseguro_dollars", "TicketSeguro"],
+                                        ["tax_dollars", "Impuestos"],
+                                        ["wallet_dollars", "Billetera Virtual"],
+                                    ] as const
+                                ).map(([key, label]) => (
+                                    <div key={key} className="space-y-1">
+                                        <Label className="text-[11px] text-muted-foreground">
+                                            {label}
+                                        </Label>
+                                        <div className="relative">
+                                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                                $
+                                            </span>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                className="pl-6"
+                                                value={form.ticket_fees?.[key] || ""}
+                                                onChange={(e) =>
+                                                    update("ticket_fees", {
+                                                        ...(form.ticket_fees || {}),
+                                                        [key]: e.target.value,
+                                                    })
+                                                }
+                                                disabled={disabled}
+                                                data-testid={`wiz-fee-${key}`}
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -2626,6 +2807,8 @@ function SectionTicketDesign({ form, update, eventId }) {
 const PAYMENT_CARD_ICONS = {
     nuvei: CreditCard,
     deuna: Smartphone,
+    stripe: CreditCard,
+    paypal: CreditCard,
     transfer: Landmark,
     cash: Banknote,
 };
@@ -2645,6 +2828,8 @@ function SectionPayments({ form, update }) {
                     setCatalog([
                         { code: "nuvei", name: "Nuvei", kind: "gateway", description: "Pago digital" },
                         { code: "deuna", name: "DeUna", kind: "gateway", description: "Pago digital" },
+                        { code: "stripe", name: "Stripe", kind: "gateway", description: "Pago digital" },
+                        { code: "paypal", name: "PayPal", kind: "gateway", description: "Pago digital" },
                         { code: "transfer", name: "Transferencia", kind: "manual", description: "Confirmación manual" },
                         { code: "cash", name: "Efectivo", kind: "manual", description: "Pago en persona" },
                     ]);
@@ -2658,7 +2843,7 @@ function SectionPayments({ form, update }) {
         };
     }, []);
 
-    if (form.pricing_type === "free") {
+    if (form.pricing_type === "free" && !form.optional_donation_enabled) {
         return (
             <div
                 className="rounded-xl border border-dashed p-10 bg-card text-center"
@@ -2668,17 +2853,16 @@ function SectionPayments({ form, update }) {
                 <p className="font-medium">Evento gratuito</p>
                 <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto">
                     No hace falta configurar formas de pago. Los compradores confirman sin cobrar.
+                    Activá «Donación opcional» en General si querés aceptar aportes.
                 </p>
             </div>
         );
     }
 
     const pm = form.payment_methods || defaultPayments();
-    const selected = resolveEnabledPaymentCodes(pm, { includeLegacyStripe: false });
-    const total = catalog.length || 4;
-    const hasFunctioningMethod = selected.some(
-        (code) => catalog.find((c) => c.code === code)?.kind !== "gateway",
-    );
+    const selected = resolveEnabledPaymentCodes(pm);
+    const total = catalog.length || 6;
+    const hasFunctioningMethod = selected.some((code) => !GATEWAY_STUB_CODES.has(code));
     const onlyGatewayStubsSelected = selected.length > 0 && !hasFunctioningMethod;
 
     const setCodes = (codes) => {
@@ -2736,9 +2920,9 @@ function SectionPayments({ form, update }) {
                 >
                     <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                     <p>
-                        Nuvei y DeUna todavía no procesan cobros reales (integración en preparación):
-                        si publicás con solo estas formas de pago, nadie va a poder completar una
-                        compra. Activá también Transferencia o Efectivo si querés vender ya.
+                        DeUna todavía no procesa cobros reales (integración en preparación):
+                        si publicás solo con DeUna, nadie va a poder completar una compra.
+                        Activá Nuvei, Transferencia o Efectivo si querés vender ya.
                     </p>
                 </div>
             )}

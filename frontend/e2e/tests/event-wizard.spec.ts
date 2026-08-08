@@ -96,7 +96,7 @@ test.describe("Event wizard", () => {
     await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
 
     // "free" is the default pricing type for a brand-new event.
-    await expect(page.getByTestId("wiz-pricing-type")).toContainText("Gratis");
+    await expect(page.getByTestId("wiz-pricing-type")).toContainText("Gratuito");
 
     await page.getByTestId("tab-fechas").click();
     await expect(page.getByTestId("info-cuando-block")).toContainText(

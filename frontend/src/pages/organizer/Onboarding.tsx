@@ -17,6 +17,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PlanCard } from "@/components/PlansShowcase";
 import { SIGNUP_PLAN_KEY } from "@/pages/marketing/Register";
 import api, { formatApiError } from "@/lib/api";
+import { PAYMENT_METHOD_META, PLAN_PAYMENT_METHODS } from "@/lib/orders";
+import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
+import type { NuveiCheckoutConfig } from "@/lib/nuvei";
 import {
     Upload,
     CheckCircle2,
@@ -48,11 +51,31 @@ export default function Onboarding() {
     const [pendingFile, setPendingFile] = useState(null);
     const [resubmitting, setResubmitting] = useState(false);
     const [signupPlanCode, setSignupPlanCode] = useState(null);
+    const [planPaymentMethod, setPlanPaymentMethod] = useState("stripe");
+    const [payingPlan, setPayingPlan] = useState(false);
+    const [gatewayPending, setGatewayPending] = useState(null);
+    const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
 
     useEffect(() => {
         const saved = localStorage.getItem(SIGNUP_PLAN_KEY);
         if (saved) setSignupPlanCode(saved);
     }, []);
+
+    useEffect(() => {
+        if (organizer?.status !== "approved" || organizer?.subscription_status !== "none") {
+            return;
+        }
+        (async () => {
+            try {
+                const { data } = await api.get("/billing/me/pending-intent");
+                if (data?.status === "pending_gateway") {
+                    setGatewayPending(data);
+                }
+            } catch {
+                /* ignore */
+            }
+        })();
+    }, [organizer?.status, organizer?.subscription_status]);
 
     // Fire `link_clicked` event when an activation token is present in the URL.
     useEffect(() => {
@@ -194,19 +217,43 @@ export default function Onboarding() {
     };
 
     const choosePlan = async (plan_code) => {
+        setPayingPlan(true);
         try {
             const { data } = await api.post("/billing/checkout-session", {
                 plan_code,
                 origin_url: window.location.origin,
+                payment_method: planPaymentMethod,
             });
             localStorage.removeItem(SIGNUP_PLAN_KEY);
+            if (data?.status === "pending_gateway") {
+                setGatewayPending({
+                    ...data,
+                    plan_code: data.plan_code || plan_code,
+                    payment_method: data.payment_method || planPaymentMethod,
+                });
+                toast.success(data.message || "Solicitud de pago registrada");
+                return;
+            }
+            if (data?.status === "nuvei_checkout" && data.session_token) {
+                setNuveiCheckout({
+                    session_token: data.session_token,
+                    merchant_id: data.merchant_id,
+                    merchant_site_id: data.merchant_site_id,
+                    nuvei_env: data.nuvei_env,
+                    checkout_js_url: data.checkout_js_url,
+                    client_unique_id: data.client_unique_id || data.session_id,
+                });
+                return;
+            }
             if (data?.checkout_url) {
                 window.location.href = data.checkout_url;
             } else {
-                toast.error("Stripe no devolvió la URL de checkout");
+                toast.error("No se pudo iniciar el checkout");
             }
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+        } finally {
+            setPayingPlan(false);
         }
     };
 
@@ -383,33 +430,111 @@ export default function Onboarding() {
                             <CheckCircle2 className="h-5 w-5" /> ¡Tu cuenta fue aprobada!
                         </CardTitle>
                         <CardDescription>
-                            {signupPlanCode ? (
+                            {gatewayPending ? (
+                                <>Tu pago está pendiente de confirmación. Cuando TYS lo valide, tu plan se activa solo.</>
+                            ) : signupPlanCode ? (
                                 <>
                                     Al registrarte elegiste el plan{" "}
                                     <strong>{plans.find((p) => p.code === signupPlanCode)?.name || signupPlanCode}</strong>.
-                                    Confirmá el pago con Stripe para activar tu cuenta.
+                                    Elegí cómo pagar para activar tu cuenta.
                                 </>
                             ) : (
-                                <>Elegí un plan para activar tu cuenta. Vas a Stripe Checkout y al volver actualizamos tu suscripción automáticamente.</>
+                                <>Elegí un plan y la forma de pago para activar tu cuenta.</>
                             )}
                         </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 pt-2">
-                            {plans.map((p) => (
-                                <PlanCard
-                                    key={p.id}
-                                    plan={p}
-                                    selected={p.code === signupPlanCode}
-                                    onSelect={() => choosePlan(p.code)}
-                                    ctaLabel={
-                                        p.code === signupPlanCode
-                                            ? "Pagar plan elegido"
-                                            : "Pagar con Stripe"
-                                    }
+                    <CardContent className="space-y-6">
+                        {nuveiCheckout ? (
+                            <div data-testid="onboarding-nuvei-checkout">
+                                <NuveiCheckoutPanel
+                                    config={nuveiCheckout}
+                                    onPaid={async () => {
+                                        setNuveiCheckout(null);
+                                        toast.success("Pago confirmado. Activando tu plan…");
+                                        await refreshOrganizer();
+                                        navigate("/app");
+                                    }}
+                                    onCancel={() => setNuveiCheckout(null)}
                                 />
-                            ))}
-                        </div>
+                            </div>
+                        ) : gatewayPending ? (
+                            <div
+                                className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 space-y-2"
+                                data-testid="onboarding-gateway-pending"
+                            >
+                                <p className="text-sm font-medium text-sky-900">
+                                    Pago con{" "}
+                                    {PAYMENT_METHOD_META[gatewayPending.payment_method]?.label ||
+                                        gatewayPending.payment_method}{" "}
+                                    en revisión
+                                </p>
+                                <p className="text-sm text-sky-900/80">
+                                    Plan:{" "}
+                                    <strong>
+                                        {plans.find((p) => p.code === gatewayPending.plan_code)?.name ||
+                                            gatewayPending.plan_code}
+                                    </strong>
+                                    . El equipo TYS confirmará el cobro y activará tu suscripción.
+                                </p>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setGatewayPending(null)}
+                                >
+                                    Elegir otro método / plan
+                                </Button>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="space-y-2" data-testid="plan-payment-methods">
+                                    <Label>Forma de pago</Label>
+                                    <div className="grid sm:grid-cols-3 gap-3">
+                                        {PLAN_PAYMENT_METHODS.map((code) => {
+                                            const meta = PAYMENT_METHOD_META[code];
+                                            const selected = planPaymentMethod === code;
+                                            return (
+                                                <button
+                                                    key={code}
+                                                    type="button"
+                                                    data-testid={`plan-pay-${code}`}
+                                                    onClick={() => setPlanPaymentMethod(code)}
+                                                    className={`text-left rounded-lg border p-3 transition ${
+                                                        selected
+                                                            ? "border-primary bg-primary/5 ring-1 ring-primary"
+                                                            : "border-border/70 hover:border-primary/40"
+                                                    }`}
+                                                >
+                                                    <div className="text-sm font-medium">
+                                                        {meta.icon} {meta.label}
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground mt-1">
+                                                        {meta.description}
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 pt-2">
+                                    {plans.map((p) => (
+                                        <PlanCard
+                                            key={p.id}
+                                            plan={p}
+                                            selected={p.code === signupPlanCode}
+                                            onSelect={() => !payingPlan && choosePlan(p.code)}
+                                            ctaLabel={
+                                                payingPlan
+                                                    ? "Procesando…"
+                                                    : p.code === signupPlanCode
+                                                      ? `Pagar con ${PAYMENT_METHOD_META[planPaymentMethod]?.label || planPaymentMethod}`
+                                                      : `Pagar · ${PAYMENT_METHOD_META[planPaymentMethod]?.label || planPaymentMethod}`
+                                            }
+                                        />
+                                    ))}
+                                </div>
+                            </>
+                        )}
 
                         <DemoShortcut onActivated={() => navigate("/app/dashboard")} />
                     </CardContent>

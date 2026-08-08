@@ -5,6 +5,7 @@ Free / paid / donation events, single occurrence, numbered seating, tiered prici
 
 import logging
 import mimetypes
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -343,6 +344,10 @@ class EventBase(BaseModel):
     visibility: Visibility = "public"
     # §4.2.1 — "Por Donación" events may emit RIFA-numbered tickets
     raffle_enabled: bool = False
+    # §4.2.1 — free events may accept an optional voluntary contribution
+    optional_donation_enabled: bool = False
+    # §4.2.1 Pagado — per-ticket fees (general / non-seated events)
+    ticket_fees: Optional[dict] = None
     # §4.2.8 — preguntas adicionales al comprador
     custom_questions: List[CustomQuestion] = Field(default_factory=list)
     # M4 — diseñador visual de tickets; courtesy null = hereda el diseño principal
@@ -417,6 +422,8 @@ class EventUpdate(BaseModel):
     capacity: Optional[int] = None
     visibility: Optional[Visibility] = None
     raffle_enabled: Optional[bool] = None
+    optional_donation_enabled: Optional[bool] = None
+    ticket_fees: Optional[dict] = None
     custom_questions: Optional[List[CustomQuestion]] = None
     ticket_design: Optional[TicketDesign] = None
     courtesy_ticket_design: Optional[TicketDesign] = None
@@ -465,6 +472,36 @@ async def _require_organizer_can_publish(user) -> dict:
                     "Tu cuenta está en revisión. Una vez aprobada vas a poder "
                     "publicar este evento. Podés seguir editándolo libremente "
                     "mientras tanto."
+                ),
+            },
+        )
+    if org.get("subscription_status") in (None, "none"):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "plan_not_paid",
+                "message": "Debés pagar tu plan antes de publicar eventos.",
+            },
+        )
+    v_status = org.get("verification_fee_status") or "none"
+    if v_status not in ("paid", "waived"):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "verification_fee_pending",
+                "message": (
+                    "Debés completar el pago de verificación de cuenta "
+                    "antes de publicar."
+                ),
+            },
+        )
+    if (org.get("contract_status") or "none") != "signed":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "contract_not_signed",
+                "message": (
+                    "Debés firmar el contrato (OneShot) antes de publicar eventos."
                 ),
             },
         )
@@ -521,8 +558,8 @@ def _publish_validation(doc: dict) -> None:
             )
             if has_paid_locality and doc.get("pricing_type") == "free":
                 missing.append(
-                    "marcar el evento como 'Pago' en Tipo de recaudación "
-                    "(tenés localidades con precio pero el evento está como Gratis)"
+                    "marcar el evento como 'Pagado' en Tipo de recaudación "
+                    "(tenés localidades con precio pero el evento está como Gratuito)"
                 )
     if missing:
         raise HTTPException(
@@ -536,8 +573,9 @@ class LocalityPriceIn(BaseModel):
     locality_id: str
     price_cents: int = Field(ge=0)
     service_fee_cents: int = Field(default=0, ge=0)
-    admin_fee_cents: int = Field(default=0, ge=0)
-    vxs_cents: int = Field(default=0, ge=0)
+    admin_fee_cents: int = Field(default=0, ge=0)  # TicketSeguro
+    vxs_cents: int = Field(default=0, ge=0)  # Impuestos
+    wallet_fee_cents: int = Field(default=0, ge=0)  # Billetera Virtual
     max_tickets_per_purchase: Optional[int] = Field(default=None, ge=1, le=20)
 
 
@@ -765,6 +803,7 @@ async def put_event_venue_layout(
                     "service_fee_cents": int(prev.get("service_fee_cents") or 0),
                     "admin_fee_cents": int(prev.get("admin_fee_cents") or 0),
                     "vxs_cents": int(prev.get("vxs_cents") or 0),
+                    "wallet_fee_cents": int(prev.get("wallet_fee_cents") or 0),
                     "max_tickets_per_purchase": prev.get("max_tickets_per_purchase"),
                 }
             )
@@ -899,6 +938,29 @@ def _assert_access_type_allowed(
         assert_feature(plan_code, "access_codes")
 
 
+async def _assert_pricing_type_allowed(
+    session, plan_code: Optional[str], pricing_type: Optional[str]
+) -> None:
+    """PRD §4.2.1 — Gratuito / Pagado / Por Donación gated by plan flags."""
+    if not pricing_type:
+        return
+    from services.plan_features import get_plan_features_async
+
+    features = await get_plan_features_async(session, plan_code)
+    if pricing_type == "free":
+        if not features.get("allows_free_events", True):
+            raise HTTPException(
+                403,
+                "Tu plan no permite eventos gratuitos. Mejorá tu plan o elegí Pagado / Por Donación.",
+            )
+    elif pricing_type in ("paid", "donation"):
+        if not features.get("allows_paid_events", True):
+            raise HTTPException(
+                403,
+                "Tu plan no permite eventos con cobro (Pagado o Por Donación). Mejorá tu plan.",
+            )
+
+
 async def _active_catalog_codes(session) -> set[str]:
     from orm_models import PaymentMethodCatalog
 
@@ -940,6 +1002,11 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             org.get("plan_code"), payload.access_params.access_type
         )
     async with AsyncSessionLocal() as session:
+        await _assert_pricing_type_allowed(
+            session,
+            org.get("plan_code") or org.get("signup_plan_code"),
+            payload.pricing_type,
+        )
         slug = await _next_event_slug(org["id"], normalize_slug(payload.title), session)
         payment_methods = await _normalize_payment_methods_or_400(
             session, payload.payment_methods
@@ -989,6 +1056,16 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             capacity=payload.capacity,
             visibility=payload.visibility,
             raffle_enabled=payload.raffle_enabled,
+            optional_donation_enabled=(
+                bool(payload.optional_donation_enabled)
+                if payload.pricing_type == "free"
+                else False
+            ),
+            ticket_fees=(
+                payload.ticket_fees
+                if payload.pricing_type == "paid" and payload.ticket_fees
+                else {}
+            ),
             custom_questions=[q.model_dump() for q in payload.custom_questions],
             multi_function_mode=payload.multi_function_mode,
             payment_methods=payment_methods,
@@ -1033,6 +1110,7 @@ _JSONB_FIELDS = {
     "custom_questions",
     "ticket_design",
     "courtesy_ticket_design",
+    "ticket_fees",
 }
 
 
@@ -1065,6 +1143,12 @@ async def update_my_event(
             diff["access_params"] = payload.access_params.model_dump()
             _assert_access_type_allowed(
                 org.get("plan_code"), payload.access_params.access_type
+            )
+        if "pricing_type" in diff:
+            await _assert_pricing_type_allowed(
+                session,
+                org.get("plan_code") or org.get("signup_plan_code"),
+                diff["pricing_type"],
             )
         if "content" in diff and payload.content is not None:
             diff["content"] = payload.content.model_dump()
@@ -1124,12 +1208,175 @@ async def publish_event(event_id: str, user=Depends(get_current_user)):
         if not row:
             raise HTTPException(status_code=404, detail="Event not found")
         _publish_validation(row_to_dict(row))
+
+        # Pre-event platform fee (configurable per plan)
+        from orm_models import SubscriptionPlan, TicketType
+        from services.event_fees import calculate_pre_event_fee
+
+        plan_code = org.get("plan_code") or org.get("signup_plan_code")
+        plan_row = None
+        if plan_code:
+            plan_row = await session.scalar(
+                select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
+            )
+        plan_dict = row_to_dict(plan_row) if plan_row else {}
+        tt_rows = (
+            await session.scalars(
+                select(TicketType).where(TicketType.event_id == event_id)
+            )
+        ).all()
+        ticket_types = [row_to_dict(t) for t in tt_rows]
+        breakdown = calculate_pre_event_fee(
+            plan=plan_dict, event=row_to_dict(row), ticket_types=ticket_types
+        )
+        fee_status = row.pre_event_fee_status or "none"
+        if breakdown["enabled"] and breakdown["fee_cents"] > 0:
+            if fee_status not in ("paid", "waived"):
+                row.pre_event_fee_cents = breakdown["fee_cents"]
+                row.pre_event_fee_status = "pending"
+                row.pre_event_fee_breakdown = breakdown
+                await session.commit()
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "error": "pre_event_fee_required",
+                        "message": (
+                            "Debés pagar el cargo de plataforma del evento "
+                            "antes de publicarlo."
+                        ),
+                        "fee_cents": breakdown["fee_cents"],
+                        "breakdown": breakdown,
+                    },
+                )
+        else:
+            row.pre_event_fee_cents = 0
+            row.pre_event_fee_status = "waived"
+            row.pre_event_fee_breakdown = breakdown
+
         now = _now()
         row.status = "published"
         row.published_at = now
         row.updated_at = now
         await session.commit()
     return {"ok": True, "status": "published"}
+
+
+@router.get("/{event_id}/pre-event-fee")
+async def get_pre_event_fee(event_id: str, user=Depends(get_current_user)):
+    org = await _require_active_organizer(user)
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        from orm_models import SubscriptionPlan, TicketType
+        from services.event_fees import calculate_pre_event_fee
+
+        plan_code = org.get("plan_code") or org.get("signup_plan_code")
+        plan_row = (
+            await session.scalar(
+                select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
+            )
+            if plan_code
+            else None
+        )
+        tt_rows = (
+            await session.scalars(
+                select(TicketType).where(TicketType.event_id == event_id)
+            )
+        ).all()
+        breakdown = calculate_pre_event_fee(
+            plan=row_to_dict(plan_row) if plan_row else {},
+            event=row_to_dict(row),
+            ticket_types=[row_to_dict(t) for t in tt_rows],
+        )
+        return {
+            **breakdown,
+            "current_status": row.pre_event_fee_status,
+            "paid_at": row.pre_event_fee_paid_at,
+        }
+
+
+@router.post("/{event_id}/pay-pre-event-fee")
+async def pay_pre_event_fee(
+    event_id: str,
+    payload: dict | None = None,
+    user=Depends(get_current_user),
+):
+    """
+    Register / confirm pre-event fee payment.
+    payment_method: stripe | nuvei | deuna | admin_waive (admin only via separate endpoint).
+    For nuvei/deuna: marks pending until admin confirms; for stripe: stub redirect URL later.
+    Dev/local: if payment_method=simulate, marks paid immediately.
+    """
+    org = await _require_active_organizer(user)
+    payment_method = (payload or {}).get("payment_method") or "simulate"
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        from orm_models import SubscriptionPlan, TicketType
+        from services.event_fees import calculate_pre_event_fee
+
+        plan_code = org.get("plan_code") or org.get("signup_plan_code")
+        plan_row = (
+            await session.scalar(
+                select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
+            )
+            if plan_code
+            else None
+        )
+        tt_rows = (
+            await session.scalars(
+                select(TicketType).where(TicketType.event_id == event_id)
+            )
+        ).all()
+        breakdown = calculate_pre_event_fee(
+            plan=row_to_dict(plan_row) if plan_row else {},
+            event=row_to_dict(row),
+            ticket_types=[row_to_dict(t) for t in tt_rows],
+        )
+        row.pre_event_fee_cents = breakdown["fee_cents"]
+        row.pre_event_fee_breakdown = breakdown
+        if breakdown["fee_cents"] <= 0 or not breakdown["enabled"]:
+            row.pre_event_fee_status = "waived"
+            await session.commit()
+            return {"ok": True, "status": "waived", "fee_cents": 0}
+
+        if payment_method in ("simulate", "stripe") or payment_method in (
+            "nuvei",
+            "deuna",
+        ):
+            # Until gateway SDKs are wired for plan fees: simulate marks paid;
+            # nuvei/deuna leave pending for admin confirm in event detail later.
+            if payment_method == "simulate" or (
+                payment_method == "stripe"
+                and os.environ.get("ENV", "").startswith("development")
+            ):
+                row.pre_event_fee_status = "paid"
+                row.pre_event_fee_paid_at = _now()
+                status = "paid"
+            elif payment_method in ("nuvei", "deuna"):
+                row.pre_event_fee_status = "pending"
+                status = "pending"
+            else:
+                row.pre_event_fee_status = "paid"
+                row.pre_event_fee_paid_at = _now()
+                status = "paid"
+        else:
+            raise HTTPException(400, f"Unsupported payment_method: {payment_method}")
+
+        await session.commit()
+        return {
+            "ok": True,
+            "status": status,
+            "fee_cents": breakdown["fee_cents"],
+            "payment_method": payment_method,
+            "breakdown": breakdown,
+        }
 
 
 @router.post("/{event_id}/unpublish")

@@ -12,12 +12,14 @@ from sqlalchemy.orm import selectinload
 
 from audit import log_audit
 from database import get_db
-from db_helpers import organizer_row_to_dict
+from db_helpers import organizer_row_to_dict, row_to_dict
 from models import (
     AdminOrganizerUpdate,
     AdminStats,
     ApproveBody,
+    BillingIntentOut,
     CommentBody,
+    ConfirmPlanPaymentBody,
     DocumentTypeCreate,
     DocumentTypeOut,
     OrganizerOut,
@@ -31,7 +33,13 @@ from models import (
     RequiredDocumentsUpdate,
     SuspendBody,
 )
-from orm_models import Organizer, OrganizerAdminComment, SubscriptionPlan, Tenant
+from orm_models import (
+    BillingIntent,
+    Organizer,
+    OrganizerAdminComment,
+    SubscriptionPlan,
+    Tenant,
+)
 from security import require_role
 from services.document_types import create_document_type, list_document_types
 from services.email_service import (
@@ -232,6 +240,138 @@ async def update_organizer(
     return _org_to_out(row)
 
 
+@router.get(
+    "/organizers/{organizer_id}/billing-intents",
+    response_model=List[BillingIntentOut],
+)
+async def list_organizer_billing_intents(
+    organizer_id: str, session: AsyncSession = Depends(get_db)
+):
+    await _load_organizer(organizer_id, session)
+    result = await session.execute(
+        select(BillingIntent)
+        .where(BillingIntent.organizer_id == organizer_id)
+        .order_by(BillingIntent.created_at.desc())
+    )
+    return [BillingIntentOut(**row_to_dict(r)) for r in result.scalars().all()]
+
+
+@router.post(
+    "/organizers/{organizer_id}/confirm-plan-payment",
+    response_model=OrganizerOut,
+)
+async def confirm_organizer_plan_payment(
+    organizer_id: str,
+    payload: ConfirmPlanPaymentBody,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    """Confirm a pending Nuvei/DeUna plan payment and activate the subscription."""
+    from routers.billing import complete_gateway_billing_intent
+
+    row = await _load_organizer(organizer_id, session)
+    if payload.intent_id:
+        intent = await session.get(BillingIntent, payload.intent_id)
+        if not intent or intent.organizer_id != organizer_id:
+            raise HTTPException(404, "Billing intent not found")
+    else:
+        result = await session.execute(
+            select(BillingIntent)
+            .where(
+                BillingIntent.organizer_id == organizer_id,
+                BillingIntent.status == "pending_gateway",
+            )
+            .order_by(BillingIntent.created_at.desc())
+            .limit(1)
+        )
+        intent = result.scalar_one_or_none()
+        if not intent:
+            raise HTTPException(404, "No pending gateway payment for this organizer")
+
+    await complete_gateway_billing_intent(
+        session, organizer=row, intent=intent, admin_id=admin["id"]
+    )
+    if payload.comment:
+        await _add_comment(organizer_id, admin, payload.comment, session)
+    await session.refresh(row, ["admin_comments"])
+    return _org_to_out(row)
+
+
+@router.post(
+    "/organizers/{organizer_id}/mark-verification-paid",
+    response_model=OrganizerOut,
+)
+async def mark_verification_paid(
+    organizer_id: str,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _load_organizer(organizer_id, session)
+    row.verification_fee_status = "paid"
+    await session.flush()
+    await log_audit(
+        admin["id"], "organizer.verification_paid", "organizer", organizer_id, {}
+    )
+    await session.refresh(row, ["admin_comments"])
+    return _org_to_out(row)
+
+
+@router.post(
+    "/organizers/{organizer_id}/mark-contract-signed",
+    response_model=OrganizerOut,
+)
+async def mark_contract_signed(
+    organizer_id: str,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _load_organizer(organizer_id, session)
+    row.contract_status = "signed"
+    row.contract_signed_at = datetime.now(timezone.utc)
+    await session.flush()
+    await log_audit(
+        admin["id"], "organizer.contract_signed", "organizer", organizer_id, {}
+    )
+    await session.refresh(row, ["admin_comments"])
+    return _org_to_out(row)
+
+
+@router.post(
+    "/organizers/{organizer_id}/resend-contract",
+    response_model=OrganizerOut,
+)
+async def resend_contract(
+    organizer_id: str,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    from services.oneshot import send_contract
+
+    row = await _load_organizer(organizer_id, session)
+    try:
+        contract = await send_contract(
+            organizer_id=row.id,
+            organizer_email=row.email,
+            company_name=row.company_name or row.slug,
+            legal_id=row.legal_id,
+            plan_code=row.plan_code or row.signup_plan_code,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"No se pudo enviar el contrato: {type(exc).__name__}")
+    row.contract_status = contract.get("status") or "sent"
+    row.contract_external_id = contract.get("external_id")
+    await session.flush()
+    await log_audit(
+        admin["id"],
+        "organizer.contract_resent",
+        "organizer",
+        organizer_id,
+        {"external_id": row.contract_external_id},
+    )
+    await session.refresh(row, ["admin_comments"])
+    return _org_to_out(row)
+
+
 async def _add_comment(
     organizer_id: str, admin: dict, comment: str, session: AsyncSession
 ) -> OrganizerAdminComment:
@@ -264,6 +404,18 @@ async def approve_organizer(
     row.approved_at = now
     row.approved_by = admin["id"]
 
+    # Verification fee from signup plan (or assigned plan)
+    plan_code = row.signup_plan_code or row.plan_code
+    if plan_code:
+        plan_result = await session.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
+        )
+        plan = plan_result.scalar_one_or_none()
+        if plan:
+            fee = int(getattr(plan, "verification_fee_cents", 0) or 0)
+            row.verification_fee_cents = fee
+            row.verification_fee_status = "waived" if fee <= 0 else "pending"
+
     # Activate tenant
     tenant_result = await session.execute(select(Tenant).where(Tenant.slug == row.slug))
     tenant = tenant_result.scalar_one_or_none()
@@ -271,6 +423,27 @@ async def approve_organizer(
         tenant.status = "active"
 
     await session.flush()
+
+    # Send contract via OneShot (stub until credentials configured)
+    try:
+        from services.oneshot import send_contract
+
+        contract = await send_contract(
+            organizer_id=row.id,
+            organizer_email=row.email,
+            company_name=row.company_name or row.slug,
+            legal_id=row.legal_id,
+            plan_code=plan_code,
+        )
+        row.contract_status = contract.get("status") or "sent"
+        row.contract_external_id = contract.get("external_id")
+        await session.flush()
+    except Exception as exc:  # noqa: BLE001
+        logger = __import__("logging").getLogger("tys.admin")
+        logger.warning("OneShot send on approve failed: %s", type(exc).__name__)
+        if row.contract_status == "none":
+            row.contract_status = "pending"
+            await session.flush()
 
     # Auto-create default microsite (no-op if exists)
     from routers.microsite import _get_or_create_microsite_row

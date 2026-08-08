@@ -32,6 +32,11 @@ services:
       STRIPE_API_KEY: ${STRIPE_API_KEY:-}
       STRIPE_API_BASE: ${STRIPE_API_BASE:-https://api.stripe.com}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      NUVEI_MERCHANT_ID: ${NUVEI_MERCHANT_ID:-}
+      NUVEI_MERCHANT_SITE_ID: ${NUVEI_MERCHANT_SITE_ID:-}
+      NUVEI_SECRET_KEY: ${NUVEI_SECRET_KEY:-}
+      NUVEI_ENV: ${NUVEI_ENV:-live}
+      BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-noreply@ticketyourself.com}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ticketyourself.com}

@@ -19,16 +19,25 @@ export const ORDER_STATUS_META = {
 };
 
 export const PAYMENT_METHOD_META = {
-    stripe: { label: "Tarjeta", icon: "💳", description: "Procesamiento inmediato" },
+    stripe: {
+        label: "Stripe",
+        icon: "💳",
+        description: "Pago digital con tarjeta (Checkout)",
+    },
     nuvei: {
         label: "Nuvei",
         icon: "💳",
-        description: "Pago digital (en preparación)",
+        description: "Pago digital con tarjeta (Simply Connect)",
     },
     deuna: {
         label: "DeUna",
         icon: "📱",
-        description: "Pago digital (en preparación)",
+        description: "Pago digital — confirmación TYS",
+    },
+    paypal: {
+        label: "PayPal",
+        icon: "🅿️",
+        description: "Pago digital PayPal — integración en preparación",
     },
     transfer: {
         label: "Transferencia bancaria",
@@ -41,6 +50,8 @@ export const PAYMENT_METHOD_META = {
         description: "Coordinar con organizador",
     },
 };
+
+export const PLAN_PAYMENT_METHODS = ["stripe", "nuvei", "deuna"] as const;
 
 export function formatCents(cents, currency = "USD") {
     if (cents == null) return "—";

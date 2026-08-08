@@ -289,6 +289,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         service_subtotal = 0
         admin_subtotal = 0
         vxs_subtotal = 0
+        wallet_subtotal = 0
         items_override = []
         for sel in payload.ticket_type_selections:
             tt = tt_map[sel.ticket_type_id]
@@ -332,12 +333,14 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             )
             loc_pricing = pricing_map.get(tt.get("venue_locality_id")) or {}
             vxs = int(loc_pricing.get("vxs_cents") or 0)
-            sel_subtotal = (unit + service + admin + vxs) * sel.quantity
+            wallet = int(loc_pricing.get("wallet_fee_cents") or 0)
+            sel_subtotal = (unit + service + admin + vxs + wallet) * sel.quantity
             subtotal += sel_subtotal
             entrada_subtotal += unit * sel.quantity
             service_subtotal += service * sel.quantity
             admin_subtotal += admin * sel.quantity
             vxs_subtotal += vxs * sel.quantity
+            wallet_subtotal += wallet * sel.quantity
             items_override.append(
                 {
                     "ticket_type_id": tt["id"],
@@ -356,6 +359,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             "service_fee_cents": service_subtotal,
             "admin_fee_cents": admin_subtotal,
             "vxs_cents": vxs_subtotal,
+            "wallet_fee_cents": wallet_subtotal,
             "fees_cents": fees,
             "total_cents": subtotal + fees,
             "donation_amount_cents": 0,
@@ -422,10 +426,13 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             except ValueError:
                 raise HTTPException(422, f"'{q['label']}' debe ser un número.")
 
-    # Free events ignore payment_method (no payment at all)
-    effective_method = (
-        "stripe" if event.get("pricing_type") == "free" else payload.payment_method
+    # Free events ignore payment_method unless optional donation > 0
+    donation_cents = int(payload.donation_amount_cents or 0)
+    is_pure_free = (
+        event.get("pricing_type") == "free"
+        and not (event.get("optional_donation_enabled") and donation_cents > 0)
     )
+    effective_method = "stripe" if is_pure_free else payload.payment_method
 
     # Phase 9.5 — apply discount rules (promo_code + best auto/quantity/buy_n_get_m)
     # BEFORE creating the order so the persisted totals match what the buyer was
@@ -467,8 +474,8 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         custom_answers=custom_answers or None,
     )
 
-    # FREE event — confirm instantly.
-    if event.get("pricing_type") == "free":
+    # FREE event without optional donation — confirm instantly.
+    if is_pure_free:
         finalized, tickets = await order_service.finalize_paid_order(order=order)
         from services.email_service import send_purchase_confirmation
 
@@ -515,8 +522,113 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}/instrucciones",
         }
 
-    # ── Gateway stubs (Nuvei / DeUna) — order held; real charge not wired yet ──
-    if effective_method in ("nuvei", "deuna"):
+    # ── Nuvei — openOrder + Simply Connect (REST API) ─────────────────────────
+    if effective_method == "nuvei":
+        from services import nuvei_service
+
+        if not nuvei_service.is_configured():
+            async with AsyncSessionLocal() as _pg:
+                from orm_models import TicketOrder as _TOModel
+
+                _row = await _pg.scalar(
+                    select(_TOModel).where(_TOModel.id == order["id"])
+                )
+                if _row:
+                    _row.status = "pending_gateway"
+                    await _pg.commit()
+            await order_service.reserve_capacity(
+                event=event,
+                order_id=order["id"],
+                quantity=quantity,
+                ttl_minutes=order_service.RESERVATION_TTL_MIN,
+                function_id=function["id"] if function else None,
+            )
+            return {
+                "order_number": order["order_number"],
+                "status": "pending_gateway",
+                "payment_method": "nuvei",
+                "message": (
+                    "Nuvei aún no está configurado en este entorno. "
+                    "Tu reserva quedó registrada; contactá a soporte TYS."
+                ),
+                "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
+            }
+
+        origin = _frontend_base(payload.origin_url)
+        success_url = (
+            f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}"
+        )
+        cancel_url = (
+            f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}/cancelado"
+        )
+        first_name, last_name = nuvei_service.split_buyer_name(
+            (payload.buyer.name if payload.buyer else "") or ""
+        )
+        try:
+            nuvei = nuvei_service.open_order(
+                amount_cents=order["total_cents"],
+                currency=order.get("currency") or event.get("currency") or "USD",
+                client_unique_id=order["order_number"],
+                user_token_id=order["buyer_email"],
+                email=order["buyer_email"],
+                first_name=first_name,
+                last_name=last_name,
+                success_url=success_url,
+                failure_url=cancel_url,
+                pending_url=success_url,
+                custom_data=f"ticket:{order['id']}",
+            )
+        except nuvei_service.NuveiError as e:
+            logger.error(
+                "Nuvei openOrder failed for %s: %s",
+                order["order_number"],
+                type(e).__name__,
+            )
+            raise HTTPException(
+                502,
+                "No pudimos iniciar el pago con Nuvei. Intentá de nuevo en unos minutos.",
+            ) from e
+
+        async with AsyncSessionLocal() as _pg:
+            from orm_models import TicketOrder as _TOModel
+
+            _row = await _pg.scalar(select(_TOModel).where(_TOModel.id == order["id"]))
+            _row.stripe_session_id = nuvei["session_token"]
+            meta = dict(_row.metadata_ or {})
+            meta["nuvei_order_id"] = nuvei.get("order_id")
+            meta["nuvei_client_unique_id"] = order["order_number"]
+            _row.metadata_ = meta
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(_row, "metadata_")
+            # Ensure status is pending (openOrder path), not leftover stub state
+            _row.status = "pending"
+            await _pg.commit()
+
+        await order_service.reserve_capacity(
+            event=event,
+            order_id=order["id"],
+            quantity=quantity,
+            function_id=function["id"] if function else None,
+        )
+        return {
+            "order_number": order["order_number"],
+            "status": "nuvei_checkout",
+            "payment_method": "nuvei",
+            "session_token": nuvei["session_token"],
+            "session_id": nuvei["session_token"],
+            "merchant_id": nuvei["merchant_id"],
+            "merchant_site_id": nuvei["merchant_site_id"],
+            "nuvei_env": nuvei["env"],
+            "checkout_js_url": nuvei["checkout_js_url"],
+            "client_unique_id": order["order_number"],
+            "amount": nuvei["amount"],
+            "currency": nuvei["currency"],
+            "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
+        }
+
+    # ── Gateway stubs (DeUna / PayPal) — order held; real charge not wired yet ──
+    if effective_method in ("deuna", "paypal"):
         await order_service.reserve_capacity(
             event=event,
             order_id=order["id"],
@@ -524,7 +636,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             ttl_minutes=order_service.RESERVATION_TTL_MIN,
             function_id=function["id"] if function else None,
         )
-        label = "Nuvei" if effective_method == "nuvei" else "DeUna"
+        label = "DeUna" if effective_method == "deuna" else "PayPal"
         return {
             "order_number": order["order_number"],
             "status": "pending_gateway",
@@ -536,7 +648,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
         }
 
-    # Paid or donation > 0 — Stripe checkout (legacy events).
+    # Paid or donation > 0 — Stripe checkout.
     origin = _frontend_base(payload.origin_url)
     success_url = (
         f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}"

@@ -42,6 +42,7 @@ from slugs import normalize_slug
 DEFAULT_DOCUMENT_TYPES = {
     "ruc": "RUC",
     "id_card": "Cédula",
+    "legal_rep_appointment": "Nombramiento de representante legal",
     "operating_permit": "Permiso de funcionamiento",
     "bank_certificate": "Certificación bancaria",
     "enabling_docs": "Documentos habilitantes",
@@ -228,7 +229,7 @@ PAYMENT_METHOD_CATALOG = [
         "name": "Nuvei",
         "kind": "gateway",
         "sort_order": 10,
-        "description": "Pago digital con tarjeta (integración en preparación).",
+        "description": "Pago digital con tarjeta vía Nuvei (Simply Connect).",
     },
     {
         "code": "deuna",
@@ -236,6 +237,20 @@ PAYMENT_METHOD_CATALOG = [
         "kind": "gateway",
         "sort_order": 20,
         "description": "Pago digital DeUna (integración en preparación).",
+    },
+    {
+        "code": "stripe",
+        "name": "Stripe",
+        "kind": "gateway",
+        "sort_order": 25,
+        "description": "Pago digital con tarjeta vía Stripe Checkout.",
+    },
+    {
+        "code": "paypal",
+        "name": "PayPal",
+        "kind": "gateway",
+        "sort_order": 28,
+        "description": "Pago digital PayPal (integración en preparación).",
     },
     {
         "code": "transfer",
@@ -355,7 +370,7 @@ async def _seed_required_documents() -> None:
     """Default mandatory docs: global (*) + Ecuador-specific matrix."""
     ec_defaults = {
         "individual": ["id_card", "bank_certificate"],
-        "company": ["ruc", "bank_certificate", "enabling_docs"],
+        "company": ["ruc", "legal_rep_appointment", "bank_certificate", "enabling_docs"],
     }
     async with AsyncSessionLocal() as session:
         now = datetime.now(timezone.utc)
@@ -485,6 +500,10 @@ async def _seed_demo_organizers() -> None:
                 created_at=now,
                 approved_at=now if od["status"] == "approved" else None,
                 approved_by="system" if od["status"] == "approved" else None,
+                verification_fee_status="waived" if od["status"] == "approved" else "none",
+                verification_fee_cents=0 if od["status"] == "approved" else None,
+                contract_status="signed" if od["status"] == "approved" else "none",
+                contract_signed_at=now if od["status"] == "approved" else None,
             )
             session.add(org_row)
             await session.flush()
@@ -583,6 +602,15 @@ async def _reset_demo_organizers() -> None:
             org_row.subscription_status = od["subscription_status"]
             org_row.approved_at = now if approved else None
             org_row.approved_by = "system" if approved else None
+            # Demo accounts can publish without going through OneShot / verification fee
+            if approved:
+                org_row.verification_fee_status = "waived"
+                org_row.verification_fee_cents = 0
+                org_row.contract_status = "signed"
+                org_row.contract_signed_at = now
+            else:
+                org_row.verification_fee_status = "none"
+                org_row.contract_status = "none"
 
             # Reset admin comments: delete existing, re-insert canonical ones
             for c in list(org_row.admin_comments):
@@ -1022,8 +1050,8 @@ async def _seed_demo_events() -> None:
     from sqlalchemy.orm.attributes import flag_modified as _flag_modified
 
     _demo_payment_methods_full = {
-        "enabled_codes": ["nuvei", "deuna", "transfer", "cash"],
-        "stripe": {"enabled": False},
+        "enabled_codes": ["nuvei", "deuna", "stripe", "paypal", "transfer", "cash"],
+        "stripe": {"enabled": True},
         "transfer": {
             "enabled": True,
             "bank_name": "Banco Pichincha",
@@ -1986,8 +2014,8 @@ async def _seed_demo_numbered_event() -> None:
     now = datetime.now(timezone.utc)
     slug = "funcion-especial-demo-numerado"
     _pm_num = {
-        "enabled_codes": ["nuvei", "deuna", "transfer", "cash"],
-        "stripe": {"enabled": False},
+        "enabled_codes": ["nuvei", "deuna", "stripe", "paypal", "transfer", "cash"],
+        "stripe": {"enabled": True},
         "transfer": {
             "enabled": True,
             "bank_name": "Banco Pichincha",

@@ -38,14 +38,14 @@ export const EVENT_STATUS_META = {
 };
 
 export const PRICING_LABELS = {
-    free: "Gratis",
-    paid: "Pago",
-    donation: "Aporte voluntario",
+    free: "Gratuito",
+    paid: "Pagado",
+    donation: "Por Donación",
 };
 
 export function formatPriceLabel(event) {
     if (!event) return "";
-    if (event.pricing_type === "free") return "Gratis";
+    if (event.pricing_type === "free") return "Gratuito";
     if (event.pricing_type === "donation") {
         return event.base_price_cents > 0
             ? `Aporta desde $${(event.base_price_cents / 100).toFixed(0)}`

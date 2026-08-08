@@ -494,10 +494,24 @@ def test_create_order_with_cash_returns_pending_manual():
 
 
 def test_create_order_nuvei_returns_pending_gateway_stub():
+    """Without NUVEI_* credentials, checkout falls back to pending_gateway stub."""
     data = _create_manual_order("nuvei")
-    assert data["status"] == "pending_gateway"
     assert data["payment_method"] == "nuvei"
-    assert "Integración pendiente" in (data.get("message") or "")
+    assert data["status"] in ("pending_gateway", "nuvei_checkout")
+    if data["status"] == "pending_gateway":
+        assert "Nuvei" in (data.get("message") or "") or "configurado" in (
+            data.get("message") or ""
+        ).lower()
+    else:
+        assert data.get("session_token")
+        assert data.get("merchant_id")
+
+
+def test_create_order_paypal_returns_pending_gateway_stub():
+    data = _create_manual_order("paypal")
+    assert data["status"] == "pending_gateway"
+    assert data["payment_method"] == "paypal"
+    assert "PayPal" in (data.get("message") or "")
 
 
 def test_create_order_deuna_returns_pending_gateway_stub():
@@ -505,6 +519,7 @@ def test_create_order_deuna_returns_pending_gateway_stub():
     assert data["status"] == "pending_gateway"
     assert data["payment_method"] == "deuna"
     assert data.get("message")
+    assert "DeUna" in (data.get("message") or "")
 
 
 def test_nuvei_rejected_when_not_enabled():

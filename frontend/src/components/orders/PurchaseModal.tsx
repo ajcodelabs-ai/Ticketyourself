@@ -43,6 +43,8 @@ import api, { formatApiError } from "@/lib/api";
 import { formatPriceLabel } from "@/lib/events";
 import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders";
 import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
+import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
+import type { NuveiCheckoutConfig } from "@/lib/nuvei";
 
 const FEE_PERCENT = 5;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -128,6 +130,7 @@ export default function PurchaseModal({
 }) {
     const navigate = useNavigate();
     const pricingType = event?.pricing_type || "free";
+    const optionalDonation = pricingType === "free" && !!event?.optional_donation_enabled;
     const isSeatNumbered = !!seatHoldsInfo;
     // §4.2.6 — límite "por compra/transacción" configurado en el evento.
     const maxPerPurchase = event?.access_params?.max_per_purchase || 10;
@@ -137,10 +140,10 @@ export default function PurchaseModal({
     const functionNoun = isSubevent ? "subevento" : "función";
 
     const activeMethods = useMemo(() => {
-        if (pricingType === "free") return [];
+        if (pricingType === "free" && !optionalDonation) return [];
         const m = activeMethodsFor(event);
         return m.length ? m : ["nuvei"];
-    }, [event, pricingType]);
+    }, [event, pricingType, optionalDonation]);
 
     // ── Phase 8: ticket types + functions ────────────────────────────────────
     const [ticketTypes, setTicketTypes] = useState<TicketTypeItem[]>([]);
@@ -162,6 +165,7 @@ export default function PurchaseModal({
     });
     const [submitting, setSubmitting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
+    const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
     // §4.2.8 — preguntas adicionales al comprador, por id de pregunta
     const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
     const selectedLocalityIds = useMemo(() => {
@@ -392,15 +396,24 @@ export default function PurchaseModal({
             const fees = subtotal > 0 ? Math.round((subtotal * FEE_PERCENT) / 100) : 0;
             base = { subtotal, fees, total: subtotal + fees };
         } else if (pricingType === "free") {
-            base = { subtotal: 0, fees: 0, total: 0 };
+            const cents = optionalDonation
+                ? Math.round(parseFloat(donation || "0") * 100)
+                : 0;
+            base = { subtotal: cents, fees: 0, total: cents };
         } else if (pricingType === "donation") {
             const cents = Math.round(parseFloat(donation || "0") * 100);
             const fees = cents > 0 ? Math.round((cents * FEE_PERCENT) / 100) : 0;
             base = { subtotal: cents, fees, total: cents + fees };
         } else {
             const unit = event.base_price_cents || 0;
-            const subtotal = unit * quantity;
-            const fees = Math.round((subtotal * FEE_PERCENT) / 100);
+            const tf = event.ticket_fees || {};
+            const perExtra =
+                Number(tf.service_fee_cents || 0) +
+                Number(tf.ticketseguro_cents || tf.admin_fee_cents || 0) +
+                Number(tf.tax_cents || tf.vxs_cents || 0) +
+                Number(tf.wallet_fee_cents || 0);
+            const subtotal = (unit + perExtra) * quantity;
+            const fees = Math.round((unit * quantity * FEE_PERCENT) / 100);
             base = { subtotal, fees, total: subtotal + fees };
         }
 
@@ -422,7 +435,7 @@ export default function PurchaseModal({
         }
         return { ...base, discount: 0 };
     }, [
-        event, pricingType, quantity, donation, isSeatNumbered, seatHoldsInfo,
+        event, pricingType, optionalDonation, quantity, donation, isSeatNumbered, seatHoldsInfo,
         appliedPromo, previewTotals, hasTypes, typeSelections, ticketTypes,
     ]);
 
@@ -478,9 +491,10 @@ export default function PurchaseModal({
         const e: Record<string, string> = {};
         if (!buyer.name.trim() || buyer.name.trim().length < 2) e.name = "Requerido";
         if (!EMAIL_RE.test(buyer.email)) e.email = "Email inválido";
-        if (pricingType === "donation") {
+        if (pricingType === "donation" || optionalDonation) {
             const d = parseFloat(donation || "0");
-            if (!d || d < 1) e.donation = "Mínimo $1";
+            if (pricingType === "donation" && (!d || d < 1)) e.donation = "Mínimo $1";
+            if (optionalDonation && d && d < 1) e.donation = "Mínimo $1";
         }
         if (!isSeatNumbered && !hasTypes && (quantity < 1 || quantity > maxPerPurchase))
             e.quantity = `Entre 1 y ${maxPerPurchase}`;
@@ -530,12 +544,20 @@ export default function PurchaseModal({
                     document_id: buyer.document_id || undefined,
                 },
                 origin_url: window.location.origin,
-                payment_method: pricingType === "free" ? "stripe" : paymentMethod,
+                payment_method:
+                    pricingType === "free" &&
+                    !(optionalDonation && Math.round(parseFloat(donation || "0") * 100) > 0)
+                        ? "stripe"
+                        : paymentMethod,
             };
 
             if (pricingType === "donation") {
                 payload.donation_amount_cents = Math.round(parseFloat(donation) * 100);
                 payload.quantity = 1;
+            }
+            if (optionalDonation) {
+                const cents = Math.round(parseFloat(donation || "0") * 100);
+                if (cents > 0) payload.donation_amount_cents = cents;
             }
             if (isSeatNumbered) {
                 payload.seat_ids = seatHoldsInfo.seat_ids;
@@ -581,6 +603,17 @@ export default function PurchaseModal({
                 onOpenChange(false);
                 return;
             }
+            if (data.status === "nuvei_checkout" && data.session_token) {
+                setNuveiCheckout({
+                    session_token: data.session_token,
+                    merchant_id: data.merchant_id,
+                    merchant_site_id: data.merchant_site_id,
+                    nuvei_env: data.nuvei_env,
+                    checkout_js_url: data.checkout_js_url,
+                    client_unique_id: data.client_unique_id || data.order_number,
+                });
+                return;
+            }
             if (data.checkout_url) {
                 window.location.href = data.checkout_url;
                 return;
@@ -595,19 +628,50 @@ export default function PurchaseModal({
 
     if (!event) return null;
 
+    const donationCents = Math.round(parseFloat(donation || "0") * 100);
     const isEffectivelyFree = hasTypes
         ? typeSelections.every((s) => {
               const tt = ticketTypes.find((t) => t.id === s.ticket_type_id);
               return (tt?.price_cents ?? 0) === 0;
           }) && typeSelections.length > 0
-        : pricingType === "free";
+        : pricingType === "free" && !(optionalDonation && donationCents > 0);
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog
+            open={open}
+            onOpenChange={(next) => {
+                if (!next) setNuveiCheckout(null);
+                onOpenChange(next);
+            }}
+        >
             <DialogContent
                 className="sm:max-w-lg max-h-[92vh] overflow-y-auto"
                 data-testid="purchase-modal"
             >
+                {nuveiCheckout ? (
+                    <>
+                        <DialogHeader>
+                            <DialogTitle>Completar pago</DialogTitle>
+                            <DialogDescription>
+                                Ingresá los datos de tu tarjeta en el checkout seguro de Nuvei.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <NuveiCheckoutPanel
+                            config={nuveiCheckout}
+                            onPaid={() => {
+                                const orderNumber =
+                                    nuveiCheckout.client_unique_id || "";
+                                setNuveiCheckout(null);
+                                onOpenChange(false);
+                                if (orderNumber) {
+                                    navigate(orderSuccessPath(tenantSlug, orderNumber));
+                                }
+                            }}
+                            onCancel={() => setNuveiCheckout(null)}
+                        />
+                    </>
+                ) : (
+                <>
                 <DialogHeader>
                     <div className="flex items-start justify-between gap-2">
                         <DialogTitle className="text-2xl">Comprar entradas</DialogTitle>
@@ -932,10 +996,14 @@ export default function PurchaseModal({
                             </div>
                         )}
 
-                        {/* ── Donation ──────────────────────────────────────── */}
-                        {pricingType === "donation" && !functionPending && (
+                        {/* ── Donation (full or optional on free) ───────────── */}
+                        {(pricingType === "donation" || optionalDonation) && !functionPending && (
                             <div className="space-y-1.5">
-                                <Label htmlFor="donation">Tu aporte (USD)</Label>
+                                <Label htmlFor="donation">
+                                    {optionalDonation
+                                        ? "Aporte voluntario (opcional, USD)"
+                                        : "Tu aporte (USD)"}
+                                </Label>
                                 <div className="flex gap-2">
                                     {[5, 10, 20, 50].map((v) => (
                                         <Button
@@ -950,13 +1018,27 @@ export default function PurchaseModal({
                                             ${v}
                                         </Button>
                                     ))}
+                                    {optionalDonation && (
+                                        <Button
+                                            type="button"
+                                            variant={!donation ? "default" : "outline"}
+                                            onClick={() => setDonation("")}
+                                            data-testid="donation-preset-skip"
+                                        >
+                                            Sin aporte
+                                        </Button>
+                                    )}
                                 </div>
                                 <Input
                                     id="donation"
                                     type="number"
-                                    min="1"
+                                    min={optionalDonation ? "0" : "1"}
                                     step="0.50"
-                                    placeholder="O escribí un monto"
+                                    placeholder={
+                                        optionalDonation
+                                            ? "Monto opcional"
+                                            : "O escribí un monto"
+                                    }
                                     value={donation}
                                     onChange={(e) => setDonation(e.target.value)}
                                     data-testid="donation-input"
@@ -968,12 +1050,16 @@ export default function PurchaseModal({
                         )}
 
                         {/* ── Payment method ────────────────────────────────── */}
-                        {activeMethods.length > 1 && (
+                        {!isEffectivelyFree && activeMethods.length > 0 && (
                             <div className="space-y-2" data-testid="payment-method-selector">
                                 <Label>¿Cómo quieres pagar?</Label>
                                 <div className="space-y-2">
                                     {activeMethods.map((m) => {
-                                        const meta = PAYMENT_METHOD_META[m];
+                                        const meta = PAYMENT_METHOD_META[m] || {
+                                            label: m,
+                                            icon: "💳",
+                                            description: "",
+                                        };
                                         const checked = paymentMethod === m;
                                         return (
                                             <label
@@ -1112,7 +1198,9 @@ export default function PurchaseModal({
                         )}
 
                         {/* ── Promo code ────────────────────────────────────── */}
-                        {(pricingType !== "free" || (hasTypes && totals.subtotal > 0)) && (
+                        {(pricingType !== "free" ||
+                            (optionalDonation && donationCents > 0) ||
+                            (hasTypes && totals.subtotal > 0)) && (
                             <div className="border-t pt-3 space-y-2" data-testid="promo-code-block">
                                 {appliedPromo ? (
                                     <div
@@ -1197,21 +1285,28 @@ export default function PurchaseModal({
                                         )}
                                         {(seatHoldsInfo.admin_fee_cents || 0) > 0 && (
                                             <Row
-                                                label="Cargo admin"
+                                                label="TicketSeguro"
                                                 value={formatCents(seatHoldsInfo.admin_fee_cents, event.currency)}
                                             />
                                         )}
                                         {(seatHoldsInfo.vxs_cents || 0) > 0 && (
                                             <Row
-                                                label="VXS"
+                                                label="Impuestos"
                                                 value={formatCents(seatHoldsInfo.vxs_cents, event.currency)}
+                                            />
+                                        )}
+                                        {(seatHoldsInfo.wallet_fee_cents || 0) > 0 && (
+                                            <Row
+                                                label="Billetera Virtual"
+                                                value={formatCents(seatHoldsInfo.wallet_fee_cents, event.currency)}
                                             />
                                         )}
                                     </>
                                 ) : (
                                     <Row
                                         label={
-                                            pricingType === "donation"
+                                            pricingType === "donation" ||
+                                            (optionalDonation && donationCents > 0)
                                                 ? "Aporte"
                                                 : `Subtotal (${quantity}× ${formatCents(event.base_price_cents)})`
                                         }
@@ -1242,9 +1337,15 @@ export default function PurchaseModal({
 
                         <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                             <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                            {isEffectivelyFree || pricingType === "free"
+                            {isEffectivelyFree
                                 ? "Te enviaremos tu ticket por email al confirmar."
-                                : "Te redirigimos a Stripe (procesamiento seguro). Los datos del tarjetahabiente no quedan en TYS."}
+                                : paymentMethod === "nuvei"
+                                  ? "El cobro se procesa con Nuvei (Simply Connect). Los datos de tarjeta no quedan en TYS."
+                                  : paymentMethod === "stripe"
+                                    ? "Te redirigimos a Stripe (procesamiento seguro). Los datos del tarjetahabiente no quedan en TYS."
+                                    : paymentMethod === "paypal"
+                                      ? "PayPal aún está en integración: tu reserva queda registrada."
+                                      : "Te mostramos las instrucciones de pago. La entrada se confirma cuando el organizador valida el cobro."}
                         </p>
 
                         <div className="flex justify-end gap-2 pt-2">
@@ -1295,6 +1396,8 @@ export default function PurchaseModal({
                             </Button>
                         </div>
                     </>
+                )}
+                </>
                 )}
             </DialogContent>
         </Dialog>

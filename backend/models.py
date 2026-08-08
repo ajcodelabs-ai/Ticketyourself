@@ -98,7 +98,7 @@ class SlugCheckResponse(BaseModel):
 # Plans
 # ──────────────────────────────────────────────────────────────────────────────
 PlanCode = Literal["evento_unico", "basico", "profesional", "enterprise"]
-BillingPeriod = Literal["one_time", "monthly"]
+BillingPeriod = Literal["one_time", "monthly", "annual"]
 
 
 class PlanOut(TimestampedModel):
@@ -110,11 +110,21 @@ class PlanOut(TimestampedModel):
     currency: str
     billing_period: BillingPeriod
     features: List[str]
-    max_events: int  # -1 unlimited
+    max_events: int  # monthly quota (-1 unlimited)
+    max_events_year: int = -1
     max_tickets_per_event: int  # -1 unlimited
     includes_numbered: bool
     includes_ai_design: bool
     includes_custom_domain: bool
+    includes_marketing: bool = False
+    allows_paid_events: bool = True
+    allows_free_events: bool = True
+    access_types: Optional[List[str]] = None
+    verification_fee_cents: int = 0
+    event_fee_enabled: bool = False
+    event_fee_per_ticket_cents: int = 0
+    event_fee_percent_bps: int = 0
+    feature_flags: Optional[Dict[str, Any]] = None
     active: bool
     stripe_price_id: Optional[str] = None
     created_at: datetime
@@ -130,10 +140,20 @@ class PlanCreate(BaseModel):
     billing_period: BillingPeriod
     features: List[str] = Field(default_factory=list)
     max_events: int = -1
+    max_events_year: int = -1
     max_tickets_per_event: int = -1
     includes_numbered: bool = False
     includes_ai_design: bool = False
     includes_custom_domain: bool = False
+    includes_marketing: bool = False
+    allows_paid_events: bool = True
+    allows_free_events: bool = True
+    access_types: Optional[List[str]] = None
+    verification_fee_cents: int = Field(default=0, ge=0, le=10_000_000)
+    event_fee_enabled: bool = False
+    event_fee_per_ticket_cents: int = Field(default=0, ge=0, le=1_000_000)
+    event_fee_percent_bps: int = Field(default=0, ge=0, le=10_000)
+    feature_flags: Optional[Dict[str, Any]] = None
     active: bool = True
     stripe_price_id: Optional[str] = None
 
@@ -146,10 +166,20 @@ class PlanUpdate(BaseModel):
     billing_period: Optional[BillingPeriod] = None
     features: Optional[List[str]] = None
     max_events: Optional[int] = None
+    max_events_year: Optional[int] = None
     max_tickets_per_event: Optional[int] = None
     includes_numbered: Optional[bool] = None
     includes_ai_design: Optional[bool] = None
     includes_custom_domain: Optional[bool] = None
+    includes_marketing: Optional[bool] = None
+    allows_paid_events: Optional[bool] = None
+    allows_free_events: Optional[bool] = None
+    access_types: Optional[List[str]] = None
+    verification_fee_cents: Optional[int] = Field(default=None, ge=0, le=10_000_000)
+    event_fee_enabled: Optional[bool] = None
+    event_fee_per_ticket_cents: Optional[int] = Field(default=None, ge=0, le=1_000_000)
+    event_fee_percent_bps: Optional[int] = Field(default=None, ge=0, le=10_000)
+    feature_flags: Optional[Dict[str, Any]] = None
     active: Optional[bool] = None
     stripe_price_id: Optional[str] = None
 
@@ -184,6 +214,11 @@ class OrganizerOut(TimestampedModel):
     uafe_declaration: Optional[Dict[str, Any]] = None
     org_references: Optional[List[Dict[str, Any]]] = None
     signup_plan_code: Optional[str] = None
+    verification_fee_cents: Optional[int] = None
+    verification_fee_status: str = "none"
+    contract_status: str = "none"
+    contract_external_id: Optional[str] = None
+    contract_signed_at: Optional[datetime] = None
     admin_comments: List[AdminCommentOut] = Field(default_factory=list)
     plan_id: Optional[str] = None
     plan_code: Optional[str] = None
@@ -343,21 +378,55 @@ class OrganizersList(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Billing / Stripe
+# Billing / Stripe / gateways
 # ──────────────────────────────────────────────────────────────────────────────
+PlanPaymentMethod = Literal["stripe", "nuvei", "deuna"]
+
+
 class CheckoutRequest(BaseModel):
     plan_code: str = Field(min_length=2, max_length=40)
     origin_url: str
+    payment_method: PlanPaymentMethod = "stripe"
 
 
 class CheckoutResponse(BaseModel):
-    checkout_url: str
-    session_id: str
-    mode: Literal["subscription", "payment"]
+    checkout_url: Optional[str] = None
+    session_id: Optional[str] = None
+    mode: Optional[Literal["subscription", "payment", "gateway"]] = None
+    payment_method: PlanPaymentMethod = "stripe"
+    status: Literal["redirect", "pending_gateway", "nuvei_checkout"] = "redirect"
+    message: Optional[str] = None
+    plan_code: Optional[str] = None
+    intent_id: Optional[str] = None
+    # Simply Connect (Nuvei openOrder)
+    session_token: Optional[str] = None
+    merchant_id: Optional[str] = None
+    merchant_site_id: Optional[str] = None
+    nuvei_env: Optional[str] = None
+    checkout_js_url: Optional[str] = None
+    client_unique_id: Optional[str] = None
 
 
 class PortalResponse(BaseModel):
     portal_url: str
+
+
+class BillingIntentOut(TimestampedModel):
+    id: str
+    organizer_id: str
+    plan_id: Optional[str] = None
+    plan_code: str
+    session_id: Optional[str] = None
+    payment_method: str = "stripe"
+    mode: Optional[str] = None
+    status: str
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+
+class ConfirmPlanPaymentBody(BaseModel):
+    intent_id: Optional[str] = None
+    comment: Optional[str] = Field(default=None, max_length=1000)
 
 
 class SimulateWebhookBody(BaseModel):
