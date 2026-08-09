@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
     Plus,
@@ -199,7 +199,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState<string | null>(null);
 
-    const load = async () => {
+    const load = useCallback(async () => {
         if (!eventId) return;
         setLoading(true);
         try {
@@ -210,11 +210,11 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
         } finally {
             setLoading(false);
         }
-    };
+    }, [eventId]);
 
     useEffect(() => {
         load();
-    }, [eventId]);
+    }, [load]);
 
     useEffect(() => {
         if (!eventId) return;
