@@ -236,7 +236,7 @@ PAYMENT_METHOD_CATALOG = [
         "name": "DeUna",
         "kind": "gateway",
         "sort_order": 20,
-        "description": "Pago digital DeUna (integración en preparación).",
+        "description": "Pago digital con DEUNA (Payment Widget).",
     },
     {
         "code": "stripe",

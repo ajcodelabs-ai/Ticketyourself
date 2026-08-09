@@ -32,7 +32,7 @@ export const PAYMENT_METHOD_META = {
     deuna: {
         label: "DeUna",
         icon: "📱",
-        description: "Pago digital — confirmación TYS",
+        description: "Pago digital con DEUNA (Payment Widget)",
     },
     paypal: {
         label: "PayPal",

@@ -74,7 +74,14 @@ class TestPlanGatewayPayments:
             },
         )
         assert r.status_code == 200, r.text
-        intent_id = r.json()["intent_id"]
+        data = r.json()
+        assert data["payment_method"] == "deuna"
+        assert data["status"] in ("pending_gateway", "deuna_checkout")
+        if data["status"] != "pending_gateway":
+            # Live DEUNA credentials in env — skip admin confirm path.
+            assert data.get("order_token")
+            return
+        intent_id = data["intent_id"]
 
         r = admin_client.post(
             f"{API}/admin/organizers/{org_id}/confirm-plan-payment",

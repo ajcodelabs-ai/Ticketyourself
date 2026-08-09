@@ -172,27 +172,96 @@ async def create_checkout_session(
             message=f"Completá el pago del plan {plan['name']} con Nuvei.",
         )
 
-    # ── DeUna: pending gateway intent (manual admin confirm) ──────────────────
+    # ── DEUNA: Create Order + Payment Widget ──────────────────────────────────
     if payment_method == "deuna":
-        label = GATEWAY_LABELS["deuna"]
+        from services import deuna_service
+
         intent_id = str(uuid.uuid4())
-        session_ref = f"gw_deuna_{intent_id[:12]}"
+        client_unique_id = f"bill_{intent_id.replace('-', '')[:20]}"
+
+        if not deuna_service.is_configured():
+            session_ref = f"gw_deuna_{intent_id[:12]}"
+            session.add(
+                BillingIntent(
+                    id=intent_id,
+                    organizer_id=org.id,
+                    plan_id=plan["id"],
+                    plan_code=plan["code"],
+                    session_id=session_ref,
+                    payment_method="deuna",
+                    mode="gateway",
+                    status="pending_gateway",
+                )
+            )
+            await session.flush()
+            await log_audit(
+                user["id"],
+                "billing.gateway_checkout_created",
+                "billing_intent",
+                intent_id,
+                {
+                    "plan_code": plan["code"],
+                    "payment_method": "deuna",
+                    "configured": False,
+                },
+            )
+            return CheckoutResponse(
+                checkout_url=None,
+                session_id=session_ref,
+                mode="gateway",
+                payment_method="deuna",
+                status="pending_gateway",
+                plan_code=plan["code"],
+                intent_id=intent_id,
+                message=(
+                    "DEUNA aún no está configurado. Registramos tu solicitud; "
+                    "el equipo TYS confirmará el cobro manualmente."
+                ),
+            )
+
+        try:
+            first_name, last_name = deuna_service.split_buyer_name(
+                org.company_name or user.get("email") or "Organizer"
+            )
+            deuna = deuna_service.create_order(
+                order_id=client_unique_id,
+                amount_cents=plan["price_cents"],
+                currency=plan.get("currency") or "USD",
+                item_name=f"Plan {plan['name']}",
+                item_description=plan.get("description") or plan["code"],
+                email=user.get("email") or "",
+                first_name=first_name,
+                last_name=last_name,
+                metadata={
+                    "tys_purpose": "billing",
+                    "intent_id": intent_id,
+                    "plan_code": plan["code"],
+                    "organizer_id": org.id,
+                },
+            )
+        except deuna_service.DeunaError as e:
+            logger.error("DEUNA billing create_order failed: %s", type(e).__name__)
+            raise HTTPException(
+                502,
+                "No pudimos iniciar el pago con DEUNA. Intentá de nuevo en unos minutos.",
+            ) from e
+
         session.add(
             BillingIntent(
                 id=intent_id,
                 organizer_id=org.id,
                 plan_id=plan["id"],
                 plan_code=plan["code"],
-                session_id=session_ref,
+                session_id=client_unique_id,
                 payment_method="deuna",
-                mode="gateway",
-                status="pending_gateway",
+                mode="payment",
+                status="pending",
             )
         )
         await session.flush()
         await log_audit(
             user["id"],
-            "billing.gateway_checkout_created",
+            "billing.deuna_checkout_created",
             "billing_intent",
             intent_id,
             {"plan_code": plan["code"], "payment_method": "deuna"},
@@ -206,17 +275,18 @@ async def create_checkout_session(
             pass
         return CheckoutResponse(
             checkout_url=None,
-            session_id=session_ref,
-            mode="gateway",
+            session_id=client_unique_id,
+            mode="payment",
             payment_method="deuna",
-            status="pending_gateway",
+            status="deuna_checkout",
             plan_code=plan["code"],
             intent_id=intent_id,
-            message=(
-                f"Registramos tu solicitud de pago con {label} para el plan "
-                f"{plan['name']}. El equipo TYS confirmará el cobro y activará "
-                "tu suscripción (normalmente en pocas horas)."
-            ),
+            order_token=deuna["order_token"],
+            public_api_key=deuna["public_api_key"],
+            deuna_env=deuna["env"],
+            checkout_js_url=deuna["checkout_js_url"],
+            client_unique_id=client_unique_id,
+            message=f"Completá el pago del plan {plan['name']} con DEUNA.",
         )
 
     # ── Stripe Checkout ───────────────────────────────────────────────────────

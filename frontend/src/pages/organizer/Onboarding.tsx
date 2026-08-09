@@ -20,6 +20,8 @@ import api, { formatApiError } from "@/lib/api";
 import { PAYMENT_METHOD_META, PLAN_PAYMENT_METHODS } from "@/lib/orders";
 import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
 import type { NuveiCheckoutConfig } from "@/lib/nuvei";
+import DeunaCheckoutPanel from "@/components/orders/DeunaCheckoutPanel";
+import type { DeunaCheckoutConfig } from "@/lib/deuna";
 import {
     Upload,
     CheckCircle2,
@@ -55,6 +57,7 @@ export default function Onboarding() {
     const [payingPlan, setPayingPlan] = useState(false);
     const [gatewayPending, setGatewayPending] = useState(null);
     const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
+    const [deunaCheckout, setDeunaCheckout] = useState<DeunaCheckoutConfig | null>(null);
 
     useEffect(() => {
         const saved = localStorage.getItem(SIGNUP_PLAN_KEY);
@@ -242,6 +245,16 @@ export default function Onboarding() {
                     nuvei_env: data.nuvei_env,
                     checkout_js_url: data.checkout_js_url,
                     client_unique_id: data.client_unique_id || data.session_id,
+                });
+                return;
+            }
+            if (data?.status === "deuna_checkout" && data.order_token) {
+                setDeunaCheckout({
+                    order_token: data.order_token,
+                    public_api_key: data.public_api_key,
+                    deuna_env: data.deuna_env,
+                    checkout_js_url: data.checkout_js_url,
+                    order_id: data.client_unique_id || data.session_id,
                 });
                 return;
             }
@@ -455,6 +468,19 @@ export default function Onboarding() {
                                         navigate("/app");
                                     }}
                                     onCancel={() => setNuveiCheckout(null)}
+                                />
+                            </div>
+                        ) : deunaCheckout ? (
+                            <div data-testid="onboarding-deuna-checkout">
+                                <DeunaCheckoutPanel
+                                    config={deunaCheckout}
+                                    onPaid={async () => {
+                                        setDeunaCheckout(null);
+                                        toast.success("Pago confirmado. Activando tu plan…");
+                                        await refreshOrganizer();
+                                        navigate("/app");
+                                    }}
+                                    onCancel={() => setDeunaCheckout(null)}
                                 />
                             </div>
                         ) : gatewayPending ? (

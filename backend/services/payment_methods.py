@@ -6,8 +6,8 @@ from typing import Any
 
 # Platform catalog for wizard / new events (PRD §4.2.1 Pagado / Por Donación).
 CATALOG_CODES = ("nuvei", "deuna", "stripe", "paypal", "transfer", "cash")
-# Real charge not wired yet — order stays pending_gateway.
-GATEWAY_STUB_CODES = ("deuna", "paypal")
+# PayPal remains stubbed; Nuvei + DeUna use live gateway SDKs.
+GATEWAY_STUB_CODES = ("paypal",)
 MANUAL_CODES = ("transfer", "cash")
 
 

@@ -85,7 +85,11 @@ EventCategory = Literal[
 ]
 EventStatus = Literal["draft", "published", "sold_out", "ended", "cancelled"]
 PricingType = Literal["free", "paid", "donation"]
-Visibility = Literal["public", "public_blocked", "private"]
+Visibility = Literal["public", "private", "public_blocked"]  # public_blocked: legacy read
+# Listed on microsite index (private is link-only, never listed).
+LISTABLE_VISIBILITIES = ("public", "public_blocked")
+# Resolvable by direct slug URL (includes private + legacy blocked).
+RESOLVABLE_VISIBILITIES = ("public", "public_blocked", "private")
 
 
 router = APIRouter(prefix="/api/events/me", tags=["events"])
@@ -213,17 +217,30 @@ class EventAccessParams(BaseModel):
     # Visibility lives only on `Event.visibility` (top-level column) — it used
     # to be duplicated here too, written by hand on every update. Removed to
     # avoid the two values drifting apart; see EventBase.visibility instead.
+    # link_only is legacy (normalized to open); kept for read tolerance.
     access_type: Literal["open", "link_only", "verified_list", "access_code"] = "open"
     max_per_purchase: int = Field(default=10, ge=1, le=100)
     min_per_purchase: int = Field(default=1, ge=1, le=100)
     max_per_email: Optional[int] = Field(default=None, ge=1)
     refund_window_hours: int = Field(default=24, ge=0)
     show_buyer_name_on_ticket: bool = True
+    # §4.2.2 Acceso — QR validable en puerta vs entrada solo PDF/email.
+    ticket_validation: Literal["qr", "none"] = "qr"
+    # §4.2.2 — código de acceso puede convivir con "continuar sin código".
+    allow_continue_without_code: bool = False
+    # §4.2.4 — formato de asistencia (wizard); layout may refine mixed vs numbered.
+    attendance_format: Optional[Literal["numbered", "general", "mixed"]] = None
 
     @model_validator(mode="after")
     def _check_min_max(self):
         if self.min_per_purchase > self.max_per_purchase:
             raise ValueError("min_per_purchase no puede ser mayor que max_per_purchase")
+        return self
+
+    @model_validator(mode="after")
+    def _normalize_legacy_access(self):
+        if self.access_type == "link_only":
+            self.access_type = "open"
         return self
 
 
@@ -361,8 +378,8 @@ class EventBase(BaseModel):
     ticket_delivery_mode: Optional[str] = Field(default="al_momento", max_length=20)
     ticket_delivery_hours: Optional[int] = Field(default=None, ge=1)
     ticket_delivery_at: Optional[datetime] = None
-    # "function" = Multifunción/Franjas horarias, "subevent" = Evento con
-    # Subeventos — drives wording + the default EventFunction.kind.
+    # PRD §4.2.3 — "function" = Multifunción, "subevent" = Evento con Subeventos.
+    # Entry time-slots / franjas de ingreso are Phase 2 — not in this version.
     multi_function_mode: Literal["function", "subevent"] = "function"
 
     @field_validator("ends_at")
@@ -594,6 +611,10 @@ async def link_venue_to_event(
     from services.seats import active_localities
 
     org = await _require_approved_organizer(user)
+    assert_feature(
+        org.get("plan_code") or org.get("signup_plan_code"),
+        "numbered_seating",
+    )
     async with AsyncSessionLocal() as session:
         row = await session.scalar(
             select(Event)
@@ -1054,7 +1075,11 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             base_price_cents=payload.base_price_cents,
             currency=payload.currency,
             capacity=payload.capacity,
-            visibility=payload.visibility,
+            visibility=(
+                "public"
+                if payload.visibility == "public_blocked"
+                else payload.visibility
+            ),
             raffle_enabled=payload.raffle_enabled,
             optional_donation_enabled=(
                 bool(payload.optional_donation_enabled)
@@ -1150,6 +1175,8 @@ async def update_my_event(
                 org.get("plan_code") or org.get("signup_plan_code"),
                 diff["pricing_type"],
             )
+        if diff.get("visibility") == "public_blocked":
+            diff["visibility"] = "public"
         if "content" in diff and payload.content is not None:
             diff["content"] = payload.content.model_dump()
         if "custom_questions" in diff and payload.custom_questions is not None:
@@ -1763,7 +1790,7 @@ async def list_public_events(
         stmt = select(Event).where(
             Event.organizer_id == org_id,
             Event.status == "published",
-            Event.visibility.in_(["public", "public_blocked"]),
+            Event.visibility.in_(list(LISTABLE_VISIBILITIES)),
         )
         total = await pg.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         # Higher priority first (microsite featured / landing order), then soonest date.
@@ -1800,7 +1827,7 @@ async def get_public_event(
                 Event.organizer_id == organizer["id"],
                 Event.slug == event_slug,
                 Event.status == "published",
-                Event.visibility.in_(["public", "public_blocked"]),
+                Event.visibility.in_(list(RESOLVABLE_VISIBILITIES)),
             )
         )
     if not event_row:
@@ -1876,7 +1903,7 @@ async def _resolve_public_event(tenant_slug: str, event_slug: str) -> tuple:
                 Event.organizer_id == organizer["id"],
                 Event.slug == event_slug,
                 Event.status == "published",
-                Event.visibility.in_(["public", "public_blocked"]),
+                Event.visibility.in_(list(RESOLVABLE_VISIBILITIES)),
             )
         )
     if not event_row:

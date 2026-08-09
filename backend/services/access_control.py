@@ -1,11 +1,11 @@
-"""Guest-list and access-code gating for event purchases — Fase 9.
+"""Guest-list and access-code gating for event purchases — Fase 9 / PRD §4.2.2.
 
 `access_params.access_type` on the Event drives this:
-  - "open" / "link_only": no gate, handled elsewhere (visibility/listing only).
+  - "open" / "link_only" (legacy→open): compra abierta.
   - "verified_list": buyer's email or cédula must exist in
     `event_guest_list_entries` for the event.
-  - "access_code": buyer must supply an active, not-yet-exhausted code from
-    `event_access_codes`.
+  - "access_code": buyer must supply an active code, unless
+    `allow_continue_without_code` is true and no code was sent.
 """
 
 from __future__ import annotations
@@ -34,7 +34,10 @@ async def check_purchase_access(
     so the caller can persist it on the order and consume it once payment is
     confirmed — `None` otherwise.
     """
-    access_type = (event.get("access_params") or {}).get("access_type", "open")
+    access_params = event.get("access_params") or {}
+    access_type = access_params.get("access_type", "open")
+    if access_type == "link_only":
+        access_type = "open"
 
     if access_type == "verified_list":
         email = (buyer_email or "").strip().lower()
@@ -76,7 +79,10 @@ async def check_purchase_access(
 
     if access_type == "access_code":
         code = (access_code or "").strip().upper()
+        allow_skip = bool(access_params.get("allow_continue_without_code"))
         if not code:
+            if allow_skip:
+                return None
             raise ValueError("Este evento requiere un código de acceso para comprar.")
         match = await session.scalar(
             select(EventAccessCode).where(
@@ -97,7 +103,6 @@ async def check_purchase_access(
         return match.id
 
     return None
-
 
 async def _tickets_bought_by_guest(
     session: AsyncSession,

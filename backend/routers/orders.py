@@ -627,8 +627,105 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
         }
 
-    # ── Gateway stubs (DeUna / PayPal) — order held; real charge not wired yet ──
-    if effective_method in ("deuna", "paypal"):
+    # ── DEUNA — Create Order + Payment Widget Web SDK ─────────────────────────
+    if effective_method == "deuna":
+        from services import deuna_service
+
+        if not deuna_service.is_configured():
+            async with AsyncSessionLocal() as _pg:
+                from orm_models import TicketOrder as _TOModel
+
+                _row = await _pg.scalar(
+                    select(_TOModel).where(_TOModel.id == order["id"])
+                )
+                if _row:
+                    _row.status = "pending_gateway"
+                    await _pg.commit()
+            await order_service.reserve_capacity(
+                event=event,
+                order_id=order["id"],
+                quantity=quantity,
+                ttl_minutes=order_service.RESERVATION_TTL_MIN,
+                function_id=function["id"] if function else None,
+            )
+            return {
+                "order_number": order["order_number"],
+                "status": "pending_gateway",
+                "payment_method": "deuna",
+                "message": (
+                    "DEUNA aún no está configurado en este entorno. "
+                    "Tu reserva quedó registrada; contactá a soporte TYS."
+                ),
+                "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
+            }
+
+        first_name, last_name = deuna_service.split_buyer_name(
+            (payload.buyer.name if payload.buyer else "") or ""
+        )
+        try:
+            deuna = deuna_service.create_order(
+                order_id=order["order_number"],
+                amount_cents=order["total_cents"],
+                currency=order.get("currency") or event.get("currency") or "USD",
+                item_name=f"{event.get('title') or 'Evento'} · {order['quantity_total']} entradas",
+                item_description=order["buyer_email"],
+                email=order["buyer_email"],
+                first_name=first_name,
+                last_name=last_name,
+                phone=(payload.buyer.phone if payload.buyer else None),
+                metadata={
+                    "tys_purpose": "ticket_purchase",
+                    "order_id": order["id"],
+                    "event_id": event["id"],
+                },
+            )
+        except deuna_service.DeunaError as e:
+            logger.error(
+                "DEUNA create_order failed for %s: %s",
+                order["order_number"],
+                type(e).__name__,
+            )
+            raise HTTPException(
+                502,
+                "No pudimos iniciar el pago con DEUNA. Intentá de nuevo en unos minutos.",
+            ) from e
+
+        async with AsyncSessionLocal() as _pg:
+            from orm_models import TicketOrder as _TOModel
+
+            _row = await _pg.scalar(select(_TOModel).where(_TOModel.id == order["id"]))
+            _row.stripe_session_id = deuna["order_token"]
+            meta = dict(_row.metadata_ or {})
+            meta["deuna_order_token"] = deuna["order_token"]
+            meta["deuna_order_id"] = order["order_number"]
+            _row.metadata_ = meta
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(_row, "metadata_")
+            _row.status = "pending"
+            await _pg.commit()
+
+        await order_service.reserve_capacity(
+            event=event,
+            order_id=order["id"],
+            quantity=quantity,
+            function_id=function["id"] if function else None,
+        )
+        return {
+            "order_number": order["order_number"],
+            "status": "deuna_checkout",
+            "payment_method": "deuna",
+            "order_token": deuna["order_token"],
+            "session_id": deuna["order_token"],
+            "public_api_key": deuna["public_api_key"],
+            "deuna_env": deuna["env"],
+            "checkout_js_url": deuna["checkout_js_url"],
+            "client_unique_id": order["order_number"],
+            "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
+        }
+
+    # ── Gateway stubs (PayPal) — order held; real charge not wired yet ──
+    if effective_method == "paypal":
         await order_service.reserve_capacity(
             event=event,
             order_id=order["id"],
@@ -636,13 +733,12 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             ttl_minutes=order_service.RESERVATION_TTL_MIN,
             function_id=function["id"] if function else None,
         )
-        label = "DeUna" if effective_method == "deuna" else "PayPal"
         return {
             "order_number": order["order_number"],
             "status": "pending_gateway",
             "payment_method": effective_method,
             "message": (
-                f"Integración pendiente: el cobro con {label} aún no está disponible. "
+                "Integración pendiente: el cobro con PayPal aún no está disponible. "
                 "Tu reserva quedó registrada; te avisaremos cuando puedas completar el pago."
             ),
             "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",

@@ -38,6 +38,7 @@ import {
     googleMapsUrl,
     eventPublicUrl,
 } from "@/lib/events";
+import { inferAttendanceFormat } from "@/lib/attendanceFormat";
 import { previewMicrositePath } from "@/lib/config";
 import { PAYMENT_METHOD_META } from "@/lib/orders";
 import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
@@ -61,6 +62,13 @@ export default function EventPublic() {
     const [buyFunctionChoice, setBuyFunctionChoice] = useState(null);
     const [seasonPasses, setSeasonPasses] = useState([]);
     const [buyingPass, setBuyingPass] = useState(null);
+    const [gaTicketCount, setGaTicketCount] = useState(0);
+
+    const attendanceFormat = useMemo(
+        () => (event ? inferAttendanceFormat(event) : "general"),
+        [event],
+    );
+    const isMixed = attendanceFormat === "mixed";
 
     useEffect(() => {
         let alive = true;
@@ -80,6 +88,29 @@ export default function EventPublic() {
             alive = false;
         };
     }, [slug, event_slug]);
+
+    // §4.2.2 — private events must not be indexed when opened via direct link.
+    useEffect(() => {
+        if (!event) return;
+        let meta = document.querySelector('meta[name="robots"]');
+        const created = !meta;
+        if (!meta) {
+            meta = document.createElement("meta");
+            meta.setAttribute("name", "robots");
+            document.head.appendChild(meta);
+        }
+        const prev = meta.getAttribute("content");
+        if (event.visibility === "private") {
+            meta.setAttribute("content", "noindex, nofollow");
+        } else {
+            meta.setAttribute("content", "index, follow");
+        }
+        return () => {
+            if (!meta) return;
+            if (created) meta.remove();
+            else if (prev != null) meta.setAttribute("content", prev);
+        };
+    }, [event]);
 
     // Multi-función events: numbered ones need the buyer to pick a función
     // before the seat map (each función has its own independent seat pool —
@@ -104,6 +135,28 @@ export default function EventPublic() {
             .catch(() => alive && setSeasonPasses([]));
         return () => { alive = false; };
     }, [event?.id, event?.venue_id]);
+
+    // §4.2.4 Mixto — ticket types for unnumbered zones (sold by quantity).
+    useEffect(() => {
+        if (!event?.id || !isMixed) {
+            setGaTicketCount(0);
+            return;
+        }
+        let alive = true;
+        api
+            .get(`/public/events/${event.id}/ticket-types`)
+            .then((r) => {
+                if (!alive) return;
+                const available = (r.data || []).filter(
+                    (t) => !t.is_sold_out && t.is_on_sale !== false,
+                );
+                setGaTicketCount(available.length);
+            })
+            .catch(() => alive && setGaTicketCount(0));
+        return () => {
+            alive = false;
+        };
+    }, [event?.id, isMixed]);
 
     const url = useMemo(() => eventPublicUrl(slug, event_slug), [slug, event_slug]);
     // "Subevento" wording (independent add-on: sala VIP, cena, meet & greet)
@@ -468,6 +521,42 @@ export default function EventPublic() {
                         setBuyOpen(true);
                     }}
                 />
+            )}
+
+            {isMixed && event.venue_id && (!event.is_multi_function || !functions.length || selectedFunctionId) && (
+                <section
+                    className="max-w-3xl mx-auto px-6 pb-16 space-y-3"
+                    data-testid="event-public-mixed-ga"
+                >
+                    <h2 className="text-xl font-semibold">Zonas generales (sin asiento)</h2>
+                    <p className="text-sm text-muted-foreground">
+                        Además del mapa numerado, podés comprar entradas de aforo general
+                        (sin butaca asignada).
+                    </p>
+                    {gaTicketCount > 0 ? (
+                        <Button
+                            onClick={() => {
+                                setSeatHoldsInfo(null);
+                                if (selectedFunctionId) {
+                                    const fn = functions.find((f) => f.id === selectedFunctionId);
+                                    setBuyFunctionChoice(
+                                        fn ? { id: fn.id, name: fn.name } : { id: selectedFunctionId, name: "" },
+                                    );
+                                }
+                                setBuyOpen(true);
+                            }}
+                            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                            data-testid="event-public-mixed-ga-buy"
+                        >
+                            <Ticket className="h-4 w-4 mr-1.5" />
+                            Comprar zona general
+                        </Button>
+                    ) : (
+                        <p className="text-sm text-muted-foreground" data-testid="event-public-mixed-ga-empty">
+                            Todavía no hay tipos de entrada disponibles para zonas generales.
+                        </p>
+                    )}
+                </section>
             )}
 
             <ShareModal

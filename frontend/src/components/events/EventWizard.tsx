@@ -70,6 +70,10 @@ import {
     Users,
     KeyRound,
     Ticket,
+    ScanQrCode,
+    Mail,
+    MapPinned,
+    Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -122,6 +126,10 @@ import {
     isoToLocalInput,
     localInputToIso,
 } from "@/lib/events";
+import {
+    ATTENDANCE_FORMATS,
+    inferAttendanceFormat,
+} from "@/lib/attendanceFormat";
 
 const DEFAULT_TZ = import.meta.env.VITE_DEFAULT_TIMEZONE || "America/Guayaquil";
 
@@ -188,6 +196,9 @@ function defaultAccessParams() {
         max_per_email: null,
         refund_window_hours: 24,
         show_buyer_name_on_ticket: true,
+        ticket_validation: "qr",
+        allow_continue_without_code: false,
+        attendance_format: "numbered",
     };
 }
 
@@ -233,6 +244,7 @@ function makeInitial(d) {
             // ON by default => event uses numbered seating with a venue.
             // (Internally `no_seating_mode === true` means "general / no seats".)
             no_seating_mode: false,
+            attendance_format: "numbered",
             venue_id: null,
             payment_methods: defaultPayments(),
             discounts: defaultDiscounts(),
@@ -242,6 +254,7 @@ function makeInitial(d) {
             ticket_delivery_hours: "",
             ticket_delivery_at: "",
             multi_function_mode: "function",
+            event_structure: "single",
             priority: 0,
             video_url: "",
             keywords: [],
@@ -250,6 +263,21 @@ function makeInitial(d) {
     const startsIso = d.starts_at || null;
     const endsIso = d.ends_at || null;
     const durInfer = inferDurationPreset(startsIso, endsIso);
+    const attendanceFormat = (() => {
+        const saved = d.access_params?.attendance_format;
+        if (d.venue_id) {
+            const inferred = inferAttendanceFormat(d);
+            if (saved === "mixed" || inferred === "mixed") return "mixed";
+            if (saved === "numbered") return "numbered";
+            return inferred;
+        }
+        if (saved === "numbered" || saved === "general" || saved === "mixed") {
+            return saved;
+        }
+        return !d.venue_id && !!d.venue_name && d.pricing_type !== undefined
+            ? "general"
+            : "numbered";
+    })();
     return {
         title: d.title || "",
         description: d.description || "",
@@ -276,7 +304,7 @@ function makeInitial(d) {
         currency: d.currency || "USD",
         capacity: d.capacity != null ? String(d.capacity) : "",
         unlimited_capacity: d.capacity == null,
-        visibility: d.visibility || "public",
+        visibility: d.visibility === "public_blocked" ? "public" : d.visibility || "public",
         raffle_enabled: !!d.raffle_enabled,
         optional_donation_enabled: !!d.optional_donation_enabled,
         ticket_fees: {
@@ -304,25 +332,35 @@ function makeInitial(d) {
         custom_questions: d.custom_questions || [],
         ticket_design: d.ticket_design || null,
         courtesy_ticket_design: d.courtesy_ticket_design || null,
-        // If event has a venue_id, force numbered mode regardless of legacy flags.
-        no_seating_mode: !d.venue_id && !!d.venue_name && d.pricing_type !== undefined
-            ? !d.venue_id // legacy events with venue_name but no venue_id default to general
-            : false,
+        // PRD §4.2.4 — general = no map; numbered/mixed use venue.
+        no_seating_mode: attendanceFormat === "general",
+        attendance_format: attendanceFormat,
         venue_id: d.venue_id || null,
         payment_methods: normalizePaymentMethodsForForm(d.payment_methods),
         discounts: d.discounts || defaultDiscounts(),
         access_params: {
             ...defaultAccessParams(),
             ...(d.access_params || {}),
+            access_type:
+                d.access_params?.access_type === "link_only"
+                    ? "open"
+                    : d.access_params?.access_type || defaultAccessParams().access_type,
             min_per_purchase:
                 d.access_params?.min_per_purchase
                 ?? defaultAccessParams().min_per_purchase,
+            ticket_validation: d.access_params?.ticket_validation || "qr",
+            allow_continue_without_code: !!d.access_params?.allow_continue_without_code,
         },
         content: normalizeEventContent(d.content),
         ticket_delivery_mode: d.ticket_delivery_mode || "al_momento",
         ticket_delivery_hours: d.ticket_delivery_hours != null ? String(d.ticket_delivery_hours) : "",
         ticket_delivery_at: d.ticket_delivery_at ? isoToLocalInput(d.ticket_delivery_at, d.timezone) : "",
         multi_function_mode: d.multi_function_mode || "function",
+        event_structure: d.is_multi_function
+            ? d.multi_function_mode === "subevent"
+                ? "subevent"
+                : "multi"
+            : "single",
         priority: d.priority ?? 0,
         video_url: d.video_url || "",
         keywords: d.keywords || [],
@@ -627,6 +665,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     setPendingVenueId(null);
                     update("venue_id", venueToLink);
                     update("no_seating_mode", false);
+                    if (form.attendance_format === "general") {
+                        update("attendance_format", "numbered");
+                    }
                 } catch (linkErr) {
                     toast.error(
                         formatApiError(linkErr?.response?.data?.detail)
@@ -984,19 +1025,32 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                     pendingVenueId={pendingVenueId}
                                     onPendingVenueChange={setPendingVenueId}
                                 />
-                                {!hasVenueSelected && form.no_seating_mode && (
+                                {((!hasVenueSelected && form.attendance_format === "general")
+                                    || form.attendance_format === "mixed") && (
                                     <div className="space-y-5">
+                                        {form.attendance_format === "mixed" && (
+                                            <p
+                                                className="text-xs text-muted-foreground rounded-lg border bg-secondary/30 px-3 py-2"
+                                                data-testid="mixed-ga-hint"
+                                            >
+                                                Mixto: el mapa cubre asientos numerados; abajo definí
+                                                tipos de entrada para las zonas no numeradas (aforo
+                                                general).
+                                            </p>
+                                        )}
                                         <TicketTypesPanel
                                             eventId={eventId}
                                             localities={venueLocalities}
                                             eventSaleWindow={liveSaleWindow}
                                             timezone={form.timezone}
                                         />
-                                        <SeasonPassPanel
-                                            eventId={eventId}
-                                            hasVenue={false}
-                                            timezone={form.timezone}
-                                        />
+                                        {form.attendance_format === "general" && (
+                                            <SeasonPassPanel
+                                                eventId={eventId}
+                                                hasVenue={false}
+                                                timezone={form.timezone}
+                                            />
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -1337,7 +1391,7 @@ function buildPayload(form) {
             form.capacity === ""
                 ? null
                 : parseInt(form.capacity, 10),
-        visibility: form.visibility,
+        visibility: form.visibility === "public_blocked" ? "public" : form.visibility,
         raffle_enabled: form.pricing_type === "donation" ? !!form.raffle_enabled : false,
         optional_donation_enabled:
             form.pricing_type === "free" ? !!form.optional_donation_enabled : false,
@@ -1363,7 +1417,21 @@ function buildPayload(form) {
         courtesy_ticket_design: form.courtesy_ticket_design,
         payment_methods: form.payment_methods,
         discounts: form.discounts,
-        access_params: form.access_params,
+        access_params: (() => {
+            const ap = { ...defaultAccessParams(), ...(form.access_params || {}) };
+            const accessType = ap.access_type === "link_only" ? "open" : ap.access_type;
+            const format =
+                form.attendance_format
+                || (form.no_seating_mode ? "general" : "numbered");
+            return {
+                ...ap,
+                access_type: accessType,
+                ticket_validation: ap.ticket_validation === "none" ? "none" : "qr",
+                allow_continue_without_code:
+                    accessType === "access_code" ? !!ap.allow_continue_without_code : false,
+                attendance_format: format,
+            };
+        })(),
         content: form.content,
         ticket_delivery_mode: form.ticket_delivery_mode || "al_momento",
         ticket_delivery_hours:
@@ -1374,7 +1442,12 @@ function buildPayload(form) {
             form.ticket_delivery_mode === "fecha_especifica" && form.ticket_delivery_at
                 ? localInputToIso(form.ticket_delivery_at, tz)
                 : null,
-        multi_function_mode: form.multi_function_mode || "function",
+        multi_function_mode:
+            form.event_structure === "subevent"
+                ? "subevent"
+                : form.event_structure === "multi"
+                  ? "function"
+                  : form.multi_function_mode || "function",
         priority: Number(form.priority) || 0,
         video_url: form.video_url || null,
         keywords: Array.isArray(form.keywords) ? form.keywords : [],
@@ -1781,15 +1854,42 @@ function SectionGeneral({ form, update, disabled }) {
 }
 
 function SectionFechas({ form, update, disabled, eventId, localities }) {
+    const { data: planFeatures } = usePlanFeatures();
+    const allowsMulti = planFeatures ? Boolean(planFeatures.multi_function_events) : false;
     const durationLabel =
         DURATION_PRESETS.find((p) => p.key === form.duration_preset)?.label
         || form.duration_preset;
     const salesStartLabel =
         SALES_START_PRESETS.find((p) => p.key === form.sales_window_preset_start)?.label
         || form.sales_window_preset_start;
-    const modeLabel =
-        form.multi_function_mode === "subevent" ? "Subeventos" : "Funciones";
+    const structure = form.event_structure || "single";
+    const structureLabel =
+        structure === "multi"
+            ? "Multifunción"
+            : structure === "subevent"
+              ? "Con subeventos"
+              : "Evento único";
     const maxPer = form.access_params?.max_per_purchase ?? 10;
+
+    // Fail closed: if plan doesn't allow multi/subevent, force single.
+    useEffect(() => {
+        if (!planFeatures) return;
+        if (planFeatures.multi_function_events) return;
+        if (structure === "single") return;
+        update("event_structure", "single");
+        toast.message("Tipo de evento ajustado a tu plan", {
+            description:
+                "Multifunción y subeventos requieren un plan superior. Se dejó Evento único.",
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [planFeatures, structure]);
+
+    const setStructure = (value) => {
+        if (value !== "single" && !allowsMulti) return;
+        update("event_structure", value);
+        if (value === "multi") update("multi_function_mode", "function");
+        if (value === "subevent") update("multi_function_mode", "subevent");
+    };
 
     return (
         <div className="space-y-6" data-testid="section-fechas">
@@ -1814,61 +1914,93 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
                     {" · Máx. "}
                     <strong className="text-foreground">{maxPer}</strong>
                     {"/orden · "}
-                    <strong className="text-foreground">{modeLabel}</strong>
+                    <strong className="text-foreground">{structureLabel}</strong>
+                    {" · Venta: "}
+                    <strong className="text-foreground">{salesStartLabel}</strong>
                 </p>
             </div>
 
-            {/* TicketShow layout: fechas | configuración de ventas */}
             <div className="grid lg:grid-cols-2 gap-6 items-start">
                 <CuandoBlock form={form} update={update} disabled={disabled} />
                 <SalesConfigBlock form={form} update={update} disabled={disabled} />
             </div>
 
-            <section className="space-y-3">
+            <section className="space-y-3" data-testid="event-structure-block">
                 <div>
-                    <h4 className="text-sm font-medium">3. Funciones o subeventos</h4>
+                    <h4 className="text-sm font-medium">3. Tipo de estructura</h4>
                     <p className="text-xs text-muted-foreground">
-                        Opcional · varias fechas, franjas o experiencias independientes.
-                        Venta: <strong className="text-foreground">{salesStartLabel}</strong>
+                        Evento único, multifunción o con subeventos. Las franjas de ingreso
+                        por aforo quedan para una fase posterior.
                     </p>
                 </div>
 
-                <div className="grid sm:grid-cols-2 gap-3">
+                <div className="grid sm:grid-cols-3 gap-3" data-testid="event-structure">
                     <ChoiceCard
                         icon={CalendarClock}
-                        title="Funciones"
-                        description="El mismo show se repite en varias fechas u horarios."
-                        selected={form.multi_function_mode !== "subevent"}
-                        onSelect={() => update("multi_function_mode", "function")}
-                        testid="wiz-multi-function-mode-function"
+                        title="Evento único"
+                        description="Una sola función en fecha y lugar. Caso base."
+                        selected={structure === "single"}
+                        onSelect={() => setStructure("single")}
+                        testid="event-structure-single"
                         disabled={disabled}
                     />
                     <ChoiceCard
                         icon={CalendarClock}
-                        title="Subeventos"
-                        description="Experiencias independientes (VIP, cena, meet & greet)."
-                        selected={form.multi_function_mode === "subevent"}
-                        onSelect={() => update("multi_function_mode", "subevent")}
-                        testid="wiz-multi-function-mode-subevent"
-                        disabled={disabled}
+                        title="Multifunción"
+                        description="El mismo evento se repite en varias fechas u horarios."
+                        selected={structure === "multi"}
+                        onSelect={() => setStructure("multi")}
+                        testid="event-structure-multi"
+                        disabled={disabled || !allowsMulti}
+                        badge={!allowsMulti ? "Plan Enterprise" : undefined}
+                    />
+                    <ChoiceCard
+                        icon={CalendarClock}
+                        title="Con subeventos"
+                        description="Paraguas con experiencias propias (VIP, cena, meet & greet)."
+                        selected={structure === "subevent"}
+                        onSelect={() => setStructure("subevent")}
+                        testid="event-structure-subevent"
+                        disabled={disabled || !allowsMulti}
+                        badge={!allowsMulti ? "Plan Enterprise" : undefined}
                     />
                 </div>
-                {/* Keep legacy testid for e2e / tooling that looks for the mode control */}
+
                 <input
                     type="hidden"
                     data-testid="wiz-multi-function-mode"
-                    value={form.multi_function_mode || "function"}
+                    value={
+                        structure === "subevent"
+                            ? "subevent"
+                            : structure === "multi"
+                              ? "function"
+                              : form.multi_function_mode || "function"
+                    }
+                    readOnly
+                />
+                <input
+                    type="hidden"
+                    data-testid="wiz-multi-function-mode-function"
+                    value={structure === "multi" ? "1" : "0"}
+                    readOnly
+                />
+                <input
+                    type="hidden"
+                    data-testid="wiz-multi-function-mode-subevent"
+                    value={structure === "subevent" ? "1" : "0"}
                     readOnly
                 />
 
-                <div className="rounded-xl border bg-card p-4 sm:p-5">
-                    <EventFunctionsPanel
-                        eventId={eventId}
-                        localities={localities}
-                        mode={form.multi_function_mode}
-                        timezone={form.timezone}
-                    />
-                </div>
+                {structure !== "single" && (
+                    <div className="rounded-xl border bg-card p-4 sm:p-5">
+                        <EventFunctionsPanel
+                            eventId={eventId}
+                            localities={localities}
+                            mode={structure === "subevent" ? "subevent" : "function"}
+                            timezone={form.timezone}
+                        />
+                    </div>
+                )}
             </section>
         </div>
     );
@@ -2270,67 +2402,104 @@ function DondeBlock({
     disabled,
     currentEvent,
 }) {
-    const seatedMode = !form.no_seating_mode; // ON => numbered venue
+    const { data: planFeatures } = usePlanFeatures();
+    const allowsNumbered = planFeatures ? Boolean(planFeatures.numbered_seating) : false;
+    const format = form.attendance_format || (form.no_seating_mode ? "general" : "numbered");
     const linkedVenueId = currentEvent?.venue_id || form.venue_id || null;
     const isDonation = form.pricing_type === "donation";
 
-    // Numbered seating is ON by default for every new event. If the organizer
-    // picks "Donación" before linking a venue, switch to general mode right
-    // away instead of leaving a disabled toggle stuck in the wrong state.
+    // Numbered/mixed default for new events. Donation without a linked map
+    // must stay general (buyer picks amount; no seat map).
     useEffect(() => {
-        if (isDonation && seatedMode && !linkedVenueId) {
+        if (isDonation && format !== "general" && !linkedVenueId) {
+            update("attendance_format", "general");
             update("no_seating_mode", true);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isDonation, linkedVenueId]);
 
-    const handleModeChange = (numbered) => {
-        if (numbered && isDonation) {
+    useEffect(() => {
+        if (!planFeatures) return;
+        if (allowsNumbered) return;
+        if (format === "general" || linkedVenueId) return;
+        update("attendance_format", "general");
+        update("no_seating_mode", true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [planFeatures, allowsNumbered, format, linkedVenueId]);
+
+    const handleFormatChange = (next: "numbered" | "general" | "mixed") => {
+        if (next !== "general" && isDonation) {
             toast.error(
                 "Los eventos de donación no admiten venue con asientos numerados.",
             );
             return;
         }
-        if (!numbered && linkedVenueId) {
+        if (next !== "general" && !allowsNumbered) {
             toast.error(
-                "Para cambiar a evento general primero desvinculá el mapa más abajo.",
+                "Tu plan no incluye asientos numerados. Mejorá tu plan para usar Numerado o Mixto.",
             );
             return;
         }
-        update("no_seating_mode", !numbered);
+        if (next === "general" && linkedVenueId) {
+            toast.error(
+                "Para cambiar a no numerado primero desvinculá el mapa más abajo.",
+            );
+            return;
+        }
+        update("attendance_format", next);
+        update("no_seating_mode", next === "general");
     };
 
     return (
         <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="info-donde-block">
             <div>
-                <h3 className="font-semibold text-base">1. Tipo de lugar</h3>
+                <h3 className="font-semibold text-base">1. Formato de asistencia</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Con mapa de asientos o ubicación general con precio único.
+                    Numerado (mapa), no numerado (cantidad) o mixto (ambos en el mismo evento).
                 </p>
             </div>
 
-            <div className="flex items-start gap-3 rounded-lg border bg-secondary/30 p-3">
-                <Switch
-                    checked={seatedMode}
-                    onCheckedChange={handleModeChange}
-                    disabled={disabled || (isDonation && !seatedMode)}
-                    data-testid="wiz-seated-toggle"
+            <div className="grid sm:grid-cols-3 gap-3" data-testid="attendance-format">
+                <ChoiceCard
+                    icon={MapPinned}
+                    title={ATTENDANCE_FORMATS.numbered.title}
+                    description={ATTENDANCE_FORMATS.numbered.description}
+                    selected={format === "numbered"}
+                    onSelect={() => handleFormatChange("numbered")}
+                    testid="attendance-format-numbered"
+                    disabled={disabled || (isDonation && format === "general") || !allowsNumbered}
+                    badge={!allowsNumbered ? "Plan con mapa" : undefined}
                 />
-                <div className="text-sm">
-                    <p className="font-medium leading-tight">
-                        Asientos numerados (mapa)
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                        {isDonation
-                            ? "No disponible en donación: el comprador elige el monto."
-                            : seatedMode
-                              ? "Activado: abajo elegís el mapa y definís el precio de cada localidad."
-                              : "Apagado: solo nombre del lugar, dirección y un precio base."}
-                    </p>
-                </div>
+                <ChoiceCard
+                    icon={Users}
+                    title={ATTENDANCE_FORMATS.general.title}
+                    description={ATTENDANCE_FORMATS.general.description}
+                    selected={format === "general"}
+                    onSelect={() => handleFormatChange("general")}
+                    testid="attendance-format-general"
+                    disabled={disabled || !!linkedVenueId}
+                />
+                <ChoiceCard
+                    icon={Layers}
+                    title={ATTENDANCE_FORMATS.mixed.title}
+                    description={ATTENDANCE_FORMATS.mixed.description}
+                    selected={format === "mixed"}
+                    onSelect={() => handleFormatChange("mixed")}
+                    testid="attendance-format-mixed"
+                    disabled={disabled || (isDonation && format === "general") || !allowsNumbered}
+                    badge={!allowsNumbered ? "Plan con mapa" : undefined}
+                />
             </div>
 
-            {!seatedMode && (
+            {/* Compat e2e / legacy: toggle mirror for general vs seated */}
+            <input
+                type="hidden"
+                data-testid="wiz-seated-toggle"
+                value={format === "general" ? "0" : "1"}
+                readOnly
+            />
+
+            {format === "general" && (
                 <GeneralLocationFields form={form} update={update} disabled={disabled} />
             )}
         </div>
@@ -2385,8 +2554,9 @@ function SectionVenueLocalidades({
     onPendingVenueChange,
 }) {
     const hasVenue = !!(event?.venue_id || pendingVenueId);
-    const isGeneralMode = form.no_seating_mode && !hasVenue;
-    const seatedMode = !form.no_seating_mode;
+    const format = form.attendance_format || (form.no_seating_mode ? "general" : "numbered");
+    const isGeneralMode = format === "general" && !hasVenue;
+    const seatedMode = format !== "general";
 
     return (
         <div className="space-y-5" data-testid="section-venue-localidades">
@@ -2395,6 +2565,11 @@ function SectionVenueLocalidades({
                     Recaudación:{" "}
                     <strong className="text-foreground">
                         {PRICING_LABELS[form.pricing_type] || form.pricing_type}
+                    </strong>
+                    {" · "}
+                    Formato:{" "}
+                    <strong className="text-foreground">
+                        {ATTENDANCE_FORMATS[format]?.title || format}
                     </strong>
                 </span>
                 {onJumpToInfo && (
@@ -2529,8 +2704,9 @@ function SectionVenueLocalidades({
                     <div>
                         <h3 className="font-semibold text-base">2. Escenario y localidades</h3>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            El mapa es solo la forma. Nombre, color y precios son de este evento;
-                            podés usar un subconjunto de las secciones del plano.
+                            {format === "mixed"
+                                ? "En Mixto: usá asientos en el mapa y zonas no numeradas; los tipos de entrada GA van debajo."
+                                : "El mapa es solo la forma. Nombre, color y precios son de este evento; podés usar un subconjunto de las secciones del plano."}
                         </p>
                     </div>
                     <EventVenueSection
@@ -2920,9 +3096,9 @@ function SectionPayments({ form, update }) {
                 >
                     <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                     <p>
-                        DeUna todavía no procesa cobros reales (integración en preparación):
-                        si publicás solo con DeUna, nadie va a poder completar una compra.
-                        Activá Nuvei, Transferencia o Efectivo si querés vender ya.
+                        PayPal todavía no procesa cobros reales (integración en preparación):
+                        si publicás solo con PayPal, nadie va a poder completar una compra.
+                        Activá Nuvei, DEUNA, Transferencia o Efectivo si querés vender ya.
                     </p>
                 </div>
             )}
@@ -3195,7 +3371,8 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                 <div>
                     <h4 className="text-sm font-medium">2. Descuentos del evento</h4>
                     <p className="text-xs text-muted-foreground">
-                        Con o sin código. Stacking máximo: 1 código + 1 automático/promo.
+                        Con o sin código. Los códigos de compra sirven para descuentos,
+                        referidos y preventas (uso único configurable).
                     </p>
                 </div>
                 <DiscountRulesPanel
@@ -3306,25 +3483,20 @@ function DiscountsReportPanel({ eventId }) {
     );
 }
 
-// ── Section: Accesos ────────────────────────────────────────────────────────
+// ── Section: Accesos (PRD §4.2.2) ───────────────────────────────────────────
 const VISIBILITY_OPTIONS = [
     {
         value: "public",
         icon: Globe,
         title: "Público",
-        description: "Aparece en tu microsite y cualquiera puede verlo.",
-    },
-    {
-        value: "public_blocked",
-        icon: Lock,
-        title: "Público bloqueado",
-        description: "Se ve en el microsite, pero solo compra con código o lista.",
+        description: "Aparece en tu microsite y es indexable por buscadores.",
     },
     {
         value: "private",
         icon: Link2,
         title: "Privado",
-        description: "Solo con link directo. No aparece en listados.",
+        description:
+            "No aparece en listados ni se indexa. Solo con el link directo (o lista / código).",
     },
 ];
 
@@ -3332,19 +3504,13 @@ const ACCESS_TYPE_OPTIONS = [
     {
         value: "open",
         icon: Globe,
-        title: "Abierto",
-        description: "Cualquiera puede comprar sin código ni lista.",
-    },
-    {
-        value: "link_only",
-        icon: Link2,
-        title: "Solo con link",
-        description: "No aparece en listados; hace falta el link directo.",
+        title: "Compra abierta",
+        description: "Cualquiera puede comprar. Podés limitar por cantidad o localidad.",
     },
     {
         value: "verified_list",
         icon: Users,
-        title: "Lista verificada",
+        title: "Lista de invitados",
         description: "Solo quienes estén en la lista (email o cédula).",
         requiredFeature: "verified_lists",
         upgradeLabel: "Plan Enterprise",
@@ -3356,6 +3522,21 @@ const ACCESS_TYPE_OPTIONS = [
         description: "El comprador ingresa un código para poder comprar.",
         requiredFeature: "access_codes",
         upgradeLabel: "Plan Enterprise",
+    },
+];
+
+const TICKET_VALIDATION_OPTIONS = [
+    {
+        value: "qr",
+        icon: ScanQrCode,
+        title: "Entrada QR (validable)",
+        description: "Ticket con QR para control en puerta.",
+    },
+    {
+        value: "none",
+        icon: Mail,
+        title: "Entrada no validable",
+        description: "Email con PDF. Sin control sistemático en puerta.",
     },
 ];
 
@@ -3385,7 +3566,7 @@ function SectionAccess({ form, update, eventId }) {
         if (!opt?.requiredFeature || planFeatures[opt.requiredFeature]) return;
         update("access_params.access_type", "open");
         toast.message("Acceso ajustado a tu plan", {
-            description: `«${opt.title}» requiere ${opt.upgradeLabel}. Se cambió a Abierto.`,
+            description: `«${opt.title}» requiere ${opt.upgradeLabel}. Se cambió a Compra abierta.`,
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to plan + selected type
     }, [planFeatures, ap.access_type]);
@@ -3393,10 +3574,9 @@ function SectionAccess({ form, update, eventId }) {
     return (
         <div className="space-y-6" data-testid="section-access">
             <div>
-                <h3 className="font-semibold text-base">Accesos</h3>
+                <h3 className="font-semibold text-base">Visibilidad y control de acceso</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Quién ve el evento en el microsite y quién puede comprar.
-                    El control en puerta se valida con el ticket/QR.
+                    Quién ve el evento en el microsite, quién puede comprar y cómo se valida la entrada.
                     {" · "}
                     <strong className="text-foreground">{visibilityLabel}</strong>
                     {" · "}
@@ -3408,10 +3588,10 @@ function SectionAccess({ form, update, eventId }) {
                 <div>
                     <h4 className="text-sm font-medium">1. Visibilidad</h4>
                     <p className="text-xs text-muted-foreground">
-                        Define si el evento aparece en tu microsite.
+                        Define si el evento aparece en tu microsite y es indexable.
                     </p>
                 </div>
-                <div className="grid sm:grid-cols-3 gap-3" data-testid="access-visibility">
+                <div className="grid sm:grid-cols-2 gap-3" data-testid="access-visibility">
                     {VISIBILITY_OPTIONS.map((opt) => (
                         <ChoiceCard
                             key={opt.value}
@@ -3430,10 +3610,10 @@ function SectionAccess({ form, update, eventId }) {
                 <div>
                     <h4 className="text-sm font-medium">2. Quién puede comprar</h4>
                     <p className="text-xs text-muted-foreground">
-                        Elegí un modo. Si usás lista o código, configurá los accesos abajo.
+                        Compra abierta, lista de invitados o código de acceso.
                     </p>
                 </div>
-                <div className="grid sm:grid-cols-2 gap-3" data-testid="access-type">
+                <div className="grid sm:grid-cols-3 gap-3" data-testid="access-type">
                     {ACCESS_TYPE_OPTIONS.map((opt) => {
                         const allowed = accessAllowed(opt);
                         return (
@@ -3453,11 +3633,33 @@ function SectionAccess({ form, update, eventId }) {
                 </div>
             </section>
 
+            {ap.access_type === "access_code" && accessAllowed(currentAccessOpt) && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                    <div className="min-w-0">
+                        <div className="font-medium text-sm">Continuar sin código</div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Permite comprar sin código; quienes tengan código lo usan igual
+                            (referidos / cupos).
+                        </p>
+                    </div>
+                    <Switch
+                        checked={!!ap.allow_continue_without_code}
+                        onCheckedChange={(v) =>
+                            update("access_params.allow_continue_without_code", v)
+                        }
+                        data-testid="wiz-allow-continue-without-code"
+                    />
+                </div>
+            )}
+
             {needsListOrCode && (
                 <section className="space-y-3">
                     <div>
                         <h4 className="text-sm font-medium">
-                            3. {ap.access_type === "verified_list" ? "Lista de invitados" : "Códigos de acceso"}
+                            3.{" "}
+                            {ap.access_type === "verified_list"
+                                ? "Lista de invitados"
+                                : "Códigos de acceso"}
                         </h4>
                         <p className="text-xs text-muted-foreground">
                             {ap.access_type === "verified_list"
@@ -3466,9 +3668,6 @@ function SectionAccess({ form, update, eventId }) {
                         </p>
                     </div>
                     <div className="rounded-xl border bg-card p-4 sm:p-5">
-                        {/* `key` remounts the boundary (resetting hasError) whenever the
-                            access type changes, instead of leaving a transient crash
-                            permanently stuck behind the fallback for the rest of the wizard. */}
                         <ErrorBoundary
                             key={`guest-list-${ap.access_type}`}
                             fallback={
@@ -3496,6 +3695,30 @@ function SectionAccess({ form, update, eventId }) {
                     </div>
                 </section>
             )}
+
+            <section className="space-y-3">
+                <div>
+                    <h4 className="text-sm font-medium">
+                        {needsListOrCode ? "4" : "3"}. Tipo de entrada
+                    </h4>
+                    <p className="text-xs text-muted-foreground">
+                        Si es validable en puerta con QR o solo se envía por email/PDF.
+                    </p>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3" data-testid="ticket-validation">
+                    {TICKET_VALIDATION_OPTIONS.map((opt) => (
+                        <ChoiceCard
+                            key={opt.value}
+                            icon={opt.icon}
+                            title={opt.title}
+                            description={opt.description}
+                            selected={(ap.ticket_validation || "qr") === opt.value}
+                            onSelect={() => update("access_params.ticket_validation", opt.value)}
+                            testid={`ticket-validation-${opt.value}`}
+                        />
+                    ))}
+                </div>
+            </section>
         </div>
     );
 }

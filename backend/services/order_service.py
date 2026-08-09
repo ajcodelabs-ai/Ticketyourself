@@ -445,14 +445,14 @@ async def create_order_skeleton(
 
     is_manual = payment_method in MANUAL_CODES
     is_gateway_stub = payment_method in GATEWAY_STUB_CODES
-    is_nuvei = payment_method == "nuvei"
+    is_live_gateway = payment_method in ("nuvei", "deuna")
     if is_manual:
         ttl = timedelta(hours=MANUAL_RESERVATION_TTL_HOURS)
         initial_status = "pending_manual_payment"
     elif is_gateway_stub:
         ttl = timedelta(minutes=RESERVATION_TTL_MIN)
         initial_status = "pending_gateway"
-    elif is_nuvei:
+    elif is_live_gateway:
         ttl = timedelta(minutes=RESERVATION_TTL_MIN)
         initial_status = "pending"
     else:

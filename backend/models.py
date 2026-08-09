@@ -394,7 +394,9 @@ class CheckoutResponse(BaseModel):
     session_id: Optional[str] = None
     mode: Optional[Literal["subscription", "payment", "gateway"]] = None
     payment_method: PlanPaymentMethod = "stripe"
-    status: Literal["redirect", "pending_gateway", "nuvei_checkout"] = "redirect"
+    status: Literal[
+        "redirect", "pending_gateway", "nuvei_checkout", "deuna_checkout"
+    ] = "redirect"
     message: Optional[str] = None
     plan_code: Optional[str] = None
     intent_id: Optional[str] = None
@@ -405,6 +407,10 @@ class CheckoutResponse(BaseModel):
     nuvei_env: Optional[str] = None
     checkout_js_url: Optional[str] = None
     client_unique_id: Optional[str] = None
+    # DEUNA Payment Widget
+    order_token: Optional[str] = None
+    public_api_key: Optional[str] = None
+    deuna_env: Optional[str] = None
 
 
 class PortalResponse(BaseModel):

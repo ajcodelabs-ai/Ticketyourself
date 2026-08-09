@@ -45,7 +45,7 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
-import api from "@/lib/api";
+import api, { formatApiError } from "@/lib/api";
 import { venuesApi, eventVenueLayoutApi, computeCapacity, LOCALITY_PALETTE, newId } from "@/lib/venues";
 import EditorCanvas from "@/components/venues/EditorCanvas";
 import { useAuth } from "@/contexts/AuthContext";
@@ -543,7 +543,7 @@ export default function EventVenueSection({
             initializedRef.current = false;
             toast.success("Mapa vinculado — ahora creá las localidades del evento");
         } catch (e) {
-            toast.error(e?.response?.data?.detail || "No se pudo vincular el mapa.");
+            toast.error(formatApiError(e?.response?.data?.detail) || "No se pudo vincular el mapa.");
         } finally {
             setLoadingLink(false);
         }

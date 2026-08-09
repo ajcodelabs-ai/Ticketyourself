@@ -78,18 +78,18 @@ interface Props {
 
 type OverrideRow = { price: string; capacity: string; active: boolean };
 
-// "function" = same show repeated (Multifunción / Franjas horarias).
+// "function" = same show repeated (Multifunción — PRD §4.2.3).
 // "subevent" = independent add-on under the umbrella event (sala VIP, cena,
-// meet & greet) — only changes wording; both share the EventFunction model.
+// meet & greet). Entry time-slots / franjas de ingreso are Phase 2 — not here.
 const MODE_LABELS = {
     function: {
         plural: "funciones",
         addButton: "Agregar función",
-        panelTitle: "Funciones del evento",
+        panelTitle: "Funciones (multifunción)",
         panelSubtitle:
-            "Agrega múltiples fechas o franjas horarias. Cada una puede tener su propio venue, aforo y precios por tipo de ticket / localidad.",
+            "Agrega las repeticiones del mismo evento en distintas fechas u horarios. Cada una puede tener su propio venue, aforo y precios por tipo de ticket / localidad.",
         emptyTitle: "Aún no hay funciones.",
-        emptyHint: "Si el evento tiene una sola fecha, no necesitas agregar funciones.",
+        emptyHint: "Agregá al menos una función para un evento multifunción.",
         namePlaceholder: "Función 1 — Sábado 14 de junio",
         descPlaceholder: "Detalles adicionales de esta función…",
         venueSectionTitle: "Lugar de esta función",

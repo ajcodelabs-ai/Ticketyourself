@@ -178,11 +178,31 @@ function StatsTab({ event }) {
 
 // ── Door access (Phase 9 closing item) ──────────────────────────────────────
 function DoorAccessSection({ event, scanStats }) {
+    const ticketValidation = event?.access_params?.ticket_validation || "qr";
     // Show only when we actually have a published numbered/free event with tickets
     // issued so far OR the org explicitly wants to monitor scans. If the event has
     // no tickets issued and no scans, render a minimal CTA instead of empty cards.
     const isPublished = event.status === "published";
     if (!scanStats && !isPublished) return null;
+
+    if (ticketValidation === "none") {
+        return (
+            <Card data-testid="door-access-section">
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <DoorOpen className="h-5 w-5 text-muted-foreground" />
+                        <CardTitle className="text-lg">Acceso al evento</CardTitle>
+                    </div>
+                </CardHeader>
+                <CardContent>
+                    <p className="text-sm text-muted-foreground" data-testid="door-non-validatable">
+                        Este evento usa entrada no validable (email/PDF). No hay control
+                        sistemático en puerta con QR.
+                    </p>
+                </CardContent>
+            </Card>
+        );
+    }
 
     const hasData = scanStats && (scanStats.tickets_issued > 0 || scanStats.scanned_count > 0);
     const lastScan = scanStats?.last_scan_at

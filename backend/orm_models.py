@@ -423,9 +423,10 @@ class Event(Base):
 
     # Phase 8 — multi-function support
     is_multi_function = Column(Boolean, nullable=False, default=False)
-    # "function" = Multifunción/Franjas horarias (same show repeated).
-    # "subevent" = Evento con Subeventos (independent add-ons: sala VIP,
-    # cena, meet & greet). Drives wording + EventFunction.kind default and
+    # PRD §4.2.3 — "function" = Multifunción (same show repeated on other dates).
+    # "subevent" = Evento con Subeventos (independent add-ons: sala VIP, cena,
+    # meet & greet). Entry time-slots / franjas de ingreso are Phase 2 — not here.
+    # Drives wording + EventFunction.kind default and
     # whether sibling funciones are allowed to overlap in time.
     multi_function_mode = Column(String(20), nullable=False, default="function")
 
@@ -860,11 +861,11 @@ class EventFunction(Base):
         String(20), nullable=False, default="active"
     )  # active | cancelled | soldout
     sort_order = Column(Integer, nullable=False, default=0)
-    # "function" = same show repeated (Multifunción/Franjas horarias) — blocked
-    # from overlapping a sibling in the same venue. "subevent" = independent
-    # add-on under the umbrella event (sala VIP, cena, meet & greet) — may
-    # legitimately run concurrently with the main event or other subevents,
-    # so the schedule-overlap check skips it. See _check_schedule_conflict.
+    # "function" = same show repeated (Multifunción) — blocked from overlapping
+    # a sibling in the same venue. "subevent" = independent add-on under the
+    # umbrella event (sala VIP, cena, meet & greet) — may legitimately run
+    # concurrently with the main event or other subevents, so the schedule-
+    # overlap check skips it. Entry time-slots / franjas are Phase 2 — not here.
     kind = Column(String(20), nullable=False, default="function")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(

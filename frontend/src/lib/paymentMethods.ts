@@ -13,7 +13,7 @@ export const CATALOG_PAYMENT_CODES = [
 export type CatalogPaymentCode = (typeof CATALOG_PAYMENT_CODES)[number];
 
 /** Gateways without a live charge path yet (order stays pending_gateway). */
-export const GATEWAY_STUB_CODES = new Set(["deuna", "paypal"]);
+export const GATEWAY_STUB_CODES = new Set(["paypal"]);
 
 const CATALOG_SET = new Set<string>(CATALOG_PAYMENT_CODES);
 

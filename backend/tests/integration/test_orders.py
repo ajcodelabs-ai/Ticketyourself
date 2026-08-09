@@ -515,11 +515,16 @@ def test_create_order_paypal_returns_pending_gateway_stub():
 
 
 def test_create_order_deuna_returns_pending_gateway_stub():
+    """Without DEUNA_* credentials, checkout falls back to pending_gateway stub."""
     data = _create_manual_order("deuna")
-    assert data["status"] == "pending_gateway"
     assert data["payment_method"] == "deuna"
-    assert data.get("message")
-    assert "DeUna" in (data.get("message") or "")
+    assert data["status"] in ("pending_gateway", "deuna_checkout")
+    if data["status"] == "pending_gateway":
+        msg = data.get("message") or ""
+        assert "DEUNA" in msg or "DeUna" in msg
+    else:
+        assert data.get("order_token")
+        assert data.get("public_api_key")
 
 
 def test_nuvei_rejected_when_not_enabled():

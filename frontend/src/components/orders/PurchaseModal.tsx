@@ -45,6 +45,8 @@ import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders
 import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
 import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
 import type { NuveiCheckoutConfig } from "@/lib/nuvei";
+import DeunaCheckoutPanel from "@/components/orders/DeunaCheckoutPanel";
+import type { DeunaCheckoutConfig } from "@/lib/deuna";
 
 const FEE_PERCENT = 5;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -166,6 +168,7 @@ export default function PurchaseModal({
     const [submitting, setSubmitting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
+    const [deunaCheckout, setDeunaCheckout] = useState<DeunaCheckoutConfig | null>(null);
     // §4.2.8 — preguntas adicionales al comprador, por id de pregunta
     const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
     const selectedLocalityIds = useMemo(() => {
@@ -200,7 +203,10 @@ export default function PurchaseModal({
 
     // ── Fase 9: access gate (lista verificada / código de acceso) ──────────────
     const accessType = event?.access_params?.access_type || "open";
-    const needsAccessGate = accessType === "verified_list" || accessType === "access_code";
+    const allowContinueWithoutCode = !!event?.access_params?.allow_continue_without_code;
+    const needsAccessGate =
+        accessType === "verified_list" ||
+        (accessType === "access_code" && !allowContinueWithoutCode);
     const [accessVerified, setAccessVerified] = useState(false);
     const [accessCode, setAccessCode] = useState("");
     const [checkEmail, setCheckEmail] = useState("");
@@ -210,12 +216,21 @@ export default function PurchaseModal({
 
     const checkAccess = async () => {
         setAccessError("");
-        if (accessType === "access_code" && !accessCode.trim()) {
+        if (accessType === "access_code" && !accessCode.trim() && !allowContinueWithoutCode) {
             setAccessError("Ingresá el código de acceso.");
             return;
         }
         if (accessType === "verified_list" && !checkEmail.trim() && !checkCedula.trim()) {
             setAccessError("Ingresá tu correo o cédula.");
+            return;
+        }
+        // Optional code path: skip verification and continue.
+        if (
+            accessType === "access_code" &&
+            allowContinueWithoutCode &&
+            !accessCode.trim()
+        ) {
+            setAccessVerified(true);
             return;
         }
         setCheckingAccess(true);
@@ -614,6 +629,16 @@ export default function PurchaseModal({
                 });
                 return;
             }
+            if (data.status === "deuna_checkout" && data.order_token) {
+                setDeunaCheckout({
+                    order_token: data.order_token,
+                    public_api_key: data.public_api_key,
+                    deuna_env: data.deuna_env,
+                    checkout_js_url: data.checkout_js_url,
+                    order_id: data.client_unique_id || data.order_number,
+                });
+                return;
+            }
             if (data.checkout_url) {
                 window.location.href = data.checkout_url;
                 return;
@@ -640,7 +665,10 @@ export default function PurchaseModal({
         <Dialog
             open={open}
             onOpenChange={(next) => {
-                if (!next) setNuveiCheckout(null);
+                if (!next) {
+                    setNuveiCheckout(null);
+                    setDeunaCheckout(null);
+                }
                 onOpenChange(next);
             }}
         >
@@ -668,6 +696,27 @@ export default function PurchaseModal({
                                 }
                             }}
                             onCancel={() => setNuveiCheckout(null)}
+                        />
+                    </>
+                ) : deunaCheckout ? (
+                    <>
+                        <DialogHeader>
+                            <DialogTitle>Completar pago</DialogTitle>
+                            <DialogDescription>
+                                Completá el cobro en el widget seguro de DEUNA.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <DeunaCheckoutPanel
+                            config={deunaCheckout}
+                            onPaid={() => {
+                                const orderNumber = deunaCheckout.order_id || "";
+                                setDeunaCheckout(null);
+                                onOpenChange(false);
+                                if (orderNumber) {
+                                    navigate(orderSuccessPath(tenantSlug, orderNumber));
+                                }
+                            }}
+                            onCancel={() => setDeunaCheckout(null)}
                         />
                     </>
                 ) : (
@@ -1197,6 +1246,22 @@ export default function PurchaseModal({
                             </div>
                         )}
 
+                        {/* ── Optional access code (continuar sin código) ───── */}
+                        {accessType === "access_code" && allowContinueWithoutCode && (
+                            <div className="space-y-1.5" data-testid="optional-access-code">
+                                <Label htmlFor="optional-access-code">
+                                    Código de acceso (opcional)
+                                </Label>
+                                <Input
+                                    id="optional-access-code"
+                                    placeholder="Si tenés un código, ingresalo"
+                                    value={accessCode}
+                                    onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
+                                    data-testid="optional-access-code-input"
+                                />
+                            </div>
+                        )}
+
                         {/* ── Promo code ────────────────────────────────────── */}
                         {(pricingType !== "free" ||
                             (optionalDonation && donationCents > 0) ||
@@ -1228,7 +1293,7 @@ export default function PurchaseModal({
                                 ) : (
                                     <div className="flex gap-2">
                                         <Input
-                                            placeholder="¿Tenés un código promocional?"
+                                            placeholder="¿Tenés un código de compra / descuento?"
                                             value={promoCodeInput}
                                             onChange={(e) =>
                                                 setPromoCodeInput(e.target.value.toUpperCase())
@@ -1341,6 +1406,8 @@ export default function PurchaseModal({
                                 ? "Te enviaremos tu ticket por email al confirmar."
                                 : paymentMethod === "nuvei"
                                   ? "El cobro se procesa con Nuvei (Simply Connect). Los datos de tarjeta no quedan en TYS."
+                                  : paymentMethod === "deuna"
+                                    ? "El cobro se procesa con DEUNA (Payment Widget). Los datos de tarjeta no quedan en TYS."
                                   : paymentMethod === "stripe"
                                     ? "Te redirigimos a Stripe (procesamiento seguro). Los datos del tarjetahabiente no quedan en TYS."
                                     : paymentMethod === "paypal"

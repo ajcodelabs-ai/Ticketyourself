@@ -554,6 +554,20 @@ class TestCheckoutResponse:
         assert r.session_token == "tok"
         assert r.status == "nuvei_checkout"
 
+    def test_deuna_checkout(self):
+        r = CheckoutResponse(
+            payment_method="deuna",
+            status="deuna_checkout",
+            mode="payment",
+            plan_code="basico",
+            order_token="otok",
+            public_api_key="pk_test",
+            deuna_env="sandbox",
+            client_unique_id="bill_xyz",
+        )
+        assert r.order_token == "otok"
+        assert r.status == "deuna_checkout"
+
     def test_invalid_mode(self):
         with pytest.raises(ValidationError):
             CheckoutResponse(
