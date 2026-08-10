@@ -8,7 +8,7 @@ Paid + donation events: Stripe Checkout Session, finalize via webhook
 
 import logging
 import os
-from typing import Optional
+from typing import Literal, Optional
 
 import stripe
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
@@ -74,6 +74,9 @@ class CreateOrderBody(BaseModel):
     seat_ids: Optional[list[str]] = None
     # Phase 9.5 — promo codes (Bloque E)
     promo_code: Optional[str] = Field(default=None, max_length=40)
+    # §4.2.7 — descuentos por ley (declaración del comprador + doc de verificación)
+    law_category: Optional[Literal["disability", "senior"]] = None
+    law_document_id: Optional[str] = Field(default=None, max_length=80)
     # Phase 8 — multi-función + ticket types
     function_id: Optional[str] = None
     ticket_type_selections: Optional[list[TicketTypeSelection]] = None
@@ -90,6 +93,9 @@ class PreviewOrderBody(BaseModel):
     seat_ids: Optional[list[str]] = None
     promo_code: Optional[str] = Field(default=None, max_length=40)
     payment_method: Optional[str] = Field(default=None, max_length=20)
+    law_category: Optional[Literal["disability", "senior"]] = None
+    ticket_type_selections: Optional[list[TicketTypeSelection]] = None
+    buyer_email: Optional[EmailStr] = None
 
 
 async def _resolve_event_for_pricing(tenant_slug: str, event_slug: str):
@@ -153,12 +159,52 @@ async def preview_order(payload: PreviewOrderBody):
         seat_ids=payload.seat_ids,
         quantity=quantity,
     )
+    if payload.ticket_type_selections:
+        from orm_models import TicketType as _TTModel
+
+        async with AsyncSessionLocal() as pg:
+            tt_ids = [s.ticket_type_id for s in payload.ticket_type_selections]
+            result = await pg.execute(
+                select(_TTModel).where(
+                    _TTModel.id.in_(tt_ids), _TTModel.event_id == event["id"]
+                )
+            )
+            tt_map = {r.id: row_to_dict(r) for r in result.scalars().all()}
+        items = discount_service.items_from_ticket_types(
+            selections=[s.model_dump() for s in payload.ticket_type_selections],
+            ticket_types_by_id=tt_map,
+        )
+        # Align gross totals with ticket-type pricing when seats aren't used.
+        if not (payload.seat_ids and venue):
+            subtotal = sum(it["price_cents"] for it in items)
+            fees = (
+                int(round(subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
+                if subtotal > 0 and event.get("pricing_type") == "paid"
+                else 0
+            )
+            totals = {
+                **totals,
+                "subtotal_cents": subtotal,
+                "fees_cents": fees,
+                "total_cents": subtotal + fees,
+                "unit_price_cents": int(subtotal / max(1, len(items))),
+            }
     applied, warnings = discount_service.evaluate_discounts(
         event=event,
         items=items,
         promo_code=payload.promo_code,
         payment_method=payload.payment_method,
+        law_category=payload.law_category,
     )
+    if payload.promo_code and payload.buyer_email:
+        try:
+            await discount_service.enforce_promo_max_per_buyer(
+                event=event,
+                promo_code=payload.promo_code,
+                buyer_email=str(payload.buyer_email),
+            )
+        except HTTPException as exc:
+            warnings.append(exc.detail if isinstance(exc.detail, str) else str(exc.detail))
     out = _apply_discount_breakdown(totals, applied)
     out["organizer_id"] = organizer["id"]
     out["currency"] = event.get("currency", "USD")
@@ -348,6 +394,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                     "quantity": sel.quantity,
                     "unit_price_cents": unit,
                     "subtotal_cents": sel_subtotal,
+                    "venue_locality_id": tt.get("venue_locality_id"),
                 }
             )
         quantity = sum(s.quantity for s in payload.ticket_type_selections)
@@ -434,21 +481,71 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
     )
     effective_method = "stripe" if is_pure_free else payload.payment_method
 
-    # Phase 9.5 — apply discount rules (promo_code + best auto/quantity/buy_n_get_m)
+    # Phase 9.5 — apply discount rules (promo + auto/NxM + preventa/ley)
     # BEFORE creating the order so the persisted totals match what the buyer was
     # shown. Resolved against `effective_method` so payment-method-conditioned
     # rules see the form of payment that will actually be charged.
-    items = discount_service.items_from_payload(
+    if items_override and not seat_ids:
+        items = []
+        for io in items_override:
+            for _ in range(int(io.get("quantity") or 0)):
+                items.append(
+                    {
+                        "seat_id": None,
+                        "locality_id": io.get("venue_locality_id"),
+                        "price_cents": int(io.get("unit_price_cents") or 0),
+                    }
+                )
+    else:
+        items = discount_service.items_from_payload(
+            event=event,
+            venue=venue,
+            seat_ids=seat_ids,
+            quantity=quantity,
+        )
+
+    # §4.2.7 — verificación mínima de descuentos por ley
+    if payload.law_category:
+        discounts_cfg = event.get("discounts") or {}
+        if payload.law_category == "disability":
+            law = discounts_cfg.get("disability_law") or {}
+            if not law.get("enabled"):
+                raise HTTPException(
+                    422, "Este evento no tiene descuento por discapacidad."
+                )
+        elif payload.law_category == "senior":
+            law = discounts_cfg.get("senior_law") or {}
+            if not law.get("enabled"):
+                raise HTTPException(
+                    422, "Este evento no tiene descuento por tercera edad."
+                )
+            if law.get("require_document", True) and not (
+                payload.law_document_id or buyer.get("document_id")
+            ):
+                raise HTTPException(
+                    422,
+                    "Para el descuento de tercera edad indicá el número de cédula o carné.",
+                )
+        if payload.law_category == "disability" and not (
+            payload.law_document_id or buyer.get("document_id")
+        ):
+            raise HTTPException(
+                422,
+                "Para el descuento por discapacidad indicá el número de carné CONADIS o cédula.",
+            )
+
+    await discount_service.enforce_promo_max_per_buyer(
         event=event,
-        venue=venue,
-        seat_ids=seat_ids,
-        quantity=quantity,
+        promo_code=payload.promo_code,
+        buyer_email=buyer.get("email") or "",
     )
+
     applied_discounts, discount_warnings = discount_service.evaluate_discounts(
         event=event,
         items=items,
         promo_code=payload.promo_code,
         payment_method=effective_method,
+        law_category=payload.law_category,
     )
     if payload.promo_code and not any(
         a.get("type") == "promo_code" for a in applied_discounts
@@ -456,6 +553,15 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         # Buyer typed a code but it didn't resolve into a real discount — fail hard
         # so they don't pay for a code that won't apply.
         reason = discount_warnings[0] if discount_warnings else "Código no válido."
+        raise HTTPException(422, reason)
+    if payload.law_category and not any(
+        a.get("type") in ("disability_law", "senior_law") for a in applied_discounts
+    ):
+        reason = (
+            discount_warnings[0]
+            if discount_warnings
+            else "No se pudo aplicar el descuento por ley."
+        )
         raise HTTPException(422, reason)
     totals = _apply_discount_breakdown(totals, applied_discounts)
 
@@ -472,6 +578,8 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         items_override=items_override,
         access_code_id=access_code_id,
         custom_answers=custom_answers or None,
+        law_category=payload.law_category,
+        law_document_id=payload.law_document_id,
     )
 
     # FREE event without optional donation — confirm instantly.

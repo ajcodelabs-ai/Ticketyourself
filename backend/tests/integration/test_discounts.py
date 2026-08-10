@@ -86,6 +86,12 @@ def _discount_rule(rule_id: str | None = None, **kw) -> dict:
 
 BASE_DISCOUNTS = {
     "disability_law": {"enabled": False, "percent": 50},
+    "senior_law": {
+        "enabled": False,
+        "percent": 50,
+        "min_age": 65,
+        "require_document": True,
+    },
     "presale": {"enabled": False, "percent": 0, "ends_at": None},
 }
 

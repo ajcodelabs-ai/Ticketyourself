@@ -199,7 +199,14 @@ export default function PurchaseModal({
         fees_cents: number;
         total_cents: number;
         discount_total_cents: number;
+        discounts_applied?: Array<{ name: string; type: string; amount_cents: number }>;
     } | null>(null);
+    const [lawCategory, setLawCategory] = useState<"" | "disability" | "senior">("");
+    const [lawDocumentId, setLawDocumentId] = useState("");
+
+    const disabilityEnabled = !!event?.discounts?.disability_law?.enabled;
+    const seniorEnabled = !!event?.discounts?.senior_law?.enabled;
+    const lawDiscountAvailable = disabilityEnabled || seniorEnabled;
 
     // ── Fase 9: access gate (lista verificada / código de acceso) ──────────────
     const accessType = event?.access_params?.access_type || "open";
@@ -432,12 +439,12 @@ export default function PurchaseModal({
             base = { subtotal, fees, total: subtotal + fees };
         }
 
-        if (appliedPromo && previewTotals) {
+        if (previewTotals) {
             return {
                 subtotal: previewTotals.subtotal_cents,
                 fees: previewTotals.fees_cents,
                 total: previewTotals.total_cents,
-                discount: previewTotals.discount_total_cents,
+                discount: previewTotals.discount_total_cents || 0,
             };
         }
         if (appliedPromo) {
@@ -460,19 +467,65 @@ export default function PurchaseModal({
           ? totalQtyFromTypes
           : quantity;
 
+    const buildPreviewBody = () => {
+        const body: Record<string, unknown> = {
+            tenant_slug: tenantSlug,
+            event_slug: event.slug,
+            quantity: effectiveQty || 1,
+            payment_method: pricingType === "free" ? "stripe" : paymentMethod,
+        };
+        if (appliedPromo?.code) body.promo_code = appliedPromo.code;
+        if (lawCategory) body.law_category = lawCategory;
+        if (buyer.email) body.buyer_email = buyer.email;
+        if (isSeatNumbered) body.seat_ids = seatHoldsInfo.seat_ids;
+        if (hasTypes && typeSelections.length > 0) {
+            body.ticket_type_selections = typeSelections;
+        }
+        return body;
+    };
+
+    const refreshPreview = async () => {
+        if (!open || !event?.slug) return;
+        if (pricingType === "free" && !optionalDonation && !hasTypes) return;
+        if ((effectiveQty || 0) < 1 && !isSeatNumbered) return;
+        try {
+            const { data } = await api.post("/public/orders/preview", buildPreviewBody());
+            setPreviewTotals({
+                subtotal_cents: data.subtotal_cents,
+                fees_cents: data.fees_cents,
+                total_cents: data.total_cents,
+                discount_total_cents: data.discount_total_cents || 0,
+                discounts_applied: data.discounts_applied || [],
+            });
+        } catch {
+            /* soft — keep local totals */
+        }
+    };
+
+    useEffect(() => {
+        if (!open) return;
+        const t = window.setTimeout(() => {
+            refreshPreview();
+        }, 350);
+        return () => window.clearTimeout(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [
+        open,
+        effectiveQty,
+        paymentMethod,
+        appliedPromo?.code,
+        lawCategory,
+        JSON.stringify(typeSelections),
+        isSeatNumbered,
+        buyer.email,
+    ]);
+
     const applyPromo = async () => {
         const code = (promoCodeInput || "").trim().toUpperCase();
         if (!code) return;
         setApplyingPromo(true);
         try {
-            const body = {
-                tenant_slug: tenantSlug,
-                event_slug: event.slug,
-                quantity: effectiveQty || 1,
-                promo_code: code,
-                payment_method: pricingType === "free" ? "stripe" : paymentMethod,
-            };
-            if (isSeatNumbered) (body as any).seat_ids = seatHoldsInfo.seat_ids;
+            const body = { ...buildPreviewBody(), promo_code: code };
             const { data } = await api.post("/public/orders/preview", body);
             const applied = (data.discounts_applied || []).find(
                 (a: any) => a.type === "promo_code",
@@ -487,6 +540,7 @@ export default function PurchaseModal({
                 fees_cents: data.fees_cents,
                 total_cents: data.total_cents,
                 discount_total_cents: data.discount_total_cents,
+                discounts_applied: data.discounts_applied || [],
             });
             toast.success(`Descuento "${applied.name}" aplicado`);
         } catch (e: any) {
@@ -499,7 +553,6 @@ export default function PurchaseModal({
     const removePromo = () => {
         setAppliedPromo(null);
         setPromoCodeInput("");
-        setPreviewTotals(null);
     };
 
     const validate = () => {
@@ -529,6 +582,9 @@ export default function PurchaseModal({
         }
         if (event?.is_multi_function && functions.length > 0 && !selectedFunctionId)
             e.function = `Seleccioná un${isSubevent ? "" : "a"} ${functionNoun}`;
+        if (lawCategory && !(lawDocumentId.trim() || buyer.document_id.trim())) {
+            e.law_document = "Indicá el documento de verificación (cédula / carné).";
+        }
         for (const q of customQuestions) {
             if (q.required && !(customAnswers[q.id] || "").trim()) {
                 e[`cq_${q.id}`] = "Requerido";
@@ -580,6 +636,10 @@ export default function PurchaseModal({
             }
             if (appliedPromo?.code) {
                 payload.promo_code = appliedPromo.code;
+            }
+            if (lawCategory) {
+                payload.law_category = lawCategory;
+                payload.law_document_id = (lawDocumentId || buyer.document_id || "").trim() || null;
             }
             if (accessType === "access_code" && accessCode.trim()) {
                 payload.access_code = accessCode.trim();
@@ -1262,6 +1322,54 @@ export default function PurchaseModal({
                             </div>
                         )}
 
+                        {/* ── Law discounts ─────────────────────────────────── */}
+                        {lawDiscountAvailable && (
+                            <div className="border-t pt-3 space-y-2" data-testid="law-discount-block">
+                                <Label>Descuento por ley (opcional)</Label>
+                                <select
+                                    className="w-full border rounded-md h-9 px-2 text-sm bg-background"
+                                    value={lawCategory}
+                                    onChange={(e) =>
+                                        setLawCategory(e.target.value as "" | "disability" | "senior")
+                                    }
+                                    data-testid="law-category"
+                                >
+                                    <option value="">Sin descuento por ley</option>
+                                    {disabilityEnabled && (
+                                        <option value="disability">
+                                            Discapacidad ({event.discounts.disability_law.percent || 50}%)
+                                        </option>
+                                    )}
+                                    {seniorEnabled && (
+                                        <option value="senior">
+                                            Tercera edad ({event.discounts.senior_law?.percent || 50}%)
+                                        </option>
+                                    )}
+                                </select>
+                                {lawCategory && (
+                                    <div className="space-y-1">
+                                        <Label htmlFor="law-document">
+                                            Documento de verificación
+                                        </Label>
+                                        <Input
+                                            id="law-document"
+                                            placeholder="Cédula o carné CONADIS"
+                                            value={lawDocumentId || buyer.document_id}
+                                            onChange={(e) => setLawDocumentId(e.target.value)}
+                                            data-testid="law-document"
+                                        />
+                                        {errors.law_document && (
+                                            <p className="text-xs text-destructive">{errors.law_document}</p>
+                                        )}
+                                        <p className="text-[11px] text-muted-foreground">
+                                            Declarás que la información es correcta; el organizador puede
+                                            verificarla en puerta.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         {/* ── Promo code ────────────────────────────────────── */}
                         {(pricingType !== "free" ||
                             (optionalDonation && donationCents > 0) ||
@@ -1379,12 +1487,26 @@ export default function PurchaseModal({
                                     />
                                 )}
                                 {totals.discount > 0 && (
-                                    <Row
-                                        label={`Descuento ${appliedPromo?.name || ""}`}
-                                        value={`–${formatCents(totals.discount, event.currency)}`}
-                                        accent="emerald"
-                                        testid="row-discount"
-                                    />
+                                    <>
+                                        {(previewTotals?.discounts_applied || []).length > 0
+                                            ? (previewTotals?.discounts_applied || []).map((a) => (
+                                                <Row
+                                                    key={`${a.type}-${a.name}`}
+                                                    label={a.name || "Descuento"}
+                                                    value={`–${formatCents(a.amount_cents, event.currency)}`}
+                                                    accent="emerald"
+                                                    testid={`row-discount-${a.type}`}
+                                                />
+                                            ))
+                                            : (
+                                                <Row
+                                                    label={`Descuento ${appliedPromo?.name || ""}`}
+                                                    value={`–${formatCents(totals.discount, event.currency)}`}
+                                                    accent="emerald"
+                                                    testid="row-discount"
+                                                />
+                                            )}
+                                    </>
                                 )}
                                 {totals.fees > 0 && (
                                     <Row

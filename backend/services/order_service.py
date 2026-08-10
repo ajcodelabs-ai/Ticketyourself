@@ -407,6 +407,8 @@ async def create_order_skeleton(
     items_override: list[dict] | None = None,
     access_code_id: str | None = None,
     custom_answers: dict[str, str] | None = None,
+    law_category: str | None = None,
+    law_document_id: str | None = None,
 ) -> dict:
     from database import AsyncSessionLocal
     from orm_models import TicketOrder
@@ -516,6 +518,8 @@ async def create_order_skeleton(
             "source": "web",
             **({"access_code_id": access_code_id} if access_code_id else {}),
             **({"custom_answers": custom_answers} if custom_answers else {}),
+            **({"law_category": law_category} if law_category else {}),
+            **({"law_document_id": law_document_id} if law_document_id else {}),
         },
         expires_at=now + ttl,
         created_at=now,

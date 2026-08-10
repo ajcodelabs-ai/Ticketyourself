@@ -56,6 +56,12 @@ const EMPTY_FORM = {
     includes_marketing: false,
     allows_paid_events: true,
     allows_free_events: true,
+    // §4.2.7 — descuentos (viven en feature_flags del plan)
+    promo_codes: false,
+    advanced_discounts: false,
+    presale_discount: true,
+    disability_discount: true,
+    senior_discount: true,
     access_types_text: "general,vip",
     verification_fee_dollars: "10.00",
     event_fee_enabled: false,
@@ -79,6 +85,7 @@ function dollarsToCents(value) {
 }
 
 function planToForm(p) {
+    const flags = p.feature_flags || {};
     return {
         code: p.code,
         name: p.name,
@@ -96,6 +103,11 @@ function planToForm(p) {
         includes_marketing: Boolean(p.includes_marketing),
         allows_paid_events: p.allows_paid_events !== false,
         allows_free_events: p.allows_free_events !== false,
+        promo_codes: flags.promo_codes ?? Boolean(p.includes_marketing),
+        advanced_discounts: flags.advanced_discounts ?? Boolean(p.includes_marketing),
+        presale_discount: flags.presale_discount !== false,
+        disability_discount: flags.disability_discount !== false,
+        senior_discount: flags.senior_discount !== false,
         access_types_text: (p.access_types || []).join(","),
         verification_fee_dollars: centsToDollars(p.verification_fee_cents ?? 0),
         event_fee_enabled: Boolean(p.event_fee_enabled),
@@ -142,6 +154,13 @@ function formToPayload(form, { includeCode } = { includeCode: false }) {
         event_fee_per_ticket_cents,
         event_fee_percent_bps: Number(form.event_fee_percent_bps) || 0,
         active: form.active,
+        feature_flags: {
+            promo_codes: Boolean(form.promo_codes),
+            advanced_discounts: Boolean(form.advanced_discounts),
+            presale_discount: Boolean(form.presale_discount),
+            disability_discount: Boolean(form.disability_discount),
+            senior_discount: Boolean(form.senior_discount),
+        },
     };
     if (includeCode) payload.code = form.code.trim().toLowerCase();
     return payload;
@@ -174,7 +193,7 @@ const MODULE_HINTS = {
     includes_numbered:
         "Permite asientos numerados y el editor de venue. El organizador lo ve al crear eventos con mapa de butacas.",
     includes_marketing:
-        "Desbloquea herramientas de marketing premium (promos avanzadas / módulo marketing). Sin esto, esas opciones aparecen bloqueadas o ‘mejorá tu plan’.",
+        "Desbloquea herramientas de marketing premium (módulo marketing). Sin esto, esas opciones aparecen bloqueadas o ‘mejorá tu plan’.",
     includes_ai_design:
         "Habilita el diseñador de tickets con IA en el panel del evento.",
     includes_custom_domain:
@@ -183,6 +202,16 @@ const MODULE_HINTS = {
         "Si está off, el organizador no puede crear eventos Pagado ni Por Donación.",
     allows_free_events:
         "Si está off, el organizador no puede crear eventos Gratuitos.",
+    promo_codes:
+        "Permite códigos promocionales múltiples (cupo global / por comprador) en el paso Descuentos del wizard.",
+    advanced_discounts:
+        "Permite reglas automáticas: valor fijo, NxM (2x1), por forma de pago y por cantidad mínima.",
+    presale_discount:
+        "Permite el toggle Preventa (% hasta una fecha) en el wizard.",
+    disability_discount:
+        "Permite el descuento por ley de discapacidad (Ecuador) con verificación documental en checkout.",
+    senior_discount:
+        "Permite el descuento por tercera edad con verificación documental en checkout.",
 };
 
 export default function AdminPlans() {
@@ -520,6 +549,47 @@ export default function AdminPlans() {
                                     ["includes_custom_domain", "Dominio custom"],
                                     ["allows_paid_events", "Pagado / Donación"],
                                     ["allows_free_events", "Gratuito"],
+                                ].map(([key, label]) => (
+                                    <div key={key} className="flex items-center gap-2">
+                                        <Checkbox
+                                            id={key}
+                                            checked={Boolean(form[key])}
+                                            onCheckedChange={(v) =>
+                                                setForm((f) => ({ ...f, [key]: Boolean(v) }))
+                                            }
+                                        />
+                                        <FieldHint label={label} tip={MODULE_HINTS[key]} htmlFor={key} />
+                                    </div>
+                                ))}
+                            </CardContent>
+                        </Card>
+
+                        <Card className="sm:col-span-2 border-border/60" data-testid="admin-plan-discounts">
+                            <CardHeader className="py-3">
+                                <CardTitle className="text-base inline-flex items-center gap-1.5">
+                                    Descuentos (§4.2.7)
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <button type="button" className="text-muted-foreground" onClick={(e) => e.preventDefault()}>
+                                                <CircleHelp className="h-3.5 w-3.5" />
+                                            </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent className="max-w-xs text-xs">
+                                            Flags que el organizador ve en el paso Descuentos del wizard. Se guardan en feature_flags del plan.
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </CardTitle>
+                                <CardDescription>
+                                    Preventa, ley (discapacidad / tercera edad), códigos y reglas avanzadas.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="grid sm:grid-cols-2 gap-2 pb-4">
+                                {[
+                                    ["presale_discount", "Preventa"],
+                                    ["disability_discount", "Ley discapacidad"],
+                                    ["senior_discount", "Tercera edad"],
+                                    ["promo_codes", "Códigos promocionales"],
+                                    ["advanced_discounts", "Reglas avanzadas (NxM / fijo / pago)"],
                                 ].map(([key, label]) => (
                                     <div key={key} className="flex items-center gap-2">
                                         <Checkbox

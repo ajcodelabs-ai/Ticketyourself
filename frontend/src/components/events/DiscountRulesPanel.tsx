@@ -223,6 +223,8 @@ export default function DiscountRulesPanel({
     onChange,
     localities = [],
     enabledPaymentMethods = Object.keys(PAYMENT_METHOD_LABELS),
+    allowPromoCodes = true,
+    allowAdvanced = true,
 }) {
     const [draft, setDraft] = useState(null); // null = list mode
 
@@ -235,6 +237,15 @@ export default function DiscountRulesPanel({
         const name = (draft.name || "").trim();
         if (name.length < 2) {
             toast.error("El nombre debe tener al menos 2 caracteres.");
+            return;
+        }
+        const hasCode = !!(draft.code || "").trim();
+        if (hasCode && !allowPromoCodes) {
+            toast.error("Tu plan no incluye códigos promocionales.");
+            return;
+        }
+        if (!hasCode && !allowAdvanced) {
+            toast.error("Tu plan no incluye descuentos avanzados (automáticos / NxM).");
             return;
         }
         if (draft.modality === MODALITY.nxm) {

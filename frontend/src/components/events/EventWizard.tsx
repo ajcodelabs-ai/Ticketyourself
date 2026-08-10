@@ -183,6 +183,12 @@ function defaultPayments() {
 function defaultDiscounts() {
     return {
         disability_law: { enabled: false, percent: 50 },
+        senior_law: {
+            enabled: false,
+            percent: 50,
+            min_age: 65,
+            require_document: true,
+        },
         presale: { enabled: false, percent: 0, ends_at: null },
         rules: [],
     };
@@ -337,7 +343,23 @@ function makeInitial(d) {
         attendance_format: attendanceFormat,
         venue_id: d.venue_id || null,
         payment_methods: normalizePaymentMethodsForForm(d.payment_methods),
-        discounts: d.discounts || defaultDiscounts(),
+        discounts: {
+            ...defaultDiscounts(),
+            ...(d.discounts || {}),
+            disability_law: {
+                ...defaultDiscounts().disability_law,
+                ...(d.discounts?.disability_law || {}),
+            },
+            senior_law: {
+                ...defaultDiscounts().senior_law,
+                ...(d.discounts?.senior_law || {}),
+            },
+            presale: {
+                ...defaultDiscounts().presale,
+                ...(d.discounts?.presale || {}),
+            },
+            rules: d.discounts?.rules || [],
+        },
         access_params: {
             ...defaultAccessParams(),
             ...(d.access_params || {}),
@@ -1328,6 +1350,7 @@ function evalStepStatus(form, poster, currentEvent, pendingVenueId = null) {
 
     // Discounts: ok only once the organizer has configured at least one rule
     const hasDiscount = form.discounts?.disability_law?.enabled
+        || form.discounts?.senior_law?.enabled
         || form.discounts?.presale?.enabled
         || (form.discounts?.rules?.length > 0);
     s.discounts = hasDiscount ? "ok" : undefined;
@@ -3253,15 +3276,50 @@ function enabledPaymentMethodsOf(pm) {
 
 // ── Section: Discounts ──────────────────────────────────────────────────────
 function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }) {
-    const d = form.discounts;
+    const d = {
+        ...defaultDiscounts(),
+        ...(form.discounts || {}),
+        disability_law: {
+            ...defaultDiscounts().disability_law,
+            ...(form.discounts?.disability_law || {}),
+        },
+        senior_law: {
+            ...defaultDiscounts().senior_law,
+            ...(form.discounts?.senior_law || {}),
+        },
+        presale: {
+            ...defaultDiscounts().presale,
+            ...(form.discounts?.presale || {}),
+        },
+    };
     const rulesCount = (d.rules || []).filter((r) => r.enabled).length;
+    const { data: planFeatures } = usePlanFeatures();
+    const allowsDisability = planFeatures ? Boolean(planFeatures.disability_discount) : true;
+    const allowsSenior = planFeatures ? Boolean(planFeatures.senior_discount) : true;
+    const allowsPresale = planFeatures ? Boolean(planFeatures.presale_discount) : true;
+    const allowsPromo = planFeatures ? Boolean(planFeatures.promo_codes) : false;
+    const allowsAdvanced = planFeatures ? Boolean(planFeatures.advanced_discounts) : false;
+
+    useEffect(() => {
+        if (!planFeatures) return;
+        if (!allowsDisability && d.disability_law.enabled) {
+            update("discounts.disability_law.enabled", false);
+        }
+        if (!allowsSenior && d.senior_law.enabled) {
+            update("discounts.senior_law.enabled", false);
+        }
+        if (!allowsPresale && d.presale.enabled) {
+            update("discounts.presale.enabled", false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [planFeatures, allowsDisability, allowsSenior, allowsPresale]);
 
     return (
         <div className="space-y-6" data-testid="section-discounts">
             <div>
                 <h3 className="font-semibold text-base">Descuentos</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Configura descuentos por porcentaje, valor fijo o promociones 2x1.
+                    Preventa, descuentos por ley, códigos y reglas automáticas (NxM / fijo).
                     {rulesCount > 0 && (
                         <> · <strong className="text-foreground">{rulesCount}</strong> activo{rulesCount !== 1 ? "s" : ""}</>
                     )}
@@ -3290,7 +3348,8 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                         <div className="flex-1 min-w-0">
                             <div className="font-medium">Ley de discapacidad (Ecuador)</div>
                             <p className="text-xs text-muted-foreground mt-0.5">
-                                50% de descuento para compradores que acrediten discapacidad.
+                                {d.disability_law.percent || 50}% con verificación documental en compra.
+                                {!allowsDisability && " · Requiere plan con este módulo."}
                             </p>
                         </div>
                         <Switch
@@ -3298,9 +3357,74 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                             onCheckedChange={(v) =>
                                 update("discounts.disability_law.enabled", v)
                             }
+                            disabled={!allowsDisability}
                             data-testid="disc-disability"
                         />
                     </div>
+                </div>
+
+                <div className="rounded-xl border bg-card p-4">
+                    <div className="flex items-start gap-3">
+                        <div
+                            className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${
+                                d.senior_law?.enabled
+                                    ? "bg-teal-50 text-teal-800"
+                                    : "bg-secondary text-muted-foreground"
+                            }`}
+                        >
+                            <Users className="h-5 w-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="font-medium">Tercera edad</div>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                {d.senior_law?.percent || 50}% desde {d.senior_law?.min_age || 65} años,
+                                con cédula en checkout.
+                                {!allowsSenior && " · Requiere plan con este módulo."}
+                            </p>
+                        </div>
+                        <Switch
+                            checked={!!d.senior_law?.enabled}
+                            onCheckedChange={(v) =>
+                                update("discounts.senior_law.enabled", v)
+                            }
+                            disabled={!allowsSenior}
+                            data-testid="disc-senior"
+                        />
+                    </div>
+                    {d.senior_law?.enabled && (
+                        <div className="mt-4 pt-4 border-t grid sm:grid-cols-2 gap-3">
+                            <Field label="Porcentaje %">
+                                <Input
+                                    type="number"
+                                    min="1"
+                                    max="100"
+                                    value={d.senior_law.percent}
+                                    onChange={(e) =>
+                                        update(
+                                            "discounts.senior_law.percent",
+                                            parseInt(e.target.value || "50", 10),
+                                        )
+                                    }
+                                    data-testid="disc-senior-percent"
+                                />
+                            </Field>
+                            <Field label="Edad mínima">
+                                <Input
+                                    type="number"
+                                    min="50"
+                                    max="100"
+                                    value={d.senior_law.min_age}
+                                    onChange={(e) =>
+                                        update(
+                                            "discounts.senior_law.min_age",
+                                            parseInt(e.target.value || "65", 10),
+                                        )
+                                    }
+                                    data-testid="disc-senior-age"
+                                />
+                            </Field>
+                        </div>
+                    )}
                 </div>
 
                 <div className="rounded-xl border bg-card p-4">
@@ -3318,11 +3442,13 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                             <div className="font-medium">Preventa</div>
                             <p className="text-xs text-muted-foreground mt-0.5">
                                 Porcentaje automático hasta una fecha límite.
+                                {!allowsPresale && " · Requiere plan con este módulo."}
                             </p>
                         </div>
                         <Switch
                             checked={d.presale.enabled}
                             onCheckedChange={(v) => update("discounts.presale.enabled", v)}
+                            disabled={!allowsPresale}
                             data-testid="disc-presale"
                         />
                     </div>
@@ -3371,16 +3497,26 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                 <div>
                     <h4 className="text-sm font-medium">2. Descuentos del evento</h4>
                     <p className="text-xs text-muted-foreground">
-                        Con o sin código. Los códigos de compra sirven para descuentos,
-                        referidos y preventas (uso único configurable).
+                        Códigos múltiples y reglas automáticas (NxM, fijo, por forma de pago).
+                        {!allowsPromo && !allowsAdvanced && (
+                            <> · Tu plan no incluye códigos ni reglas avanzadas.</>
+                        )}
                     </p>
                 </div>
-                <DiscountRulesPanel
-                    rules={d.rules || []}
-                    onChange={(next) => update("discounts.rules", next)}
-                    localities={venueLocalities}
-                    enabledPaymentMethods={enabledPaymentMethodsOf(form.payment_methods)}
-                />
+                {(allowsPromo || allowsAdvanced) ? (
+                    <DiscountRulesPanel
+                        rules={d.rules || []}
+                        onChange={(next) => update("discounts.rules", next)}
+                        localities={venueLocalities}
+                        enabledPaymentMethods={enabledPaymentMethodsOf(form.payment_methods)}
+                        allowPromoCodes={allowsPromo}
+                        allowAdvanced={allowsAdvanced}
+                    />
+                ) : (
+                    <p className="text-sm text-muted-foreground rounded-lg border bg-secondary/30 px-3 py-2">
+                        Mejorá tu plan para usar códigos promocionales o descuentos avanzados.
+                    </p>
+                )}
             </section>
 
             {eventId && (

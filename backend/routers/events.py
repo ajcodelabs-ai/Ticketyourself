@@ -197,6 +197,14 @@ class EventDiscounts(BaseModel):
     disability_law: Dict[str, Any] = Field(
         default_factory=lambda: {"enabled": False, "percent": 50}
     )
+    senior_law: Dict[str, Any] = Field(
+        default_factory=lambda: {
+            "enabled": False,
+            "percent": 50,
+            "min_age": 65,
+            "require_document": True,
+        }
+    )
     presale: Dict[str, Any] = Field(
         default_factory=lambda: {"enabled": False, "percent": 0, "ends_at": None}
     )
@@ -210,6 +218,23 @@ class EventDiscounts(BaseModel):
             if c in seen:
                 raise ValueError(f"Código promocional duplicado: {c}")
             seen.add(c)
+        return self
+
+    @model_validator(mode="after")
+    def _normalize_law_blocks(self):
+        # Keep percent in range; tolerate missing keys from older events.
+        for key, default_pct in (("disability_law", 50), ("senior_law", 50)):
+            block = getattr(self, key) or {}
+            if not isinstance(block, dict):
+                block = {}
+            pct = int(block.get("percent") or default_pct)
+            block["percent"] = max(1, min(100, pct))
+            block["enabled"] = bool(block.get("enabled"))
+            if key == "senior_law":
+                age = int(block.get("min_age") or 65)
+                block["min_age"] = max(50, min(100, age))
+                block["require_document"] = bool(block.get("require_document", True))
+            setattr(self, key, block)
         return self
 
 
@@ -982,6 +1007,27 @@ async def _assert_pricing_type_allowed(
             )
 
 
+async def _assert_discounts_allowed(
+    session, plan_code: Optional[str], discounts: Optional[EventDiscounts]
+) -> None:
+    """PRD §4.2.7 — gate legacy toggles + rules by plan feature flags."""
+    if not discounts:
+        return
+    from services.plan_features import assert_feature_async
+
+    if (discounts.disability_law or {}).get("enabled"):
+        await assert_feature_async(session, plan_code, "disability_discount")
+    if (discounts.senior_law or {}).get("enabled"):
+        await assert_feature_async(session, plan_code, "senior_discount")
+    if (discounts.presale or {}).get("enabled"):
+        await assert_feature_async(session, plan_code, "presale_discount")
+    rules = discounts.rules or []
+    if any(r.type == "promo_code" for r in rules):
+        await assert_feature_async(session, plan_code, "promo_codes")
+    if any(r.type in ("auto", "quantity", "buy_n_get_m") for r in rules):
+        await assert_feature_async(session, plan_code, "advanced_discounts")
+
+
 async def _active_catalog_codes(session) -> set[str]:
     from orm_models import PaymentMethodCatalog
 
@@ -1028,6 +1074,12 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             org.get("plan_code") or org.get("signup_plan_code"),
             payload.pricing_type,
         )
+        if payload.discounts is not None:
+            await _assert_discounts_allowed(
+                session,
+                org.get("plan_code") or org.get("signup_plan_code"),
+                payload.discounts,
+            )
         slug = await _next_event_slug(org["id"], normalize_slug(payload.title), session)
         payment_methods = await _normalize_payment_methods_or_400(
             session, payload.payment_methods
@@ -1160,6 +1212,11 @@ async def update_my_event(
         # Re-dump nested JSONB fields to preserve all values (e.g. None inside rules).
         if "discounts" in diff and payload.discounts is not None:
             diff["discounts"] = payload.discounts.model_dump(exclude_none=False)
+            await _assert_discounts_allowed(
+                session,
+                org.get("plan_code") or org.get("signup_plan_code"),
+                payload.discounts,
+            )
         if "payment_methods" in diff and payload.payment_methods is not None:
             diff["payment_methods"] = await _normalize_payment_methods_or_400(
                 session, payload.payment_methods

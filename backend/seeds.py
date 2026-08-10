@@ -1081,6 +1081,12 @@ async def _seed_demo_events() -> None:
     }
     _demo_discounts = {
         "disability_law": {"enabled": False, "percent": 50},
+        "senior_law": {
+            "enabled": False,
+            "percent": 50,
+            "min_age": 65,
+            "require_document": True,
+        },
         "presale": {"enabled": False, "percent": 0, "ends_at": None},
     }
     _demo_access_params = {
@@ -2032,6 +2038,12 @@ async def _seed_demo_numbered_event() -> None:
     }
     _disc_num = {
         "disability_law": {"enabled": False, "percent": 50},
+        "senior_law": {
+            "enabled": False,
+            "percent": 50,
+            "min_age": 65,
+            "require_document": True,
+        },
         "presale": {"enabled": False, "percent": 0, "ends_at": None},
     }
     _ap_num = {

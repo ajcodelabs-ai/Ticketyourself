@@ -24,6 +24,7 @@ DEFAULT_FEATURES: Dict[str, Any] = {
     "manual_payments": True,
     "presale_discount": True,
     "disability_discount": True,
+    "senior_discount": True,
     "gallery_uploads": True,
     "includes_marketing": False,
     "allows_paid_events": True,
@@ -179,6 +180,18 @@ async def get_plan_features_async(
 def assert_feature(plan_code: Optional[str], feature: str) -> None:
     """Raises 403 when `feature` is not enabled for the organizer's plan."""
     if not get_plan_features(plan_code).get(feature, False):
+        raise HTTPException(
+            403,
+            f"Tu plan actual no incluye esta función ({feature}). Mejorá tu plan para usarla.",
+        )
+
+
+async def assert_feature_async(
+    session: AsyncSession, plan_code: Optional[str], feature: str
+) -> None:
+    """Like assert_feature but merges DB plan columns / feature_flags."""
+    feats = await get_plan_features_async(session, plan_code)
+    if not feats.get(feature, False):
         raise HTTPException(
             403,
             f"Tu plan actual no incluye esta función ({feature}). Mejorá tu plan para usarla.",
