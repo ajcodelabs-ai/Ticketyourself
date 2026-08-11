@@ -204,7 +204,9 @@ async def preview_order(payload: PreviewOrderBody):
                 buyer_email=str(payload.buyer_email),
             )
         except HTTPException as exc:
-            warnings.append(exc.detail if isinstance(exc.detail, str) else str(exc.detail))
+            warnings.append(
+                exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            )
     out = _apply_discount_breakdown(totals, applied)
     out["organizer_id"] = organizer["id"]
     out["currency"] = event.get("currency", "USD")
@@ -475,9 +477,8 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
 
     # Free events ignore payment_method unless optional donation > 0
     donation_cents = int(payload.donation_amount_cents or 0)
-    is_pure_free = (
-        event.get("pricing_type") == "free"
-        and not (event.get("optional_donation_enabled") and donation_cents > 0)
+    is_pure_free = event.get("pricing_type") == "free" and not (
+        event.get("optional_donation_enabled") and donation_cents > 0
     )
     effective_method = "stripe" if is_pure_free else payload.payment_method
 
@@ -533,6 +534,12 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                 422,
                 "Para el descuento por discapacidad indicá el número de carné CONADIS o cédula.",
             )
+
+        law_doc = payload.law_document_id or buyer.get("document_id")
+        if discount_service.looks_like_ec_cedula(
+            law_doc
+        ) and not discount_service.is_valid_ec_cedula(law_doc):
+            raise HTTPException(422, "Número de cédula inválido.")
 
     await discount_service.enforce_promo_max_per_buyer(
         event=event,
@@ -663,9 +670,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             }
 
         origin = _frontend_base(payload.origin_url)
-        success_url = (
-            f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}"
-        )
+        success_url = f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}"
         cancel_url = (
             f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}/cancelado"
         )

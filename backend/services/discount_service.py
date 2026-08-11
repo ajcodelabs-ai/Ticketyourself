@@ -16,6 +16,7 @@ None, so a locality-filtered rule never applies.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -175,6 +176,30 @@ def _apply_percent_to_items(items: list[dict], percent: int) -> int:
         return 0
     subtotal = sum(int(it.get("price_cents") or 0) for it in items)
     return min(subtotal, int(round(subtotal * percent / 100)))
+
+
+def looks_like_ec_cedula(value: str | None) -> bool:
+    """CONADIS disability carnet numbers use other formats; only 10-digit
+    numeric strings are meant to be an Ecuadorian cédula."""
+    return bool(value and re.fullmatch(r"\d{10}", value))
+
+
+def is_valid_ec_cedula(value: str | None) -> bool:
+    """Ecuadorian national ID checksum (módulo 10)."""
+    if not looks_like_ec_cedula(value):
+        return False
+    province = int(value[0:2])
+    if province < 1 or province > 24:
+        return False
+    if int(value[2]) > 6:
+        return False
+    coefficients = (2, 1, 2, 1, 2, 1, 2, 1, 2)
+    total = 0
+    for digit, coef in zip(value[:9], coefficients):
+        product = int(digit) * coef
+        total += product - 9 if product > 9 else product
+    verifier = (10 - (total % 10)) % 10
+    return verifier == int(value[9])
 
 
 def evaluate_legacy_benefits(
@@ -384,9 +409,7 @@ def evaluate_discounts(
                 }
             )
     applied.extend(
-        evaluate_legacy_benefits(
-            event=event, items=items, law_category=law_category
-        )
+        evaluate_legacy_benefits(event=event, items=items, law_category=law_category)
     )
     if law_category and law_category not in ("disability", "senior"):
         warnings.append("Categoría de descuento por ley no válida.")
