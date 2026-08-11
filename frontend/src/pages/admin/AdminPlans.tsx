@@ -132,7 +132,7 @@ function formToPayload(form, { includeCode } = { includeCode: false }) {
     if (price_cents === null || verification_fee_cents === null || event_fee_per_ticket_cents === null) {
         throw new Error("Monto inválido: usá formato 20.00");
     }
-    const payload = {
+    const payload: Record<string, any> = {
         name: form.name,
         description: form.description,
         price_cents,
@@ -166,7 +166,7 @@ function formToPayload(form, { includeCode } = { includeCode: false }) {
     return payload;
 }
 
-function FieldHint({ label, tip, htmlFor }) {
+function FieldHint({ label, tip, htmlFor }: { label: string; tip: string; htmlFor?: string }) {
     return (
         <Label htmlFor={htmlFor} className="inline-flex items-center gap-1.5">
             <span>{label}</span>

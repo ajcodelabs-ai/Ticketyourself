@@ -53,7 +53,7 @@ export default function AdminOrganizerDetail() {
     const [docs, setDocs] = useState([]);
     const [countries, setCountries] = useState([]);
     const [plans, setPlans] = useState([]);
-    const [edit, setEdit] = useState({});
+    const [edit, setEdit] = useState<Record<string, any>>({});
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [comment, setComment] = useState("");
@@ -128,7 +128,7 @@ export default function AdminOrganizerDetail() {
     const saveEdit = async () => {
         setSaving(true);
         try {
-            const payload = {
+            const payload: Record<string, any> = {
                 company_name: edit.company_name,
                 phone: edit.phone,
                 legal_id: edit.legal_id,
