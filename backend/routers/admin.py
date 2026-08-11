@@ -187,9 +187,22 @@ async def update_organizer(
     session: AsyncSession = Depends(get_db),
 ):
     row = await _load_organizer(organizer_id, session)
-    updates = {
-        k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None
+    raw_updates = payload.model_dump(exclude_unset=True)
+    # plan_code=null is handled below as "leave the current plan alone" —
+    # unassigning a plan is a distinct action, not implied by this generic PATCH.
+    if raw_updates.get("plan_code") is None:
+        raw_updates.pop("plan_code", None)
+    null_ok = {
+        "social_links",
+        "pep_details",
+        "uafe_declaration",
+        "org_references",
+        "signup_plan_code",
     }
+    for key, val in raw_updates.items():
+        if val is None and key not in null_ok:
+            raise HTTPException(422, f"El campo '{key}' no puede quedar vacío.")
+    updates = raw_updates
     if not updates:
         raise HTTPException(400, "No fields to update")
 
@@ -622,7 +635,9 @@ async def create_document_type_settings(
     return created
 
 
-@router.get("/settings/registration-countries", response_model=List[RegistrationCountryOut])
+@router.get(
+    "/settings/registration-countries", response_model=List[RegistrationCountryOut]
+)
 async def get_registration_countries_settings(session: AsyncSession = Depends(get_db)):
     return await list_countries(session, active_only=False)
 
