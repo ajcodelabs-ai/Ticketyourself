@@ -146,27 +146,41 @@ async def finalize_billing_intent_from_nuvei(
         pass
 
 
-async def apply_nuvei_notification(parsed: dict[str, Any], *, source: str) -> str:
+async def apply_nuvei_notification(
+    parsed: dict[str, Any], *, source: str, checksum_verified: bool = False
+) -> str:
     """Route an approved Nuvei notification to ticket order or billing intent."""
-    if not nuvei_service.is_approved_status(parsed.get("status")):
-        return "ignored_not_approved"
-
     client_unique_id = (parsed.get("client_unique_id") or "").strip()
     session_token = parsed.get("session_token")
     transaction_id = parsed.get("transaction_id")
 
-    # Prefer verifying with getPaymentStatus when we have a session token.
-    if session_token and nuvei_service.is_configured():
+    if checksum_verified:
+        # The DMN's cryptographic checksum already proves this came from Nuvei.
+        if not nuvei_service.is_approved_status(parsed.get("status")):
+            return "ignored_not_approved"
+    else:
+        # No valid checksum to trust — the raw status/id in the request body
+        # could be forged, so we MUST re-fetch the authoritative status from
+        # Nuvei's API ourselves before finalizing anything.
+        if not session_token or not nuvei_service.is_configured():
+            logger.warning(
+                "Nuvei %s: rejecting unverifiable notification (cuid=%s, has_token=%s)",
+                source,
+                client_unique_id,
+                bool(session_token),
+            )
+            return "ignored_unverified"
         try:
             status = nuvei_service.get_payment_status(session_token)
-            if not nuvei_service.is_approved_status(status.get("transaction_status")):
-                return "ignored_status_mismatch"
-            client_unique_id = (
-                status.get("client_unique_id") or client_unique_id or ""
-            ).strip()
-            transaction_id = status.get("transaction_id") or transaction_id
         except nuvei_service.NuveiError as e:
-            logger.warning("getPaymentStatus during DMN failed: %s", e)
+            logger.warning("getPaymentStatus during %s failed: %s", source, e)
+            return "ignored_unverified"
+        if not nuvei_service.is_approved_status(status.get("transaction_status")):
+            return "ignored_status_mismatch"
+        client_unique_id = (
+            status.get("client_unique_id") or client_unique_id or ""
+        ).strip()
+        transaction_id = status.get("transaction_id") or transaction_id
 
     if not client_unique_id:
         return "ignored_missing_id"
@@ -177,7 +191,9 @@ async def apply_nuvei_notification(parsed: dict[str, Any], *, source: str) -> st
         )
         if order_row is None and session_token:
             order_row = await session.scalar(
-                select(TicketOrder).where(TicketOrder.stripe_session_id == session_token)
+                select(TicketOrder).where(
+                    TicketOrder.stripe_session_id == session_token
+                )
             )
         if order_row is not None:
             order = row_to_dict(order_row)
@@ -245,12 +261,15 @@ async def nuvei_dmn(request: Request):
     Always return 200 OK so Nuvei does not retry endlessly on business misses.
     """
     params = await _params_from_request(request)
-    if not nuvei_service.verify_dmn_checksum(params):
+    checksum_result = nuvei_service.verify_dmn_checksum(params)
+    if checksum_result is False:
         logger.warning("Nuvei DMN checksum mismatch")
         raise HTTPException(400, "Invalid DMN checksum")
 
     parsed = nuvei_service.parse_dmn_params(params)
-    result = await apply_nuvei_notification(parsed, source="dmn")
+    result = await apply_nuvei_notification(
+        parsed, source="dmn", checksum_verified=(checksum_result is True)
+    )
     logger.info(
         "Nuvei DMN result=%s status=%s cuid=%s",
         result,
@@ -293,7 +312,9 @@ async def confirm_nuvei_payment(body: dict[str, Any]):
         "session_token": session_token,
         "transaction_id": status.get("transaction_id"),
     }
-    result = await apply_nuvei_notification(parsed, source="confirm")
+    result = await apply_nuvei_notification(
+        parsed, source="confirm", checksum_verified=True
+    )
     if result == "not_found":
         raise HTTPException(404, "No encontramos la orden o el plan asociado al pago")
     return {"ok": True, "result": result}

@@ -252,15 +252,13 @@ def get_payment_status(session_token: str) -> dict[str, Any]:
         raise NuveiError("sessionToken required")
     data = _post("getPaymentStatus.do", {"sessionToken": session_token})
     transaction_status = (
-        data.get("transactionStatus")
-        or data.get("Status")
-        or data.get("status")
-        or ""
+        data.get("transactionStatus") or data.get("Status") or data.get("status") or ""
     )
     return {
         "transaction_status": str(transaction_status).upper(),
         "transaction_id": data.get("transactionId"),
-        "client_unique_id": data.get("clientUniqueId") or data.get("merchant_unique_id"),
+        "client_unique_id": data.get("clientUniqueId")
+        or data.get("merchant_unique_id"),
         "amount": data.get("amount") or data.get("totalAmount"),
         "currency": data.get("currency"),
         "raw": data,
@@ -273,6 +271,7 @@ def is_approved_status(status: str | None) -> bool:
 
 def parse_dmn_params(params: dict[str, Any]) -> dict[str, Any]:
     """Normalize DMN query/form params (Payment Page + REST notification styles)."""
+
     def _get(*keys: str) -> Any:
         for k in keys:
             if k in params and params[k] not in (None, ""):
@@ -303,12 +302,17 @@ def parse_dmn_params(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def verify_dmn_checksum(params: dict[str, Any]) -> bool:
+def verify_dmn_checksum(params: dict[str, Any]) -> Optional[bool]:
     """
     Optional Payment Page–style response checksum.
 
     Concatenation: secret + totalAmount + currency + responseTimeStamp
     + ppp_TransactionID + status + productId
+
+    Returns True if the checksum is present and matches, False if present and
+    wrong, or None if the field is simply absent (REST-style DMNs may omit it —
+    callers MUST treat None as unverified and re-check via getPaymentStatus,
+    never as implicitly valid).
     """
     secret = _secret()
     if not secret:
@@ -316,8 +320,7 @@ def verify_dmn_checksum(params: dict[str, Any]) -> bool:
     parsed = parse_dmn_params(params)
     expected_hex = parsed.get("advance_response_checksum")
     if not expected_hex:
-        # REST DMNs may omit this; caller should still verify via getPaymentStatus.
-        return True
+        return None
 
     raw = (
         f"{secret}"
