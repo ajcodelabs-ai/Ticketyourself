@@ -223,6 +223,8 @@ export default function DiscountRulesPanel({
     onChange,
     localities = [],
     enabledPaymentMethods = Object.keys(PAYMENT_METHOD_LABELS),
+    allowPromoCodes = true,
+    allowAdvanced = true,
 }) {
     const [draft, setDraft] = useState(null); // null = list mode
 
@@ -235,6 +237,15 @@ export default function DiscountRulesPanel({
         const name = (draft.name || "").trim();
         if (name.length < 2) {
             toast.error("El nombre debe tener al menos 2 caracteres.");
+            return;
+        }
+        const hasCode = !!(draft.code || "").trim();
+        if (hasCode && !allowPromoCodes) {
+            toast.error("Tu plan no incluye códigos promocionales.");
+            return;
+        }
+        if (!hasCode && !allowAdvanced) {
+            toast.error("Tu plan no incluye descuentos avanzados (automáticos / NxM).");
             return;
         }
         if (draft.modality === MODALITY.nxm) {
@@ -295,7 +306,7 @@ export default function DiscountRulesPanel({
         <div className="space-y-4" data-testid="discount-rules-panel">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="text-xs text-muted-foreground max-w-md space-y-1">
-                    <p>Configura descuentos por porcentaje, valor fijo o promociones 2x1.</p>
+                    <p>Configura descuentos, códigos de compra (referidos / preventas) o promos 2x1.</p>
                     <p>
                         Stacking máximo:{" "}
                         <strong className="text-foreground">1 código + 1 automático/cantidad</strong>.

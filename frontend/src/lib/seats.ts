@@ -101,7 +101,8 @@ export function seatRadius(element) {
 }
 
 // Totals of selected seats given event.locality_pricing.
-// Buyer pays entrada + c.servicio + c.admin; platform fee applies only to entrada.
+// Buyer pays entrada + servicio + TicketSeguro + impuestos + billetera;
+// platform fee applies only to entrada.
 export function selectedSeatBreakdown(selectedSeats, localityPricing) {
     const byLoc = Object.fromEntries(
         (localityPricing || []).map((lp) => [lp.locality_id, lp]),
@@ -110,19 +111,22 @@ export function selectedSeatBreakdown(selectedSeats, localityPricing) {
     let service = 0;
     let admin = 0;
     let vxs = 0;
+    let wallet = 0;
     for (const seat of selectedSeats || []) {
         const lp = byLoc[seat.locality_id] || {};
         entrada += Number(lp.price_cents || 0);
         service += Number(lp.service_fee_cents || 0);
         admin += Number(lp.admin_fee_cents || 0);
         vxs += Number(lp.vxs_cents || 0);
+        wallet += Number(lp.wallet_fee_cents || 0);
     }
     return {
         entrada_cents: entrada,
         service_fee_cents: service,
         admin_fee_cents: admin,
         vxs_cents: vxs,
-        subtotal_cents: entrada + service + admin + vxs,
+        wallet_fee_cents: wallet,
+        subtotal_cents: entrada + service + admin + vxs + wallet,
     };
 }
 

@@ -351,7 +351,8 @@ class EventFunctionUpdate(BaseModel):
     ticket_type_overrides: Optional[List[FunctionTicketTypeOverride]] = None
 
 
-# Franjas horarias — a función without an explicit end is assumed to run ~1h
+# Duration default for overlap detection when ends_at is missing (~1h).
+# Not "franjas de ingreso" (Phase 2 capacity slots) — those are out of scope.
 # for the purpose of detecting schedule overlaps against sibling funciones.
 _DEFAULT_FUNCTION_DURATION = timedelta(hours=1)
 
@@ -432,6 +433,9 @@ async def create_function(
     session: AsyncSession = Depends(get_db),
 ):
     org = await _get_org(user, session)
+    from services.plan_features import assert_feature
+
+    assert_feature(org.plan_code, "multi_function_events")
     event = await _get_event_for_org(event_id, org.id, session)
     await _check_schedule_conflict(
         event_id,
@@ -468,9 +472,11 @@ async def create_function(
     if body.ticket_type_overrides:
         await _upsert_overrides(func.id, body.ticket_type_overrides, session)
 
-    # Mark event as multi-function
+    # Mark event as multi-function / subevent umbrella (PRD §4.2.3).
     if not event.is_multi_function:
         event.is_multi_function = True
+    if body.kind in ("function", "subevent"):
+        event.multi_function_mode = body.kind
 
     await session.refresh(func)
 
@@ -573,7 +579,7 @@ async def delete_function(
     session: AsyncSession = Depends(get_db),
 ):
     org = await _get_org(user, session)
-    await _get_event_for_org(event_id, org.id, session)
+    event = await _get_event_for_org(event_id, org.id, session)
 
     result = await session.execute(
         select(EventFunction).where(
@@ -581,15 +587,26 @@ async def delete_function(
             EventFunction.event_id == event_id,
         )
     )
-    func = result.scalar_one_or_none()
-    if not func:
+    row = result.scalar_one_or_none()
+    if not row:
         raise HTTPException(status_code=404, detail="Function not found")
-    if func.tickets_sold > 0:
+    if row.tickets_sold > 0:
         raise HTTPException(
             status_code=409,
             detail="Cannot delete a function that already has ticket sales.",
         )
-    await session.delete(func)
+    await session.delete(row)
+    await session.flush()
+    remaining = await session.scalar(
+        select(sa.func.count())
+        .select_from(EventFunction)
+        .where(
+            EventFunction.event_id == event_id,
+            EventFunction.status != "cancelled",
+        )
+    )
+    if not remaining:
+        event.is_multi_function = False
 
 
 # ── Public function endpoints ─────────────────────────────────────────────────

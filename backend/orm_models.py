@@ -82,13 +82,29 @@ class SubscriptionPlan(Base):
     description = Column(String(500), nullable=False)
     price_cents = Column(Integer, nullable=False)
     currency = Column(String(3), nullable=False, default="usd")
-    billing_period = Column(String(20), nullable=False)
-    features = Column(JSONB, nullable=False, default=list)
-    max_events = Column(Integer, nullable=False, default=-1)
+    billing_period = Column(String(20), nullable=False)  # one_time | monthly | annual
+    features = Column(JSONB, nullable=False, default=list)  # marketing bullet list
+    max_events = Column(
+        Integer, nullable=False, default=-1
+    )  # monthly quota (-1 unlimited)
+    max_events_year = Column(Integer, nullable=False, default=-1)
     max_tickets_per_event = Column(Integer, nullable=False, default=-1)
     includes_numbered = Column(Boolean, nullable=False, default=False)
     includes_ai_design = Column(Boolean, nullable=False, default=False)
     includes_custom_domain = Column(Boolean, nullable=False, default=False)
+    includes_marketing = Column(Boolean, nullable=False, default=False)
+    allows_paid_events = Column(Boolean, nullable=False, default=True)
+    allows_free_events = Column(Boolean, nullable=False, default=True)
+    access_types = Column(JSONB, nullable=True)  # e.g. ["general","vip","season"]
+    # Advance verification fee charged at onboarding (0 = waived for this plan)
+    verification_fee_cents = Column(Integer, nullable=False, default=0)
+    # Pre-event platform fee (charged before publish / event start)
+    event_fee_enabled = Column(Boolean, nullable=False, default=False)
+    event_fee_per_ticket_cents = Column(Integer, nullable=False, default=0)
+    event_fee_percent_bps = Column(
+        Integer, nullable=False, default=0
+    )  # 100 = 1% of estimated GMV
+    feature_flags = Column(JSONB, nullable=True)  # overrides for plan_features
     active = Column(Boolean, nullable=False, default=True)
     stripe_price_id = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
@@ -131,13 +147,31 @@ class Organizer(Base):
     org_type = Column(String(20), nullable=False)  # individual | company
     email = Column(String(254), nullable=False)
     phone = Column(String(40), nullable=False)
-    country = Column(String(40), nullable=False)
+    country = Column(String(40), nullable=False)  # display label
+    country_code = Column(String(2), nullable=False, default="EC")  # ISO-2
     slug = Column(String(60), ForeignKey("tenants.slug"), unique=True, nullable=False)
     status = Column(String(20), nullable=False, default="pending")
     rejection_reason = Column(Text, nullable=True)
+    social_links = Column(JSONB, nullable=True)
+    is_pep = Column(Boolean, nullable=False, default=False)
+    pep_details = Column(Text, nullable=True)
+    uafe_declaration = Column(JSONB, nullable=True)
+    org_references = Column(JSONB, nullable=True)  # [{name, phone, relation}, ...]
+    signup_plan_code = Column(String(40), nullable=True)
     plan_id = Column(String(36), ForeignKey("subscription_plans.id"), nullable=True)
     plan_code = Column(String(40), nullable=True)
     subscription_status = Column(String(20), nullable=False, default="none")
+    # Advance verification fee (plan-driven)
+    verification_fee_cents = Column(Integer, nullable=True)
+    verification_fee_status = Column(
+        String(20), nullable=False, default="none"
+    )  # none | pending | paid | waived
+    # OneShot / contract
+    contract_status = Column(
+        String(20), nullable=False, default="none"
+    )  # none | pending | sent | signed | failed
+    contract_external_id = Column(String(120), nullable=True)
+    contract_signed_at = Column(DateTime(timezone=True), nullable=True)
     stripe_customer_id = Column(String(100), nullable=True)
     stripe_subscription_id = Column(String(100), nullable=True)
     current_period_end = Column(DateTime(timezone=True), nullable=True)
@@ -195,10 +229,14 @@ class OrganizerDocument(Base):
 
 
 class RequiredDocumentSet(Base):
-    """Admin-configurable: which doc_types are mandatory per org_type."""
+    """Admin-configurable: which doc_types are mandatory per country × org_type.
+
+    country_code='*' is the global fallback when a country has no specific row.
+    """
 
     __tablename__ = "required_document_sets"
 
+    country_code = Column(String(2), primary_key=True)  # ISO-2 or '*'
     org_type = Column(String(20), primary_key=True)  # "individual" | "company"
     doc_types = Column(JSONB, nullable=False)
     updated_at = Column(
@@ -216,6 +254,26 @@ class DocumentType(Base):
     label = Column(String(80), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     created_by = Column(String(36), nullable=True)
+
+
+class RegistrationCountry(Base):
+    """Admin-configurable registration jurisdiction (country) for KYC / docs."""
+
+    __tablename__ = "registration_countries"
+
+    code = Column(String(2), primary_key=True)  # ISO-2
+    name = Column(String(80), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    requires_compliance = Column(Boolean, nullable=False, default=False)
+    legal_id_label = Column(String(80), nullable=True)
+    legal_id_pattern = Column(String(120), nullable=True)
+    form_schema = Column(JSONB, nullable=True)
+    compliance_schema = Column(JSONB, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+    updated_by = Column(String(36), nullable=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -280,6 +338,7 @@ class Event(Base):
     venue_address = Column(String(300), nullable=True)
     venue_city = Column(String(100), nullable=True)
     venue_country = Column(String(100), nullable=True)
+    country_code = Column(String(2), nullable=True)  # ISO-2 country of the event
     location_lat = Column(Float, nullable=True)
     location_lng = Column(Float, nullable=True)
 
@@ -315,6 +374,11 @@ class Event(Base):
     # §4.2.1 — donation events may emit RIFA-numbered tickets
     raffle_enabled = Column(Boolean, nullable=False, default=False)
     raffle_numbers_issued = Column(Integer, nullable=False, default=0)
+    # §4.2.1 — free events may accept an optional voluntary contribution
+    optional_donation_enabled = Column(Boolean, nullable=False, default=False)
+    # §4.2.1 Pagado — per-ticket fees for general (non-seated) events:
+    # service_fee_cents, ticketseguro_cents, tax_cents, wallet_fee_cents
+    ticket_fees = Column(JSONB, nullable=False, default=dict)
 
     # Media — Banner / Mediana (poster) / Pequeña (small) + gallery
     poster_url = Column(Text, nullable=True)
@@ -361,9 +425,10 @@ class Event(Base):
 
     # Phase 8 — multi-function support
     is_multi_function = Column(Boolean, nullable=False, default=False)
-    # "function" = Multifunción/Franjas horarias (same show repeated).
-    # "subevent" = Evento con Subeventos (independent add-ons: sala VIP,
-    # cena, meet & greet). Drives wording + EventFunction.kind default and
+    # PRD §4.2.3 — "function" = Multifunción (same show repeated on other dates).
+    # "subevent" = Evento con Subeventos (independent add-ons: sala VIP, cena,
+    # meet & greet). Entry time-slots / franjas de ingreso are Phase 2 — not here.
+    # Drives wording + EventFunction.kind default and
     # whether sibling funciones are allowed to overlap in time.
     multi_function_mode = Column(String(20), nullable=False, default="function")
 
@@ -378,6 +443,13 @@ class Event(Base):
         DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
     )
     published_at = Column(DateTime(timezone=True), nullable=True)
+    # Platform fee charged before the event can be published / start
+    pre_event_fee_cents = Column(Integer, nullable=False, default=0)
+    pre_event_fee_status = Column(
+        String(20), nullable=False, default="none"
+    )  # none | pending | paid | waived
+    pre_event_fee_paid_at = Column(DateTime(timezone=True), nullable=True)
+    pre_event_fee_breakdown = Column(JSONB, nullable=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -690,8 +762,11 @@ class BillingIntent(Base):
     plan_code = Column(String(40), nullable=False)
     session_id = Column(
         String(200), nullable=True, index=True
-    )  # Stripe checkout session ID
-    mode = Column(String(20), nullable=True)  # subscription | payment
+    )  # Stripe checkout session ID or local gateway ref
+    payment_method = Column(
+        String(20), nullable=False, default="stripe"
+    )  # stripe | nuvei | deuna
+    mode = Column(String(20), nullable=True)  # subscription | payment | gateway
     status = Column(String(20), nullable=False, default="pending")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     completed_at = Column(DateTime(timezone=True), nullable=True)
@@ -788,11 +863,11 @@ class EventFunction(Base):
         String(20), nullable=False, default="active"
     )  # active | cancelled | soldout
     sort_order = Column(Integer, nullable=False, default=0)
-    # "function" = same show repeated (Multifunción/Franjas horarias) — blocked
-    # from overlapping a sibling in the same venue. "subevent" = independent
-    # add-on under the umbrella event (sala VIP, cena, meet & greet) — may
-    # legitimately run concurrently with the main event or other subevents,
-    # so the schedule-overlap check skips it. See _check_schedule_conflict.
+    # "function" = same show repeated (Multifunción) — blocked from overlapping
+    # a sibling in the same venue. "subevent" = independent add-on under the
+    # umbrella event (sala VIP, cena, meet & greet) — may legitimately run
+    # concurrently with the main event or other subevents, so the schedule-
+    # overlap check skips it. Entry time-slots / franjas are Phase 2 — not here.
     kind = Column(String(20), nullable=False, default="function")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(

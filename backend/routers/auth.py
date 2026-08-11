@@ -2,9 +2,10 @@
 
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -20,6 +21,7 @@ from models import (
     LoginRequest,
     OrganizerOut,
     RegisterRequest,
+    RegistrationCountryOut,
     SlugCheckResponse,
     UserOut,
 )
@@ -36,6 +38,11 @@ from security import (
 )
 from services.activation import create_activation_token, ensure_activation_record
 from services.email_service import send_welcome_email
+from services.registration_countries import (
+    get_country,
+    list_countries,
+    validate_compliance_payload,
+)
 from slugs import find_unique_slug_pg, is_valid_slug, normalize_slug
 
 logger = logging.getLogger("tys.auth")
@@ -51,6 +58,14 @@ def _org_row_to_out(row: Optional[Organizer]) -> Optional[OrganizerOut]:
     if not row:
         return None
     return OrganizerOut(**organizer_row_to_dict(row))
+
+
+# ── Registration countries (public) ───────────────────────────────────────────
+
+
+@router.get("/registration-countries", response_model=List[RegistrationCountryOut])
+async def registration_countries(session: AsyncSession = Depends(get_db)):
+    return await list_countries(session, active_only=True)
 
 
 # ── Slug check ────────────────────────────────────────────────────────────────
@@ -96,6 +111,32 @@ async def register(
     existing = await session.execute(select(User).where(User.email == email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")
+
+    # Resolve country (ISO-2 preferred; fall back to display name → EC)
+    country_code = (payload.country_code or "").upper().strip()
+    if not country_code:
+        # Legacy clients send country="Ecuador" or "EC"
+        raw = payload.country.strip()
+        country_code = raw.upper() if len(raw) == 2 else "EC"
+    country_row = await get_country(session, country_code)
+    if not country_row or not country_row.is_active:
+        raise HTTPException(
+            status_code=400, detail=f"Country '{country_code}' is not available"
+        )
+    country_label = country_row.name
+
+    validate_compliance_payload(
+        country_row,
+        is_pep=payload.is_pep,
+        pep_details=payload.pep_details,
+        uafe_declaration=payload.uafe_declaration,
+        org_references=payload.org_references,
+    )
+
+    if country_row.legal_id_pattern:
+        if not re.match(country_row.legal_id_pattern, payload.legal_id.strip()):
+            label = country_row.legal_id_label or "legal_id"
+            raise HTTPException(400, f"Invalid {label} for {country_label}")
 
     desired_slug = (payload.slug or "").strip()
     base_slug = (
@@ -158,10 +199,17 @@ async def register(
             org_type=payload.org_type,
             email=email,
             phone=payload.phone.strip(),
-            country=payload.country.strip(),
+            country=country_label,
+            country_code=country_code,
             slug=slug,
             status="pending",
             rejection_reason=None,
+            social_links=payload.social_links,
+            is_pep=payload.is_pep,
+            pep_details=payload.pep_details,
+            uafe_declaration=payload.uafe_declaration,
+            org_references=payload.org_references,
+            signup_plan_code=payload.signup_plan_code,
             plan_id=None,
             plan_code=None,
             subscription_status="none",

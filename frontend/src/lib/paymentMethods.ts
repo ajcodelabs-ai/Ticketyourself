@@ -2,8 +2,18 @@
  * Payment method catalog helpers — dual-read of enabled_codes + legacy flags.
  */
 
-export const CATALOG_PAYMENT_CODES = ["nuvei", "deuna", "transfer", "cash"] as const;
+export const CATALOG_PAYMENT_CODES = [
+    "nuvei",
+    "deuna",
+    "stripe",
+    "paypal",
+    "transfer",
+    "cash",
+] as const;
 export type CatalogPaymentCode = (typeof CATALOG_PAYMENT_CODES)[number];
+
+/** Gateways without a live charge path yet (order stays pending_gateway). */
+export const GATEWAY_STUB_CODES = new Set(["paypal"]);
 
 const CATALOG_SET = new Set<string>(CATALOG_PAYMENT_CODES);
 
@@ -17,20 +27,17 @@ export function resolveEnabledPaymentCodes(
         for (const c of pm.enabled_codes) {
             if (typeof c !== "string") continue;
             const code = c.trim().toLowerCase();
-            if ((CATALOG_SET.has(code) || (includeLegacyStripe && code === "stripe")) && !out.includes(code)) {
+            if (CATALOG_SET.has(code) && !out.includes(code)) {
                 out.push(code);
             }
         }
         // An explicit (even empty) `enabled_codes` array is respected as-is —
-        // matches backend's resolve_enabled_codes, which never re-adds a
-        // default once the key is present. Falling back to ["nuvei"] here
-        // made the UI show a payment method as available right after the
-        // organizer cleared every selection, while the backend correctly
-        // rejects the purchase.
+        // matches backend's resolve_enabled_codes.
+        void includeLegacyStripe;
         return out;
     }
     const codes: string[] = [];
-    if (includeLegacyStripe && pm.stripe?.enabled) codes.push("stripe");
+    if (pm.stripe?.enabled) codes.push("stripe");
     if (pm.transfer?.enabled) codes.push("transfer");
     if (pm.cash?.enabled) codes.push("cash");
     return codes.length ? codes : ["nuvei"];
@@ -51,14 +58,14 @@ export function defaultPaymentMethods() {
     };
 }
 
-/** Normalize event payment_methods for the wizard form (stripe out of UI). */
+/** Normalize event payment_methods for the wizard form. */
 export function normalizePaymentMethodsForForm(pm: Record<string, any> | null | undefined) {
     const base = defaultPaymentMethods();
     if (!pm) return base;
-    const enabled_codes = resolveEnabledPaymentCodes(pm, { includeLegacyStripe: false });
+    const enabled_codes = resolveEnabledPaymentCodes(pm);
     return {
         enabled_codes,
-        stripe: { enabled: false },
+        stripe: { enabled: enabled_codes.includes("stripe") },
         transfer: {
             enabled: enabled_codes.includes("transfer"),
             bank_name: pm.transfer?.bank_name || "",
@@ -83,7 +90,7 @@ export function withEnabledCodes(
     return {
         ...pm,
         enabled_codes,
-        stripe: { enabled: false },
+        stripe: { enabled: enabled_codes.includes("stripe") },
         transfer: {
             ...(pm.transfer || baseTransfer()),
             enabled: enabled_codes.includes("transfer"),

@@ -69,7 +69,7 @@ test.describe("Event wizard", () => {
     await page.getByTestId("tab-localidades").click();
     await page.waitForTimeout(300);
 
-    await page.getByTestId("wiz-seated-toggle").click();
+    await page.getByTestId("attendance-format-general").click();
     await page.waitForTimeout(300);
 
     // General-admission mode also requires a venue name before `whereOk`
@@ -96,7 +96,7 @@ test.describe("Event wizard", () => {
     await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
 
     // "free" is the default pricing type for a brand-new event.
-    await expect(page.getByTestId("wiz-pricing-type")).toContainText("Gratis");
+    await expect(page.getByTestId("wiz-pricing-type")).toContainText("Gratuito");
 
     await page.getByTestId("tab-fechas").click();
     await expect(page.getByTestId("info-cuando-block")).toContainText(
@@ -131,8 +131,11 @@ test.describe("Event wizard", () => {
     await expect(verified).toContainText("Plan Enterprise");
     await expect(accessCode).toContainText("Plan Enterprise");
 
-    // Open / link_only remain available.
+    // Open remains available; link_only / público bloqueado removed (PRD §4.2.2).
     await expect(page.getByTestId("access-type-open")).toBeEnabled();
-    await expect(page.getByTestId("access-type-link_only")).toBeEnabled();
+    await expect(page.getByTestId("access-type-link_only")).toHaveCount(0);
+    await expect(page.getByTestId("access-visibility-public_blocked")).toHaveCount(0);
+    await expect(page.getByTestId("ticket-validation-qr")).toBeVisible();
+    await expect(page.getByTestId("ticket-validation-none")).toBeVisible();
   });
 });

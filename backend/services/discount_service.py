@@ -1,11 +1,12 @@
-"""Discount evaluation & pricing for promo codes / auto / quantity rules.
+"""Discount evaluation & pricing for promo codes / auto / quantity / legacy benefits.
 
-Stacking policy (per the user's brief):
+Stacking policy:
   • At most TWO rules from `discounts.rules[]` apply per order:
       ─ 1 of type `promo_code` (when buyer provided one)
-      ─ 1 of type `auto` OR `quantity` (best automatic match)
-  • Disability + presale are legacy toggles handled outside this module
-    and stack independently on top.
+      ─ 1 of type `auto` OR `quantity` OR `buy_n_get_m` (best automatic match)
+  • Legacy toggles (`presale`, `disability_law`, `senior_law`) stack on top
+    of those rules (each as its own applied line), then the total is capped
+    at the items subtotal.
 
 Discount calculation happens AGAINST the per-item subtotal. A rule targets
 either the full order (when `locality_ids` is empty/missing) or only the items
@@ -15,6 +16,7 @@ None, so a locality-filtered rule never applies.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -60,6 +62,32 @@ def items_from_payload(
         {"seat_id": None, "locality_id": None, "price_cents": unit}
         for _ in range(quantity)
     ]
+
+
+def items_from_ticket_types(
+    *,
+    selections: list[dict],
+    ticket_types_by_id: dict[str, dict],
+) -> list[dict]:
+    """One priced line per ticket from ticket-type selections."""
+    items: list[dict] = []
+    for sel in selections:
+        tt_id = sel.get("ticket_type_id") or sel.get("id") or ""
+        tt = ticket_types_by_id.get(tt_id)
+        if not tt:
+            continue
+        qty = int(sel.get("quantity") or 0)
+        price = int(tt.get("price_cents") or 0)
+        loc = tt.get("venue_locality_id")
+        for _ in range(max(0, qty)):
+            items.append(
+                {
+                    "seat_id": None,
+                    "locality_id": loc,
+                    "price_cents": price,
+                }
+            )
+    return items
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -130,7 +158,6 @@ def _apply_rule_to_items(items: list[dict], rule: dict) -> int:
         free_count = (len(eligible) // group_size) * free_qty
         if free_count <= 0:
             return 0
-        # The cheapest items in each group are the ones given away free.
         cheapest = sorted(eligible, key=lambda it: it["price_cents"])[:free_count]
         return sum(it["price_cents"] for it in cheapest)
     eligible_subtotal = sum(it["price_cents"] for it in eligible)
@@ -140,9 +167,122 @@ def _apply_rule_to_items(items: list[dict], rule: dict) -> int:
     if btype == "percent":
         return min(eligible_subtotal, int(round(eligible_subtotal * value / 100)))
     if btype == "fixed":
-        # `fixed` value is in USD per the model; convert to cents and cap to subtotal.
         return min(eligible_subtotal, value * 100)
     return 0
+
+
+def _apply_percent_to_items(items: list[dict], percent: int) -> int:
+    if percent <= 0 or not items:
+        return 0
+    subtotal = sum(int(it.get("price_cents") or 0) for it in items)
+    return min(subtotal, int(round(subtotal * percent / 100)))
+
+
+def looks_like_ec_cedula(value: str | None) -> bool:
+    """CONADIS disability carnet numbers use other formats; only 10-digit
+    numeric strings are meant to be an Ecuadorian cédula."""
+    return bool(value and re.fullmatch(r"\d{10}", value))
+
+
+def is_valid_ec_cedula(value: str | None) -> bool:
+    """Ecuadorian national ID checksum (módulo 10)."""
+    if not looks_like_ec_cedula(value):
+        return False
+    province = int(value[0:2])
+    if province < 1 or province > 24:
+        return False
+    if int(value[2]) > 6:
+        return False
+    coefficients = (2, 1, 2, 1, 2, 1, 2, 1, 2)
+    total = 0
+    for digit, coef in zip(value[:9], coefficients):
+        product = int(digit) * coef
+        total += product - 9 if product > 9 else product
+    verifier = (10 - (total % 10)) % 10
+    return verifier == int(value[9])
+
+
+def evaluate_legacy_benefits(
+    *,
+    event: dict,
+    items: list[dict],
+    law_category: str | None = None,
+) -> list[dict]:
+    """Apply wizard toggles: preventa + descuentos por ley (discapacidad / 3ª edad)."""
+    discounts = event.get("discounts") or {}
+    applied: list[dict] = []
+
+    presale = discounts.get("presale") or {}
+    if presale.get("enabled"):
+        percent = int(presale.get("percent") or 0)
+        ends = _parse_dt(presale.get("ends_at"))
+        active = percent > 0 and (ends is None or _now() <= ends)
+        if active:
+            amt = _apply_percent_to_items(items, percent)
+            if amt > 0:
+                applied.append(
+                    {
+                        "rule_id": "presale",
+                        "name": f"Preventa ({percent}%)",
+                        "type": "presale",
+                        "code": None,
+                        "amount_cents": amt,
+                    }
+                )
+
+    category = (law_category or "").strip().lower() or None
+    if category == "disability":
+        law = discounts.get("disability_law") or {}
+        if law.get("enabled"):
+            percent = int(law.get("percent") or 50)
+            amt = _apply_percent_to_items(items, percent)
+            if amt > 0:
+                applied.append(
+                    {
+                        "rule_id": "disability_law",
+                        "name": f"Ley de discapacidad ({percent}%)",
+                        "type": "disability_law",
+                        "code": None,
+                        "amount_cents": amt,
+                    }
+                )
+    elif category == "senior":
+        law = discounts.get("senior_law") or {}
+        if law.get("enabled"):
+            percent = int(law.get("percent") or 50)
+            amt = _apply_percent_to_items(items, percent)
+            if amt > 0:
+                applied.append(
+                    {
+                        "rule_id": "senior_law",
+                        "name": f"Tercera edad ({percent}%)",
+                        "type": "senior_law",
+                        "code": None,
+                        "amount_cents": amt,
+                    }
+                )
+
+    return applied
+
+
+def _cap_applied_to_subtotal(applied: list[dict], items: list[dict]) -> list[dict]:
+    """Ensure sum(amount_cents) never exceeds the items subtotal."""
+    if not applied:
+        return applied
+    subtotal = sum(int(it.get("price_cents") or 0) for it in items)
+    total = sum(int(a.get("amount_cents") or 0) for a in applied)
+    if total <= subtotal or total <= 0:
+        return applied
+    scaled: list[dict] = []
+    allocated = 0
+    for i, a in enumerate(applied):
+        if i == len(applied) - 1:
+            amt = max(0, subtotal - allocated)
+        else:
+            amt = int(round(int(a.get("amount_cents") or 0) * subtotal / total))
+            allocated += amt
+        scaled.append({**a, "amount_cents": amt})
+    return scaled
 
 
 # ── Public evaluators ───────────────────────────────────────────────────────
@@ -226,13 +366,13 @@ def evaluate_discounts(
     items: list[dict],
     promo_code: str | None,
     payment_method: str | None = None,
+    law_category: str | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Returns (applied_rules, soft_warnings). Each applied_rules item has
     `{rule_id, name, type, amount_cents}`. soft_warnings are toast-friendly
     messages for promo-code rejections."""
     warnings: list[str] = []
     applied: list[dict] = []
-    # 1) promo_code (buyer-driven)
     promo_rule, err = evaluate_promo_code(
         event=event,
         items=items,
@@ -253,7 +393,6 @@ def evaluate_discounts(
                     "amount_cents": amt,
                 }
             )
-    # 2) Best auto/quantity/buy_n_get_m, excluding the already-applied promo_code rule.
     auto_rule = evaluate_auto_quantity(
         event=event, items=items, payment_method=payment_method
     )
@@ -269,7 +408,21 @@ def evaluate_discounts(
                     "amount_cents": amt,
                 }
             )
-    return applied, warnings
+    applied.extend(
+        evaluate_legacy_benefits(event=event, items=items, law_category=law_category)
+    )
+    if law_category and law_category not in ("disability", "senior"):
+        warnings.append("Categoría de descuento por ley no válida.")
+    elif law_category == "disability":
+        law = (event.get("discounts") or {}).get("disability_law") or {}
+        if not law.get("enabled"):
+            warnings.append("Este evento no tiene descuento por discapacidad.")
+    elif law_category == "senior":
+        law = (event.get("discounts") or {}).get("senior_law") or {}
+        if not law.get("enabled"):
+            warnings.append("Este evento no tiene descuento por tercera edad.")
+
+    return _cap_applied_to_subtotal(applied, items), warnings
 
 
 async def consume_promo_code(event_id: str, rule_id: str) -> bool:
@@ -310,13 +463,77 @@ async def consume_promo_code(event_id: str, rule_id: str) -> bool:
 
 
 def assert_buyer_allowed(rule: dict, buyer: dict, applied_count: int) -> None:
-    """Optional per-buyer guardrail. For MVP we only enforce `max_per_buyer`
-    based on the count passed in; full per-buyer history requires a separate
-    `promo_code_uses` collection (deferred)."""
+    """Enforce `conditions.max_per_buyer` using prior uses (this purchase = +1)."""
     cond = rule.get("conditions") or {}
     cap = cond.get("max_per_buyer")
-    if cap and applied_count > int(cap):
+    if cap and applied_count >= int(cap):
         raise HTTPException(
             422,
             f"Este código permite hasta {cap} usos por comprador.",
         )
+
+
+async def count_buyer_promo_uses(
+    *,
+    event_id: str,
+    rule_id: str,
+    buyer_email: str,
+) -> int:
+    """Count prior orders for this email that already consumed `rule_id`."""
+    from sqlalchemy import select
+
+    from database import AsyncSessionLocal
+    from orm_models import TicketOrder
+
+    email = (buyer_email or "").strip().lower()
+    if not email or not rule_id:
+        return 0
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(TicketOrder.discounts_applied).where(
+                    TicketOrder.event_id == event_id,
+                    TicketOrder.buyer_email == email,
+                    TicketOrder.status.notin_(["cancelled", "expired", "refunded"]),
+                )
+            )
+        ).all()
+    count = 0
+    for (applied,) in rows:
+        for a in applied or []:
+            if a.get("type") == "promo_code" and a.get("rule_id") == rule_id:
+                count += 1
+                break
+    return count
+
+
+async def enforce_promo_max_per_buyer(
+    *,
+    event: dict,
+    promo_code: str | None,
+    buyer_email: str,
+) -> None:
+    """Raise 422 when the buyer already hit max_per_buyer for this promo."""
+    if not promo_code:
+        return
+    code = promo_code.strip().upper()
+    rules = (event.get("discounts") or {}).get("rules") or []
+    rule = next(
+        (
+            r
+            for r in rules
+            if r.get("type") == "promo_code" and (r.get("code") or "").upper() == code
+        ),
+        None,
+    )
+    if not rule:
+        return
+    cap = (rule.get("conditions") or {}).get("max_per_buyer")
+    if not cap:
+        return
+    used = await count_buyer_promo_uses(
+        event_id=event["id"],
+        rule_id=rule.get("id"),
+        buyer_email=buyer_email,
+    )
+    assert_buyer_allowed(rule, {"email": buyer_email}, used)

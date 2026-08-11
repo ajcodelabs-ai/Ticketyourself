@@ -305,6 +305,16 @@ export default function EventValidation() {
                 </div>
             </header>
 
+            {event?.access_params?.ticket_validation === "none" && (
+                <div
+                    className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                    data-testid="validation-disabled-banner"
+                >
+                    Este evento está configurado con entrada no validable (email/PDF). El scanner
+                    sigue disponible, pero el control en puerta no es el flujo previsto.
+                </div>
+            )}
+
             {/* Camera */}
             <Card>
                 <CardContent className="p-4 flex flex-col items-center gap-3">

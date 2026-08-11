@@ -140,6 +140,16 @@ class TestRegister:
             "org_type": "company",
             "phone": "+593999999999",
             "country": "Ecuador",
+            "is_pep": False,
+            "uafe_declaration": {
+                "funds_origin_declared": True,
+                "funds_origin_detail": "Ingresos por eventos",
+                "accepts_uafe_obligations": True,
+            },
+            "org_references": [
+                {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
+            ],
+            "country_code": "EC",
         }
         r = requests.post(f"{API}/auth/register", json=payload)
         assert r.status_code == 200, r.text
@@ -159,6 +169,16 @@ class TestRegister:
             "org_type": "company",
             "phone": "+593999",
             "country": "Ecuador",
+            "is_pep": False,
+            "uafe_declaration": {
+                "funds_origin_declared": True,
+                "funds_origin_detail": "Ingresos por eventos",
+                "accepts_uafe_obligations": True,
+            },
+            "org_references": [
+                {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
+            ],
+            "country_code": "EC",
         }
         r = requests.post(f"{API}/auth/register", json=payload)
         assert r.status_code == 409
@@ -173,6 +193,16 @@ class TestRegister:
             "org_type": "company",
             "phone": "+593999",
             "country": "Ecuador",
+            "is_pep": False,
+            "uafe_declaration": {
+                "funds_origin_declared": True,
+                "funds_origin_detail": "Ingresos por eventos",
+                "accepts_uafe_obligations": True,
+            },
+            "org_references": [
+                {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
+            ],
+            "country_code": "EC",
             "slug": "demo-org",
         }
         r = requests.post(f"{API}/auth/register", json=payload)

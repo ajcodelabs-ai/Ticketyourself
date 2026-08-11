@@ -56,6 +56,35 @@ def unique_buyer(label: str = "buyer") -> dict:
     }
 
 
+def register_organizer_payload(**overrides) -> dict:
+    """Base payload for POST /auth/register (Ecuador compliance included)."""
+    import uuid
+
+    rand = uuid.uuid4().hex[:8]
+    payload = {
+        "email": f"org_{rand}@example.com",
+        "password": "Password123!",
+        "company_name": f"Org {rand}",
+        "legal_id": "1790000000001",
+        "org_type": "company",
+        "phone": "+593999999999",
+        "country": "Ecuador",
+        "country_code": "EC",
+        "is_pep": False,
+        "uafe_declaration": {
+            "funds_origin_declared": True,
+            "funds_origin_detail": "Ingresos por eventos",
+            "accepts_uafe_obligations": True,
+        },
+        "org_references": [
+            {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
+        ],
+        "signup_plan_code": "basico",
+    }
+    payload.update(overrides)
+    return payload
+
+
 def new_session() -> requests.Session:
     s = requests.Session()
     s.headers.update({"Content-Type": "application/json"})

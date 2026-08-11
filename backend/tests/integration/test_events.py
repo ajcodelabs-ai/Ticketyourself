@@ -173,7 +173,7 @@ class TestPaymentMethodCatalog:
         r = new_session().get(f"{API}/payment-methods")
         assert r.status_code == 200, r.text
         codes = {m["code"] for m in r.json()}
-        assert codes == {"nuvei", "deuna", "transfer", "cash"}
+        assert codes == {"nuvei", "deuna", "stripe", "paypal", "transfer", "cash"}
 
     def test_reject_unknown_enabled_code(self, demo_token, created_event):
         s = new_session()

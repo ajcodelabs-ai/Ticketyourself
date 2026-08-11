@@ -8,7 +8,7 @@ Paid + donation events: Stripe Checkout Session, finalize via webhook
 
 import logging
 import os
-from typing import Optional
+from typing import Literal, Optional
 
 import stripe
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
@@ -74,6 +74,9 @@ class CreateOrderBody(BaseModel):
     seat_ids: Optional[list[str]] = None
     # Phase 9.5 — promo codes (Bloque E)
     promo_code: Optional[str] = Field(default=None, max_length=40)
+    # §4.2.7 — descuentos por ley (declaración del comprador + doc de verificación)
+    law_category: Optional[Literal["disability", "senior"]] = None
+    law_document_id: Optional[str] = Field(default=None, max_length=80)
     # Phase 8 — multi-función + ticket types
     function_id: Optional[str] = None
     ticket_type_selections: Optional[list[TicketTypeSelection]] = None
@@ -90,6 +93,9 @@ class PreviewOrderBody(BaseModel):
     seat_ids: Optional[list[str]] = None
     promo_code: Optional[str] = Field(default=None, max_length=40)
     payment_method: Optional[str] = Field(default=None, max_length=20)
+    law_category: Optional[Literal["disability", "senior"]] = None
+    ticket_type_selections: Optional[list[TicketTypeSelection]] = None
+    buyer_email: Optional[EmailStr] = None
 
 
 async def _resolve_event_for_pricing(tenant_slug: str, event_slug: str):
@@ -153,12 +159,54 @@ async def preview_order(payload: PreviewOrderBody):
         seat_ids=payload.seat_ids,
         quantity=quantity,
     )
+    if payload.ticket_type_selections:
+        from orm_models import TicketType as _TTModel
+
+        async with AsyncSessionLocal() as pg:
+            tt_ids = [s.ticket_type_id for s in payload.ticket_type_selections]
+            result = await pg.execute(
+                select(_TTModel).where(
+                    _TTModel.id.in_(tt_ids), _TTModel.event_id == event["id"]
+                )
+            )
+            tt_map = {r.id: row_to_dict(r) for r in result.scalars().all()}
+        items = discount_service.items_from_ticket_types(
+            selections=[s.model_dump() for s in payload.ticket_type_selections],
+            ticket_types_by_id=tt_map,
+        )
+        # Align gross totals with ticket-type pricing when seats aren't used.
+        if not (payload.seat_ids and venue):
+            subtotal = sum(it["price_cents"] for it in items)
+            fees = (
+                int(round(subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
+                if subtotal > 0 and event.get("pricing_type") == "paid"
+                else 0
+            )
+            totals = {
+                **totals,
+                "subtotal_cents": subtotal,
+                "fees_cents": fees,
+                "total_cents": subtotal + fees,
+                "unit_price_cents": int(subtotal / max(1, len(items))),
+            }
     applied, warnings = discount_service.evaluate_discounts(
         event=event,
         items=items,
         promo_code=payload.promo_code,
         payment_method=payload.payment_method,
+        law_category=payload.law_category,
     )
+    if payload.promo_code and payload.buyer_email:
+        try:
+            await discount_service.enforce_promo_max_per_buyer(
+                event=event,
+                promo_code=payload.promo_code,
+                buyer_email=str(payload.buyer_email),
+            )
+        except HTTPException as exc:
+            warnings.append(
+                exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            )
     out = _apply_discount_breakdown(totals, applied)
     out["organizer_id"] = organizer["id"]
     out["currency"] = event.get("currency", "USD")
@@ -289,6 +337,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         service_subtotal = 0
         admin_subtotal = 0
         vxs_subtotal = 0
+        wallet_subtotal = 0
         items_override = []
         for sel in payload.ticket_type_selections:
             tt = tt_map[sel.ticket_type_id]
@@ -332,12 +381,14 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             )
             loc_pricing = pricing_map.get(tt.get("venue_locality_id")) or {}
             vxs = int(loc_pricing.get("vxs_cents") or 0)
-            sel_subtotal = (unit + service + admin + vxs) * sel.quantity
+            wallet = int(loc_pricing.get("wallet_fee_cents") or 0)
+            sel_subtotal = (unit + service + admin + vxs + wallet) * sel.quantity
             subtotal += sel_subtotal
             entrada_subtotal += unit * sel.quantity
             service_subtotal += service * sel.quantity
             admin_subtotal += admin * sel.quantity
             vxs_subtotal += vxs * sel.quantity
+            wallet_subtotal += wallet * sel.quantity
             items_override.append(
                 {
                     "ticket_type_id": tt["id"],
@@ -345,6 +396,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                     "quantity": sel.quantity,
                     "unit_price_cents": unit,
                     "subtotal_cents": sel_subtotal,
+                    "venue_locality_id": tt.get("venue_locality_id"),
                 }
             )
         quantity = sum(s.quantity for s in payload.ticket_type_selections)
@@ -356,6 +408,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             "service_fee_cents": service_subtotal,
             "admin_fee_cents": admin_subtotal,
             "vxs_cents": vxs_subtotal,
+            "wallet_fee_cents": wallet_subtotal,
             "fees_cents": fees,
             "total_cents": subtotal + fees,
             "donation_amount_cents": 0,
@@ -422,26 +475,84 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             except ValueError:
                 raise HTTPException(422, f"'{q['label']}' debe ser un número.")
 
-    # Free events ignore payment_method (no payment at all)
-    effective_method = (
-        "stripe" if event.get("pricing_type") == "free" else payload.payment_method
+    # Free events ignore payment_method unless optional donation > 0
+    donation_cents = int(payload.donation_amount_cents or 0)
+    is_pure_free = event.get("pricing_type") == "free" and not (
+        event.get("optional_donation_enabled") and donation_cents > 0
     )
+    effective_method = "stripe" if is_pure_free else payload.payment_method
 
-    # Phase 9.5 — apply discount rules (promo_code + best auto/quantity/buy_n_get_m)
+    # Phase 9.5 — apply discount rules (promo + auto/NxM + preventa/ley)
     # BEFORE creating the order so the persisted totals match what the buyer was
     # shown. Resolved against `effective_method` so payment-method-conditioned
     # rules see the form of payment that will actually be charged.
-    items = discount_service.items_from_payload(
+    if items_override and not seat_ids:
+        items = []
+        for io in items_override:
+            for _ in range(int(io.get("quantity") or 0)):
+                items.append(
+                    {
+                        "seat_id": None,
+                        "locality_id": io.get("venue_locality_id"),
+                        "price_cents": int(io.get("unit_price_cents") or 0),
+                    }
+                )
+    else:
+        items = discount_service.items_from_payload(
+            event=event,
+            venue=venue,
+            seat_ids=seat_ids,
+            quantity=quantity,
+        )
+
+    # §4.2.7 — verificación mínima de descuentos por ley
+    if payload.law_category:
+        discounts_cfg = event.get("discounts") or {}
+        if payload.law_category == "disability":
+            law = discounts_cfg.get("disability_law") or {}
+            if not law.get("enabled"):
+                raise HTTPException(
+                    422, "Este evento no tiene descuento por discapacidad."
+                )
+        elif payload.law_category == "senior":
+            law = discounts_cfg.get("senior_law") or {}
+            if not law.get("enabled"):
+                raise HTTPException(
+                    422, "Este evento no tiene descuento por tercera edad."
+                )
+            if law.get("require_document", True) and not (
+                payload.law_document_id or buyer.get("document_id")
+            ):
+                raise HTTPException(
+                    422,
+                    "Para el descuento de tercera edad indicá el número de cédula o carné.",
+                )
+        if payload.law_category == "disability" and not (
+            payload.law_document_id or buyer.get("document_id")
+        ):
+            raise HTTPException(
+                422,
+                "Para el descuento por discapacidad indicá el número de carné CONADIS o cédula.",
+            )
+
+        law_doc = payload.law_document_id or buyer.get("document_id")
+        if discount_service.looks_like_ec_cedula(
+            law_doc
+        ) and not discount_service.is_valid_ec_cedula(law_doc):
+            raise HTTPException(422, "Número de cédula inválido.")
+
+    await discount_service.enforce_promo_max_per_buyer(
         event=event,
-        venue=venue,
-        seat_ids=seat_ids,
-        quantity=quantity,
+        promo_code=payload.promo_code,
+        buyer_email=buyer.get("email") or "",
     )
+
     applied_discounts, discount_warnings = discount_service.evaluate_discounts(
         event=event,
         items=items,
         promo_code=payload.promo_code,
         payment_method=effective_method,
+        law_category=payload.law_category,
     )
     if payload.promo_code and not any(
         a.get("type") == "promo_code" for a in applied_discounts
@@ -449,6 +560,15 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         # Buyer typed a code but it didn't resolve into a real discount — fail hard
         # so they don't pay for a code that won't apply.
         reason = discount_warnings[0] if discount_warnings else "Código no válido."
+        raise HTTPException(422, reason)
+    if payload.law_category and not any(
+        a.get("type") in ("disability_law", "senior_law") for a in applied_discounts
+    ):
+        reason = (
+            discount_warnings[0]
+            if discount_warnings
+            else "No se pudo aplicar el descuento por ley."
+        )
         raise HTTPException(422, reason)
     totals = _apply_discount_breakdown(totals, applied_discounts)
 
@@ -465,10 +585,12 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         items_override=items_override,
         access_code_id=access_code_id,
         custom_answers=custom_answers or None,
+        law_category=payload.law_category,
+        law_document_id=payload.law_document_id,
     )
 
-    # FREE event — confirm instantly.
-    if event.get("pricing_type") == "free":
+    # FREE event without optional donation — confirm instantly.
+    if is_pure_free:
         finalized, tickets = await order_service.finalize_paid_order(order=order)
         from services.email_service import send_purchase_confirmation
 
@@ -515,8 +637,208 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}/instrucciones",
         }
 
-    # ── Gateway stubs (Nuvei / DeUna) — order held; real charge not wired yet ──
-    if effective_method in ("nuvei", "deuna"):
+    # ── Nuvei — openOrder + Simply Connect (REST API) ─────────────────────────
+    if effective_method == "nuvei":
+        from services import nuvei_service
+
+        if not nuvei_service.is_configured():
+            async with AsyncSessionLocal() as _pg:
+                from orm_models import TicketOrder as _TOModel
+
+                _row = await _pg.scalar(
+                    select(_TOModel).where(_TOModel.id == order["id"])
+                )
+                if _row:
+                    _row.status = "pending_gateway"
+                    await _pg.commit()
+            await order_service.reserve_capacity(
+                event=event,
+                order_id=order["id"],
+                quantity=quantity,
+                ttl_minutes=order_service.RESERVATION_TTL_MIN,
+                function_id=function["id"] if function else None,
+            )
+            return {
+                "order_number": order["order_number"],
+                "status": "pending_gateway",
+                "payment_method": "nuvei",
+                "message": (
+                    "Nuvei aún no está configurado en este entorno. "
+                    "Tu reserva quedó registrada; contactá a soporte TYS."
+                ),
+                "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
+            }
+
+        origin = _frontend_base(payload.origin_url)
+        success_url = f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}"
+        cancel_url = (
+            f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}/cancelado"
+        )
+        first_name, last_name = nuvei_service.split_buyer_name(
+            (payload.buyer.name if payload.buyer else "") or ""
+        )
+        try:
+            nuvei = nuvei_service.open_order(
+                amount_cents=order["total_cents"],
+                currency=order.get("currency") or event.get("currency") or "USD",
+                client_unique_id=order["order_number"],
+                user_token_id=order["buyer_email"],
+                email=order["buyer_email"],
+                first_name=first_name,
+                last_name=last_name,
+                success_url=success_url,
+                failure_url=cancel_url,
+                pending_url=success_url,
+                custom_data=f"ticket:{order['id']}",
+            )
+        except nuvei_service.NuveiError as e:
+            logger.error(
+                "Nuvei openOrder failed for %s: %s",
+                order["order_number"],
+                type(e).__name__,
+            )
+            raise HTTPException(
+                502,
+                "No pudimos iniciar el pago con Nuvei. Intentá de nuevo en unos minutos.",
+            ) from e
+
+        async with AsyncSessionLocal() as _pg:
+            from orm_models import TicketOrder as _TOModel
+
+            _row = await _pg.scalar(select(_TOModel).where(_TOModel.id == order["id"]))
+            _row.stripe_session_id = nuvei["session_token"]
+            meta = dict(_row.metadata_ or {})
+            meta["nuvei_order_id"] = nuvei.get("order_id")
+            meta["nuvei_client_unique_id"] = order["order_number"]
+            _row.metadata_ = meta
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(_row, "metadata_")
+            # Ensure status is pending (openOrder path), not leftover stub state
+            _row.status = "pending"
+            await _pg.commit()
+
+        await order_service.reserve_capacity(
+            event=event,
+            order_id=order["id"],
+            quantity=quantity,
+            function_id=function["id"] if function else None,
+        )
+        return {
+            "order_number": order["order_number"],
+            "status": "nuvei_checkout",
+            "payment_method": "nuvei",
+            "session_token": nuvei["session_token"],
+            "session_id": nuvei["session_token"],
+            "merchant_id": nuvei["merchant_id"],
+            "merchant_site_id": nuvei["merchant_site_id"],
+            "nuvei_env": nuvei["env"],
+            "checkout_js_url": nuvei["checkout_js_url"],
+            "client_unique_id": order["order_number"],
+            "amount": nuvei["amount"],
+            "currency": nuvei["currency"],
+            "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
+        }
+
+    # ── DEUNA — Create Order + Payment Widget Web SDK ─────────────────────────
+    if effective_method == "deuna":
+        from services import deuna_service
+
+        if not deuna_service.is_configured():
+            async with AsyncSessionLocal() as _pg:
+                from orm_models import TicketOrder as _TOModel
+
+                _row = await _pg.scalar(
+                    select(_TOModel).where(_TOModel.id == order["id"])
+                )
+                if _row:
+                    _row.status = "pending_gateway"
+                    await _pg.commit()
+            await order_service.reserve_capacity(
+                event=event,
+                order_id=order["id"],
+                quantity=quantity,
+                ttl_minutes=order_service.RESERVATION_TTL_MIN,
+                function_id=function["id"] if function else None,
+            )
+            return {
+                "order_number": order["order_number"],
+                "status": "pending_gateway",
+                "payment_method": "deuna",
+                "message": (
+                    "DEUNA aún no está configurado en este entorno. "
+                    "Tu reserva quedó registrada; contactá a soporte TYS."
+                ),
+                "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
+            }
+
+        first_name, last_name = deuna_service.split_buyer_name(
+            (payload.buyer.name if payload.buyer else "") or ""
+        )
+        try:
+            deuna = deuna_service.create_order(
+                order_id=order["order_number"],
+                amount_cents=order["total_cents"],
+                currency=order.get("currency") or event.get("currency") or "USD",
+                item_name=f"{event.get('title') or 'Evento'} · {order['quantity_total']} entradas",
+                item_description=order["buyer_email"],
+                email=order["buyer_email"],
+                first_name=first_name,
+                last_name=last_name,
+                phone=(payload.buyer.phone if payload.buyer else None),
+                metadata={
+                    "tys_purpose": "ticket_purchase",
+                    "order_id": order["id"],
+                    "event_id": event["id"],
+                },
+            )
+        except deuna_service.DeunaError as e:
+            logger.error(
+                "DEUNA create_order failed for %s: %s",
+                order["order_number"],
+                type(e).__name__,
+            )
+            raise HTTPException(
+                502,
+                "No pudimos iniciar el pago con DEUNA. Intentá de nuevo en unos minutos.",
+            ) from e
+
+        async with AsyncSessionLocal() as _pg:
+            from orm_models import TicketOrder as _TOModel
+
+            _row = await _pg.scalar(select(_TOModel).where(_TOModel.id == order["id"]))
+            _row.stripe_session_id = deuna["order_token"]
+            meta = dict(_row.metadata_ or {})
+            meta["deuna_order_token"] = deuna["order_token"]
+            meta["deuna_order_id"] = order["order_number"]
+            _row.metadata_ = meta
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(_row, "metadata_")
+            _row.status = "pending"
+            await _pg.commit()
+
+        await order_service.reserve_capacity(
+            event=event,
+            order_id=order["id"],
+            quantity=quantity,
+            function_id=function["id"] if function else None,
+        )
+        return {
+            "order_number": order["order_number"],
+            "status": "deuna_checkout",
+            "payment_method": "deuna",
+            "order_token": deuna["order_token"],
+            "session_id": deuna["order_token"],
+            "public_api_key": deuna["public_api_key"],
+            "deuna_env": deuna["env"],
+            "checkout_js_url": deuna["checkout_js_url"],
+            "client_unique_id": order["order_number"],
+            "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
+        }
+
+    # ── Gateway stubs (PayPal) — order held; real charge not wired yet ──
+    if effective_method == "paypal":
         await order_service.reserve_capacity(
             event=event,
             order_id=order["id"],
@@ -524,19 +846,18 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             ttl_minutes=order_service.RESERVATION_TTL_MIN,
             function_id=function["id"] if function else None,
         )
-        label = "Nuvei" if effective_method == "nuvei" else "DeUna"
         return {
             "order_number": order["order_number"],
             "status": "pending_gateway",
             "payment_method": effective_method,
             "message": (
-                f"Integración pendiente: el cobro con {label} aún no está disponible. "
+                "Integración pendiente: el cobro con PayPal aún no está disponible. "
                 "Tu reserva quedó registrada; te avisaremos cuando puedas completar el pago."
             ),
             "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
         }
 
-    # Paid or donation > 0 — Stripe checkout (legacy events).
+    # Paid or donation > 0 — Stripe checkout.
     origin = _frontend_base(payload.origin_url)
     success_url = (
         f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}"

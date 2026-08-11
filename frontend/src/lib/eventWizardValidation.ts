@@ -136,7 +136,7 @@ export function collectEventWizardIssues({
                 push(
                     "general",
                     "pricing_type_mismatch",
-                    "Tenés localidades con precio pero el tipo de recaudación es Gratis. Cambialo a Pago en General.",
+                    "Tenés localidades con precio pero el tipo de recaudación es Gratuito. Cambialo a Pagado en General.",
                 );
             }
         }

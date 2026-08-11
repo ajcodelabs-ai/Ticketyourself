@@ -14,7 +14,6 @@ from db_helpers import row_to_dict
 from models import PlanCreate, PlanOut, PlanUpdate
 from orm_models import Organizer, SubscriptionPlan
 from security import get_current_user, require_role
-from services.plan_features import get_plan_features
 
 router = APIRouter(prefix="/api/plans", tags=["plans"])
 admin_router = APIRouter(
@@ -33,18 +32,19 @@ async def my_plan_features(
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ):
+    from services.plan_features import get_plan_features_async
+
     plan_code = None
     if user.get("organizer_id"):
         result = await session.execute(
-            select(Organizer.plan_id).where(Organizer.id == user["organizer_id"])
-        )
-        plan_id = result.scalar_one_or_none()
-        if plan_id:
-            code_result = await session.execute(
-                select(SubscriptionPlan.code).where(SubscriptionPlan.id == plan_id)
+            select(Organizer.plan_code, Organizer.signup_plan_code).where(
+                Organizer.id == user["organizer_id"]
             )
-            plan_code = code_result.scalar_one_or_none()
-    return get_plan_features(plan_code)
+        )
+        row = result.one_or_none()
+        if row:
+            plan_code = row[0] or row[1]
+    return await get_plan_features_async(session, plan_code)
 
 
 @router.get("", response_model=List[PlanOut])

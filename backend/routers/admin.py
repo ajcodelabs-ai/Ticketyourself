@@ -12,28 +12,50 @@ from sqlalchemy.orm import selectinload
 
 from audit import log_audit
 from database import get_db
-from db_helpers import organizer_row_to_dict
+from db_helpers import organizer_row_to_dict, row_to_dict
 from models import (
+    AdminOrganizerUpdate,
     AdminStats,
     ApproveBody,
+    BillingIntentOut,
     CommentBody,
+    ConfirmPlanPaymentBody,
     DocumentTypeCreate,
     DocumentTypeOut,
     OrganizerOut,
     OrganizersList,
+    RegistrationCountryCreate,
+    RegistrationCountryOut,
+    RegistrationCountryUpdate,
     RejectBody,
+    RequiredDocumentSetOut,
     RequiredDocumentsOut,
     RequiredDocumentsUpdate,
     SuspendBody,
 )
-from orm_models import Organizer, OrganizerAdminComment, SubscriptionPlan, Tenant
+from orm_models import (
+    BillingIntent,
+    Organizer,
+    OrganizerAdminComment,
+    SubscriptionPlan,
+    Tenant,
+)
 from security import require_role
 from services.document_types import create_document_type, list_document_types
 from services.email_service import (
     send_organizer_approved_email,
     send_organizer_rejected_email,
 )
-from services.required_documents import get_required_documents, set_required_documents
+from services.registration_countries import (
+    get_country,
+    list_countries,
+    upsert_country,
+)
+from services.required_documents import (
+    get_all_required_document_sets,
+    get_required_documents,
+    set_required_documents,
+)
 
 
 def _onboarding_url() -> str:
@@ -157,6 +179,212 @@ async def get_organizer(organizer_id: str, session: AsyncSession = Depends(get_d
     return _org_to_out(row)
 
 
+@router.patch("/organizers/{organizer_id}", response_model=OrganizerOut)
+async def update_organizer(
+    organizer_id: str,
+    payload: AdminOrganizerUpdate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _load_organizer(organizer_id, session)
+    raw_updates = payload.model_dump(exclude_unset=True)
+    # plan_code=null is handled below as "leave the current plan alone" —
+    # unassigning a plan is a distinct action, not implied by this generic PATCH.
+    if raw_updates.get("plan_code") is None:
+        raw_updates.pop("plan_code", None)
+    null_ok = {
+        "social_links",
+        "pep_details",
+        "uafe_declaration",
+        "org_references",
+        "signup_plan_code",
+    }
+    for key, val in raw_updates.items():
+        if val is None and key not in null_ok:
+            raise HTTPException(422, f"El campo '{key}' no puede quedar vacío.")
+    updates = raw_updates
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+
+    # Plan assignment override
+    if "plan_code" in updates:
+        plan_code = updates.pop("plan_code")
+        plan_result = await session.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
+        )
+        plan = plan_result.scalar_one_or_none()
+        if not plan:
+            raise HTTPException(404, f"Plan '{plan_code}' not found")
+        row.plan_code = plan.code
+        row.plan_id = plan.id
+        if "subscription_status" not in updates:
+            if row.subscription_status == "none":
+                row.subscription_status = "active"
+
+    if "country_code" in updates:
+        code = updates["country_code"].upper()
+        country = await get_country(session, code)
+        if not country:
+            raise HTTPException(400, f"Unknown country_code '{code}'")
+        updates["country_code"] = code
+        if "country" not in updates:
+            updates["country"] = country.name
+
+    for key, val in updates.items():
+        setattr(row, key, val)
+
+    if "company_name" in updates:
+        tenant_result = await session.execute(
+            select(Tenant).where(Tenant.slug == row.slug)
+        )
+        tenant_row = tenant_result.scalar_one_or_none()
+        if tenant_row:
+            tenant_row.name = updates["company_name"]
+
+    await session.flush()
+    await log_audit(
+        admin["id"],
+        "organizer.updated",
+        "organizer",
+        organizer_id,
+        payload.model_dump(exclude_unset=True),
+    )
+    await session.refresh(row, ["admin_comments"])
+    return _org_to_out(row)
+
+
+@router.get(
+    "/organizers/{organizer_id}/billing-intents",
+    response_model=List[BillingIntentOut],
+)
+async def list_organizer_billing_intents(
+    organizer_id: str, session: AsyncSession = Depends(get_db)
+):
+    await _load_organizer(organizer_id, session)
+    result = await session.execute(
+        select(BillingIntent)
+        .where(BillingIntent.organizer_id == organizer_id)
+        .order_by(BillingIntent.created_at.desc())
+    )
+    return [BillingIntentOut(**row_to_dict(r)) for r in result.scalars().all()]
+
+
+@router.post(
+    "/organizers/{organizer_id}/confirm-plan-payment",
+    response_model=OrganizerOut,
+)
+async def confirm_organizer_plan_payment(
+    organizer_id: str,
+    payload: ConfirmPlanPaymentBody,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    """Confirm a pending Nuvei/DeUna plan payment and activate the subscription."""
+    from routers.billing import complete_gateway_billing_intent
+
+    row = await _load_organizer(organizer_id, session)
+    if payload.intent_id:
+        intent = await session.get(BillingIntent, payload.intent_id)
+        if not intent or intent.organizer_id != organizer_id:
+            raise HTTPException(404, "Billing intent not found")
+    else:
+        result = await session.execute(
+            select(BillingIntent)
+            .where(
+                BillingIntent.organizer_id == organizer_id,
+                BillingIntent.status == "pending_gateway",
+            )
+            .order_by(BillingIntent.created_at.desc())
+            .limit(1)
+        )
+        intent = result.scalar_one_or_none()
+        if not intent:
+            raise HTTPException(404, "No pending gateway payment for this organizer")
+
+    await complete_gateway_billing_intent(
+        session, organizer=row, intent=intent, admin_id=admin["id"]
+    )
+    if payload.comment:
+        await _add_comment(organizer_id, admin, payload.comment, session)
+    await session.refresh(row, ["admin_comments"])
+    return _org_to_out(row)
+
+
+@router.post(
+    "/organizers/{organizer_id}/mark-verification-paid",
+    response_model=OrganizerOut,
+)
+async def mark_verification_paid(
+    organizer_id: str,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _load_organizer(organizer_id, session)
+    row.verification_fee_status = "paid"
+    await session.flush()
+    await log_audit(
+        admin["id"], "organizer.verification_paid", "organizer", organizer_id, {}
+    )
+    await session.refresh(row, ["admin_comments"])
+    return _org_to_out(row)
+
+
+@router.post(
+    "/organizers/{organizer_id}/mark-contract-signed",
+    response_model=OrganizerOut,
+)
+async def mark_contract_signed(
+    organizer_id: str,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _load_organizer(organizer_id, session)
+    row.contract_status = "signed"
+    row.contract_signed_at = datetime.now(timezone.utc)
+    await session.flush()
+    await log_audit(
+        admin["id"], "organizer.contract_signed", "organizer", organizer_id, {}
+    )
+    await session.refresh(row, ["admin_comments"])
+    return _org_to_out(row)
+
+
+@router.post(
+    "/organizers/{organizer_id}/resend-contract",
+    response_model=OrganizerOut,
+)
+async def resend_contract(
+    organizer_id: str,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    from services.oneshot import send_contract
+
+    row = await _load_organizer(organizer_id, session)
+    try:
+        contract = await send_contract(
+            organizer_id=row.id,
+            organizer_email=row.email,
+            company_name=row.company_name or row.slug,
+            legal_id=row.legal_id,
+            plan_code=row.plan_code or row.signup_plan_code,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"No se pudo enviar el contrato: {type(exc).__name__}")
+    row.contract_status = contract.get("status") or "sent"
+    row.contract_external_id = contract.get("external_id")
+    await session.flush()
+    await log_audit(
+        admin["id"],
+        "organizer.contract_resent",
+        "organizer",
+        organizer_id,
+        {"external_id": row.contract_external_id},
+    )
+    await session.refresh(row, ["admin_comments"])
+    return _org_to_out(row)
+
+
 async def _add_comment(
     organizer_id: str, admin: dict, comment: str, session: AsyncSession
 ) -> OrganizerAdminComment:
@@ -189,6 +417,18 @@ async def approve_organizer(
     row.approved_at = now
     row.approved_by = admin["id"]
 
+    # Verification fee from signup plan (or assigned plan)
+    plan_code = row.signup_plan_code or row.plan_code
+    if plan_code:
+        plan_result = await session.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
+        )
+        plan = plan_result.scalar_one_or_none()
+        if plan:
+            fee = int(getattr(plan, "verification_fee_cents", 0) or 0)
+            row.verification_fee_cents = fee
+            row.verification_fee_status = "waived" if fee <= 0 else "pending"
+
     # Activate tenant
     tenant_result = await session.execute(select(Tenant).where(Tenant.slug == row.slug))
     tenant = tenant_result.scalar_one_or_none()
@@ -196,6 +436,27 @@ async def approve_organizer(
         tenant.status = "active"
 
     await session.flush()
+
+    # Send contract via OneShot (stub until credentials configured)
+    try:
+        from services.oneshot import send_contract
+
+        contract = await send_contract(
+            organizer_id=row.id,
+            organizer_email=row.email,
+            company_name=row.company_name or row.slug,
+            legal_id=row.legal_id,
+            plan_code=plan_code,
+        )
+        row.contract_status = contract.get("status") or "sent"
+        row.contract_external_id = contract.get("external_id")
+        await session.flush()
+    except Exception as exc:  # noqa: BLE001
+        logger = __import__("logging").getLogger("tys.admin")
+        logger.warning("OneShot send on approve failed: %s", type(exc).__name__)
+        if row.contract_status == "none":
+            row.contract_status = "pending"
+            await session.flush()
 
     # Auto-create default microsite (no-op if exists)
     from routers.microsite import _get_or_create_microsite_row
@@ -311,8 +572,19 @@ async def add_comment(
 
 
 @router.get("/settings/required-documents", response_model=RequiredDocumentsOut)
-async def get_required_documents_settings(session: AsyncSession = Depends(get_db)):
-    return await get_required_documents(session)
+async def get_required_documents_settings(
+    country: Optional[str] = Query(default="*"),
+    session: AsyncSession = Depends(get_db),
+):
+    docs = await get_required_documents(session, country)
+    return RequiredDocumentsOut(country_code=(country or "*").upper(), **docs)
+
+
+@router.get(
+    "/settings/required-documents/all", response_model=List[RequiredDocumentSetOut]
+)
+async def get_all_required_documents_settings(session: AsyncSession = Depends(get_db)):
+    return await get_all_required_document_sets(session)
 
 
 @router.put("/settings/required-documents", response_model=RequiredDocumentsOut)
@@ -321,8 +593,13 @@ async def update_required_documents_settings(
     admin=Depends(require_role("super_admin")),
     session: AsyncSession = Depends(get_db),
 ):
-    await set_required_documents(session, "individual", payload.individual, admin["id"])
-    await set_required_documents(session, "company", payload.company, admin["id"])
+    country = (payload.country_code or "*").upper()
+    await set_required_documents(
+        session, "individual", payload.individual, admin["id"], country_code=country
+    )
+    await set_required_documents(
+        session, "company", payload.company, admin["id"], country_code=country
+    )
     await log_audit(
         admin["id"],
         "settings.required_documents_updated",
@@ -330,7 +607,8 @@ async def update_required_documents_settings(
         "required_documents",
         payload.model_dump(),
     )
-    return await get_required_documents(session)
+    docs = await get_required_documents(session, country)
+    return RequiredDocumentsOut(country_code=country, **docs)
 
 
 @router.get("/settings/document-types", response_model=List[DocumentTypeOut])
@@ -355,3 +633,61 @@ async def create_document_type_settings(
         {"label": payload.label},
     )
     return created
+
+
+@router.get(
+    "/settings/registration-countries", response_model=List[RegistrationCountryOut]
+)
+async def get_registration_countries_settings(session: AsyncSession = Depends(get_db)):
+    return await list_countries(session, active_only=False)
+
+
+@router.post(
+    "/settings/registration-countries",
+    response_model=RegistrationCountryOut,
+    status_code=201,
+)
+async def create_registration_country(
+    payload: RegistrationCountryCreate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    created = await upsert_country(
+        session, payload.code, payload.model_dump(), admin["id"]
+    )
+    await log_audit(
+        admin["id"],
+        "settings.registration_country_created",
+        "registration_country",
+        created["code"],
+        {"name": payload.name},
+    )
+    return created
+
+
+@router.put(
+    "/settings/registration-countries/{code}",
+    response_model=RegistrationCountryOut,
+)
+async def update_registration_country(
+    code: str,
+    payload: RegistrationCountryUpdate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(400, "No fields to update")
+    # Ensure row exists
+    existing = await get_country(session, code)
+    if not existing:
+        raise HTTPException(404, f"Country '{code}' not found")
+    updated = await upsert_country(session, code, data, admin["id"])
+    await log_audit(
+        admin["id"],
+        "settings.registration_country_updated",
+        "registration_country",
+        code.upper(),
+        data,
+    )
+    return updated

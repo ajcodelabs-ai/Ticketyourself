@@ -525,6 +525,48 @@ class TestCheckoutResponse:
             mode="subscription",
         )
         assert r.mode == "subscription"
+        assert r.payment_method == "stripe"
+        assert r.status == "redirect"
+
+    def test_gateway_pending(self):
+        r = CheckoutResponse(
+            payment_method="nuvei",
+            status="pending_gateway",
+            mode="gateway",
+            plan_code="basico",
+            message="ok",
+        )
+        assert r.checkout_url is None
+        assert r.status == "pending_gateway"
+
+    def test_nuvei_checkout(self):
+        r = CheckoutResponse(
+            payment_method="nuvei",
+            status="nuvei_checkout",
+            mode="payment",
+            plan_code="basico",
+            session_token="tok",
+            merchant_id="1",
+            merchant_site_id="2",
+            nuvei_env="int",
+            client_unique_id="bill_abc",
+        )
+        assert r.session_token == "tok"
+        assert r.status == "nuvei_checkout"
+
+    def test_deuna_checkout(self):
+        r = CheckoutResponse(
+            payment_method="deuna",
+            status="deuna_checkout",
+            mode="payment",
+            plan_code="basico",
+            order_token="otok",
+            public_api_key="pk_test",
+            deuna_env="sandbox",
+            client_unique_id="bill_xyz",
+        )
+        assert r.order_token == "otok"
+        assert r.status == "deuna_checkout"
 
     def test_invalid_mode(self):
         with pytest.raises(ValidationError):

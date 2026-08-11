@@ -5,6 +5,15 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
     Dialog,
@@ -23,6 +32,7 @@ import {
     Eye,
     FileText,
     Loader2,
+    Save,
 } from "lucide-react";
 
 const STATUS_STYLE = {
@@ -41,20 +51,44 @@ export default function AdminOrganizerDetail() {
     const { id } = useParams();
     const [org, setOrg] = useState(null);
     const [docs, setDocs] = useState([]);
+    const [countries, setCountries] = useState([]);
+    const [plans, setPlans] = useState([]);
+    const [edit, setEdit] = useState<Record<string, any>>({});
     const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
     const [comment, setComment] = useState("");
     const [acting, setActing] = useState(false);
-    const [preview, setPreview] = useState(null); // { doc, url, loading, error }
+    const [preview, setPreview] = useState(null);
+    const [billingIntents, setBillingIntents] = useState([]);
+    const [confirmingPay, setConfirmingPay] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [orgR, docsR] = await Promise.all([
+            const [orgR, docsR, countriesR, plansR, intentsR] = await Promise.all([
                 api.get(`/admin/organizers/${id}`),
                 api.get(`/organizers/${id}/documents`),
+                api.get("/admin/settings/registration-countries"),
+                api.get("/plans"),
+                api.get(`/admin/organizers/${id}/billing-intents`).catch(() => ({ data: [] })),
             ]);
             setOrg(orgR.data);
             setDocs(docsR.data || []);
+            setCountries(countriesR.data || []);
+            setPlans(plansR.data || []);
+            setBillingIntents(intentsR.data || []);
+            setEdit({
+                company_name: orgR.data.company_name || "",
+                phone: orgR.data.phone || "",
+                legal_id: orgR.data.legal_id || "",
+                country_code: orgR.data.country_code || "EC",
+                org_type: orgR.data.org_type || "company",
+                is_pep: Boolean(orgR.data.is_pep),
+                pep_details: orgR.data.pep_details || "",
+                plan_code: orgR.data.plan_code || "",
+                subscription_status: orgR.data.subscription_status || "none",
+                signup_plan_code: orgR.data.signup_plan_code || "",
+            });
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail));
         } finally {
@@ -88,6 +122,50 @@ export default function AdminOrganizerDetail() {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
         } finally {
             setActing(false);
+        }
+    };
+
+    const saveEdit = async () => {
+        setSaving(true);
+        try {
+            const payload: Record<string, any> = {
+                company_name: edit.company_name,
+                phone: edit.phone,
+                legal_id: edit.legal_id,
+                country_code: edit.country_code,
+                org_type: edit.org_type,
+                is_pep: edit.is_pep,
+                pep_details: edit.pep_details || null,
+                subscription_status: edit.subscription_status,
+            };
+            if (edit.plan_code) payload.plan_code = edit.plan_code;
+            const { data } = await api.patch(`/admin/organizers/${id}`, payload);
+            setOrg(data);
+            toast.success("Organizador actualizado");
+        } catch (err) {
+            toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const confirmGatewayPayment = async (intentId) => {
+        setConfirmingPay(true);
+        try {
+            const { data } = await api.post(
+                `/admin/organizers/${id}/confirm-plan-payment`,
+                {
+                    intent_id: intentId,
+                    comment: "Pago Nuvei/DeUna confirmado por admin",
+                },
+            );
+            setOrg(data);
+            toast.success("Pago confirmado — plan activado");
+            await load();
+        } catch (err) {
+            toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+        } finally {
+            setConfirmingPay(false);
         }
     };
 
@@ -171,30 +249,342 @@ export default function AdminOrganizerDetail() {
                     {org.email} ·{" "}
                     <span className="font-mono">{org.slug}</span> · plan:{" "}
                     {org.plan_code || "—"} · sub: {org.subscription_status}
+                    {org.signup_plan_code ? ` · intención: ${org.signup_plan_code}` : ""}
                 </p>
             </header>
 
-            {/* Datos */}
             <Card className="border-border/70">
-                <CardHeader>
-                    <CardTitle className="text-lg">Datos</CardTitle>
+                <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle className="text-lg">Datos editables</CardTitle>
+                    <Button
+                        size="sm"
+                        onClick={saveEdit}
+                        disabled={saving}
+                        data-testid="admin-org-save-btn"
+                    >
+                        {saving ? (
+                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                            <Save className="h-4 w-4 mr-1" />
+                        )}
+                        Guardar
+                    </Button>
                 </CardHeader>
                 <CardContent className="grid sm:grid-cols-2 gap-4 text-sm">
-                    <Field label="Tipo" value={org.org_type} />
-                    <Field label="RUC / Cédula" value={org.legal_id} />
-                    <Field label="Teléfono" value={org.phone} />
-                    <Field label="País" value={org.country} />
-                    <Field label="Creado" value={new Date(org.created_at).toLocaleString("es-EC")} />
+                    <div className="space-y-1.5">
+                        <Label>Nombre</Label>
+                        <Input
+                            value={edit.company_name}
+                            onChange={(e) =>
+                                setEdit((f) => ({ ...f, company_name: e.target.value }))
+                            }
+                        />
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>Teléfono</Label>
+                        <Input
+                            value={edit.phone}
+                            onChange={(e) => setEdit((f) => ({ ...f, phone: e.target.value }))}
+                        />
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>RUC / Cédula</Label>
+                        <Input
+                            value={edit.legal_id}
+                            onChange={(e) =>
+                                setEdit((f) => ({ ...f, legal_id: e.target.value }))
+                            }
+                        />
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>Tipo</Label>
+                        <Select
+                            value={edit.org_type}
+                            onValueChange={(v) => setEdit((f) => ({ ...f, org_type: v }))}
+                        >
+                            <SelectTrigger>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="individual">Persona natural</SelectItem>
+                                <SelectItem value="company">Empresa</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>País</Label>
+                        <Select
+                            value={edit.country_code}
+                            onValueChange={(v) =>
+                                setEdit((f) => ({ ...f, country_code: v }))
+                            }
+                        >
+                            <SelectTrigger data-testid="admin-org-country">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {countries.map((c) => (
+                                    <SelectItem key={c.code} value={c.code}>
+                                        {c.name} ({c.code})
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>Plan asignado</Label>
+                        <Select
+                            value={edit.plan_code || "__none__"}
+                            onValueChange={(v) =>
+                                setEdit((f) => ({
+                                    ...f,
+                                    plan_code: v === "__none__" ? "" : v,
+                                }))
+                            }
+                        >
+                            <SelectTrigger data-testid="admin-org-plan">
+                                <SelectValue placeholder="Sin plan" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="__none__">Sin plan</SelectItem>
+                                {plans.map((p) => (
+                                    <SelectItem key={p.code} value={p.code}>
+                                        {p.name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>Estado suscripción</Label>
+                        <Select
+                            value={edit.subscription_status}
+                            onValueChange={(v) =>
+                                setEdit((f) => ({ ...f, subscription_status: v }))
+                            }
+                        >
+                            <SelectTrigger>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {["none", "trialing", "active", "past_due", "canceled"].map(
+                                    (s) => (
+                                        <SelectItem key={s} value={s}>
+                                            {s}
+                                        </SelectItem>
+                                    ),
+                                )}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>PEP</Label>
+                        <Select
+                            value={edit.is_pep ? "yes" : "no"}
+                            onValueChange={(v) =>
+                                setEdit((f) => ({ ...f, is_pep: v === "yes" }))
+                            }
+                        >
+                            <SelectTrigger>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="no">No</SelectItem>
+                                <SelectItem value="yes">Sí</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    {edit.is_pep && (
+                        <div className="space-y-1.5 sm:col-span-2">
+                            <Label>Detalle PEP</Label>
+                            <Textarea
+                                value={edit.pep_details}
+                                onChange={(e) =>
+                                    setEdit((f) => ({ ...f, pep_details: e.target.value }))
+                                }
+                            />
+                        </div>
+                    )}
+                    <Field
+                        label="Creado"
+                        value={new Date(org.created_at).toLocaleString("es-EC")}
+                    />
                     {org.approved_at && (
                         <Field
                             label="Aprobado"
                             value={`${new Date(org.approved_at).toLocaleString("es-EC")} por ${org.approved_by || "—"}`}
                         />
                     )}
+                    {org.uafe_declaration && (
+                        <div className="sm:col-span-2 text-xs text-muted-foreground">
+                            <div className="uppercase tracking-wider mb-1">UAFE</div>
+                            <pre className="bg-muted/40 rounded p-2 overflow-auto">
+                                {JSON.stringify(org.uafe_declaration, null, 2)}
+                            </pre>
+                        </div>
+                    )}
+                    {org.org_references?.length > 0 && (
+                        <div className="sm:col-span-2 text-xs text-muted-foreground">
+                            <div className="uppercase tracking-wider mb-1">Referencias</div>
+                            <pre className="bg-muted/40 rounded p-2 overflow-auto">
+                                {JSON.stringify(org.org_references, null, 2)}
+                            </pre>
+                        </div>
+                    )}
+                    {org.social_links && (
+                        <div className="sm:col-span-2 text-xs text-muted-foreground">
+                            <div className="uppercase tracking-wider mb-1">Redes</div>
+                            <pre className="bg-muted/40 rounded p-2 overflow-auto">
+                                {JSON.stringify(org.social_links, null, 2)}
+                            </pre>
+                        </div>
+                    )}
                 </CardContent>
             </Card>
 
-            {/* Documents */}
+            {billingIntents.some((i) => i.status === "pending_gateway") && (
+                <Card className="border-sky-200 bg-sky-50/40" data-testid="admin-gateway-payments">
+                    <CardHeader>
+                        <CardTitle className="text-lg">Pagos de plan pendientes (Nuvei / DeUna)</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        {billingIntents
+                            .filter((i) => i.status === "pending_gateway")
+                            .map((intent) => (
+                                <div
+                                    key={intent.id}
+                                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-200 bg-white p-3"
+                                >
+                                    <div className="text-sm">
+                                        <div className="font-medium capitalize">
+                                            {intent.payment_method} · plan {intent.plan_code}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">
+                                            {new Date(intent.created_at).toLocaleString("es-EC")} ·{" "}
+                                            {intent.session_id}
+                                        </div>
+                                    </div>
+                                    <Button
+                                        size="sm"
+                                        disabled={confirmingPay}
+                                        onClick={() => confirmGatewayPayment(intent.id)}
+                                        data-testid={`admin-confirm-pay-${intent.id}`}
+                                    >
+                                        {confirmingPay && (
+                                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                        )}
+                                        Confirmar pago y activar
+                                    </Button>
+                                </div>
+                            ))}
+                    </CardContent>
+                </Card>
+            )}
+
+            <Card className="border-border/70" data-testid="admin-publish-gates">
+                <CardHeader>
+                    <CardTitle className="text-lg">Gates de publicación</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                    <div className="grid sm:grid-cols-3 gap-3">
+                        <div>
+                            <div className="text-xs uppercase text-muted-foreground">Plan</div>
+                            <div className="font-medium">{org.subscription_status}</div>
+                        </div>
+                        <div>
+                            <div className="text-xs uppercase text-muted-foreground">
+                                Verificación
+                            </div>
+                            <div className="font-medium">
+                                {org.verification_fee_status}
+                                {org.verification_fee_cents != null
+                                    ? ` · $${(org.verification_fee_cents / 100).toFixed(2)}`
+                                    : ""}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-xs uppercase text-muted-foreground">Contrato</div>
+                            <div className="font-medium">
+                                {org.contract_status}
+                                {org.contract_external_id ? (
+                                    <span className="block text-xs font-mono text-muted-foreground truncate">
+                                        {org.contract_external_id}
+                                    </span>
+                                ) : null}
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {org.verification_fee_status === "pending" && (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                    try {
+                                        await api.post(
+                                            `/admin/organizers/${id}/mark-verification-paid`,
+                                        );
+                                        toast.success("Verificación marcada como pagada");
+                                        load();
+                                    } catch (err) {
+                                        toast.error(
+                                            formatApiError(err?.response?.data?.detail) ||
+                                                err.message,
+                                        );
+                                    }
+                                }}
+                            >
+                                Marcar verificación pagada
+                            </Button>
+                        )}
+                        {org.contract_status !== "signed" && (
+                            <>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={async () => {
+                                        try {
+                                            await api.post(
+                                                `/admin/organizers/${id}/mark-contract-signed`,
+                                            );
+                                            toast.success("Contrato marcado como firmado");
+                                            load();
+                                        } catch (err) {
+                                            toast.error(
+                                                formatApiError(err?.response?.data?.detail) ||
+                                                    err.message,
+                                            );
+                                        }
+                                    }}
+                                >
+                                    Marcar contrato firmado
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={async () => {
+                                        try {
+                                            await api.post(
+                                                `/admin/organizers/${id}/resend-contract`,
+                                            );
+                                            toast.success("Contrato reenviado / regenerado");
+                                            load();
+                                        } catch (err) {
+                                            toast.error(
+                                                formatApiError(err?.response?.data?.detail) ||
+                                                    err.message,
+                                            );
+                                        }
+                                    }}
+                                >
+                                    Reenviar contrato OneShot
+                                </Button>
+                            </>
+                        )}
+                    </div>
+                </CardContent>
+            </Card>
+
             <Card className="border-border/70">
                 <CardHeader>
                     <CardTitle className="text-lg flex items-center gap-2">
@@ -252,7 +642,6 @@ export default function AdminOrganizerDetail() {
                 </CardContent>
             </Card>
 
-            {/* Comments history */}
             <Card className="border-border/70">
                 <CardHeader>
                     <CardTitle className="text-lg flex items-center gap-2">
@@ -284,7 +673,6 @@ export default function AdminOrganizerDetail() {
                 </CardContent>
             </Card>
 
-            {/* Actions */}
             <Card className="border-border/70 tys-soft-shadow">
                 <CardHeader>
                     <CardTitle className="text-lg">Acciones</CardTitle>

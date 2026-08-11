@@ -178,11 +178,31 @@ function StatsTab({ event }) {
 
 // ── Door access (Phase 9 closing item) ──────────────────────────────────────
 function DoorAccessSection({ event, scanStats }) {
+    const ticketValidation = event?.access_params?.ticket_validation || "qr";
     // Show only when we actually have a published numbered/free event with tickets
     // issued so far OR the org explicitly wants to monitor scans. If the event has
     // no tickets issued and no scans, render a minimal CTA instead of empty cards.
     const isPublished = event.status === "published";
     if (!scanStats && !isPublished) return null;
+
+    if (ticketValidation === "none") {
+        return (
+            <Card data-testid="door-access-section">
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <DoorOpen className="h-5 w-5 text-muted-foreground" />
+                        <CardTitle className="text-lg">Acceso al evento</CardTitle>
+                    </div>
+                </CardHeader>
+                <CardContent>
+                    <p className="text-sm text-muted-foreground" data-testid="door-non-validatable">
+                        Este evento usa entrada no validable (email/PDF). No hay control
+                        sistemático en puerta con QR.
+                    </p>
+                </CardContent>
+            </Card>
+        );
+    }
 
     const hasData = scanStats && (scanStats.tickets_issued > 0 || scanStats.scanned_count > 0);
     const lastScan = scanStats?.last_scan_at
@@ -757,32 +777,40 @@ function ManualPaymentDialog({ order, event, onClose, onChanged }) {
                 {mode === "confirming" && (
                     <div className="space-y-3">
                         <div className="space-y-1.5">
-                            <label className="text-xs font-medium uppercase">
-                                Referencia (opcional)
+                            <label
+                                htmlFor="confirm-reference"
+                                className="text-xs font-medium uppercase block space-y-1.5"
+                            >
+                                <span>Referencia (opcional)</span>
+                                <input
+                                    id="confirm-reference"
+                                    type="text"
+                                    value={reference}
+                                    onChange={(e) => setReference(e.target.value)}
+                                    placeholder="Ej: TRX-12345"
+                                    className="w-full border rounded px-2 py-1.5 text-sm font-normal normal-case"
+                                    maxLength={120}
+                                    data-testid="confirm-reference"
+                                />
                             </label>
-                            <input
-                                type="text"
-                                value={reference}
-                                onChange={(e) => setReference(e.target.value)}
-                                placeholder="Ej: TRX-12345"
-                                className="w-full border rounded px-2 py-1.5 text-sm"
-                                maxLength={120}
-                                data-testid="confirm-reference"
-                            />
                         </div>
                         <div className="space-y-1.5">
-                            <label className="text-xs font-medium uppercase">
-                                Notas (opcional)
+                            <label
+                                htmlFor="confirm-notes"
+                                className="text-xs font-medium uppercase block space-y-1.5"
+                            >
+                                <span>Notas (opcional)</span>
+                                <textarea
+                                    id="confirm-notes"
+                                    value={notes}
+                                    onChange={(e) => setNotes(e.target.value)}
+                                    placeholder="Ej: Recibido en cuenta Pichincha"
+                                    rows={3}
+                                    maxLength={500}
+                                    className="w-full border rounded px-2 py-1.5 text-sm font-normal normal-case"
+                                    data-testid="confirm-notes"
+                                />
                             </label>
-                            <textarea
-                                value={notes}
-                                onChange={(e) => setNotes(e.target.value)}
-                                placeholder="Ej: Recibido en cuenta Pichincha"
-                                rows={3}
-                                maxLength={500}
-                                className="w-full border rounded px-2 py-1.5 text-sm"
-                                data-testid="confirm-notes"
-                            />
                         </div>
                         <div className="flex gap-2 justify-end">
                             <Button

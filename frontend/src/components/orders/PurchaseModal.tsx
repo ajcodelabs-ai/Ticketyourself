@@ -43,6 +43,10 @@ import api, { formatApiError } from "@/lib/api";
 import { formatPriceLabel } from "@/lib/events";
 import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders";
 import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
+import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
+import type { NuveiCheckoutConfig } from "@/lib/nuvei";
+import DeunaCheckoutPanel from "@/components/orders/DeunaCheckoutPanel";
+import type { DeunaCheckoutConfig } from "@/lib/deuna";
 
 const FEE_PERCENT = 5;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -128,6 +132,7 @@ export default function PurchaseModal({
 }) {
     const navigate = useNavigate();
     const pricingType = event?.pricing_type || "free";
+    const optionalDonation = pricingType === "free" && !!event?.optional_donation_enabled;
     const isSeatNumbered = !!seatHoldsInfo;
     // §4.2.6 — límite "por compra/transacción" configurado en el evento.
     const maxPerPurchase = event?.access_params?.max_per_purchase || 10;
@@ -137,10 +142,10 @@ export default function PurchaseModal({
     const functionNoun = isSubevent ? "subevento" : "función";
 
     const activeMethods = useMemo(() => {
-        if (pricingType === "free") return [];
+        if (pricingType === "free" && !optionalDonation) return [];
         const m = activeMethodsFor(event);
         return m.length ? m : ["nuvei"];
-    }, [event, pricingType]);
+    }, [event, pricingType, optionalDonation]);
 
     // ── Phase 8: ticket types + functions ────────────────────────────────────
     const [ticketTypes, setTicketTypes] = useState<TicketTypeItem[]>([]);
@@ -162,6 +167,8 @@ export default function PurchaseModal({
     });
     const [submitting, setSubmitting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
+    const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
+    const [deunaCheckout, setDeunaCheckout] = useState<DeunaCheckoutConfig | null>(null);
     // §4.2.8 — preguntas adicionales al comprador, por id de pregunta
     const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
     const selectedLocalityIds = useMemo(() => {
@@ -192,11 +199,21 @@ export default function PurchaseModal({
         fees_cents: number;
         total_cents: number;
         discount_total_cents: number;
+        discounts_applied?: Array<{ name: string; type: string; amount_cents: number }>;
     } | null>(null);
+    const [lawCategory, setLawCategory] = useState<"" | "disability" | "senior">("");
+    const [lawDocumentId, setLawDocumentId] = useState("");
+
+    const disabilityEnabled = !!event?.discounts?.disability_law?.enabled;
+    const seniorEnabled = !!event?.discounts?.senior_law?.enabled;
+    const lawDiscountAvailable = disabilityEnabled || seniorEnabled;
 
     // ── Fase 9: access gate (lista verificada / código de acceso) ──────────────
     const accessType = event?.access_params?.access_type || "open";
-    const needsAccessGate = accessType === "verified_list" || accessType === "access_code";
+    const allowContinueWithoutCode = !!event?.access_params?.allow_continue_without_code;
+    const needsAccessGate =
+        accessType === "verified_list" ||
+        (accessType === "access_code" && !allowContinueWithoutCode);
     const [accessVerified, setAccessVerified] = useState(false);
     const [accessCode, setAccessCode] = useState("");
     const [checkEmail, setCheckEmail] = useState("");
@@ -206,12 +223,21 @@ export default function PurchaseModal({
 
     const checkAccess = async () => {
         setAccessError("");
-        if (accessType === "access_code" && !accessCode.trim()) {
+        if (accessType === "access_code" && !accessCode.trim() && !allowContinueWithoutCode) {
             setAccessError("Ingresá el código de acceso.");
             return;
         }
         if (accessType === "verified_list" && !checkEmail.trim() && !checkCedula.trim()) {
             setAccessError("Ingresá tu correo o cédula.");
+            return;
+        }
+        // Optional code path: skip verification and continue.
+        if (
+            accessType === "access_code" &&
+            allowContinueWithoutCode &&
+            !accessCode.trim()
+        ) {
+            setAccessVerified(true);
             return;
         }
         setCheckingAccess(true);
@@ -392,24 +418,33 @@ export default function PurchaseModal({
             const fees = subtotal > 0 ? Math.round((subtotal * FEE_PERCENT) / 100) : 0;
             base = { subtotal, fees, total: subtotal + fees };
         } else if (pricingType === "free") {
-            base = { subtotal: 0, fees: 0, total: 0 };
+            const cents = optionalDonation
+                ? Math.round(parseFloat(donation || "0") * 100)
+                : 0;
+            base = { subtotal: cents, fees: 0, total: cents };
         } else if (pricingType === "donation") {
             const cents = Math.round(parseFloat(donation || "0") * 100);
             const fees = cents > 0 ? Math.round((cents * FEE_PERCENT) / 100) : 0;
             base = { subtotal: cents, fees, total: cents + fees };
         } else {
             const unit = event.base_price_cents || 0;
-            const subtotal = unit * quantity;
-            const fees = Math.round((subtotal * FEE_PERCENT) / 100);
+            const tf = event.ticket_fees || {};
+            const perExtra =
+                Number(tf.service_fee_cents || 0) +
+                Number(tf.ticketseguro_cents || tf.admin_fee_cents || 0) +
+                Number(tf.tax_cents || tf.vxs_cents || 0) +
+                Number(tf.wallet_fee_cents || 0);
+            const subtotal = (unit + perExtra) * quantity;
+            const fees = Math.round((unit * quantity * FEE_PERCENT) / 100);
             base = { subtotal, fees, total: subtotal + fees };
         }
 
-        if (appliedPromo && previewTotals) {
+        if (previewTotals) {
             return {
                 subtotal: previewTotals.subtotal_cents,
                 fees: previewTotals.fees_cents,
                 total: previewTotals.total_cents,
-                discount: previewTotals.discount_total_cents,
+                discount: previewTotals.discount_total_cents || 0,
             };
         }
         if (appliedPromo) {
@@ -422,7 +457,7 @@ export default function PurchaseModal({
         }
         return { ...base, discount: 0 };
     }, [
-        event, pricingType, quantity, donation, isSeatNumbered, seatHoldsInfo,
+        event, pricingType, optionalDonation, quantity, donation, isSeatNumbered, seatHoldsInfo,
         appliedPromo, previewTotals, hasTypes, typeSelections, ticketTypes,
     ]);
 
@@ -432,19 +467,65 @@ export default function PurchaseModal({
           ? totalQtyFromTypes
           : quantity;
 
+    const buildPreviewBody = () => {
+        const body: Record<string, unknown> = {
+            tenant_slug: tenantSlug,
+            event_slug: event.slug,
+            quantity: effectiveQty || 1,
+            payment_method: pricingType === "free" ? "stripe" : paymentMethod,
+        };
+        if (appliedPromo?.code) body.promo_code = appliedPromo.code;
+        if (lawCategory) body.law_category = lawCategory;
+        if (buyer.email) body.buyer_email = buyer.email;
+        if (isSeatNumbered) body.seat_ids = seatHoldsInfo.seat_ids;
+        if (hasTypes && typeSelections.length > 0) {
+            body.ticket_type_selections = typeSelections;
+        }
+        return body;
+    };
+
+    const refreshPreview = async () => {
+        if (!open || !event?.slug) return;
+        if (pricingType === "free" && !optionalDonation && !hasTypes) return;
+        if ((effectiveQty || 0) < 1 && !isSeatNumbered) return;
+        try {
+            const { data } = await api.post("/public/orders/preview", buildPreviewBody());
+            setPreviewTotals({
+                subtotal_cents: data.subtotal_cents,
+                fees_cents: data.fees_cents,
+                total_cents: data.total_cents,
+                discount_total_cents: data.discount_total_cents || 0,
+                discounts_applied: data.discounts_applied || [],
+            });
+        } catch {
+            /* soft — keep local totals */
+        }
+    };
+
+    useEffect(() => {
+        if (!open) return;
+        const t = window.setTimeout(() => {
+            refreshPreview();
+        }, 350);
+        return () => window.clearTimeout(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [
+        open,
+        effectiveQty,
+        paymentMethod,
+        appliedPromo?.code,
+        lawCategory,
+        JSON.stringify(typeSelections),
+        isSeatNumbered,
+        buyer.email,
+    ]);
+
     const applyPromo = async () => {
         const code = (promoCodeInput || "").trim().toUpperCase();
         if (!code) return;
         setApplyingPromo(true);
         try {
-            const body = {
-                tenant_slug: tenantSlug,
-                event_slug: event.slug,
-                quantity: effectiveQty || 1,
-                promo_code: code,
-                payment_method: pricingType === "free" ? "stripe" : paymentMethod,
-            };
-            if (isSeatNumbered) (body as any).seat_ids = seatHoldsInfo.seat_ids;
+            const body = { ...buildPreviewBody(), promo_code: code };
             const { data } = await api.post("/public/orders/preview", body);
             const applied = (data.discounts_applied || []).find(
                 (a: any) => a.type === "promo_code",
@@ -459,6 +540,7 @@ export default function PurchaseModal({
                 fees_cents: data.fees_cents,
                 total_cents: data.total_cents,
                 discount_total_cents: data.discount_total_cents,
+                discounts_applied: data.discounts_applied || [],
             });
             toast.success(`Descuento "${applied.name}" aplicado`);
         } catch (e: any) {
@@ -471,6 +553,9 @@ export default function PurchaseModal({
     const removePromo = () => {
         setAppliedPromo(null);
         setPromoCodeInput("");
+        // Drop the stale server-computed (discounted) total immediately instead
+        // of waiting for the debounced refreshPreview — otherwise the buyer can
+        // still see and act on a discount that no longer applies.
         setPreviewTotals(null);
     };
 
@@ -478,9 +563,10 @@ export default function PurchaseModal({
         const e: Record<string, string> = {};
         if (!buyer.name.trim() || buyer.name.trim().length < 2) e.name = "Requerido";
         if (!EMAIL_RE.test(buyer.email)) e.email = "Email inválido";
-        if (pricingType === "donation") {
+        if (pricingType === "donation" || optionalDonation) {
             const d = parseFloat(donation || "0");
-            if (!d || d < 1) e.donation = "Mínimo $1";
+            if (pricingType === "donation" && (!d || d < 1)) e.donation = "Mínimo $1";
+            if (optionalDonation && d && d < 1) e.donation = "Mínimo $1";
         }
         if (!isSeatNumbered && !hasTypes && (quantity < 1 || quantity > maxPerPurchase))
             e.quantity = `Entre 1 y ${maxPerPurchase}`;
@@ -500,6 +586,9 @@ export default function PurchaseModal({
         }
         if (event?.is_multi_function && functions.length > 0 && !selectedFunctionId)
             e.function = `Seleccioná un${isSubevent ? "" : "a"} ${functionNoun}`;
+        if (lawCategory && !(lawDocumentId.trim() || buyer.document_id.trim())) {
+            e.law_document = "Indicá el documento de verificación (cédula / carné).";
+        }
         for (const q of customQuestions) {
             if (q.required && !(customAnswers[q.id] || "").trim()) {
                 e[`cq_${q.id}`] = "Requerido";
@@ -530,12 +619,20 @@ export default function PurchaseModal({
                     document_id: buyer.document_id || undefined,
                 },
                 origin_url: window.location.origin,
-                payment_method: pricingType === "free" ? "stripe" : paymentMethod,
+                payment_method:
+                    pricingType === "free" &&
+                    !(optionalDonation && Math.round(parseFloat(donation || "0") * 100) > 0)
+                        ? "stripe"
+                        : paymentMethod,
             };
 
             if (pricingType === "donation") {
                 payload.donation_amount_cents = Math.round(parseFloat(donation) * 100);
                 payload.quantity = 1;
+            }
+            if (optionalDonation) {
+                const cents = Math.round(parseFloat(donation || "0") * 100);
+                if (cents > 0) payload.donation_amount_cents = cents;
             }
             if (isSeatNumbered) {
                 payload.seat_ids = seatHoldsInfo.seat_ids;
@@ -543,6 +640,10 @@ export default function PurchaseModal({
             }
             if (appliedPromo?.code) {
                 payload.promo_code = appliedPromo.code;
+            }
+            if (lawCategory) {
+                payload.law_category = lawCategory;
+                payload.law_document_id = (lawDocumentId || buyer.document_id || "").trim() || null;
             }
             if (accessType === "access_code" && accessCode.trim()) {
                 payload.access_code = accessCode.trim();
@@ -581,6 +682,27 @@ export default function PurchaseModal({
                 onOpenChange(false);
                 return;
             }
+            if (data.status === "nuvei_checkout" && data.session_token) {
+                setNuveiCheckout({
+                    session_token: data.session_token,
+                    merchant_id: data.merchant_id,
+                    merchant_site_id: data.merchant_site_id,
+                    nuvei_env: data.nuvei_env,
+                    checkout_js_url: data.checkout_js_url,
+                    client_unique_id: data.client_unique_id || data.order_number,
+                });
+                return;
+            }
+            if (data.status === "deuna_checkout" && data.order_token) {
+                setDeunaCheckout({
+                    order_token: data.order_token,
+                    public_api_key: data.public_api_key,
+                    deuna_env: data.deuna_env,
+                    checkout_js_url: data.checkout_js_url,
+                    order_id: data.client_unique_id || data.order_number,
+                });
+                return;
+            }
             if (data.checkout_url) {
                 window.location.href = data.checkout_url;
                 return;
@@ -595,19 +717,74 @@ export default function PurchaseModal({
 
     if (!event) return null;
 
+    const donationCents = Math.round(parseFloat(donation || "0") * 100);
     const isEffectivelyFree = hasTypes
         ? typeSelections.every((s) => {
               const tt = ticketTypes.find((t) => t.id === s.ticket_type_id);
               return (tt?.price_cents ?? 0) === 0;
           }) && typeSelections.length > 0
-        : pricingType === "free";
+        : pricingType === "free" && !(optionalDonation && donationCents > 0);
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog
+            open={open}
+            onOpenChange={(next) => {
+                if (!next) {
+                    setNuveiCheckout(null);
+                    setDeunaCheckout(null);
+                }
+                onOpenChange(next);
+            }}
+        >
             <DialogContent
                 className="sm:max-w-lg max-h-[92vh] overflow-y-auto"
                 data-testid="purchase-modal"
             >
+                {nuveiCheckout ? (
+                    <>
+                        <DialogHeader>
+                            <DialogTitle>Completar pago</DialogTitle>
+                            <DialogDescription>
+                                Ingresá los datos de tu tarjeta en el checkout seguro de Nuvei.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <NuveiCheckoutPanel
+                            config={nuveiCheckout}
+                            onPaid={() => {
+                                const orderNumber =
+                                    nuveiCheckout.client_unique_id || "";
+                                setNuveiCheckout(null);
+                                onOpenChange(false);
+                                if (orderNumber) {
+                                    navigate(orderSuccessPath(tenantSlug, orderNumber));
+                                }
+                            }}
+                            onCancel={() => setNuveiCheckout(null)}
+                        />
+                    </>
+                ) : deunaCheckout ? (
+                    <>
+                        <DialogHeader>
+                            <DialogTitle>Completar pago</DialogTitle>
+                            <DialogDescription>
+                                Completá el cobro en el widget seguro de DEUNA.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <DeunaCheckoutPanel
+                            config={deunaCheckout}
+                            onPaid={() => {
+                                const orderNumber = deunaCheckout.order_id || "";
+                                setDeunaCheckout(null);
+                                onOpenChange(false);
+                                if (orderNumber) {
+                                    navigate(orderSuccessPath(tenantSlug, orderNumber));
+                                }
+                            }}
+                            onCancel={() => setDeunaCheckout(null)}
+                        />
+                    </>
+                ) : (
+                <>
                 <DialogHeader>
                     <div className="flex items-start justify-between gap-2">
                         <DialogTitle className="text-2xl">Comprar entradas</DialogTitle>
@@ -932,10 +1109,14 @@ export default function PurchaseModal({
                             </div>
                         )}
 
-                        {/* ── Donation ──────────────────────────────────────── */}
-                        {pricingType === "donation" && !functionPending && (
+                        {/* ── Donation (full or optional on free) ───────────── */}
+                        {(pricingType === "donation" || optionalDonation) && !functionPending && (
                             <div className="space-y-1.5">
-                                <Label htmlFor="donation">Tu aporte (USD)</Label>
+                                <Label htmlFor="donation">
+                                    {optionalDonation
+                                        ? "Aporte voluntario (opcional, USD)"
+                                        : "Tu aporte (USD)"}
+                                </Label>
                                 <div className="flex gap-2">
                                     {[5, 10, 20, 50].map((v) => (
                                         <Button
@@ -950,13 +1131,27 @@ export default function PurchaseModal({
                                             ${v}
                                         </Button>
                                     ))}
+                                    {optionalDonation && (
+                                        <Button
+                                            type="button"
+                                            variant={!donation ? "default" : "outline"}
+                                            onClick={() => setDonation("")}
+                                            data-testid="donation-preset-skip"
+                                        >
+                                            Sin aporte
+                                        </Button>
+                                    )}
                                 </div>
                                 <Input
                                     id="donation"
                                     type="number"
-                                    min="1"
+                                    min={optionalDonation ? "0" : "1"}
                                     step="0.50"
-                                    placeholder="O escribí un monto"
+                                    placeholder={
+                                        optionalDonation
+                                            ? "Monto opcional"
+                                            : "O escribí un monto"
+                                    }
                                     value={donation}
                                     onChange={(e) => setDonation(e.target.value)}
                                     data-testid="donation-input"
@@ -968,12 +1163,16 @@ export default function PurchaseModal({
                         )}
 
                         {/* ── Payment method ────────────────────────────────── */}
-                        {activeMethods.length > 1 && (
+                        {!isEffectivelyFree && activeMethods.length > 0 && (
                             <div className="space-y-2" data-testid="payment-method-selector">
                                 <Label>¿Cómo quieres pagar?</Label>
                                 <div className="space-y-2">
                                     {activeMethods.map((m) => {
-                                        const meta = PAYMENT_METHOD_META[m];
+                                        const meta = PAYMENT_METHOD_META[m] || {
+                                            label: m,
+                                            icon: "💳",
+                                            description: "",
+                                        };
                                         const checked = paymentMethod === m;
                                         return (
                                             <label
@@ -1111,8 +1310,74 @@ export default function PurchaseModal({
                             </div>
                         )}
 
+                        {/* ── Optional access code (continuar sin código) ───── */}
+                        {accessType === "access_code" && allowContinueWithoutCode && (
+                            <div className="space-y-1.5" data-testid="optional-access-code">
+                                <Label htmlFor="optional-access-code">
+                                    Código de acceso (opcional)
+                                </Label>
+                                <Input
+                                    id="optional-access-code"
+                                    placeholder="Si tenés un código, ingresalo"
+                                    value={accessCode}
+                                    onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
+                                    data-testid="optional-access-code-input"
+                                />
+                            </div>
+                        )}
+
+                        {/* ── Law discounts ─────────────────────────────────── */}
+                        {lawDiscountAvailable && (
+                            <div className="border-t pt-3 space-y-2" data-testid="law-discount-block">
+                                <Label>Descuento por ley (opcional)</Label>
+                                <select
+                                    className="w-full border rounded-md h-9 px-2 text-sm bg-background"
+                                    value={lawCategory}
+                                    onChange={(e) =>
+                                        setLawCategory(e.target.value as "" | "disability" | "senior")
+                                    }
+                                    data-testid="law-category"
+                                >
+                                    <option value="">Sin descuento por ley</option>
+                                    {disabilityEnabled && (
+                                        <option value="disability">
+                                            Discapacidad ({event.discounts.disability_law.percent || 50}%)
+                                        </option>
+                                    )}
+                                    {seniorEnabled && (
+                                        <option value="senior">
+                                            Tercera edad ({event.discounts.senior_law?.percent || 50}%)
+                                        </option>
+                                    )}
+                                </select>
+                                {lawCategory && (
+                                    <div className="space-y-1">
+                                        <Label htmlFor="law-document">
+                                            Documento de verificación
+                                        </Label>
+                                        <Input
+                                            id="law-document"
+                                            placeholder="Cédula o carné CONADIS"
+                                            value={lawDocumentId || buyer.document_id}
+                                            onChange={(e) => setLawDocumentId(e.target.value)}
+                                            data-testid="law-document"
+                                        />
+                                        {errors.law_document && (
+                                            <p className="text-xs text-destructive">{errors.law_document}</p>
+                                        )}
+                                        <p className="text-[11px] text-muted-foreground">
+                                            Declarás que la información es correcta; el organizador puede
+                                            verificarla en puerta.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         {/* ── Promo code ────────────────────────────────────── */}
-                        {(pricingType !== "free" || (hasTypes && totals.subtotal > 0)) && (
+                        {(pricingType !== "free" ||
+                            (optionalDonation && donationCents > 0) ||
+                            (hasTypes && totals.subtotal > 0)) && (
                             <div className="border-t pt-3 space-y-2" data-testid="promo-code-block">
                                 {appliedPromo ? (
                                     <div
@@ -1140,7 +1405,7 @@ export default function PurchaseModal({
                                 ) : (
                                     <div className="flex gap-2">
                                         <Input
-                                            placeholder="¿Tenés un código promocional?"
+                                            placeholder="¿Tenés un código de compra / descuento?"
                                             value={promoCodeInput}
                                             onChange={(e) =>
                                                 setPromoCodeInput(e.target.value.toUpperCase())
@@ -1197,21 +1462,28 @@ export default function PurchaseModal({
                                         )}
                                         {(seatHoldsInfo.admin_fee_cents || 0) > 0 && (
                                             <Row
-                                                label="Cargo admin"
+                                                label="TicketSeguro"
                                                 value={formatCents(seatHoldsInfo.admin_fee_cents, event.currency)}
                                             />
                                         )}
                                         {(seatHoldsInfo.vxs_cents || 0) > 0 && (
                                             <Row
-                                                label="VXS"
+                                                label="Impuestos"
                                                 value={formatCents(seatHoldsInfo.vxs_cents, event.currency)}
+                                            />
+                                        )}
+                                        {(seatHoldsInfo.wallet_fee_cents || 0) > 0 && (
+                                            <Row
+                                                label="Billetera Virtual"
+                                                value={formatCents(seatHoldsInfo.wallet_fee_cents, event.currency)}
                                             />
                                         )}
                                     </>
                                 ) : (
                                     <Row
                                         label={
-                                            pricingType === "donation"
+                                            pricingType === "donation" ||
+                                            (optionalDonation && donationCents > 0)
                                                 ? "Aporte"
                                                 : `Subtotal (${quantity}× ${formatCents(event.base_price_cents)})`
                                         }
@@ -1219,12 +1491,26 @@ export default function PurchaseModal({
                                     />
                                 )}
                                 {totals.discount > 0 && (
-                                    <Row
-                                        label={`Descuento ${appliedPromo?.name || ""}`}
-                                        value={`–${formatCents(totals.discount, event.currency)}`}
-                                        accent="emerald"
-                                        testid="row-discount"
-                                    />
+                                    <>
+                                        {(previewTotals?.discounts_applied || []).length > 0
+                                            ? (previewTotals?.discounts_applied || []).map((a) => (
+                                                <Row
+                                                    key={`${a.type}-${a.name}`}
+                                                    label={a.name || "Descuento"}
+                                                    value={`–${formatCents(a.amount_cents, event.currency)}`}
+                                                    accent="emerald"
+                                                    testid={`row-discount-${a.type}`}
+                                                />
+                                            ))
+                                            : (
+                                                <Row
+                                                    label={`Descuento ${appliedPromo?.name || ""}`}
+                                                    value={`–${formatCents(totals.discount, event.currency)}`}
+                                                    accent="emerald"
+                                                    testid="row-discount"
+                                                />
+                                            )}
+                                    </>
                                 )}
                                 {totals.fees > 0 && (
                                     <Row
@@ -1242,9 +1528,17 @@ export default function PurchaseModal({
 
                         <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                             <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                            {isEffectivelyFree || pricingType === "free"
+                            {isEffectivelyFree
                                 ? "Te enviaremos tu ticket por email al confirmar."
-                                : "Te redirigimos a Stripe (procesamiento seguro). Los datos del tarjetahabiente no quedan en TYS."}
+                                : paymentMethod === "nuvei"
+                                  ? "El cobro se procesa con Nuvei (Simply Connect). Los datos de tarjeta no quedan en TYS."
+                                  : paymentMethod === "deuna"
+                                    ? "El cobro se procesa con DEUNA (Payment Widget). Los datos de tarjeta no quedan en TYS."
+                                  : paymentMethod === "stripe"
+                                    ? "Te redirigimos a Stripe (procesamiento seguro). Los datos del tarjetahabiente no quedan en TYS."
+                                    : paymentMethod === "paypal"
+                                      ? "PayPal aún está en integración: tu reserva queda registrada."
+                                      : "Te mostramos las instrucciones de pago. La entrada se confirma cuando el organizador valida el cobro."}
                         </p>
 
                         <div className="flex justify-end gap-2 pt-2">
@@ -1295,6 +1589,8 @@ export default function PurchaseModal({
                             </Button>
                         </div>
                     </>
+                )}
+                </>
                 )}
             </DialogContent>
         </Dialog>

@@ -45,7 +45,7 @@ def test_normalize_syncs_manual_flags():
             "transfer": {"bank_name": "Pichincha"},
             "cash": {"location": "Oficina"},
         },
-        allowed_codes={"nuvei", "deuna", "transfer", "cash"},
+        allowed_codes={"nuvei", "deuna", "stripe", "paypal", "transfer", "cash"},
     )
     assert out["transfer"]["enabled"] is True
     assert out["cash"]["enabled"] is True

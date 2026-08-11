@@ -170,6 +170,7 @@ export default function NumberedSeatSection({
                 service_fee_cents: breakdown.service_fee_cents,
                 admin_fee_cents: breakdown.admin_fee_cents,
                 vxs_cents: breakdown.vxs_cents,
+                wallet_fee_cents: breakdown.wallet_fee_cents,
                 fees_cents: fees,
                 total_cents: total,
                 function_id: functionId || undefined,

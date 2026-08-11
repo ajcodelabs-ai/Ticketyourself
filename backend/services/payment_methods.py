@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-# Platform catalog codes (wizard / new events). Legacy "stripe" may still appear
-# on older events via dual-read but is not offered in the organizer UI.
-CATALOG_CODES = ("nuvei", "deuna", "transfer", "cash")
-GATEWAY_STUB_CODES = ("nuvei", "deuna")
+# Platform catalog for wizard / new events (PRD §4.2.1 Pagado / Por Donación).
+CATALOG_CODES = ("nuvei", "deuna", "stripe", "paypal", "transfer", "cash")
+# PayPal remains stubbed; Nuvei + DeUna use live gateway SDKs.
+GATEWAY_STUB_CODES = ("paypal",)
 MANUAL_CODES = ("transfer", "cash")
 
 
@@ -15,8 +15,7 @@ def resolve_enabled_codes(pm: dict | None) -> list[str]:
     """Return enabled payment codes for an event's payment_methods JSON.
 
     Prefer ``enabled_codes`` when present; otherwise map legacy
-    ``{stripe,transfer,cash}.enabled`` flags (stripe kept for checkout of
-    older events).
+    ``{stripe,transfer,cash}.enabled`` flags.
     """
     pm = pm or {}
     raw = pm.get("enabled_codes")
@@ -26,7 +25,7 @@ def resolve_enabled_codes(pm: dict | None) -> list[str]:
             if not isinstance(c, str):
                 continue
             code = c.strip().lower()
-            if code in CATALOG_CODES or code == "stripe":
+            if code in CATALOG_CODES:
                 if code not in out:
                     out.append(code)
         return out
@@ -67,7 +66,7 @@ def normalize_payment_methods(
             if not isinstance(c, str):
                 continue
             code = c.strip().lower()
-            if code and code not in allowed_codes and code != "stripe":
+            if code and code not in allowed_codes:
                 if code not in unknown:
                     unknown.append(code)
         if unknown:
@@ -82,7 +81,6 @@ def normalize_payment_methods(
         codes = ["nuvei"]
 
     if allowed_codes is not None:
-        # Stripe is never in the platform catalog — strip it on save.
         codes = [c for c in codes if c in allowed_codes]
 
     if not codes:
