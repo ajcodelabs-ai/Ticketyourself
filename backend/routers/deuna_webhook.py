@@ -152,25 +152,29 @@ async def apply_deuna_notification(
     *,
     order_token: Optional[str],
     order_id: Optional[str],
-    status: str,
-    payment_status: str,
     transaction_id: Optional[str],
     source: str,
 ) -> str:
-    info = {
-        "status": status,
-        "payment_status": payment_status,
-    }
-    # Prefer live verification when we have a token.
-    if order_token and deuna_service.is_configured():
-        try:
-            verified = deuna_service.get_order(order_token)
-            info = verified
-            order_id = verified.get("order_id") or order_id
-            transaction_id = verified.get("transaction_id") or transaction_id
-            order_token = verified.get("order_token") or order_token
-        except deuna_service.DeunaError as e:
-            logger.warning("get_order during DEUNA %s failed: %s", source, e)
+    # Never trust caller-supplied status: always re-fetch the order from DEUNA's
+    # API with our private key so a forged webhook body can't mark anything paid.
+    if not order_token or not deuna_service.is_configured():
+        logger.warning(
+            "DEUNA %s: rejecting unverifiable notification (order_id=%s, has_token=%s)",
+            source,
+            order_id,
+            bool(order_token),
+        )
+        return "ignored_unverified"
+
+    try:
+        info = deuna_service.get_order(order_token)
+    except deuna_service.DeunaError as e:
+        logger.warning("get_order during DEUNA %s failed: %s", source, e)
+        return "ignored_unverified"
+
+    order_id = info.get("order_id") or order_id
+    transaction_id = info.get("transaction_id") or transaction_id
+    order_token = info.get("order_token") or order_token
 
     if not deuna_service.is_paid(info):
         return "ignored_not_paid"
@@ -241,8 +245,6 @@ async def deuna_webhook(request: Request):
     result = await apply_deuna_notification(
         order_token=parsed.get("order_token"),
         order_id=parsed.get("order_id"),
-        status=parsed.get("status") or "",
-        payment_status=parsed.get("payment_status") or "",
         transaction_id=parsed.get("transaction_id"),
         source="webhook",
     )
@@ -283,8 +285,6 @@ async def confirm_deuna_payment(body: dict[str, Any]):
     result = await apply_deuna_notification(
         order_token=info.get("order_token") or order_token,
         order_id=body.get("order_id") or info.get("order_id"),
-        status=info.get("status") or "",
-        payment_status=info.get("payment_status") or "",
         transaction_id=info.get("transaction_id"),
         source="confirm",
     )
