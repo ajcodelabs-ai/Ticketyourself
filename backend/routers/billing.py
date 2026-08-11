@@ -91,7 +91,11 @@ async def create_checkout_session(
                 "billing.gateway_checkout_created",
                 "billing_intent",
                 intent_id,
-                {"plan_code": plan["code"], "payment_method": "nuvei", "configured": False},
+                {
+                    "plan_code": plan["code"],
+                    "payment_method": "nuvei",
+                    "configured": False,
+                },
             )
             return CheckoutResponse(
                 checkout_url=None,

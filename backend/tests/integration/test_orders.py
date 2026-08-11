@@ -499,9 +499,10 @@ def test_create_order_nuvei_returns_pending_gateway_stub():
     assert data["payment_method"] == "nuvei"
     assert data["status"] in ("pending_gateway", "nuvei_checkout")
     if data["status"] == "pending_gateway":
-        assert "Nuvei" in (data.get("message") or "") or "configurado" in (
-            data.get("message") or ""
-        ).lower()
+        assert (
+            "Nuvei" in (data.get("message") or "")
+            or "configurado" in (data.get("message") or "").lower()
+        )
     else:
         assert data.get("session_token")
         assert data.get("merchant_id")

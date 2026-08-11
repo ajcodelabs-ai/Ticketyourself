@@ -20,17 +20,17 @@ from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 from database import close_db  # noqa: E402
 from routers import activation as activation_router  # noqa: E402
 from routers import admin as admin_router  # noqa: E402
-from routers import oneshot_webhook as oneshot_webhook_router  # noqa: E402
 from routers import auth as auth_router  # noqa: E402
 from routers import billing as billing_router  # noqa: E402
+from routers import deuna_webhook as deuna_webhook_router  # noqa: E402
 from routers import dev as dev_router  # noqa: E402
 from routers import microsite as microsite_router  # noqa: E402
+from routers import nuvei_webhook as nuvei_webhook_router  # noqa: E402
+from routers import oneshot_webhook as oneshot_webhook_router  # noqa: E402
 from routers import organizers as organizers_router  # noqa: E402
 from routers import payment_methods as payment_methods_router  # noqa: E402
 from routers import plans as plans_router  # noqa: E402
 from routers import stripe_webhook as stripe_webhook_router  # noqa: E402
-from routers import nuvei_webhook as nuvei_webhook_router  # noqa: E402
-from routers import deuna_webhook as deuna_webhook_router  # noqa: E402
 from routers import tenants as tenants_router  # noqa: E402
 from seeds import run_seeds  # noqa: E402
 

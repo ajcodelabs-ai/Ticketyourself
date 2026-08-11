@@ -96,7 +96,9 @@ async def send_contract(
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(url, json=payload, headers=headers)
         if resp.status_code >= 400:
-            logger.error("OneShot send failed: %s %s", resp.status_code, resp.text[:200])
+            logger.error(
+                "OneShot send failed: %s %s", resp.status_code, resp.text[:200]
+            )
             raise RuntimeError(f"OneShot error {resp.status_code}")
         data = resp.json()
     external_id = str(

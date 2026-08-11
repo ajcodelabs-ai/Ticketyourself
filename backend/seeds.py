@@ -370,7 +370,12 @@ async def _seed_required_documents() -> None:
     """Default mandatory docs: global (*) + Ecuador-specific matrix."""
     ec_defaults = {
         "individual": ["id_card", "bank_certificate"],
-        "company": ["ruc", "legal_rep_appointment", "bank_certificate", "enabling_docs"],
+        "company": [
+            "ruc",
+            "legal_rep_appointment",
+            "bank_certificate",
+            "enabling_docs",
+        ],
     }
     async with AsyncSessionLocal() as session:
         now = datetime.now(timezone.utc)
@@ -500,7 +505,9 @@ async def _seed_demo_organizers() -> None:
                 created_at=now,
                 approved_at=now if od["status"] == "approved" else None,
                 approved_by="system" if od["status"] == "approved" else None,
-                verification_fee_status="waived" if od["status"] == "approved" else "none",
+                verification_fee_status=(
+                    "waived" if od["status"] == "approved" else "none"
+                ),
                 verification_fee_cents=0 if od["status"] == "approved" else None,
                 contract_status="signed" if od["status"] == "approved" else "none",
                 contract_signed_at=now if od["status"] == "approved" else None,

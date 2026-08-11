@@ -280,7 +280,10 @@ def validate_compliance_payload(
             if not isinstance(ref, dict):
                 raise HTTPException(400, f"references[{i}] must be an object")
             for field in refs_cfg.get("fields") or []:
-                if field.get("required") and not str(ref.get(field["key"]) or "").strip():
+                if (
+                    field.get("required")
+                    and not str(ref.get(field["key"]) or "").strip()
+                ):
                     raise HTTPException(
                         400, f"references[{i}].{field['key']} is required"
                     )

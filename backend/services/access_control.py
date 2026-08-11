@@ -104,6 +104,7 @@ async def check_purchase_access(
 
     return None
 
+
 async def _tickets_bought_by_guest(
     session: AsyncSession,
     *,

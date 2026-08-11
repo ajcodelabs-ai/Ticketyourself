@@ -120,7 +120,9 @@ async def register(
         country_code = raw.upper() if len(raw) == 2 else "EC"
     country_row = await get_country(session, country_code)
     if not country_row or not country_row.is_active:
-        raise HTTPException(status_code=400, detail=f"Country '{country_code}' is not available")
+        raise HTTPException(
+            status_code=400, detail=f"Country '{country_code}' is not available"
+        )
     country_label = country_row.name
 
     validate_compliance_payload(

@@ -1,11 +1,11 @@
 """OneShot webhook — mark organizer contract as signed when notified."""
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timezone
 
 from database import get_db
 from orm_models import Organizer
@@ -31,10 +31,7 @@ async def oneshot_webhook(request: Request, session: AsyncSession = Depends(get_
         raise HTTPException(400, "Invalid JSON")
 
     event_type = (
-        payload.get("event")
-        or payload.get("type")
-        or payload.get("event_type")
-        or ""
+        payload.get("event") or payload.get("type") or payload.get("event_type") or ""
     ).lower()
     data = payload.get("data") or payload
     external_id = str(

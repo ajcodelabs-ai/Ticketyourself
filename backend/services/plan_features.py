@@ -141,7 +141,9 @@ def features_from_plan_row(row) -> Dict[str, Any]:
             "allows_paid_events": bool(data.get("allows_paid_events", True)),
             "allows_free_events": bool(data.get("allows_free_events", True)),
             "max_events": data.get("max_events", base["max_events"]),
-            "max_events_year": data.get("max_events_year", base.get("max_events_year", -1)),
+            "max_events_year": data.get(
+                "max_events_year", base.get("max_events_year", -1)
+            ),
             "max_tickets_per_event": data.get(
                 "max_tickets_per_event", base["max_tickets_per_event"]
             ),

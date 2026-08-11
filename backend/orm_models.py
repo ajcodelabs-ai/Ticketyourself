@@ -84,7 +84,9 @@ class SubscriptionPlan(Base):
     currency = Column(String(3), nullable=False, default="usd")
     billing_period = Column(String(20), nullable=False)  # one_time | monthly | annual
     features = Column(JSONB, nullable=False, default=list)  # marketing bullet list
-    max_events = Column(Integer, nullable=False, default=-1)  # monthly quota (-1 unlimited)
+    max_events = Column(
+        Integer, nullable=False, default=-1
+    )  # monthly quota (-1 unlimited)
     max_events_year = Column(Integer, nullable=False, default=-1)
     max_tickets_per_event = Column(Integer, nullable=False, default=-1)
     includes_numbered = Column(Boolean, nullable=False, default=False)

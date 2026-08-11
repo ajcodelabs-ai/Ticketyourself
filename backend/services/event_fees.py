@@ -12,7 +12,9 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 
-def _ticket_units_and_gmv(event: dict, ticket_types: Optional[List[dict]] = None) -> tuple[int, int]:
+def _ticket_units_and_gmv(
+    event: dict, ticket_types: Optional[List[dict]] = None
+) -> tuple[int, int]:
     """Estimate capacity units and GMV from ticket types or locality pricing."""
     units = 0
     gmv = 0
@@ -30,7 +32,9 @@ def _ticket_units_and_gmv(event: dict, ticket_types: Optional[List[dict]] = None
     layout = event.get("venue_layout") or {}
     localities = layout.get("localities") or event.get("localities") or []
     pricing = {
-        p.get("locality_id"): p for p in (event.get("locality_pricing") or []) if p.get("locality_id")
+        p.get("locality_id"): p
+        for p in (event.get("locality_pricing") or [])
+        if p.get("locality_id")
     }
     for loc in localities:
         lid = loc.get("id")

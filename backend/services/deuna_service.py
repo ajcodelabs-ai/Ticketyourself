@@ -109,7 +109,11 @@ def split_buyer_name(full_name: str) -> tuple[str, str]:
 
 
 def currency_symbol(currency: str) -> str:
-    return "$" if (currency or "USD").upper() in ("USD", "MXN", "ARS", "CLP", "COP") else ""
+    return (
+        "$"
+        if (currency or "USD").upper() in ("USD", "MXN", "ARS", "CLP", "COP")
+        else ""
+    )
 
 
 def _request(
@@ -215,7 +219,11 @@ def create_order(
                 "quantity": 1,
                 "type": "digital",
                 "unit_price": dict(money),
-                "total_amount": {**money, "original_amount": amount, "total_discount": 0},
+                "total_amount": {
+                    **money,
+                    "original_amount": amount,
+                    "total_discount": 0,
+                },
             }
         ],
         "billing_address": billing,
@@ -280,7 +288,9 @@ def parse_webhook_payload(body: dict[str, Any]) -> dict[str, Any]:
         order = {}
     payment = (order.get("payment") or {}).get("data") or {}
     return {
-        "order_token": order.get("token") or body.get("token") or body.get("order_token"),
+        "order_token": order.get("token")
+        or body.get("token")
+        or body.get("order_token"),
         "order_id": order.get("order_id") or body.get("order_id"),
         "status": str(order.get("status") or body.get("status") or "").lower(),
         "payment_status": str(payment.get("status") or "").lower(),
