@@ -85,7 +85,9 @@ EventCategory = Literal[
 ]
 EventStatus = Literal["draft", "published", "sold_out", "ended", "cancelled"]
 PricingType = Literal["free", "paid", "donation"]
-Visibility = Literal["public", "private", "public_blocked"]  # public_blocked: legacy read
+Visibility = Literal[
+    "public", "private", "public_blocked"
+]  # public_blocked: legacy read
 # Listed on microsite index (private is link-only, never listed).
 LISTABLE_VISIBILITIES = ("public", "public_blocked")
 # Resolvable by direct slug URL (includes private + legacy blocked).
@@ -637,7 +639,8 @@ async def link_venue_to_event(
 
     org = await _require_approved_organizer(user)
     assert_feature(
-        org.get("plan_code") or org.get("signup_plan_code"),
+        # signup_plan_code is unverified/self-declared — never used for feature gates
+        org.get("plan_code"),
         "numbered_seating",
     )
     async with AsyncSessionLocal() as session:
@@ -1071,13 +1074,13 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
     async with AsyncSessionLocal() as session:
         await _assert_pricing_type_allowed(
             session,
-            org.get("plan_code") or org.get("signup_plan_code"),
+            org.get("plan_code"),
             payload.pricing_type,
         )
         if payload.discounts is not None:
             await _assert_discounts_allowed(
                 session,
-                org.get("plan_code") or org.get("signup_plan_code"),
+                org.get("plan_code"),
                 payload.discounts,
             )
         slug = await _next_event_slug(org["id"], normalize_slug(payload.title), session)
@@ -1214,7 +1217,7 @@ async def update_my_event(
             diff["discounts"] = payload.discounts.model_dump(exclude_none=False)
             await _assert_discounts_allowed(
                 session,
-                org.get("plan_code") or org.get("signup_plan_code"),
+                org.get("plan_code"),
                 payload.discounts,
             )
         if "payment_methods" in diff and payload.payment_methods is not None:
@@ -1229,7 +1232,7 @@ async def update_my_event(
         if "pricing_type" in diff:
             await _assert_pricing_type_allowed(
                 session,
-                org.get("plan_code") or org.get("signup_plan_code"),
+                org.get("plan_code"),
                 diff["pricing_type"],
             )
         if diff.get("visibility") == "public_blocked":
