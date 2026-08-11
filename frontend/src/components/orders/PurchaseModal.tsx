@@ -553,6 +553,10 @@ export default function PurchaseModal({
     const removePromo = () => {
         setAppliedPromo(null);
         setPromoCodeInput("");
+        // Drop the stale server-computed (discounted) total immediately instead
+        // of waiting for the debounced refreshPreview — otherwise the buyer can
+        // still see and act on a discount that no longer applies.
+        setPreviewTotals(null);
     };
 
     const validate = () => {
