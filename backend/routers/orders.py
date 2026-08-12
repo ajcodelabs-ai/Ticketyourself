@@ -637,7 +637,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}/instrucciones",
         }
 
-    # ── Nuvei — openOrder + Simply Connect (REST API) ─────────────────────────
+    # ── Nuvei Ecuador (Paymentez) — init_reference + Checkout JS ──────────────
     if effective_method == "nuvei":
         from services import nuvei_service
 
@@ -669,11 +669,6 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                 "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
             }
 
-        origin = _frontend_base(payload.origin_url)
-        success_url = f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}"
-        cancel_url = (
-            f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}/cancelado"
-        )
         first_name, last_name = nuvei_service.split_buyer_name(
             (payload.buyer.name if payload.buyer else "") or ""
         )
@@ -684,16 +679,14 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                 client_unique_id=order["order_number"],
                 user_token_id=order["buyer_email"],
                 email=order["buyer_email"],
+                phone=(payload.buyer.phone if payload.buyer else None),
                 first_name=first_name,
                 last_name=last_name,
-                success_url=success_url,
-                failure_url=cancel_url,
-                pending_url=success_url,
                 custom_data=f"ticket:{order['id']}",
             )
         except nuvei_service.NuveiError as e:
             logger.error(
-                "Nuvei openOrder failed for %s: %s",
+                "Nuvei checkout prepare failed for %s: %s",
                 order["order_number"],
                 type(e).__name__,
             )
@@ -706,15 +699,15 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             from orm_models import TicketOrder as _TOModel
 
             _row = await _pg.scalar(select(_TOModel).where(_TOModel.id == order["id"]))
-            _row.stripe_session_id = nuvei["session_token"]
+            _row.stripe_session_id = nuvei["reference"]
             meta = dict(_row.metadata_ or {})
-            meta["nuvei_order_id"] = nuvei.get("order_id")
+            meta["nuvei_reference"] = nuvei.get("reference")
+            meta["nuvei_checkout_mode"] = nuvei.get("checkout_mode")
             meta["nuvei_client_unique_id"] = order["order_number"]
             _row.metadata_ = meta
             from sqlalchemy.orm.attributes import flag_modified
 
             flag_modified(_row, "metadata_")
-            # Ensure status is pending (openOrder path), not leftover stub state
             _row.status = "pending"
             await _pg.commit()
 
@@ -728,13 +721,22 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             "order_number": order["order_number"],
             "status": "nuvei_checkout",
             "payment_method": "nuvei",
-            "session_token": nuvei["session_token"],
-            "session_id": nuvei["session_token"],
-            "merchant_id": nuvei["merchant_id"],
-            "merchant_site_id": nuvei["merchant_site_id"],
+            "checkout_mode": nuvei.get("checkout_mode") or "reference",
+            "reference": nuvei["reference"],
+            "session_token": nuvei["reference"],
+            "session_id": nuvei["reference"],
+            "checkout_url": nuvei.get("checkout_url"),
             "nuvei_env": nuvei["env"],
             "checkout_js_url": nuvei["checkout_js_url"],
+            "client_app_code": nuvei.get("client_app_code"),
+            "client_app_key": nuvei.get("client_app_key"),
             "client_unique_id": order["order_number"],
+            "user_id": nuvei.get("user_id"),
+            "user_email": nuvei.get("user_email"),
+            "user_phone": nuvei.get("user_phone"),
+            "order_description": nuvei.get("order_description"),
+            "order_vat": nuvei.get("order_vat"),
+            "order_installments_type": nuvei.get("order_installments_type"),
             "amount": nuvei["amount"],
             "currency": nuvei["currency"],
             "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",

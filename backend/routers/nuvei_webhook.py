@@ -1,4 +1,4 @@
-"""Nuvei DMN (Direct Merchant Notification) + payment confirmation."""
+"""Nuvei Ecuador (Paymentez) webhook + payment confirmation."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ async def finalize_ticket_order_from_nuvei(
     order: dict,
     session_token: Optional[str] = None,
     transaction_id: Optional[str] = None,
-    source: str = "dmn",
+    source: str = "webhook",
 ) -> dict:
     from services import order_service
 
@@ -88,7 +88,7 @@ async def finalize_billing_intent_from_nuvei(
     *,
     intent: BillingIntent,
     transaction_id: Optional[str] = None,
-    source: str = "dmn",
+    source: str = "webhook",
 ) -> None:
     if intent.status == "completed":
         return
@@ -149,51 +149,63 @@ async def finalize_billing_intent_from_nuvei(
 async def apply_nuvei_notification(
     parsed: dict[str, Any], *, source: str, checksum_verified: bool = False
 ) -> str:
-    """Route an approved Nuvei notification to ticket order or billing intent."""
+    """Route an approved Paymentez notification to ticket order or billing intent."""
+    status = parsed.get("status")
+    status_detail = parsed.get("status_detail")
     client_unique_id = (parsed.get("client_unique_id") or "").strip()
-    session_token = parsed.get("session_token")
     transaction_id = parsed.get("transaction_id")
+    reference = (parsed.get("reference") or parsed.get("session_token") or "").strip()
 
     if checksum_verified:
-        # The DMN's cryptographic checksum already proves this came from Nuvei.
-        if not nuvei_service.is_approved_status(parsed.get("status")):
+        # Cryptographic stoken (or prior server-side get_transaction) already
+        # proved this came from Paymentez.
+        if not nuvei_service.is_approved_status(status, status_detail):
             return "ignored_not_approved"
     else:
-        # No valid checksum to trust — the raw status/id in the request body
+        # No valid stoken to trust — the raw status/id in the request body
         # could be forged, so we MUST re-fetch the authoritative status from
-        # Nuvei's API ourselves before finalizing anything.
-        if not session_token or not nuvei_service.is_configured():
+        # Paymentez ourselves before finalizing anything.
+        if not transaction_id or not nuvei_service.is_configured():
             logger.warning(
-                "Nuvei %s: rejecting unverifiable notification (cuid=%s, has_token=%s)",
+                "Nuvei %s: rejecting unverifiable notification (cuid=%s, has_txn=%s)",
                 source,
                 client_unique_id,
-                bool(session_token),
+                bool(transaction_id),
             )
             return "ignored_unverified"
         try:
-            status = nuvei_service.get_payment_status(session_token)
+            verified = nuvei_service.get_transaction(str(transaction_id))
         except nuvei_service.NuveiError as e:
-            logger.warning("getPaymentStatus during %s failed: %s", source, e)
+            logger.warning("get_transaction during %s failed: %s", source, e)
             return "ignored_unverified"
-        if not nuvei_service.is_approved_status(status.get("transaction_status")):
+        if not nuvei_service.is_approved_status(
+            verified.get("transaction_status"),
+            verified.get("status_detail"),
+        ):
             return "ignored_status_mismatch"
         client_unique_id = (
-            status.get("client_unique_id") or client_unique_id or ""
+            verified.get("client_unique_id") or client_unique_id or ""
         ).strip()
-        transaction_id = status.get("transaction_id") or transaction_id
+        transaction_id = verified.get("transaction_id") or transaction_id
+        status = verified.get("transaction_status")
+        status_detail = verified.get("status_detail")
 
-    if not client_unique_id:
+    if not nuvei_service.is_approved_status(status, status_detail):
+        return "ignored_not_approved"
+
+    if not client_unique_id and not reference:
         return "ignored_missing_id"
 
+    order_row = None
+    order: dict = {}
     async with AsyncSessionLocal() as session:
-        order_row = await session.scalar(
-            select(TicketOrder).where(TicketOrder.order_number == client_unique_id)
-        )
-        if order_row is None and session_token:
+        if client_unique_id:
             order_row = await session.scalar(
-                select(TicketOrder).where(
-                    TicketOrder.stripe_session_id == session_token
-                )
+                select(TicketOrder).where(TicketOrder.order_number == client_unique_id)
+            )
+        if order_row is None and reference:
+            order_row = await session.scalar(
+                select(TicketOrder).where(TicketOrder.stripe_session_id == reference)
             )
         if order_row is not None:
             order = row_to_dict(order_row)
@@ -203,26 +215,21 @@ async def apply_nuvei_notification(
             return "already_paid"
         await finalize_ticket_order_from_nuvei(
             order=order,
-            session_token=session_token,
+            session_token=reference or order.get("stripe_session_id"),
             transaction_id=str(transaction_id) if transaction_id else None,
             source=source,
         )
         return "order_paid"
 
+    intent_row = None
     async with AsyncSessionLocal() as session:
-        intent_row = await session.scalar(
-            select(BillingIntent).where(BillingIntent.session_id == client_unique_id)
-        )
-        if intent_row is None and session_token:
+        if client_unique_id:
             intent_row = await session.scalar(
-                select(BillingIntent).where(BillingIntent.session_id == session_token)
+                select(BillingIntent).where(BillingIntent.session_id == client_unique_id)
             )
-        if intent_row is None and client_unique_id.startswith("bill_"):
-            # clientUniqueId format: bill_<intent_id_prefix>_<plan>
+        if intent_row is None and reference:
             intent_row = await session.scalar(
-                select(BillingIntent).where(
-                    BillingIntent.session_id == client_unique_id
-                )
+                select(BillingIntent).where(BillingIntent.session_id == reference)
             )
 
     if intent_row is not None:
@@ -233,7 +240,12 @@ async def apply_nuvei_notification(
         )
         return "billing_completed"
 
-    logger.warning("Nuvei %s: no order/intent for %s", source, client_unique_id)
+    logger.warning(
+        "Nuvei %s: no order/intent for ref=%s cuid=%s",
+        source,
+        reference,
+        client_unique_id,
+    )
     return "not_found"
 
 
@@ -254,52 +266,153 @@ async def _params_from_request(request: Request) -> dict[str, Any]:
     return params
 
 
+@router.api_route("/webhook", methods=["GET", "POST"])
 @router.api_route("/dmn", methods=["GET", "POST"])
-async def nuvei_dmn(request: Request):
+async def nuvei_webhook(request: Request):
     """
-    Nuvei Direct Merchant Notification listener.
-    Always return 200 OK so Nuvei does not retry endlessly on business misses.
+    Paymentez / Nuvei Ecuador webhook listener.
+    Always return 200 OK so the gateway does not retry endlessly on business misses.
+    Register this URL in the Paymentez dashboard (BACKEND_PUBLIC_URL/api/nuvei/webhook).
     """
     params = await _params_from_request(request)
     checksum_result = nuvei_service.verify_dmn_checksum(params)
     if checksum_result is False:
-        logger.warning("Nuvei DMN checksum mismatch")
-        raise HTTPException(400, "Invalid DMN checksum")
+        logger.warning("Nuvei webhook stoken mismatch")
+        raise HTTPException(400, "Invalid webhook stoken")
 
-    parsed = nuvei_service.parse_dmn_params(params)
+    parsed = nuvei_service.parse_webhook_payload(params)
     result = await apply_nuvei_notification(
-        parsed, source="dmn", checksum_verified=(checksum_result is True)
+        parsed, source="webhook", checksum_verified=(checksum_result is True)
     )
     logger.info(
-        "Nuvei DMN result=%s status=%s cuid=%s",
+        "Nuvei webhook result=%s status=%s detail=%s cuid=%s",
         result,
         parsed.get("status"),
+        parsed.get("status_detail"),
         parsed.get("client_unique_id"),
     )
     return PlainTextResponse("OK")
 
 
-@router.post("/confirm")
-async def confirm_nuvei_payment(body: dict[str, Any]):
+@router.post("/charge")
+async def charge_nuvei_with_token(body: dict[str, Any]):
     """
-    Client-side callback confirmation.
-    Body: { session_token, client_unique_id? }
-    Verifies with getPaymentStatus before finalizing.
+    Charge a card token from PaymentGateway tokenization.
+    Body: { card_token, client_unique_id, amount_cents? }
     """
     if not nuvei_service.is_configured():
         raise HTTPException(503, "Nuvei no está configurado")
 
-    session_token = (body.get("session_token") or "").strip()
-    if not session_token:
-        raise HTTPException(422, "session_token requerido")
+    card_token = str(body.get("card_token") or "").strip()
+    client_unique_id = str(body.get("client_unique_id") or "").strip()
+    if not card_token:
+        raise HTTPException(422, "card_token requerido")
+    if not client_unique_id:
+        raise HTTPException(422, "client_unique_id requerido")
+
+    order = None
+    intent = None
+    async with AsyncSessionLocal() as session:
+        order_row = await session.scalar(
+            select(TicketOrder).where(TicketOrder.order_number == client_unique_id)
+        )
+        if order_row is not None:
+            order = row_to_dict(order_row)
+        else:
+            intent = await session.scalar(
+                select(BillingIntent).where(BillingIntent.session_id == client_unique_id)
+            )
+
+    if order is None and intent is None:
+        raise HTTPException(404, "No encontramos la orden o el plan asociado")
+
+    if order is not None and order.get("status") == "paid":
+        return {"ok": True, "result": "already_paid"}
+
+    if order is not None:
+        amount_cents = int(order.get("total_cents") or body.get("amount_cents") or 0)
+        email = order.get("buyer_email") or ""
+        description = f"Orden {order.get('order_number')}"
+        user_id = email or order["id"]
+    else:
+        # Billing: amount from request or leave to plan — frontend sends amount
+        amount_cents = int(body.get("amount_cents") or 0)
+        if amount_cents <= 0:
+            raise HTTPException(422, "amount_cents requerido para billing")
+        email = str(body.get("email") or "")
+        description = str(body.get("description") or f"Plan {client_unique_id}")
+        user_id = str(body.get("user_id") or email or client_unique_id)
 
     try:
-        status = nuvei_service.get_payment_status(session_token)
+        debit = nuvei_service.debit_with_token(
+            card_token=card_token,
+            amount_cents=amount_cents,
+            currency=str(body.get("currency") or order.get("currency") if order else "USD"),
+            dev_reference=client_unique_id,
+            description=description,
+            user_id=user_id,
+            email=email or "noreply@ticketyourself.com",
+        )
     except nuvei_service.NuveiError as e:
-        logger.error("getPaymentStatus failed: %s", e)
+        logger.error("Nuvei debit failed: %s", e)
+        raise HTTPException(502, str(e) or "No pudimos cobrar con Nuvei") from e
+
+    if not nuvei_service.is_approved_status(
+        debit.get("transaction_status"),
+        debit.get("status_detail"),
+    ):
+        raise HTTPException(
+            402,
+            f"Pago no aprobado ({debit.get('transaction_status') or 'UNKNOWN'})",
+        )
+
+    parsed = {
+        "status": debit.get("transaction_status"),
+        "status_detail": debit.get("status_detail"),
+        "client_unique_id": client_unique_id,
+        "session_token": client_unique_id,
+        "reference": client_unique_id,
+        "transaction_id": debit.get("transaction_id"),
+    }
+    result = await apply_nuvei_notification(
+        parsed, source="charge", checksum_verified=True
+    )
+    return {"ok": True, "result": result, "transaction_id": debit.get("transaction_id")}
+
+
+@router.post("/confirm")
+async def confirm_nuvei_payment(body: dict[str, Any]):
+    """
+    Client-side callback confirmation after PaymentCheckout.onResponse.
+    Body: { transaction_id, client_unique_id?, reference? }
+    Verifies with GET /v2/transaction/<id>/ before finalizing.
+    """
+    if not nuvei_service.is_configured():
+        raise HTTPException(503, "Nuvei no está configurado")
+
+    # Token charge path (preferred)
+    if body.get("card_token"):
+        return await charge_nuvei_with_token(body)
+
+    transaction_id = (
+        body.get("transaction_id")
+        or body.get("session_token")  # legacy Simply Connect field name
+        or ""
+    )
+    transaction_id = str(transaction_id).strip()
+    if not transaction_id:
+        raise HTTPException(422, "transaction_id requerido")
+
+    try:
+        status = nuvei_service.get_transaction(transaction_id)
+    except nuvei_service.NuveiError as e:
+        logger.error("get_transaction failed: %s", e)
         raise HTTPException(502, "No pudimos verificar el pago con Nuvei") from e
 
-    if not nuvei_service.is_approved_status(status.get("transaction_status")):
+    if not nuvei_service.is_approved_status(
+        status.get("transaction_status"),
+        status.get("status_detail"),
+    ):
         raise HTTPException(
             402,
             f"Pago no aprobado ({status.get('transaction_status') or 'UNKNOWN'})",
@@ -307,10 +420,12 @@ async def confirm_nuvei_payment(body: dict[str, Any]):
 
     parsed = {
         "status": status.get("transaction_status"),
+        "status_detail": status.get("status_detail"),
         "client_unique_id": body.get("client_unique_id")
         or status.get("client_unique_id"),
-        "session_token": session_token,
-        "transaction_id": status.get("transaction_id"),
+        "session_token": body.get("reference") or body.get("session_token"),
+        "reference": body.get("reference") or body.get("session_token"),
+        "transaction_id": status.get("transaction_id") or transaction_id,
     }
     result = await apply_nuvei_notification(
         parsed, source="confirm", checksum_verified=True

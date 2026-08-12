@@ -63,10 +63,8 @@ def _env_name() -> str:
 
 
 def is_configured() -> bool:
-    return bool(
-        os.environ.get("DEUNA_PRIVATE_API_KEY")
-        and os.environ.get("DEUNA_PUBLIC_API_KEY")
-    )
+    """Need ApiKey + ApiSecret (aliases: PUBLIC/PRIVATE keys)."""
+    return bool(_api_key() and _api_secret())
 
 
 def _api_base() -> str:
@@ -76,16 +74,44 @@ def _api_base() -> str:
     return _LIVE_BASE if _env_name() == "production" else _SANDBOX_BASE
 
 
+def _api_key() -> str:
+    """Public ApiKey from DEUNA (Web SDK publicApiKey + X-API-KEY)."""
+    return (
+        os.environ.get("DEUNA_API_KEY")
+        or os.environ.get("DEUNA_PUBLIC_API_KEY")
+        or ""
+    ).strip()
+
+
+def _api_secret() -> str:
+    """ApiSecret from DEUNA (server-only; X-API-SECRET)."""
+    return (
+        os.environ.get("DEUNA_API_SECRET")
+        or os.environ.get("DEUNA_PRIVATE_API_KEY")
+        or ""
+    ).strip()
+
+
+def _point_of_sales() -> str:
+    """pointOfSales / CAJA — used as store_code on Create Order."""
+    return (
+        os.environ.get("DEUNA_POINT_OF_SALES")
+        or os.environ.get("DEUNA_STORE_CODE")
+        or "all"
+    ).strip() or "all"
+
+
+# Back-compat aliases used elsewhere in this module
 def _private_key() -> str:
-    return os.environ.get("DEUNA_PRIVATE_API_KEY", "")
+    return _api_secret()
 
 
 def _public_key() -> str:
-    return os.environ.get("DEUNA_PUBLIC_API_KEY", "")
+    return _api_key()
 
 
 def _store_code() -> str:
-    return (os.environ.get("DEUNA_STORE_CODE") or "all").strip() or "all"
+    return _point_of_sales()
 
 
 def notification_url() -> Optional[str]:
@@ -123,15 +149,20 @@ def _request(
     json_body: dict | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
-    key = _private_key()
-    if not key:
-        raise DeunaError("DEUNA_PRIVATE_API_KEY not configured")
+    api_key = _api_key()
+    api_secret = _api_secret()
+    if not api_key and not api_secret:
+        raise DeunaError("DEUNA ApiKey/ApiSecret not configured")
 
+    # DEUNA naming: ApiKey → X-API-KEY, ApiSecret → X-API-SECRET.
+    # If only a secret was configured (legacy), send it as X-API-KEY.
     headers = {
-        "X-API-KEY": key,
+        "X-API-KEY": api_key or api_secret,
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+    if api_key and api_secret:
+        headers["X-API-SECRET"] = api_secret
     if idempotency_key:
         headers["X-Idempotency-Key"] = idempotency_key
 

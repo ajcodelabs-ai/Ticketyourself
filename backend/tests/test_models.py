@@ -545,13 +545,13 @@ class TestCheckoutResponse:
             status="nuvei_checkout",
             mode="payment",
             plan_code="basico",
-            session_token="tok",
-            merchant_id="1",
-            merchant_site_id="2",
-            nuvei_env="int",
+            reference="12438255612471559230",
+            session_token="12438255612471559230",
+            nuvei_env="stg",
             client_unique_id="bill_abc",
         )
-        assert r.session_token == "tok"
+        assert r.reference == "12438255612471559230"
+        assert r.session_token == "12438255612471559230"
         assert r.status == "nuvei_checkout"
 
     def test_deuna_checkout(self):

@@ -237,14 +237,28 @@ export default function Onboarding() {
                 toast.success(data.message || "Solicitud de pago registrada");
                 return;
             }
-            if (data?.status === "nuvei_checkout" && data.session_token) {
+            if (
+                data?.status === "nuvei_checkout" &&
+                (data.reference || data.session_token)
+            ) {
                 setNuveiCheckout({
-                    session_token: data.session_token,
-                    merchant_id: data.merchant_id,
-                    merchant_site_id: data.merchant_site_id,
+                    reference: data.reference || data.session_token,
+                    session_token: data.session_token || data.reference,
+                    checkout_mode: data.checkout_mode,
                     nuvei_env: data.nuvei_env,
                     checkout_js_url: data.checkout_js_url,
+                    checkout_url: data.checkout_url,
+                    client_app_code: data.client_app_code,
+                    client_app_key: data.client_app_key,
                     client_unique_id: data.client_unique_id || data.session_id,
+                    amount: data.amount,
+                    currency: data.currency,
+                    user_id: data.user_id,
+                    user_email: data.user_email,
+                    user_phone: data.user_phone,
+                    order_description: data.order_description,
+                    order_vat: data.order_vat,
+                    order_installments_type: data.order_installments_type,
                 });
                 return;
             }

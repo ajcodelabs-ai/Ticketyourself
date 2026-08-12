@@ -476,7 +476,9 @@ export default function PurchaseModal({
         };
         if (appliedPromo?.code) body.promo_code = appliedPromo.code;
         if (lawCategory) body.law_category = lawCategory;
-        if (buyer.email) body.buyer_email = buyer.email;
+        // Solo mandar email cuando ya es usable — evita 422 EmailStr al tipear "demo…"
+        const email = (buyer.email || "").trim();
+        if (email.includes("@") && email.includes(".")) body.buyer_email = email;
         if (isSeatNumbered) body.seat_ids = seatHoldsInfo.seat_ids;
         if (hasTypes && typeSelections.length > 0) {
             body.ticket_type_selections = typeSelections;
@@ -682,14 +684,28 @@ export default function PurchaseModal({
                 onOpenChange(false);
                 return;
             }
-            if (data.status === "nuvei_checkout" && data.session_token) {
+            if (
+                data.status === "nuvei_checkout" &&
+                (data.reference || data.session_token)
+            ) {
                 setNuveiCheckout({
-                    session_token: data.session_token,
-                    merchant_id: data.merchant_id,
-                    merchant_site_id: data.merchant_site_id,
+                    reference: data.reference || data.session_token,
+                    session_token: data.session_token || data.reference,
+                    checkout_mode: data.checkout_mode,
                     nuvei_env: data.nuvei_env,
                     checkout_js_url: data.checkout_js_url,
+                    checkout_url: data.checkout_url,
+                    client_app_code: data.client_app_code,
+                    client_app_key: data.client_app_key,
                     client_unique_id: data.client_unique_id || data.order_number,
+                    amount: data.amount,
+                    currency: data.currency,
+                    user_id: data.user_id,
+                    user_email: data.user_email,
+                    user_phone: data.user_phone,
+                    order_description: data.order_description,
+                    order_vat: data.order_vat,
+                    order_installments_type: data.order_installments_type,
                 });
                 return;
             }
@@ -728,6 +744,7 @@ export default function PurchaseModal({
     return (
         <Dialog
             open={open}
+            modal={!nuveiCheckout && !deunaCheckout}
             onOpenChange={(next) => {
                 if (!next) {
                     setNuveiCheckout(null);
@@ -1531,7 +1548,7 @@ export default function PurchaseModal({
                             {isEffectivelyFree
                                 ? "Te enviaremos tu ticket por email al confirmar."
                                 : paymentMethod === "nuvei"
-                                  ? "El cobro se procesa con Nuvei (Simply Connect). Los datos de tarjeta no quedan en TYS."
+                                  ? "El cobro se procesa con Nuvei (Paymentez Ecuador). Los datos de tarjeta no quedan en TYS."
                                   : paymentMethod === "deuna"
                                     ? "El cobro se procesa con DEUNA (Payment Widget). Los datos de tarjeta no quedan en TYS."
                                   : paymentMethod === "stripe"
