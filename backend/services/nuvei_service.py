@@ -508,13 +508,14 @@ def compute_webhook_stoken(
     MD5 is mandated by the Paymentez/Nuvei webhook spec and is used purely for
     protocol compatibility (replicate the gateway's own digest to verify the
     payload), NOT as a security primitive. `usedforsecurity=False` signals this
-    intent to FIPS-restricted runtimes; CodeQL's py/weak-sensitive-data-hashing
-    query doesn't honor that flag, so it's suppressed explicitly below.
+    intent to FIPS-restricted runtimes. The CodeQL py/weak-sensitive-data-hashing
+    alert this triggers is dismissed in the repo's Security tab (not via an
+    inline suppression comment — this repo's CodeQL runs via Default Setup,
+    which doesn't honor those) with the same justification as this docstring.
     """
     code = (application_code or _server_app_code()).strip()
     key = (app_key or _server_app_key()).strip()
     raw = f"{transaction_id}_{code}_{user_id}_{key}"
-    # lgtm[py/weak-sensitive-data-hashing]
     return hashlib.md5(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 

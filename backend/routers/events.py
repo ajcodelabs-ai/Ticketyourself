@@ -2023,8 +2023,10 @@ async def public_check_access(tenant_slug: str, event_slug: str, body: CheckAcce
         except ValueError as exc:
             # check_purchase_access only raises ValueError with hand-written,
             # user-facing Spanish messages (services/access_control.py) — never
-            # a wrapped DB/library exception — so this is safe to surface.
-            # lgtm[py/stack-trace-exposure]
+            # a wrapped DB/library exception — so this is safe to surface. The
+            # resulting CodeQL py/stack-trace-exposure alert is dismissed as a
+            # false positive in the repo's Security tab with this justification
+            # (Default Setup CodeQL doesn't honor inline suppression comments).
             return {"ok": False, "reason": str(exc)}
 
 
