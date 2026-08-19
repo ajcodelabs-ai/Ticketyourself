@@ -1,6 +1,7 @@
 """Unit tests for Nuvei Ecuador (Paymentez) helpers."""
 
 from services.nuvei_service import (
+    amount_matches,
     build_auth_token,
     cents_to_amount,
     compute_webhook_stoken,
@@ -71,3 +72,20 @@ def test_split_buyer_name():
     assert split_buyer_name("Juan Pérez") == ("Juan", "Pérez")
     assert split_buyer_name("Madonna") == ("Madonna", "TYS")
     assert split_buyer_name("") == ("Cliente", "TYS")
+
+
+def test_amount_matches_exact_and_rounding():
+    assert amount_matches(12.50, 1250) is True
+    assert amount_matches(12.49, 1250) is True  # 1-cent rounding tolerance
+    assert amount_matches("12.50", 1250) is True  # gateway may report as string
+
+
+def test_amount_matches_rejects_underpayment():
+    # A genuinely-approved but much smaller transaction must not pass for a
+    # larger order/plan — this is the actual fraud case the check guards.
+    assert amount_matches(0.50, 5000) is False
+
+
+def test_amount_matches_fails_closed_on_missing_or_malformed():
+    assert amount_matches(None, 5000) is False
+    assert amount_matches("not-a-number", 5000) is False
