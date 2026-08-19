@@ -1,8 +1,9 @@
-import { Plus, Trash2, CalendarClock, FileText, HelpCircle } from "lucide-react";
+import { Plus, Trash2, CalendarClock, FileText, HelpCircle, ExternalLink, ShieldCheck, LayoutList } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import RichTextEditor from "@/components/editor/RichTextEditor";
 import { newAgendaItem, newFaqItem } from "@/lib/eventContent";
 
@@ -140,6 +141,91 @@ export default function EventContentPanel({ content, update, disabled = false })
                         ))}
                     </div>
                 )}
+            </section>
+
+            {/* ── TyC del organizador ──────────────────────────────────────────── */}
+            <section className="rounded-xl border p-5 bg-card space-y-4" data-testid="section-tyc">
+                <header>
+                    <div className="flex items-center gap-2 font-semibold">
+                        <ShieldCheck className="h-5 w-5 text-emerald-600" />
+                        Términos y condiciones del organizador
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">
+                        Si configurás una URL, el comprador verá un checkbox obligatorio antes de pagar.
+                    </p>
+                </header>
+                <div className="space-y-3">
+                    <div>
+                        <Label className="text-xs" htmlFor="tyc-url">
+                            URL del documento de TyC
+                        </Label>
+                        <div className="flex gap-2 items-center mt-1">
+                            <Input
+                                id="tyc-url"
+                                type="url"
+                                placeholder="https://mi-empresa.com/tyc.pdf"
+                                value={content.tyc_url || ""}
+                                disabled={disabled}
+                                onChange={(e) => setContent({ tyc_url: e.target.value })}
+                                data-testid="content-tyc-url"
+                            />
+                            {content.tyc_url && (
+                                <a
+                                    href={content.tyc_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                                    title="Abrir enlace"
+                                >
+                                    <ExternalLink className="h-4 w-4" />
+                                </a>
+                            )}
+                        </div>
+                    </div>
+                    <div>
+                        <Label className="text-xs" htmlFor="tyc-label">
+                            Texto del enlace (opcional)
+                        </Label>
+                        <Input
+                            id="tyc-label"
+                            placeholder="Términos y condiciones del organizador"
+                            value={content.tyc_label || ""}
+                            disabled={disabled}
+                            onChange={(e) => setContent({ tyc_label: e.target.value })}
+                            data-testid="content-tyc-label"
+                        />
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                            Si lo dejás vacío se mostrará "Términos y condiciones del organizador".
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            {/* ── Compra de grupo completo ──────────────────────────────────────── */}
+            <section className="rounded-xl border p-5 bg-card space-y-3" data-testid="section-group-purchase">
+                <header>
+                    <div className="flex items-center gap-2 font-semibold">
+                        <LayoutList className="h-5 w-5 text-violet-600" />
+                        Compra de fila / mesa completa
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">
+                        Permite al comprador seleccionar una fila o mesa entera desde la página del evento (sólo para eventos con mapa de asientos numerados).
+                    </p>
+                </header>
+                <div className="flex items-center gap-3">
+                    <Switch
+                        id="allow-group-purchase"
+                        checked={!!content.allow_full_group_purchase}
+                        disabled={disabled}
+                        onCheckedChange={(v) => setContent({ allow_full_group_purchase: v })}
+                        data-testid="content-allow-group-purchase"
+                    />
+                    <Label htmlFor="allow-group-purchase" className="cursor-pointer">
+                        {content.allow_full_group_purchase
+                            ? "Activo — el comprador puede comprar filas/mesas completas"
+                            : "Inactivo — selección individual de asientos"}
+                    </Label>
+                </div>
             </section>
 
             {/* FAQ */}

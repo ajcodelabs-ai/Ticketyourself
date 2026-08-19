@@ -75,7 +75,7 @@ def _api_base() -> str:
 
 
 def _api_key() -> str:
-    """Public ApiKey from DEUNA (Web SDK publicApiKey + X-API-KEY)."""
+    """Public ApiKey from DEUNA — used ONLY for frontend DeunaSDK.initialize(publicApiKey)."""
     return (
         os.environ.get("DEUNA_API_KEY")
         or os.environ.get("DEUNA_PUBLIC_API_KEY")
@@ -84,7 +84,7 @@ def _api_key() -> str:
 
 
 def _api_secret() -> str:
-    """ApiSecret from DEUNA (server-only; X-API-SECRET)."""
+    """Private ApiSecret from DEUNA — sent as X-API-KEY in all server-to-server requests."""
     return (
         os.environ.get("DEUNA_API_SECRET")
         or os.environ.get("DEUNA_PRIVATE_API_KEY")
@@ -154,15 +154,14 @@ def _request(
     if not api_key and not api_secret:
         raise DeunaError("DEUNA ApiKey/ApiSecret not configured")
 
-    # DEUNA naming: ApiKey → X-API-KEY, ApiSecret → X-API-SECRET.
-    # If only a secret was configured (legacy), send it as X-API-KEY.
+    # DEUNA server-to-server auth: X-API-KEY must be the PRIVATE key (ApiSecret).
+    # The public ApiKey is only for the frontend DeunaSDK.initialize({ publicApiKey }).
+    # Ref: https://docs.deuna.com/docs/direct-api-integration
     headers = {
-        "X-API-KEY": api_key or api_secret,
+        "X-API-KEY": api_secret or api_key,
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    if api_key and api_secret:
-        headers["X-API-SECRET"] = api_secret
     if idempotency_key:
         headers["X-Idempotency-Key"] = idempotency_key
 

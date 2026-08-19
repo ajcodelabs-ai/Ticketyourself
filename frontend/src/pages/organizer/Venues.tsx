@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
-    Plus, Search, MapPin, Copy, Trash2, Archive, ExternalLink, Pencil, LayoutTemplate, Info,
+    Plus, Search, MapPin, Copy, Trash2, Archive, ExternalLink, Pencil, LayoutTemplate, Info, Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,7 @@ export default function Venues() {
     const [templatesLoading, setTemplatesLoading] = useState(true);
     const [usingTemplate, setUsingTemplate] = useState(null);
     const [pendingTemplate, setPendingTemplate] = useState(null);
+    const [previewTpl, setPreviewTpl] = useState(null);
 
     const reload = async () => {
         setLoading(true);
@@ -272,16 +273,28 @@ export default function Venues() {
                                     {tpl.description && (
                                         <p className="text-xs text-muted-foreground line-clamp-2">{tpl.description}</p>
                                     )}
-                                    <Button
-                                        size="sm"
-                                        variant="outline"
-                                        className="w-full"
-                                        disabled={!canCreate || usingTemplate === tpl.id}
-                                        onClick={() => promptTemplateName(tpl)}
-                                        data-testid={`use-template-${tpl.slug}`}
-                                    >
-                                        {usingTemplate === tpl.id ? "Creando…" : "Usar plantilla"}
-                                    </Button>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="flex-none"
+                                            onClick={() => setPreviewTpl(tpl)}
+                                            data-testid={`preview-tpl-${tpl.slug}`}
+                                            title="Previsualizar plantilla"
+                                        >
+                                            <Eye className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="flex-1"
+                                            disabled={!canCreate || usingTemplate === tpl.id}
+                                            onClick={() => promptTemplateName(tpl)}
+                                            data-testid={`use-template-${tpl.slug}`}
+                                        >
+                                            {usingTemplate === tpl.id ? "Creando…" : "Usar plantilla"}
+                                        </Button>
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -550,6 +563,54 @@ export default function Venues() {
                                     </Button>
                                 </div>
                             </DialogFooter>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            {/* Template preview dialog */}
+            <Dialog open={!!previewTpl} onOpenChange={(open) => { if (!open) setPreviewTpl(null); }}>
+                <DialogContent className="max-w-3xl w-[95vw]" data-testid="venue-tpl-preview-dialog">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <LayoutTemplate className="h-5 w-5 text-muted-foreground" />
+                            {previewTpl?.name || "Plantilla"}
+                        </DialogTitle>
+                    </DialogHeader>
+                    {previewTpl && (
+                        <div className="space-y-4">
+                            <VenueTemplateThumb template={previewTpl} height={380} />
+                            <div className="text-sm text-muted-foreground space-y-1">
+                                <p>
+                                    <span className="font-medium text-foreground">Tipo:</span>{" "}
+                                    {typeLabel(previewTpl.type)}
+                                </p>
+                                <p>
+                                    <span className="font-medium text-foreground">Capacidad:</span>{" "}
+                                    {previewTpl.capacity_calculated || 0} asientos
+                                </p>
+                                {previewTpl.description && (
+                                    <p>
+                                        <span className="font-medium text-foreground">Descripción:</span>{" "}
+                                        {previewTpl.description}
+                                    </p>
+                                )}
+                            </div>
+                            <div className="flex justify-end gap-2">
+                                <Button variant="ghost" onClick={() => setPreviewTpl(null)}>
+                                    Cerrar
+                                </Button>
+                                <Button
+                                    disabled={!canCreate}
+                                    onClick={() => {
+                                        setPreviewTpl(null);
+                                        promptTemplateName(previewTpl);
+                                    }}
+                                    data-testid="venue-tpl-preview-use"
+                                >
+                                    Usar esta plantilla
+                                </Button>
+                            </div>
                         </div>
                     )}
                 </DialogContent>

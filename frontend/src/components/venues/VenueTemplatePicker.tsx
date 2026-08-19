@@ -2,9 +2,16 @@
  * Lista de plantillas de venue + opción de empezar en blanco.
  * Usado en Venues (diálogo crear), editor vacío y wizard de eventos.
  */
-import { LayoutTemplate, PenLine } from "lucide-react";
+import { useState } from "react";
+import { LayoutTemplate, PenLine, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import { VENUE_TYPES } from "@/lib/venues";
 import VenueTemplateThumb from "@/components/venues/VenueTemplateThumb";
 
@@ -43,11 +50,14 @@ export default function VenueTemplatePicker({
     onStartBlank?: () => void;
     showBlankOption?: boolean;
 }) {
+    const [previewTemplate, setPreviewTemplate] = useState<Record<string, unknown> | null>(null);
+
     if (loading) {
         return <p className="text-sm text-muted-foreground py-4">Cargando plantillas…</p>;
     }
 
     return (
+        <>
         <div className="space-y-4" data-testid="venue-template-picker">
             <p className="text-xs text-muted-foreground">
                 Elegí un layout listo o empezá en blanco y diseñalo en el editor.
@@ -119,15 +129,27 @@ export default function VenueTemplatePicker({
                                         )}
                                     </div>
                                 </div>
-                                <Button
-                                    size="sm"
-                                    className="w-full"
-                                    disabled={disabled || busy}
-                                    onClick={() => onUseTemplate(tpl)}
-                                    data-testid={`pick-template-${tpl.slug}`}
-                                >
-                                    {busy ? "Creando…" : "Usar plantilla"}
-                                </Button>
+                                <div className="flex gap-2">
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="flex-none"
+                                        onClick={() => setPreviewTemplate(tpl)}
+                                        data-testid={`preview-template-${tpl.slug}`}
+                                        title="Previsualizar plantilla"
+                                    >
+                                        <Eye className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        className="flex-1"
+                                        disabled={disabled || busy}
+                                        onClick={() => onUseTemplate(tpl)}
+                                        data-testid={`pick-template-${tpl.slug}`}
+                                    >
+                                        {busy ? "Creando…" : "Usar plantilla"}
+                                    </Button>
+                                </div>
                             </div>
                         );
                     })}
@@ -138,5 +160,55 @@ export default function VenueTemplatePicker({
                 </p>
             )}
         </div>
+
+        {/* Preview dialog */}
+        <Dialog open={!!previewTemplate} onOpenChange={(open) => { if (!open) setPreviewTemplate(null); }}>
+            <DialogContent className="max-w-3xl w-[95vw]" data-testid="venue-template-preview-dialog">
+                <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                        <LayoutTemplate className="h-5 w-5 text-muted-foreground" />
+                        {(previewTemplate as any)?.name || "Plantilla"}
+                        <Badge variant="secondary" className="text-[10px] font-normal">Plantilla</Badge>
+                    </DialogTitle>
+                </DialogHeader>
+                {previewTemplate && (
+                    <div className="space-y-4">
+                        <VenueTemplateThumb template={previewTemplate as any} height={380} />
+                        <div className="text-sm text-muted-foreground space-y-1">
+                            <p>
+                                <span className="font-medium text-foreground">Tipo:</span>{" "}
+                                {typeLabel((previewTemplate as any).type)}
+                            </p>
+                            <p>
+                                <span className="font-medium text-foreground">Capacidad:</span>{" "}
+                                {(previewTemplate as any).capacity_calculated || 0} asientos
+                            </p>
+                            {(previewTemplate as any).description && (
+                                <p>
+                                    <span className="font-medium text-foreground">Descripción:</span>{" "}
+                                    {(previewTemplate as any).description}
+                                </p>
+                            )}
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button variant="ghost" onClick={() => setPreviewTemplate(null)}>
+                                Cerrar
+                            </Button>
+                            <Button
+                                disabled={disabled}
+                                onClick={() => {
+                                    onUseTemplate(previewTemplate);
+                                    setPreviewTemplate(null);
+                                }}
+                                data-testid="venue-template-preview-use"
+                            >
+                                Usar esta plantilla
+                            </Button>
+                        </div>
+                    </div>
+                )}
+            </DialogContent>
+        </Dialog>
+        </>
     );
 }

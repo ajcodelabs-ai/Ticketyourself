@@ -186,6 +186,12 @@ export default function PurchaseModal({
             return locs.some((id: string) => selectedLocalityIds.has(id));
         });
     }, [event?.custom_questions, selectedLocalityIds]);
+    // ── TyC configurables por organizador ────────────────────────────────────
+    const tycUrl: string | undefined = (event?.content as any)?.tyc_url;
+    const tycLabel: string = (event?.content as any)?.tyc_label || "Términos y condiciones del organizador";
+    const hasTyc = !!tycUrl;
+    const [tycAccepted, setTycAccepted] = useState(false);
+
     const [promoCodeInput, setPromoCodeInput] = useState("");
     const [appliedPromo, setAppliedPromo] = useState<{
         code: string;
@@ -356,6 +362,7 @@ export default function PurchaseModal({
             setCheckEmail("");
             setCheckCedula("");
             setAccessError("");
+            setTycAccepted(false);
         }
     }, [open]);
 
@@ -595,6 +602,9 @@ export default function PurchaseModal({
             if (q.required && !(customAnswers[q.id] || "").trim()) {
                 e[`cq_${q.id}`] = "Requerido";
             }
+        }
+        if (hasTyc && !tycAccepted) {
+            e.tyc = "Debés aceptar los términos y condiciones para continuar.";
         }
         setErrors(e);
         return Object.keys(e).length === 0;
@@ -1540,6 +1550,35 @@ export default function PurchaseModal({
                                     bold
                                     value={formatCents(totals.total, event.currency)}
                                 />
+                            </div>
+                        )}
+
+                        {/* ── TyC configurables por organizador ─────────────────────────────── */}
+                        {hasTyc && (
+                            <div className="border-t pt-3 space-y-1" data-testid="tyc-block">
+                                <label className="flex items-start gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={tycAccepted}
+                                        onChange={(e) => setTycAccepted(e.target.checked)}
+                                        className="mt-0.5 h-4 w-4 shrink-0 rounded border accent-primary"
+                                        data-testid="tyc-checkbox"
+                                    />
+                                    <span className="text-xs text-muted-foreground leading-relaxed">
+                                        He leído y acepto los{" "}
+                                        <a href={tycUrl} target="_blank" rel="noopener noreferrer"
+                                           className="underline text-primary font-medium"
+                                           data-testid="tyc-link">
+                                            {tycLabel}
+                                        </a>{" "}
+                                        del organizador.
+                                    </span>
+                                </label>
+                                {errors.tyc && (
+                                    <p className="text-xs text-red-600 pl-6" data-testid="tyc-error">
+                                        {errors.tyc}
+                                    </p>
+                                )}
                             </div>
                         )}
 

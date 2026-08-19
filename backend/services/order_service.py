@@ -6,6 +6,7 @@ DEV simulator. The webhook handler delegates the "mark paid + emit tickets"
 step to `finalize_paid_order` so the path is single-sourced.
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -767,6 +768,36 @@ async def _consume_purchase_side_effects(order: dict) -> None:
             )
 
 
+async def _send_purchase_email(order: dict, tickets: list[dict]) -> None:
+    """Fire-and-forget: send ticket confirmation email to the buyer."""
+    try:
+        from sqlalchemy import select as _sel
+
+        from orm_models import Event as _EvModel
+        from orm_models import Organizer as _OrgModel
+        from services.email_service import send_purchase_confirmation
+
+        async with AsyncSessionLocal() as _s:
+            ev_row = await _s.scalar(_sel(_EvModel).where(_EvModel.id == order["event_id"]))
+            org_row = await _s.scalar(_sel(_OrgModel).where(_OrgModel.id == order["organizer_id"]))
+
+        if not ev_row or not org_row:
+            logger.warning(
+                "send_purchase_email: missing event/organizer for order %s",
+                order.get("order_number"),
+            )
+            return
+
+        await send_purchase_confirmation(
+            order=order,
+            event=row_to_dict(ev_row),
+            organizer=row_to_dict(org_row),
+            tickets=tickets,
+        )
+    except Exception:
+        logger.exception("send_purchase_email failed for order %s", order.get("order_number"))
+
+
 # ── Mark paid + emit ────────────────────────────────────────────────────────
 async def finalize_paid_order(
     *, order: dict, stripe_session_id: str | None = None
@@ -832,6 +863,7 @@ async def finalize_paid_order(
         refreshed["quantity_total"],
         refreshed["total_cents"],
     )
+    asyncio.create_task(_send_purchase_email(refreshed, tickets))
     return refreshed, tickets
 
 
@@ -1031,6 +1063,7 @@ async def confirm_manual_payment(
         refreshed["quantity_total"],
         refreshed["total_cents"],
     )
+    asyncio.create_task(_send_purchase_email(refreshed, tickets))
     return refreshed, tickets
 
 

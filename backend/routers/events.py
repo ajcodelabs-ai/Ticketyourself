@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.orm.attributes import flag_modified
 
 from database import AsyncSessionLocal
@@ -1828,9 +1828,26 @@ async def serve_event_asset(asset_id: str):
 
 
 # ── Public endpoints ────────────────────────────────────────────────────────
+
+_TRGM_AVAILABLE: bool | None = None  # cached after first DB probe
+
+
+async def _trgm_available(pg) -> bool:
+    global _TRGM_AVAILABLE
+    if _TRGM_AVAILABLE is not None:
+        return _TRGM_AVAILABLE
+    try:
+        await pg.execute(text("SELECT similarity('a','a')"))
+        _TRGM_AVAILABLE = True
+    except Exception:
+        _TRGM_AVAILABLE = False
+    return _TRGM_AVAILABLE
+
+
 @public_router.get("")
 async def list_public_events(
     tenant_slug: str = Query(...),
+    search: Optional[str] = Query(default=None, max_length=120),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
 ):
@@ -1852,10 +1869,32 @@ async def list_public_events(
             Event.status == "published",
             Event.visibility.in_(list(LISTABLE_VISIBILITIES)),
         )
+        q = (search or "").strip()
+        if q:
+            use_trgm = await _trgm_available(pg)
+            if use_trgm:
+                stmt = stmt.where(
+                    or_(
+                        func.similarity(Event.title, q) > 0.15,
+                        Event.title.ilike(f"%{q}%"),
+                        Event.venue_city.ilike(f"%{q}%"),
+                    )
+                )
+            else:
+                stmt = stmt.where(
+                    or_(
+                        Event.title.ilike(f"%{q}%"),
+                        Event.venue_city.ilike(f"%{q}%"),
+                    )
+                )
         total = await pg.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         # Higher priority first (microsite featured / landing order), then soonest date.
+        if q and _TRGM_AVAILABLE:
+            order = [func.similarity(Event.title, q).desc(), Event.priority.desc(), Event.starts_at.asc()]
+        else:
+            order = [Event.priority.desc(), Event.starts_at.asc()]
         result = await pg.execute(
-            stmt.order_by(Event.priority.desc(), Event.starts_at.asc())
+            stmt.order_by(*order)
             .offset((page - 1) * limit)
             .limit(limit)
         )
@@ -2023,6 +2062,69 @@ async def public_release_holds(
         function_id=body.function_id,
     )
     return {"released": deleted}
+
+
+@public_router.get("/{tenant_slug}/{event_slug}/seat-groups")
+async def public_seat_groups(
+    tenant_slug: str,
+    event_slug: str,
+    function_id: Optional[str] = Query(default=None),
+):
+    """Return available seat groups (rows / tables) for whole-group purchase.
+
+    Enabled only when `event.content.allow_full_group_purchase` is true.
+    """
+    from services.seats import compute_event_seats_status
+
+    _, event, venue = await _resolve_public_event(tenant_slug, event_slug)
+
+    allow = (event.get("content") or {}).get("allow_full_group_purchase", False)
+    if not allow:
+        return {"groups": []}
+
+    fn_id = function_id or ""
+    seats_status: dict = await compute_event_seats_status(event=event, venue=venue, function_id=fn_id)
+    available_ids: set[str] = {
+        sid for sid, info in (seats_status or {}).items()
+        if (info.get("status") if isinstance(info, dict) else info) == "available"
+    }
+
+    elements = (venue.get("venue_layout") or venue).get("elements") or []
+    groups = []
+
+    def _extract_seat_ids(element: dict) -> list[str]:
+        ids: list[str] = []
+        for seat in element.get("seats") or []:
+            if isinstance(seat, dict) and seat.get("id"):
+                ids.append(seat["id"])
+        for child in element.get("children") or []:
+            if isinstance(child, dict):
+                if child.get("type") == "seat" and child.get("id"):
+                    ids.append(child["id"])
+                else:
+                    ids.extend(_extract_seat_ids(child))
+        return ids
+
+    for el in elements:
+        if not isinstance(el, dict):
+            continue
+        el_type = (el.get("type") or "").lower()
+        if el_type not in ("row", "table"):
+            continue
+        seat_ids = _extract_seat_ids(el)
+        avail = [sid for sid in seat_ids if sid in available_ids]
+        if not avail:
+            continue
+        groups.append({
+            "id": el.get("id"),
+            "type": el_type,
+            "label": el.get("label") or el.get("name") or el.get("id"),
+            "seat_ids": avail,
+            "total_seats": len(seat_ids),
+            "available_seats": len(avail),
+        })
+
+    return {"groups": groups}
 
 
 # ── Admin endpoints ─────────────────────────────────────────────────────────
