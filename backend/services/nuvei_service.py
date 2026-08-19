@@ -20,10 +20,7 @@ import httpx
 
 logger = logging.getLogger("tys.nuvei")
 
-TOKENIZE_JS_URL = (
-    "https://cdn.paymentez.com/ccapi/sdk/payment_sdk_stable.min.js"
-)
-CHECKOUT_JS_URL = TOKENIZE_JS_URL  # back-compat alias
+TOKENIZE_JS_URL = "https://cdn.paymentez.com/ccapi/sdk/payment_sdk_stable.min.js"
 CHECKOUT_JS_URL_REFERENCE = (
     "https://cdn.paymentez.com/ccapi/sdk/payment_checkout_3.0.0.min.js"
 )
@@ -109,6 +106,10 @@ def _js_use_server_credentials() -> bool:
     normally expects the CLIENT pair; SERVER is a local workaround when CLIENT
     tokenize is broken on the merchant account.
     """
+    if _env_name() == "prod":
+        # Hard override — a stray NUVEI_JS_USE_SERVER=1 copied from a stg
+        # .env must never leak the SERVER app key to the browser in prod.
+        return False
     raw = (os.environ.get("NUVEI_JS_USE_SERVER") or "").strip().lower()
     if raw in ("1", "true", "yes", "on"):
         return True
@@ -153,6 +154,23 @@ def build_auth_token(
 def cents_to_amount(cents: int) -> float:
     """Paymentez amounts are decimal currency units (e.g. 1250 → 12.50)."""
     return round(int(cents) / 100, 2)
+
+
+def amount_matches(
+    reported_amount: Any, expected_cents: int, tolerance_cents: int = 1
+) -> bool:
+    """
+    True if a Paymentez-reported amount (decimal currency units, e.g. "12.50")
+    matches the expected amount in cents, within a small rounding tolerance.
+    A malformed/missing reported_amount is treated as a mismatch (fail closed).
+    """
+    if reported_amount is None:
+        return False
+    try:
+        reported_cents = round(float(reported_amount) * 100)
+    except (TypeError, ValueError):
+        return False
+    return abs(reported_cents - int(expected_cents)) <= tolerance_cents
 
 
 def amount_to_str(amount: float | int | str) -> str:
@@ -452,15 +470,6 @@ def get_transaction(transaction_id: str) -> dict[str, Any]:
     }
 
 
-# Alias used by previous confirm flow naming
-def get_payment_status(session_token: str) -> dict[str, Any]:
-    """
-    ``session_token`` here is the Paymentez ``transaction.id`` (not the checkout reference).
-    Prefer calling ``get_transaction`` explicitly from confirm handlers.
-    """
-    return get_transaction(session_token)
-
-
 def _normalize_status_detail(value: Any) -> Optional[int]:
     if value is None or value == "":
         return None
@@ -498,12 +507,14 @@ def compute_webhook_stoken(
 
     MD5 is mandated by the Paymentez/Nuvei webhook spec and is used purely for
     protocol compatibility (replicate the gateway's own digest to verify the
-    payload), NOT as a security primitive.  `usedforsecurity=False` signals this
-    intent to static analysers (CodeQL, bandit) and to FIPS-restricted runtimes.
+    payload), NOT as a security primitive. `usedforsecurity=False` signals this
+    intent to FIPS-restricted runtimes; CodeQL's py/weak-sensitive-data-hashing
+    query doesn't honor that flag, so it's suppressed explicitly below.
     """
     code = (application_code or _server_app_code()).strip()
     key = (app_key or _server_app_key()).strip()
     raw = f"{transaction_id}_{code}_{user_id}_{key}"
+    # lgtm[py/weak-sensitive-data-hashing]
     return hashlib.md5(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
@@ -521,9 +532,7 @@ def verify_webhook_stoken(payload: dict[str, Any]) -> Optional[bool]:
         else {}
     )
     user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
-    stoken = str(
-        txn.get("stoken") or payload.get("stoken") or ""
-    ).strip().lower()
+    stoken = str(txn.get("stoken") or payload.get("stoken") or "").strip().lower()
     if not stoken:
         return None
     if not is_configured():
@@ -589,10 +598,6 @@ def parse_webhook_payload(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# Back-compat alias
-parse_dmn_params = parse_webhook_payload
-
-
 def verify_dmn_checksum(params: dict[str, Any]) -> Optional[bool]:
     """
     Verify Paymentez webhook stoken when present.
@@ -611,22 +616,3 @@ def split_buyer_name(full_name: str) -> tuple[str, str]:
     if len(parts) == 1:
         return parts[0][:30], "TYS"
     return parts[0][:30], parts[1][:40]
-
-
-def client_config_payload(open_result: dict) -> dict[str, Any]:
-    """Fields the frontend needs for PaymentCheckout.modal."""
-    out: dict[str, Any] = {
-        "reference": open_result["reference"],
-        "session_token": open_result["session_token"],
-        "env": open_result["env"],
-        "checkout_js_url": open_result.get("checkout_js_url") or CHECKOUT_JS_URL,
-        "checkout_url": open_result.get("checkout_url"),
-        "amount": open_result.get("amount"),
-        "currency": open_result.get("currency"),
-        "client_unique_id": open_result.get("client_unique_id"),
-    }
-    if open_result.get("client_app_code"):
-        out["client_app_code"] = open_result["client_app_code"]
-    if open_result.get("client_app_key"):
-        out["client_app_key"] = open_result["client_app_key"]
-    return out
