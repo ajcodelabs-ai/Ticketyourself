@@ -11,6 +11,12 @@ import {
     type NuveiCheckoutConfig,
 } from "@/lib/nuvei";
 
+// A 200 from /nuvei/confirm or /nuvei/charge isn't itself proof of payment —
+// the backend also returns 200 for e.g. "ignored_amount_mismatch" so it can
+// tell Nuvei/Paymentez not to retry. Only these results mean the order/plan
+// was actually finalized as paid.
+const NUVEI_PAID_RESULTS = new Set(["order_paid", "billing_completed", "already_paid"]);
+
 type Props = {
     config: NuveiCheckoutConfig;
     onPaid: () => void;
@@ -80,11 +86,18 @@ export default function NuveiCheckoutPanel({ config, onPaid, onCancel }: Props) 
                             }
                             setPaying(true);
                             try {
-                                await api.post("/nuvei/confirm", {
+                                const { data } = await api.post("/nuvei/confirm", {
                                     transaction_id: transactionId,
                                     client_unique_id: config.client_unique_id,
                                     reference: config.reference || config.session_token,
                                 });
+                                if (!NUVEI_PAID_RESULTS.has(data?.result)) {
+                                    toast.error(
+                                        "El pago se recibió pero aún no pudimos confirmarlo. " +
+                                            "Contactá al organizador si el problema persiste.",
+                                    );
+                                    return;
+                                }
                                 toast.success("Pago confirmado");
                                 onPaid();
                             } catch (err: any) {
@@ -124,7 +137,7 @@ export default function NuveiCheckoutPanel({ config, onPaid, onCancel }: Props) 
                         if (cancelled) return;
                         setPaying(true);
                         try {
-                            await api.post("/nuvei/charge", {
+                            const { data } = await api.post("/nuvei/charge", {
                                 card_token: token,
                                 client_unique_id: config.client_unique_id,
                                 amount_cents: Math.round(Number(config.amount) * 100),
@@ -133,6 +146,13 @@ export default function NuveiCheckoutPanel({ config, onPaid, onCancel }: Props) 
                                 user_id: config.user_id,
                                 description: config.order_description,
                             });
+                            if (!NUVEI_PAID_RESULTS.has(data?.result)) {
+                                toast.error(
+                                    "El pago se recibió pero aún no pudimos confirmarlo. " +
+                                        "Contactá al organizador si el problema persiste.",
+                                );
+                                return;
+                            }
                             toast.success("Pago confirmado");
                             onPaid();
                         } catch (err: any) {
@@ -163,6 +183,7 @@ export default function NuveiCheckoutPanel({ config, onPaid, onCancel }: Props) 
                         ),
                     );
                     setBooting(false);
+                    onCancel?.();
                 }
             }
         })();
