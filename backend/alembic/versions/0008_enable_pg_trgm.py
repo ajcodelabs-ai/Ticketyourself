@@ -9,14 +9,14 @@ back to ILIKE when it's absent; this migration makes the full fuzzy-search path
 permanent across all environments.
 
 Revision ID: 0008
-Revises: 0007
+Revises: b47829e0dcbf
 Create Date: 2026-08-19
 """
 
 from alembic import op
 
 revision = "0008"
-down_revision = "0007"
+down_revision = "b47829e0dcbf"
 branch_labels = None
 depends_on = None
 
