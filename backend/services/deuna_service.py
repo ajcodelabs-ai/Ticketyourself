@@ -77,9 +77,7 @@ def _api_base() -> str:
 def _api_key() -> str:
     """Public ApiKey from DEUNA — used ONLY for frontend DeunaSDK.initialize(publicApiKey)."""
     return (
-        os.environ.get("DEUNA_API_KEY")
-        or os.environ.get("DEUNA_PUBLIC_API_KEY")
-        or ""
+        os.environ.get("DEUNA_API_KEY") or os.environ.get("DEUNA_PUBLIC_API_KEY") or ""
     ).strip()
 
 
@@ -149,16 +147,15 @@ def _request(
     json_body: dict | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
-    api_key = _api_key()
     api_secret = _api_secret()
-    if not api_key and not api_secret:
-        raise DeunaError("DEUNA ApiKey/ApiSecret not configured")
+    if not api_secret:
+        raise DeunaError("DEUNA ApiSecret (private key) not configured")
 
     # DEUNA server-to-server auth: X-API-KEY must be the PRIVATE key (ApiSecret).
     # The public ApiKey is only for the frontend DeunaSDK.initialize({ publicApiKey }).
     # Ref: https://docs.deuna.com/docs/direct-api-integration
     headers = {
-        "X-API-KEY": api_secret or api_key,
+        "X-API-KEY": api_secret,
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
