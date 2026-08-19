@@ -61,15 +61,12 @@ async def create_checkout_session(
     plan = await _load_active_plan(session, payload.plan_code)
     payment_method = payload.payment_method or "stripe"
 
-    # ── Nuvei: openOrder + Simply Connect ─────────────────────────────────────
+    # ── Nuvei Ecuador (Paymentez): init_reference + Checkout JS ───────────────
     if payment_method == "nuvei":
         from services import nuvei_service
 
         intent_id = str(uuid.uuid4())
         client_unique_id = f"bill_{intent_id.replace('-', '')[:20]}"
-        origin = (payload.origin_url or "").rstrip("/")
-        success_url = f"{origin}/billing/success"
-        cancel_url = f"{origin}/billing/cancel"
 
         if not nuvei_service.is_configured():
             session_ref = f"gw_nuvei_{intent_id[:12]}"
@@ -120,13 +117,10 @@ async def create_checkout_session(
                 email=user.get("email"),
                 first_name=(org.company_name or "Organizer")[:30],
                 last_name="TYS",
-                success_url=success_url,
-                failure_url=cancel_url,
-                pending_url=success_url,
                 custom_data=f"billing:{intent_id}",
             )
         except nuvei_service.NuveiError as e:
-            logger.error("Nuvei billing openOrder failed: %s", type(e).__name__)
+            logger.error("Nuvei billing init_reference failed: %s", type(e).__name__)
             raise HTTPException(
                 502,
                 "No pudimos iniciar el pago con Nuvei. Intentá de nuevo en unos minutos.",
@@ -160,19 +154,29 @@ async def create_checkout_session(
         except Exception:  # noqa: BLE001
             pass
         return CheckoutResponse(
-            checkout_url=None,
+            checkout_url=nuvei.get("checkout_url"),
             session_id=client_unique_id,
             mode="payment",
             payment_method="nuvei",
             status="nuvei_checkout",
             plan_code=plan["code"],
             intent_id=intent_id,
-            session_token=nuvei["session_token"],
-            merchant_id=nuvei["merchant_id"],
-            merchant_site_id=nuvei["merchant_site_id"],
+            reference=nuvei["reference"],
+            session_token=nuvei["reference"],
             nuvei_env=nuvei["env"],
             checkout_js_url=nuvei["checkout_js_url"],
+            checkout_mode=nuvei.get("checkout_mode"),
+            client_app_code=nuvei.get("client_app_code"),
+            client_app_key=nuvei.get("client_app_key"),
             client_unique_id=client_unique_id,
+            user_id=nuvei.get("user_id"),
+            user_email=nuvei.get("user_email"),
+            user_phone=nuvei.get("user_phone"),
+            order_description=nuvei.get("order_description"),
+            order_vat=nuvei.get("order_vat"),
+            order_installments_type=nuvei.get("order_installments_type"),
+            amount=nuvei.get("amount"),
+            currency=nuvei.get("currency"),
             message=f"Completá el pago del plan {plan['name']} con Nuvei.",
         )
 

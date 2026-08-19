@@ -186,6 +186,12 @@ export default function PurchaseModal({
             return locs.some((id: string) => selectedLocalityIds.has(id));
         });
     }, [event?.custom_questions, selectedLocalityIds]);
+    // ── TyC configurables por organizador ────────────────────────────────────
+    const tycUrl: string | undefined = (event?.content as any)?.tyc_url;
+    const tycLabel: string = (event?.content as any)?.tyc_label || "Términos y condiciones del organizador";
+    const hasTyc = !!tycUrl;
+    const [tycAccepted, setTycAccepted] = useState(false);
+
     const [promoCodeInput, setPromoCodeInput] = useState("");
     const [appliedPromo, setAppliedPromo] = useState<{
         code: string;
@@ -356,6 +362,7 @@ export default function PurchaseModal({
             setCheckEmail("");
             setCheckCedula("");
             setAccessError("");
+            setTycAccepted(false);
         }
     }, [open]);
 
@@ -476,7 +483,9 @@ export default function PurchaseModal({
         };
         if (appliedPromo?.code) body.promo_code = appliedPromo.code;
         if (lawCategory) body.law_category = lawCategory;
-        if (buyer.email) body.buyer_email = buyer.email;
+        // Solo mandar email cuando ya es usable — evita 422 EmailStr al tipear "demo…"
+        const email = (buyer.email || "").trim();
+        if (email.includes("@") && email.includes(".")) body.buyer_email = email;
         if (isSeatNumbered) body.seat_ids = seatHoldsInfo.seat_ids;
         if (hasTypes && typeSelections.length > 0) {
             body.ticket_type_selections = typeSelections;
@@ -594,6 +603,9 @@ export default function PurchaseModal({
                 e[`cq_${q.id}`] = "Requerido";
             }
         }
+        if (hasTyc && !tycAccepted) {
+            e.tyc = "Debés aceptar los términos y condiciones para continuar.";
+        }
         setErrors(e);
         return Object.keys(e).length === 0;
     };
@@ -682,14 +694,28 @@ export default function PurchaseModal({
                 onOpenChange(false);
                 return;
             }
-            if (data.status === "nuvei_checkout" && data.session_token) {
+            if (
+                data.status === "nuvei_checkout" &&
+                (data.reference || data.session_token)
+            ) {
                 setNuveiCheckout({
-                    session_token: data.session_token,
-                    merchant_id: data.merchant_id,
-                    merchant_site_id: data.merchant_site_id,
+                    reference: data.reference || data.session_token,
+                    session_token: data.session_token || data.reference,
+                    checkout_mode: data.checkout_mode,
                     nuvei_env: data.nuvei_env,
                     checkout_js_url: data.checkout_js_url,
+                    checkout_url: data.checkout_url,
+                    client_app_code: data.client_app_code,
+                    client_app_key: data.client_app_key,
                     client_unique_id: data.client_unique_id || data.order_number,
+                    amount: data.amount,
+                    currency: data.currency,
+                    user_id: data.user_id,
+                    user_email: data.user_email,
+                    user_phone: data.user_phone,
+                    order_description: data.order_description,
+                    order_vat: data.order_vat,
+                    order_installments_type: data.order_installments_type,
                 });
                 return;
             }
@@ -728,6 +754,7 @@ export default function PurchaseModal({
     return (
         <Dialog
             open={open}
+            modal={!nuveiCheckout && !deunaCheckout}
             onOpenChange={(next) => {
                 if (!next) {
                     setNuveiCheckout(null);
@@ -1526,12 +1553,41 @@ export default function PurchaseModal({
                             </div>
                         )}
 
+                        {/* ── TyC configurables por organizador ─────────────────────────────── */}
+                        {hasTyc && (
+                            <div className="border-t pt-3 space-y-1" data-testid="tyc-block">
+                                <label className="flex items-start gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={tycAccepted}
+                                        onChange={(e) => setTycAccepted(e.target.checked)}
+                                        className="mt-0.5 h-4 w-4 shrink-0 rounded border accent-primary"
+                                        data-testid="tyc-checkbox"
+                                    />
+                                    <span className="text-xs text-muted-foreground leading-relaxed">
+                                        He leído y acepto los{" "}
+                                        <a href={tycUrl} target="_blank" rel="noopener noreferrer"
+                                           className="underline text-primary font-medium"
+                                           data-testid="tyc-link">
+                                            {tycLabel}
+                                        </a>{" "}
+                                        del organizador.
+                                    </span>
+                                </label>
+                                {errors.tyc && (
+                                    <p className="text-xs text-red-600 pl-6" data-testid="tyc-error">
+                                        {errors.tyc}
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
                         <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                             <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                             {isEffectivelyFree
                                 ? "Te enviaremos tu ticket por email al confirmar."
                                 : paymentMethod === "nuvei"
-                                  ? "El cobro se procesa con Nuvei (Simply Connect). Los datos de tarjeta no quedan en TYS."
+                                  ? "El cobro se procesa con Nuvei (Paymentez Ecuador). Los datos de tarjeta no quedan en TYS."
                                   : paymentMethod === "deuna"
                                     ? "El cobro se procesa con DEUNA (Payment Widget). Los datos de tarjeta no quedan en TYS."
                                   : paymentMethod === "stripe"

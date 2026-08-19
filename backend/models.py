@@ -400,13 +400,25 @@ class CheckoutResponse(BaseModel):
     message: Optional[str] = None
     plan_code: Optional[str] = None
     intent_id: Optional[str] = None
-    # Simply Connect (Nuvei openOrder)
-    session_token: Optional[str] = None
-    merchant_id: Optional[str] = None
+    # Nuvei Ecuador (Paymentez Checkout JS)
+    reference: Optional[str] = None
+    session_token: Optional[str] = None  # alias of reference (storage / legacy)
+    merchant_id: Optional[str] = None  # unused in EC; kept for old clients
     merchant_site_id: Optional[str] = None
-    nuvei_env: Optional[str] = None
+    nuvei_env: Optional[str] = None  # stg | prod
     checkout_js_url: Optional[str] = None
+    checkout_mode: Optional[str] = None  # client | reference
+    client_app_code: Optional[str] = None
+    client_app_key: Optional[str] = None
     client_unique_id: Optional[str] = None
+    user_id: Optional[str] = None
+    user_email: Optional[str] = None
+    user_phone: Optional[str] = None
+    order_description: Optional[str] = None
+    order_vat: Optional[str] = None
+    order_installments_type: Optional[int] = None
+    amount: Optional[str] = None
+    currency: Optional[str] = None
     # DEUNA Payment Widget
     order_token: Optional[str] = None
     public_api_key: Optional[str] = None

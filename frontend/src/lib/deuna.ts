@@ -39,10 +39,16 @@ export function loadDeunaSdk(src?: string): Promise<void> {
             `script[data-deuna-sdk="1"]`,
         );
         if (existing) {
+            // Script tag exists — if already loaded resolve immediately, otherwise wait.
+            if (window.DeunaSDK) {
+                resolve();
+                return;
+            }
             existing.addEventListener("load", () => resolve());
-            existing.addEventListener("error", () =>
-                reject(new Error("No se pudo cargar DEUNA Web SDK")),
-            );
+            existing.addEventListener("error", () => {
+                loading = null; // allow retry on next call
+                reject(new Error("No se pudo cargar DEUNA Web SDK"));
+            });
             return;
         }
         const script = document.createElement("script");
@@ -51,7 +57,10 @@ export function loadDeunaSdk(src?: string): Promise<void> {
         script.crossOrigin = "anonymous";
         script.dataset.deunaSdk = "1";
         script.onload = () => resolve();
-        script.onerror = () => reject(new Error("No se pudo cargar DEUNA Web SDK"));
+        script.onerror = () => {
+            loading = null; // allow retry on next call
+            reject(new Error("No se pudo cargar DEUNA Web SDK"));
+        };
         document.head.appendChild(script);
     });
     return loading;

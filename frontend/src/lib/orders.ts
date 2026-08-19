@@ -27,7 +27,7 @@ export const PAYMENT_METHOD_META = {
     nuvei: {
         label: "Nuvei",
         icon: "💳",
-        description: "Pago digital con tarjeta (Simply Connect)",
+        description: "Pago digital con tarjeta (Nuvei Ecuador)",
     },
     deuna: {
         label: "DeUna",

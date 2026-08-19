@@ -3,7 +3,7 @@
  * Used inside EventPublic when `event.venue_id` is set.
  */
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { Loader2, Ticket, Trash2, Clock, AlertTriangle } from "lucide-react";
+import { Loader2, Ticket, Trash2, Clock, AlertTriangle, LayoutList, CheckSquare2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -12,6 +12,15 @@ import SeatPickerCanvas from "@/components/venues/SeatPickerCanvas";
 import {
     getOrCreateSessionToken, selectedSeatBreakdown, feesForEntrada,
 } from "@/lib/seats";
+
+interface SeatGroup {
+    id: string;
+    type: "row" | "table";
+    label: string;
+    seat_ids: string[];
+    total_seats: number;
+    available_seats: number;
+}
 
 const REFRESH_MS = 15_000;
 
@@ -55,6 +64,10 @@ export default function NumberedSeatSection({
     const [refreshing, setRefreshing] = useState(false);
     const [sessionToken] = useState(() => getOrCreateSessionToken());
     const [activeHoldExpiresAt, setActiveHoldExpiresAt] = useState<string | null>(null);
+    const [seatGroups, setSeatGroups] = useState<SeatGroup[]>([]);
+    const [groupsLoading, setGroupsLoading] = useState(false);
+
+    const allowGroupPurchase = !!(event?.content as any)?.allow_full_group_purchase;
 
     // A función may override per-locality pricing; fall back to the event's
     // own locality_pricing when no override (or no función) applies.
@@ -97,6 +110,54 @@ export default function NumberedSeatSection({
         const t = setInterval(refreshSeats, REFRESH_MS);
         return () => clearInterval(t);
     }, [refreshSeats]);
+
+    // Fetch available groups when allow_full_group_purchase is enabled
+    useEffect(() => {
+        if (!allowGroupPurchase) { setSeatGroups([]); return; }
+        let alive = true;
+        setGroupsLoading(true);
+        api.get(`/public/events/${tenantSlug}/${event.slug}/seat-groups`, {
+            params: { function_id: functionId || undefined },
+        })
+            .then((r) => { if (alive) setSeatGroups(r.data?.groups || []); })
+            .catch(() => { if (alive) setSeatGroups([]); })
+            .finally(() => { if (alive) setGroupsLoading(false); });
+        return () => { alive = false; };
+    }, [allowGroupPurchase, tenantSlug, event.slug, functionId]);
+
+    // Re-fetch groups when seat status changes (holds/releases update availability)
+    useEffect(() => {
+        if (!allowGroupPurchase || !seatGroups.length) return;
+        api.get(`/public/events/${tenantSlug}/${event.slug}/seat-groups`, {
+            params: { function_id: functionId || undefined },
+        })
+            .then((r) => setSeatGroups(r.data?.groups || []))
+            .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [seatsStatus]);
+
+    const selectGroup = useCallback((group: SeatGroup) => {
+        const groupSeats = seatsStatus.filter(
+            (s) => group.seat_ids.includes(s.seat_id) && s.status === "available",
+        );
+        const allSelected = groupSeats.every((s) => selected.some((p) => p.seat_id === s.seat_id));
+        if (allSelected) {
+            setSelected((prev) => prev.filter((p) => !group.seat_ids.includes(p.seat_id)));
+            return;
+        }
+        if (groupSeats.length > 10) {
+            toast.error(`Esta ${group.type === "table" ? "mesa" : "fila"} tiene ${groupSeats.length} asientos — el máximo por compra es 10.`);
+            return;
+        }
+        const withoutGroup = selected.filter((p) => !group.seat_ids.includes(p.seat_id));
+        if (withoutGroup.length + groupSeats.length > 10) {
+            toast.error("Máximo 10 asientos por compra. Limpiá la selección actual primero.");
+            return;
+        }
+        setSelected([...withoutGroup, ...groupSeats]);
+        const noun = group.type === "table" ? "Mesa" : "Fila";
+        toast.success(`${noun} "${group.label}" seleccionada (${groupSeats.length} asientos).`);
+    }, [seatsStatus, selected]);
 
     const toggleSeat = (seat) => {
         if (seat.status !== "available") return;
@@ -252,6 +313,62 @@ export default function NumberedSeatSection({
                 </div>
 
                 <aside className="space-y-4">
+                    {/* ── Grupos disponibles (fila / mesa completa) ──────────────── */}
+                    {allowGroupPurchase && (
+                        <div className="rounded-xl border p-4 space-y-2" data-testid="seat-groups-panel">
+                            <h3 className="text-sm font-semibold flex items-center gap-1.5">
+                                <LayoutList className="h-4 w-4 text-violet-600" />
+                                Comprar por grupo
+                            </h3>
+                            {groupsLoading ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            ) : seatGroups.length === 0 ? (
+                                <p className="text-xs text-muted-foreground italic">
+                                    Sin grupos disponibles.
+                                </p>
+                            ) : (
+                                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                    {seatGroups.map((group) => {
+                                        const isSelected = group.seat_ids.every((id) =>
+                                            selected.some((s) => s.seat_id === id),
+                                        );
+                                        const noun = group.type === "table" ? "Mesa" : "Fila";
+                                        return (
+                                            <button
+                                                key={group.id}
+                                                onClick={() => selectGroup(group)}
+                                                data-testid={`group-btn-${group.id}`}
+                                                className={`w-full flex items-center justify-between rounded-lg border px-3 py-2 text-xs transition-colors ${
+                                                    isSelected
+                                                        ? "border-primary bg-primary/10 text-primary font-semibold"
+                                                        : "hover:border-primary/50 hover:bg-muted"
+                                                }`}
+                                            >
+                                                <span className="flex items-center gap-1.5">
+                                                    {isSelected && (
+                                                        <CheckSquare2 className="h-3.5 w-3.5 shrink-0" />
+                                                    )}
+                                                    <span>
+                                                        {noun} <strong>{group.label}</strong>
+                                                    </span>
+                                                </span>
+                                                <Badge
+                                                    variant={isSelected ? "default" : "secondary"}
+                                                    className="text-[10px]"
+                                                >
+                                                    {group.available_seats}/{group.total_seats}
+                                                </Badge>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                            <p className="text-[10px] text-muted-foreground">
+                                Al seleccionar un grupo se reservan todos sus asientos disponibles.
+                            </p>
+                        </div>
+                    )}
+
                     {/* Localities legend with prices */}
                     <div className="rounded-xl border p-4 space-y-2">
                         <h3 className="text-sm font-semibold">Localidades</h3>

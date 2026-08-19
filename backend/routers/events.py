@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.orm.attributes import flag_modified
 
 from database import AsyncSessionLocal
@@ -288,6 +288,9 @@ class EventContent(BaseModel):
     policies_html: str = Field(default="", max_length=16000)
     agenda: List[AgendaItem] = Field(default_factory=list)
     faq: List[FaqItem] = Field(default_factory=list)
+    tyc_url: Optional[str] = Field(default=None, max_length=2000)
+    tyc_label: str = Field(default="", max_length=200)
+    allow_full_group_purchase: bool = False
 
 
 # M4 — diseñador visual de tickets (drag & drop): elements are positioned as
@@ -1828,9 +1831,30 @@ async def serve_event_asset(asset_id: str):
 
 
 # ── Public endpoints ────────────────────────────────────────────────────────
+
+_TRGM_AVAILABLE: bool | None = None  # cached after first DB probe
+
+
+async def _trgm_available(pg) -> bool:
+    global _TRGM_AVAILABLE
+    if _TRGM_AVAILABLE is not None:
+        return _TRGM_AVAILABLE
+    try:
+        await pg.execute(text("SELECT similarity('a','a')"))
+        _TRGM_AVAILABLE = True
+    except Exception:
+        # A failed statement leaves the session's transaction aborted — without
+        # rolling back, the next query on this same session (the ILIKE fallback)
+        # would also fail instead of gracefully degrading.
+        await pg.rollback()
+        _TRGM_AVAILABLE = False
+    return _TRGM_AVAILABLE
+
+
 @public_router.get("")
 async def list_public_events(
     tenant_slug: str = Query(...),
+    search: Optional[str] = Query(default=None, max_length=120),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
 ):
@@ -1852,12 +1876,36 @@ async def list_public_events(
             Event.status == "published",
             Event.visibility.in_(list(LISTABLE_VISIBILITIES)),
         )
+        q = (search or "").strip()
+        if q:
+            use_trgm = await _trgm_available(pg)
+            if use_trgm:
+                stmt = stmt.where(
+                    or_(
+                        func.similarity(Event.title, q) > 0.15,
+                        Event.title.ilike(f"%{q}%"),
+                        Event.venue_city.ilike(f"%{q}%"),
+                    )
+                )
+            else:
+                stmt = stmt.where(
+                    or_(
+                        Event.title.ilike(f"%{q}%"),
+                        Event.venue_city.ilike(f"%{q}%"),
+                    )
+                )
         total = await pg.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         # Higher priority first (microsite featured / landing order), then soonest date.
+        if q and _TRGM_AVAILABLE:
+            order = [
+                func.similarity(Event.title, q).desc(),
+                Event.priority.desc(),
+                Event.starts_at.asc(),
+            ]
+        else:
+            order = [Event.priority.desc(), Event.starts_at.asc()]
         result = await pg.execute(
-            stmt.order_by(Event.priority.desc(), Event.starts_at.asc())
-            .offset((page - 1) * limit)
-            .limit(limit)
+            stmt.order_by(*order).offset((page - 1) * limit).limit(limit)
         )
         items = [row_to_dict(r) for r in result.scalars().all()]
     return {"items": items, "total": total}
@@ -1909,6 +1957,77 @@ async def get_public_event(
                 function_id=function_id or "",
             )
     return event
+
+
+# ── Fase 9 — access pre-check (lista verificada / código de acceso) ──────────
+
+
+class CheckAccessBody(BaseModel):
+    access_code: Optional[str] = Field(default=None, max_length=40)
+    email: Optional[str] = Field(default=None, max_length=140)
+    cedula: Optional[str] = Field(default=None, max_length=40)
+
+
+@public_router.post("/{tenant_slug}/{event_slug}/check-access")
+async def public_check_access(tenant_slug: str, event_slug: str, body: CheckAccessBody):
+    """Pre-flight access gate used by PurchaseModal before showing the checkout
+    form.  Validates the buyer's code / email / cédula WITHOUT consuming it
+    (no side-effects — no uses_count bump, no used_at stamp).
+
+    Returns ``{"ok": true}`` on success or ``{"ok": false, "reason": "…"}``
+    on failure so the frontend can surface a friendly error without a 4xx.
+    """
+    from services.access_control import check_purchase_access
+
+    # Resolve event (no venue required for access check)
+    async with AsyncSessionLocal() as pg:
+        org_row = (
+            await pg.execute(
+                select(Organizer).where(
+                    Organizer.slug == tenant_slug, Organizer.status == "approved"
+                )
+            )
+        ).scalar_one_or_none()
+        if not org_row:
+            raise HTTPException(404, "Organizador no encontrado")
+
+        event_row = await pg.scalar(
+            select(Event).where(
+                Event.organizer_id == org_row.id,
+                Event.slug == event_slug,
+                Event.status == "published",
+                Event.visibility.in_(list(RESOLVABLE_VISIBILITIES)),
+            )
+        )
+        if not event_row:
+            raise HTTPException(404, "Evento no encontrado")
+
+        event = row_to_dict(event_row)
+        access_params = event.get("access_params") or {}
+        access_type = access_params.get("access_type", "open")
+
+        # Open events don't need a gate check
+        if access_type in ("open", "link_only"):
+            return {"ok": True}
+
+        try:
+            await check_purchase_access(
+                event=event,
+                session=pg,
+                buyer_email=body.email,
+                buyer_document_id=body.cedula,
+                access_code=body.access_code,
+                quantity=1,  # pre-flight: check for at least 1 ticket
+            )
+            return {"ok": True}
+        except ValueError as exc:
+            # check_purchase_access only raises ValueError with hand-written,
+            # user-facing Spanish messages (services/access_control.py) — never
+            # a wrapped DB/library exception — so this is safe to surface. The
+            # resulting CodeQL py/stack-trace-exposure alert is dismissed as a
+            # false positive in the repo's Security tab with this justification
+            # (Default Setup CodeQL doesn't honor inline suppression comments).
+            return {"ok": False, "reason": str(exc)}
 
 
 # ── Phase 7 — public seat-holds endpoints ────────────────────────────────
@@ -2023,6 +2142,69 @@ async def public_release_holds(
         function_id=body.function_id,
     )
     return {"released": deleted}
+
+
+@public_router.get("/{tenant_slug}/{event_slug}/seat-groups")
+async def public_seat_groups(
+    tenant_slug: str,
+    event_slug: str,
+    function_id: Optional[str] = Query(default=None),
+):
+    """Return available seat groups (rows / tables) for whole-group purchase.
+
+    Enabled only when `event.content.allow_full_group_purchase` is true.
+    """
+    from services.seats import compute_event_seats_status
+
+    _, event, venue = await _resolve_public_event(tenant_slug, event_slug)
+
+    allow = (event.get("content") or {}).get("allow_full_group_purchase", False)
+    if not allow:
+        return {"groups": []}
+
+    fn_id = function_id or ""
+    seats_status: list[dict] = await compute_event_seats_status(
+        event=event, venue=venue, function_id=fn_id
+    )
+
+    # Venue elements use `kind` (seat_row_straight/seat_row_curved/table_round/
+    # table_rect/seat_individual), not `type`, and don't carry a `seats`/
+    # `children` list — seat_status entries already carry `element_id`/`kind`
+    # from expand_venue_seats(), so group by that instead of re-deriving it
+    # from the venue layout JSON.
+    GROUPABLE_KINDS = (
+        "seat_row_straight",
+        "seat_row_curved",
+        "table_round",
+        "table_rect",
+    )
+    elements = (venue.get("venue_layout") or venue).get("elements") or []
+    elements_by_id = {el.get("id"): el for el in elements if isinstance(el, dict)}
+
+    by_element: dict[str, list[dict]] = {}
+    for s in seats_status or []:
+        if s.get("kind") not in GROUPABLE_KINDS:
+            continue
+        by_element.setdefault(s["element_id"], []).append(s)
+
+    groups = []
+    for element_id, seats in by_element.items():
+        avail = [s["seat_id"] for s in seats if s.get("status") == "available"]
+        if not avail:
+            continue
+        el = elements_by_id.get(element_id) or {}
+        groups.append(
+            {
+                "id": element_id,
+                "type": seats[0].get("kind"),
+                "label": el.get("label") or el.get("name") or element_id,
+                "seat_ids": avail,
+                "total_seats": len(seats),
+                "available_seats": len(avail),
+            }
+        )
+
+    return {"groups": groups}
 
 
 # ── Admin endpoints ─────────────────────────────────────────────────────────
