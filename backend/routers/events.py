@@ -85,7 +85,9 @@ EventCategory = Literal[
 ]
 EventStatus = Literal["draft", "published", "sold_out", "ended", "cancelled"]
 PricingType = Literal["free", "paid", "donation"]
-Visibility = Literal["public", "private", "public_blocked"]  # public_blocked: legacy read
+Visibility = Literal[
+    "public", "private", "public_blocked"
+]  # public_blocked: legacy read
 # Listed on microsite index (private is link-only, never listed).
 LISTABLE_VISIBILITIES = ("public", "public_blocked")
 # Resolvable by direct slug URL (includes private + legacy blocked).
@@ -286,6 +288,9 @@ class EventContent(BaseModel):
     policies_html: str = Field(default="", max_length=16000)
     agenda: List[AgendaItem] = Field(default_factory=list)
     faq: List[FaqItem] = Field(default_factory=list)
+    tyc_url: Optional[str] = Field(default=None, max_length=2000)
+    tyc_label: str = Field(default="", max_length=200)
+    allow_full_group_purchase: bool = False
 
 
 # M4 — diseñador visual de tickets (drag & drop): elements are positioned as
@@ -637,7 +642,8 @@ async def link_venue_to_event(
 
     org = await _require_approved_organizer(user)
     assert_feature(
-        org.get("plan_code") or org.get("signup_plan_code"),
+        # signup_plan_code is unverified/self-declared — never used for feature gates
+        org.get("plan_code"),
         "numbered_seating",
     )
     async with AsyncSessionLocal() as session:
@@ -1071,13 +1077,13 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
     async with AsyncSessionLocal() as session:
         await _assert_pricing_type_allowed(
             session,
-            org.get("plan_code") or org.get("signup_plan_code"),
+            org.get("plan_code"),
             payload.pricing_type,
         )
         if payload.discounts is not None:
             await _assert_discounts_allowed(
                 session,
-                org.get("plan_code") or org.get("signup_plan_code"),
+                org.get("plan_code"),
                 payload.discounts,
             )
         slug = await _next_event_slug(org["id"], normalize_slug(payload.title), session)
@@ -1214,7 +1220,7 @@ async def update_my_event(
             diff["discounts"] = payload.discounts.model_dump(exclude_none=False)
             await _assert_discounts_allowed(
                 session,
-                org.get("plan_code") or org.get("signup_plan_code"),
+                org.get("plan_code"),
                 payload.discounts,
             )
         if "payment_methods" in diff and payload.payment_methods is not None:
@@ -1229,7 +1235,7 @@ async def update_my_event(
         if "pricing_type" in diff:
             await _assert_pricing_type_allowed(
                 session,
-                org.get("plan_code") or org.get("signup_plan_code"),
+                org.get("plan_code"),
                 diff["pricing_type"],
             )
         if diff.get("visibility") == "public_blocked":
@@ -1837,6 +1843,10 @@ async def _trgm_available(pg) -> bool:
         await pg.execute(text("SELECT similarity('a','a')"))
         _TRGM_AVAILABLE = True
     except Exception:
+        # A failed statement leaves the session's transaction aborted — without
+        # rolling back, the next query on this same session (the ILIKE fallback)
+        # would also fail instead of gracefully degrading.
+        await pg.rollback()
         _TRGM_AVAILABLE = False
     return _TRGM_AVAILABLE
 
@@ -1887,13 +1897,15 @@ async def list_public_events(
         total = await pg.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         # Higher priority first (microsite featured / landing order), then soonest date.
         if q and _TRGM_AVAILABLE:
-            order = [func.similarity(Event.title, q).desc(), Event.priority.desc(), Event.starts_at.asc()]
+            order = [
+                func.similarity(Event.title, q).desc(),
+                Event.priority.desc(),
+                Event.starts_at.asc(),
+            ]
         else:
             order = [Event.priority.desc(), Event.starts_at.asc()]
         result = await pg.execute(
-            stmt.order_by(*order)
-            .offset((page - 1) * limit)
-            .limit(limit)
+            stmt.order_by(*order).offset((page - 1) * limit).limit(limit)
         )
         items = [row_to_dict(r) for r in result.scalars().all()]
     return {"items": items, "total": total}
@@ -1949,6 +1961,7 @@ async def get_public_event(
 
 # ── Fase 9 — access pre-check (lista verificada / código de acceso) ──────────
 
+
 class CheckAccessBody(BaseModel):
     access_code: Optional[str] = Field(default=None, max_length=40)
     email: Optional[str] = Field(default=None, max_length=140)
@@ -1975,10 +1988,9 @@ async def public_check_access(tenant_slug: str, event_slug: str, body: CheckAcce
                 )
             )
         ).scalar_one_or_none()
-    if not org_row:
-        raise HTTPException(404, "Organizador no encontrado")
+        if not org_row:
+            raise HTTPException(404, "Organizador no encontrado")
 
-    async with AsyncSessionLocal() as pg:
         event_row = await pg.scalar(
             select(Event).where(
                 Event.organizer_id == org_row.id,
@@ -1987,18 +1999,17 @@ async def public_check_access(tenant_slug: str, event_slug: str, body: CheckAcce
                 Event.visibility.in_(list(RESOLVABLE_VISIBILITIES)),
             )
         )
-    if not event_row:
-        raise HTTPException(404, "Evento no encontrado")
+        if not event_row:
+            raise HTTPException(404, "Evento no encontrado")
 
-    event = row_to_dict(event_row)
-    access_params = event.get("access_params") or {}
-    access_type = access_params.get("access_type", "open")
+        event = row_to_dict(event_row)
+        access_params = event.get("access_params") or {}
+        access_type = access_params.get("access_type", "open")
 
-    # Open events don't need a gate check
-    if access_type in ("open", "link_only"):
-        return {"ok": True}
+        # Open events don't need a gate check
+        if access_type in ("open", "link_only"):
+            return {"ok": True}
 
-    async with AsyncSessionLocal() as pg:
         try:
             await check_purchase_access(
                 event=event,
@@ -2010,6 +2021,10 @@ async def public_check_access(tenant_slug: str, event_slug: str, body: CheckAcce
             )
             return {"ok": True}
         except ValueError as exc:
+            # check_purchase_access only raises ValueError with hand-written,
+            # user-facing Spanish messages (services/access_control.py) — never
+            # a wrapped DB/library exception — so this is safe to surface.
+            # lgtm[py/stack-trace-exposure]
             return {"ok": False, "reason": str(exc)}
 
 
@@ -2146,46 +2161,46 @@ async def public_seat_groups(
         return {"groups": []}
 
     fn_id = function_id or ""
-    seats_status: dict = await compute_event_seats_status(event=event, venue=venue, function_id=fn_id)
-    available_ids: set[str] = {
-        sid for sid, info in (seats_status or {}).items()
-        if (info.get("status") if isinstance(info, dict) else info) == "available"
-    }
+    seats_status: list[dict] = await compute_event_seats_status(
+        event=event, venue=venue, function_id=fn_id
+    )
 
+    # Venue elements use `kind` (seat_row_straight/seat_row_curved/table_round/
+    # table_rect/seat_individual), not `type`, and don't carry a `seats`/
+    # `children` list — seat_status entries already carry `element_id`/`kind`
+    # from expand_venue_seats(), so group by that instead of re-deriving it
+    # from the venue layout JSON.
+    GROUPABLE_KINDS = (
+        "seat_row_straight",
+        "seat_row_curved",
+        "table_round",
+        "table_rect",
+    )
     elements = (venue.get("venue_layout") or venue).get("elements") or []
+    elements_by_id = {el.get("id"): el for el in elements if isinstance(el, dict)}
+
+    by_element: dict[str, list[dict]] = {}
+    for s in seats_status or []:
+        if s.get("kind") not in GROUPABLE_KINDS:
+            continue
+        by_element.setdefault(s["element_id"], []).append(s)
+
     groups = []
-
-    def _extract_seat_ids(element: dict) -> list[str]:
-        ids: list[str] = []
-        for seat in element.get("seats") or []:
-            if isinstance(seat, dict) and seat.get("id"):
-                ids.append(seat["id"])
-        for child in element.get("children") or []:
-            if isinstance(child, dict):
-                if child.get("type") == "seat" and child.get("id"):
-                    ids.append(child["id"])
-                else:
-                    ids.extend(_extract_seat_ids(child))
-        return ids
-
-    for el in elements:
-        if not isinstance(el, dict):
-            continue
-        el_type = (el.get("type") or "").lower()
-        if el_type not in ("row", "table"):
-            continue
-        seat_ids = _extract_seat_ids(el)
-        avail = [sid for sid in seat_ids if sid in available_ids]
+    for element_id, seats in by_element.items():
+        avail = [s["seat_id"] for s in seats if s.get("status") == "available"]
         if not avail:
             continue
-        groups.append({
-            "id": el.get("id"),
-            "type": el_type,
-            "label": el.get("label") or el.get("name") or el.get("id"),
-            "seat_ids": avail,
-            "total_seats": len(seat_ids),
-            "available_seats": len(avail),
-        })
+        el = elements_by_id.get(element_id) or {}
+        groups.append(
+            {
+                "id": element_id,
+                "type": seats[0].get("kind"),
+                "label": el.get("label") or el.get("name") or element_id,
+                "seat_ids": avail,
+                "total_seats": len(seats),
+                "available_seats": len(avail),
+            }
+        )
 
     return {"groups": groups}
 
