@@ -155,6 +155,7 @@ async def apply_nuvei_notification(
     client_unique_id = (parsed.get("client_unique_id") or "").strip()
     transaction_id = parsed.get("transaction_id")
     reference = (parsed.get("reference") or parsed.get("session_token") or "").strip()
+    amount = parsed.get("amount") or parsed.get("total_amount")
 
     if checksum_verified:
         # Cryptographic stoken (or prior server-side get_transaction) already
@@ -187,17 +188,18 @@ async def apply_nuvei_notification(
             verified.get("client_unique_id") or client_unique_id or ""
         ).strip()
         transaction_id = verified.get("transaction_id") or transaction_id
-        status = verified.get("transaction_status")
-        status_detail = verified.get("status_detail")
+        amount = verified.get("amount") or amount
 
-    if not nuvei_service.is_approved_status(status, status_detail):
-        return "ignored_not_approved"
+    # Both branches above already returned early on a non-approved status, so
+    # by this point the notification is provably approved.
 
     if not client_unique_id and not reference:
         return "ignored_missing_id"
 
     order_row = None
     order: dict = {}
+    intent_row = None
+    intent_plan_price_cents: Optional[int] = None
     async with AsyncSessionLocal() as session:
         if client_unique_id:
             order_row = await session.scalar(
@@ -209,30 +211,60 @@ async def apply_nuvei_notification(
             )
         if order_row is not None:
             order = row_to_dict(order_row)
+        else:
+            if client_unique_id:
+                intent_row = await session.scalar(
+                    select(BillingIntent).where(
+                        BillingIntent.session_id == client_unique_id
+                    )
+                )
+            if intent_row is None and reference:
+                intent_row = await session.scalar(
+                    select(BillingIntent).where(BillingIntent.session_id == reference)
+                )
+            if intent_row is not None:
+                plan = await session.scalar(
+                    select(SubscriptionPlan).where(
+                        SubscriptionPlan.code == intent_row.plan_code
+                    )
+                )
+                intent_plan_price_cents = plan.price_cents if plan else None
 
     if order_row is not None:
         if order.get("status") == "paid":
             return "already_paid"
+        if not nuvei_service.amount_matches(amount, order.get("total_cents") or 0):
+            logger.warning(
+                "Nuvei %s: amount mismatch for order %s (reported=%s, expected_cents=%s)",
+                source,
+                order.get("order_number"),
+                amount,
+                order.get("total_cents"),
+            )
+            return "ignored_amount_mismatch"
         await finalize_ticket_order_from_nuvei(
             order=order,
-            session_token=reference or order.get("stripe_session_id"),
+            # Prefer the reference we stored ourselves at checkout time — the
+            # webhook's `reference` field may not carry the same value Paymentez
+            # actually echoes back, so don't let it silently overwrite a known-
+            # good value.
+            session_token=order.get("stripe_session_id") or reference,
             transaction_id=str(transaction_id) if transaction_id else None,
             source=source,
         )
         return "order_paid"
 
-    intent_row = None
-    async with AsyncSessionLocal() as session:
-        if client_unique_id:
-            intent_row = await session.scalar(
-                select(BillingIntent).where(BillingIntent.session_id == client_unique_id)
-            )
-        if intent_row is None and reference:
-            intent_row = await session.scalar(
-                select(BillingIntent).where(BillingIntent.session_id == reference)
-            )
-
     if intent_row is not None:
+        if not nuvei_service.amount_matches(amount, intent_plan_price_cents or 0):
+            logger.warning(
+                "Nuvei %s: amount mismatch for billing intent %s (reported=%s, "
+                "expected_cents=%s)",
+                source,
+                intent_row.id,
+                amount,
+                intent_plan_price_cents,
+            )
+            return "ignored_amount_mismatch"
         await finalize_billing_intent_from_nuvei(
             intent=intent_row,
             transaction_id=str(transaction_id) if transaction_id else None,
@@ -281,8 +313,13 @@ async def nuvei_webhook(request: Request):
         raise HTTPException(400, "Invalid webhook stoken")
 
     parsed = nuvei_service.parse_webhook_payload(params)
+    # The stoken only covers transaction_id+application_code+user_id+app_key —
+    # never status/dev_reference/amount — so a valid stoken alone isn't enough
+    # to trust the rest of the body. Always re-verify via get_transaction()
+    # (checksum_verified=False forces that path in apply_nuvei_notification).
+    # The stoken-mismatch rejection above still filters out forged requests early.
     result = await apply_nuvei_notification(
-        parsed, source="webhook", checksum_verified=(checksum_result is True)
+        parsed, source="webhook", checksum_verified=False
     )
     logger.info(
         "Nuvei webhook result=%s status=%s detail=%s cuid=%s",
@@ -312,6 +349,7 @@ async def charge_nuvei_with_token(body: dict[str, Any]):
 
     order = None
     intent = None
+    plan = None
     async with AsyncSessionLocal() as session:
         order_row = await session.scalar(
             select(TicketOrder).where(TicketOrder.order_number == client_unique_id)
@@ -320,8 +358,16 @@ async def charge_nuvei_with_token(body: dict[str, Any]):
             order = row_to_dict(order_row)
         else:
             intent = await session.scalar(
-                select(BillingIntent).where(BillingIntent.session_id == client_unique_id)
+                select(BillingIntent).where(
+                    BillingIntent.session_id == client_unique_id
+                )
             )
+            if intent is not None:
+                plan = await session.scalar(
+                    select(SubscriptionPlan).where(
+                        SubscriptionPlan.code == intent.plan_code
+                    )
+                )
 
     if order is None and intent is None:
         raise HTTPException(404, "No encontramos la orden o el plan asociado")
@@ -330,15 +376,25 @@ async def charge_nuvei_with_token(body: dict[str, Any]):
         return {"ok": True, "result": "already_paid"}
 
     if order is not None:
-        amount_cents = int(order.get("total_cents") or body.get("amount_cents") or 0)
+        # Never trust the client's amount_cents — same principle as the billing
+        # branch below. A falsy/missing total_cents means the order isn't in a
+        # chargeable state, not an invitation to let the caller pick a price.
+        amount_cents = int(order.get("total_cents") or 0)
+        if amount_cents <= 0:
+            raise HTTPException(422, "La orden no tiene un monto válido para cobrar")
+        currency = order.get("currency") or "USD"
         email = order.get("buyer_email") or ""
         description = f"Orden {order.get('order_number')}"
         user_id = email or order["id"]
     else:
-        # Billing: amount from request or leave to plan — frontend sends amount
-        amount_cents = int(body.get("amount_cents") or 0)
+        # Billing: amount/currency are the plan's real price — never trust the
+        # client's amount_cents, or a $0.01 charge could activate the full plan.
+        if plan is None:
+            raise HTTPException(404, f"Plan '{intent.plan_code}' no encontrado")
+        amount_cents = int(plan.price_cents)
         if amount_cents <= 0:
-            raise HTTPException(422, "amount_cents requerido para billing")
+            raise HTTPException(422, "El plan no tiene un precio configurado")
+        currency = plan.currency or "USD"
         email = str(body.get("email") or "")
         description = str(body.get("description") or f"Plan {client_unique_id}")
         user_id = str(body.get("user_id") or email or client_unique_id)
@@ -347,7 +403,7 @@ async def charge_nuvei_with_token(body: dict[str, Any]):
         debit = nuvei_service.debit_with_token(
             card_token=card_token,
             amount_cents=amount_cents,
-            currency=str(body.get("currency") or order.get("currency") if order else "USD"),
+            currency=currency.upper(),
             dev_reference=client_unique_id,
             description=description,
             user_id=user_id,
@@ -373,6 +429,7 @@ async def charge_nuvei_with_token(body: dict[str, Any]):
         "session_token": client_unique_id,
         "reference": client_unique_id,
         "transaction_id": debit.get("transaction_id"),
+        "amount": debit.get("amount"),
     }
     result = await apply_nuvei_notification(
         parsed, source="charge", checksum_verified=True
@@ -421,11 +478,12 @@ async def confirm_nuvei_payment(body: dict[str, Any]):
     parsed = {
         "status": status.get("transaction_status"),
         "status_detail": status.get("status_detail"),
-        "client_unique_id": body.get("client_unique_id")
-        or status.get("client_unique_id"),
+        "client_unique_id": status.get("client_unique_id")
+        or body.get("client_unique_id"),
         "session_token": body.get("reference") or body.get("session_token"),
         "reference": body.get("reference") or body.get("session_token"),
         "transaction_id": status.get("transaction_id") or transaction_id,
+        "amount": status.get("amount"),
     }
     result = await apply_nuvei_notification(
         parsed, source="confirm", checksum_verified=True
