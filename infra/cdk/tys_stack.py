@@ -1,5 +1,6 @@
 from aws_cdk import (
     Stack,
+    Tags,
     RemovalPolicy,
     Duration,
     CfnOutput,
@@ -21,6 +22,15 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+# AMI fija (Amazon Linux 2023, arm64) en vez de "latest": con "latest",
+# cualquier `cdk deploy` (incluido el automático de cada merge a staging)
+# puede resolver una AMI distinta de la que ya está corriendo y forzar el
+# reemplazo de la instancia — perdiendo el estado de Docker y causando un
+# downtime no relacionado con el cambio que se estaba desplegando (mismo
+# patrón que causó un incidente en Ticketlab el 2026-08-21, PR #17). Bump
+# manual e intencional cuando haga falta.
+_STAGING_PINNED_AMI_ID = "ami-04fc404d256fd34a2"
+
 
 class TysStack(Stack):
     def __init__(
@@ -34,6 +44,12 @@ class TysStack(Stack):
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
+
+        # Stack-wide tag — needed to attribute AWS cost by project (cost
+        # allocation tags, see the CostAndUsage.md doc in the ajcodelabs
+        # codelabs-infra repo). Same pattern as TicketlabStagingStack.
+        Tags.of(self).add("Project", "TicketYourself")
+        Tags.of(self).add("Environment", env_name)
 
         if env_name == "staging":
             self._build_staging()
@@ -84,9 +100,7 @@ class TysStack(Stack):
             self,
             "Instance",
             instance_type=ec2.InstanceType("t4g.small"),
-            machine_image=ec2.MachineImage.latest_amazon_linux2023(
-                cpu_type=ec2.AmazonLinuxCpuType.ARM_64
-            ),
+            machine_image=ec2.MachineImage.generic_linux({self.region: _STAGING_PINNED_AMI_ID}),
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             security_group=sg,
