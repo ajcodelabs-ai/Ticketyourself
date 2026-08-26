@@ -9,7 +9,11 @@ Charged before the event can be published / started.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from sqlalchemy import or_, select
+from sqlalchemy.orm.attributes import flag_modified
 
 
 def _ticket_units_and_gmv(
@@ -54,20 +58,27 @@ def calculate_pre_event_fee(
     plan: dict,
     event: dict,
     ticket_types: Optional[List[dict]] = None,
+    platform_required: bool = True,
 ) -> Dict[str, Any]:
-    """Return fee breakdown. If plan.event_fee_enabled is false → 0 / waived."""
-    if not plan.get("event_fee_enabled"):
-        return {
-            "enabled": False,
-            "fee_cents": 0,
-            "status": "waived",
-            "ticket_units": 0,
-            "estimated_gmv_cents": 0,
-            "per_ticket_cents": 0,
-            "percent_bps": 0,
-            "ticket_component_cents": 0,
-            "gmv_component_cents": 0,
-        }
+    """Return fee breakdown.
+
+    Waived when the platform master switch is off or the plan does not
+    enable event fees.
+    """
+    waived = {
+        "enabled": False,
+        "fee_cents": 0,
+        "status": "waived",
+        "ticket_units": 0,
+        "estimated_gmv_cents": 0,
+        "per_ticket_cents": 0,
+        "percent_bps": 0,
+        "ticket_component_cents": 0,
+        "gmv_component_cents": 0,
+        "platform_required": bool(platform_required),
+    }
+    if not platform_required or not plan.get("event_fee_enabled"):
+        return waived
 
     per_ticket = int(plan.get("event_fee_per_ticket_cents") or 0)
     percent_bps = int(plan.get("event_fee_percent_bps") or 0)
@@ -86,4 +97,42 @@ def calculate_pre_event_fee(
         "percent_bps": percent_bps,
         "ticket_component_cents": ticket_component,
         "gmv_component_cents": gmv_component,
+        "platform_required": True,
     }
+
+
+def fee_session_id(event_id: str) -> str:
+    """Stable Paymentez/DEUNA client_unique_id for a pre-event fee checkout."""
+    return f"pef{str(event_id).replace('-', '')}"
+
+
+async def find_event_by_fee_session(session, *candidates: str):
+    """Look up an event whose pending fee checkout used this session/order id."""
+    from orm_models import Event
+
+    ids = [str(c).strip() for c in candidates if c]
+    if not ids:
+        return None
+    clauses = [Event.pre_event_fee_breakdown["session_id"].astext == c for c in ids]
+    return await session.scalar(select(Event).where(or_(*clauses)))
+
+
+def mark_pre_event_fee_paid(
+    row,
+    *,
+    transaction_id: Optional[str] = None,
+    payment_method: Optional[str] = None,
+) -> bool:
+    """Mark the event fee paid. Returns False if it was already paid."""
+    if (getattr(row, "pre_event_fee_status", None) or "") == "paid":
+        return False
+    row.pre_event_fee_status = "paid"
+    row.pre_event_fee_paid_at = datetime.now(timezone.utc)
+    breakdown = dict(row.pre_event_fee_breakdown or {})
+    if transaction_id:
+        breakdown["transaction_id"] = transaction_id
+    if payment_method:
+        breakdown["payment_method"] = payment_method
+    row.pre_event_fee_breakdown = breakdown
+    flag_modified(row, "pre_event_fee_breakdown")
+    return True

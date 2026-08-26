@@ -222,8 +222,40 @@ async def apply_deuna_notification(
         )
         return "billing_completed"
 
+    from services.event_fees import find_event_by_fee_session, mark_pre_event_fee_paid
+    from orm_models import Event
+
+    event_id = None
+    already_paid = False
+    async with AsyncSessionLocal() as session:
+        found = await find_event_by_fee_session(session, order_id, order_token)
+        if found is not None:
+            event_id = found.id
+            already_paid = (found.pre_event_fee_status or "") == "paid"
+
+    if event_id is not None:
+        if already_paid:
+            return "already_paid"
+        async with AsyncSessionLocal() as session:
+            row = await session.scalar(select(Event).where(Event.id == event_id))
+            if row:
+                mark_pre_event_fee_paid(
+                    row,
+                    transaction_id=str(transaction_id) if transaction_id else None,
+                    payment_method="deuna",
+                )
+                await session.commit()
+        await log_audit(
+            None,
+            f"deuna.{source}",
+            "event",
+            event_id,
+            {"purpose": "pre_event_fee", "transaction_id": transaction_id},
+        )
+        return "pre_event_fee_paid"
+
     logger.warning(
-        "DEUNA %s: no order/intent for order_id=%s token=%s",
+        "DEUNA %s: no order/intent/fee for order_id=%s token=%s",
         source,
         order_id,
         order_token,
@@ -289,5 +321,5 @@ async def confirm_deuna_payment(body: dict[str, Any]):
         source="confirm",
     )
     if result == "not_found":
-        raise HTTPException(404, "No encontramos la orden o el plan asociado al pago")
+        raise HTTPException(404, "No encontramos la orden, el plan o el cargo asociado al pago")
     return {"ok": True, "result": result}

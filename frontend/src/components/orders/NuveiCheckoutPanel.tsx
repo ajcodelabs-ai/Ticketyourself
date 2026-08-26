@@ -15,7 +15,12 @@ import {
 // the backend also returns 200 for e.g. "ignored_amount_mismatch" so it can
 // tell Nuvei/Paymentez not to retry. Only these results mean the order/plan
 // was actually finalized as paid.
-const NUVEI_PAID_RESULTS = new Set(["order_paid", "billing_completed", "already_paid"]);
+const NUVEI_PAID_RESULTS = new Set([
+    "order_paid",
+    "billing_completed",
+    "already_paid",
+    "pre_event_fee_paid",
+]);
 
 type Props = {
     config: NuveiCheckoutConfig;

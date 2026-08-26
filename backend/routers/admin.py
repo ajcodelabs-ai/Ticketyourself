@@ -32,6 +32,8 @@ from models import (
     RequiredDocumentsOut,
     RequiredDocumentsUpdate,
     SuspendBody,
+    PlatformSettingsOut,
+    PlatformSettingsUpdate,
 )
 from orm_models import (
     BillingIntent,
@@ -691,3 +693,34 @@ async def update_registration_country(
         data,
     )
     return updated
+
+
+@router.get("/settings/platform", response_model=PlatformSettingsOut)
+async def get_platform_settings_admin(session: AsyncSession = Depends(get_db)):
+    from services.platform_settings import get_platform_settings
+
+    return PlatformSettingsOut(**(await get_platform_settings(session)))
+
+
+@router.put("/settings/platform", response_model=PlatformSettingsOut)
+async def update_platform_settings_admin(
+    payload: PlatformSettingsUpdate,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    from services.platform_settings import (
+        get_platform_settings,
+        set_pre_event_fee_required,
+    )
+
+    await set_pre_event_fee_required(
+        session, enabled=payload.pre_event_fee_required, admin_id=admin["id"]
+    )
+    await log_audit(
+        admin["id"],
+        "settings.platform_updated",
+        "settings",
+        "platform",
+        payload.model_dump(),
+    )
+    return PlatformSettingsOut(**(await get_platform_settings(session)))

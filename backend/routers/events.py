@@ -562,6 +562,36 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _dev_env() -> bool:
+    return os.environ.get("ENV", "").startswith("development")
+
+
+async def _pre_event_fee_breakdown(session, org: dict, event_row) -> dict:
+    from orm_models import SubscriptionPlan, TicketType
+    from services.event_fees import calculate_pre_event_fee
+    from services.platform_settings import is_pre_event_fee_required
+
+    plan_code = org.get("plan_code") or org.get("signup_plan_code")
+    plan_row = (
+        await session.scalar(
+            select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
+        )
+        if plan_code
+        else None
+    )
+    tt_rows = (
+        await session.scalars(
+            select(TicketType).where(TicketType.event_id == event_row.id)
+        )
+    ).all()
+    return calculate_pre_event_fee(
+        plan=row_to_dict(plan_row) if plan_row else {},
+        event=row_to_dict(event_row),
+        ticket_types=[row_to_dict(t) for t in tt_rows],
+        platform_required=await is_pre_event_fee_required(session),
+    )
+
+
 async def _next_event_slug(organizer_id: str, base: str, session) -> str:
     candidate = base or "evento"
     suffix = 1
@@ -1300,25 +1330,7 @@ async def publish_event(event_id: str, user=Depends(get_current_user)):
         _publish_validation(row_to_dict(row))
 
         # Pre-event platform fee (configurable per plan)
-        from orm_models import SubscriptionPlan, TicketType
-        from services.event_fees import calculate_pre_event_fee
-
-        plan_code = org.get("plan_code") or org.get("signup_plan_code")
-        plan_row = None
-        if plan_code:
-            plan_row = await session.scalar(
-                select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
-            )
-        plan_dict = row_to_dict(plan_row) if plan_row else {}
-        tt_rows = (
-            await session.scalars(
-                select(TicketType).where(TicketType.event_id == event_id)
-            )
-        ).all()
-        ticket_types = [row_to_dict(t) for t in tt_rows]
-        breakdown = calculate_pre_event_fee(
-            plan=plan_dict, event=row_to_dict(row), ticket_types=ticket_types
-        )
+        breakdown = await _pre_event_fee_breakdown(session, org, row)
         fee_status = row.pre_event_fee_status or "none"
         if breakdown["enabled"] and breakdown["fee_cents"] > 0:
             if fee_status not in ("paid", "waived"):
@@ -1336,6 +1348,7 @@ async def publish_event(event_id: str, user=Depends(get_current_user)):
                         ),
                         "fee_cents": breakdown["fee_cents"],
                         "breakdown": breakdown,
+                        "simulate_allowed": _dev_env(),
                     },
                 )
         else:
@@ -1360,31 +1373,12 @@ async def get_pre_event_fee(event_id: str, user=Depends(get_current_user)):
         )
         if not row:
             raise HTTPException(status_code=404, detail="Event not found")
-        from orm_models import SubscriptionPlan, TicketType
-        from services.event_fees import calculate_pre_event_fee
-
-        plan_code = org.get("plan_code") or org.get("signup_plan_code")
-        plan_row = (
-            await session.scalar(
-                select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
-            )
-            if plan_code
-            else None
-        )
-        tt_rows = (
-            await session.scalars(
-                select(TicketType).where(TicketType.event_id == event_id)
-            )
-        ).all()
-        breakdown = calculate_pre_event_fee(
-            plan=row_to_dict(plan_row) if plan_row else {},
-            event=row_to_dict(row),
-            ticket_types=[row_to_dict(t) for t in tt_rows],
-        )
+        breakdown = await _pre_event_fee_breakdown(session, org, row)
         return {
             **breakdown,
             "current_status": row.pre_event_fee_status,
             "paid_at": row.pre_event_fee_paid_at,
+            "simulate_allowed": _dev_env(),
         }
 
 
@@ -1395,78 +1389,231 @@ async def pay_pre_event_fee(
     user=Depends(get_current_user),
 ):
     """
-    Register / confirm pre-event fee payment.
-    payment_method: stripe | nuvei | deuna | admin_waive (admin only via separate endpoint).
-    For nuvei/deuna: marks pending until admin confirms; for stripe: stub redirect URL later.
-    Dev/local: if payment_method=simulate, marks paid immediately.
+    Start or confirm the pre-event platform fee payment.
+
+    payment_method: simulate | stripe | nuvei | deuna
+    - simulate / stripe in development: marks paid immediately
+    - nuvei / deuna: opens gateway checkout when configured; otherwise pending
+      for admin confirmation (or paid immediately in development)
     """
     org = await _require_active_organizer(user)
-    payment_method = (payload or {}).get("payment_method") or "simulate"
+    payment_method = (payload or {}).get("payment_method") or (
+        "simulate" if _dev_env() else "stripe"
+    )
     async with AsyncSessionLocal() as session:
         row = await session.scalar(
             select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
         )
         if not row:
             raise HTTPException(status_code=404, detail="Event not found")
-        from orm_models import SubscriptionPlan, TicketType
-        from services.event_fees import calculate_pre_event_fee
+        from services.event_fees import fee_session_id, mark_pre_event_fee_paid
 
-        plan_code = org.get("plan_code") or org.get("signup_plan_code")
-        plan_row = (
-            await session.scalar(
-                select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
-            )
-            if plan_code
-            else None
-        )
-        tt_rows = (
-            await session.scalars(
-                select(TicketType).where(TicketType.event_id == event_id)
-            )
-        ).all()
-        breakdown = calculate_pre_event_fee(
-            plan=row_to_dict(plan_row) if plan_row else {},
-            event=row_to_dict(row),
-            ticket_types=[row_to_dict(t) for t in tt_rows],
-        )
+        breakdown = await _pre_event_fee_breakdown(session, org, row)
+        if (row.pre_event_fee_status or "") == "paid":
+            return {
+                "ok": True,
+                "status": "paid",
+                "fee_cents": row.pre_event_fee_cents or breakdown["fee_cents"],
+                "breakdown": row.pre_event_fee_breakdown or breakdown,
+            }
+
         row.pre_event_fee_cents = breakdown["fee_cents"]
         row.pre_event_fee_breakdown = breakdown
         if breakdown["fee_cents"] <= 0 or not breakdown["enabled"]:
             row.pre_event_fee_status = "waived"
             await session.commit()
-            return {"ok": True, "status": "waived", "fee_cents": 0}
+            return {
+                "ok": True,
+                "status": "waived",
+                "fee_cents": 0,
+                "breakdown": breakdown,
+            }
 
-        if payment_method in ("simulate", "stripe") or payment_method in (
-            "nuvei",
-            "deuna",
-        ):
-            # Until gateway SDKs are wired for plan fees: simulate marks paid;
-            # nuvei/deuna leave pending for admin confirm in event detail later.
-            if payment_method == "simulate" or (
-                payment_method == "stripe"
-                and os.environ.get("ENV", "").startswith("development")
-            ):
-                row.pre_event_fee_status = "paid"
-                row.pre_event_fee_paid_at = _now()
-                status = "paid"
-            elif payment_method in ("nuvei", "deuna"):
-                row.pre_event_fee_status = "pending"
-                status = "pending"
-            else:
-                row.pre_event_fee_status = "paid"
-                row.pre_event_fee_paid_at = _now()
-                status = "paid"
-        else:
-            raise HTTPException(400, f"Unsupported payment_method: {payment_method}")
+        instant_pay = payment_method == "simulate" or (
+            payment_method == "stripe" and _dev_env()
+        )
+        if instant_pay:
+            mark_pre_event_fee_paid(row, payment_method=payment_method)
+            await session.commit()
+            return {
+                "ok": True,
+                "status": "paid",
+                "fee_cents": breakdown["fee_cents"],
+                "payment_method": payment_method,
+                "breakdown": breakdown,
+            }
 
-        await session.commit()
-        return {
-            "ok": True,
-            "status": status,
-            "fee_cents": breakdown["fee_cents"],
+        if payment_method == "stripe":
+            # Production Stripe Checkout for this fee is not wired yet; the
+            # previous stub marked paid. Keep that until a dedicated session
+            # exists, so organizers are not blocked.
+            mark_pre_event_fee_paid(row, payment_method="stripe")
+            await session.commit()
+            return {
+                "ok": True,
+                "status": "paid",
+                "fee_cents": breakdown["fee_cents"],
+                "payment_method": "stripe",
+                "breakdown": breakdown,
+            }
+
+        session_id = fee_session_id(event_id)
+        stored = {
+            **breakdown,
+            "session_id": session_id,
             "payment_method": payment_method,
-            "breakdown": breakdown,
         }
+
+        if payment_method == "nuvei":
+            from services import nuvei_service
+
+            if not nuvei_service.is_configured():
+                if _dev_env():
+                    mark_pre_event_fee_paid(row, payment_method="simulate")
+                    await session.commit()
+                    return {
+                        "ok": True,
+                        "status": "paid",
+                        "fee_cents": breakdown["fee_cents"],
+                        "payment_method": "simulate",
+                        "breakdown": breakdown,
+                    }
+                row.pre_event_fee_status = "pending"
+                row.pre_event_fee_breakdown = stored
+                flag_modified(row, "pre_event_fee_breakdown")
+                await session.commit()
+                return {
+                    "ok": True,
+                    "status": "pending_gateway",
+                    "fee_cents": breakdown["fee_cents"],
+                    "payment_method": "nuvei",
+                    "breakdown": stored,
+                    "message": (
+                        "Nuvei aún no está configurado. Registramos tu solicitud; "
+                        "el equipo TYS confirmará el cobro."
+                    ),
+                }
+            try:
+                nuvei = nuvei_service.open_order(
+                    amount_cents=breakdown["fee_cents"],
+                    currency="USD",
+                    client_unique_id=session_id,
+                    user_token_id=org["id"],
+                    email=user.get("email"),
+                    first_name=(org.get("company_name") or "Organizer")[:30],
+                    last_name="TYS",
+                    custom_data=f"pre_event_fee:{event_id}",
+                )
+            except nuvei_service.NuveiError as e:
+                logger.error("Nuvei pre-event fee init failed: %s", type(e).__name__)
+                raise HTTPException(
+                    502,
+                    "No pudimos iniciar el pago con Nuvei. Intentá de nuevo en unos minutos.",
+                ) from e
+            row.pre_event_fee_status = "pending"
+            row.pre_event_fee_breakdown = stored
+            flag_modified(row, "pre_event_fee_breakdown")
+            await session.commit()
+            return {
+                "ok": True,
+                "status": "nuvei_checkout",
+                "fee_cents": breakdown["fee_cents"],
+                "payment_method": "nuvei",
+                "breakdown": stored,
+                "reference": nuvei.get("reference"),
+                "session_token": nuvei.get("reference") or nuvei.get("session_token"),
+                "checkout_mode": nuvei.get("checkout_mode"),
+                "nuvei_env": nuvei.get("env"),
+                "checkout_js_url": nuvei.get("checkout_js_url"),
+                "checkout_url": nuvei.get("checkout_url"),
+                "client_app_code": nuvei.get("client_app_code"),
+                "client_app_key": nuvei.get("client_app_key"),
+                "client_unique_id": session_id,
+                "amount": nuvei.get("amount"),
+                "currency": nuvei.get("currency"),
+                "user_id": nuvei.get("user_id"),
+                "user_email": nuvei.get("user_email"),
+                "user_phone": nuvei.get("user_phone"),
+                "order_description": nuvei.get("order_description"),
+                "order_vat": nuvei.get("order_vat"),
+                "order_installments_type": nuvei.get("order_installments_type"),
+                "message": "Completá el cargo de plataforma con Nuvei.",
+            }
+
+        if payment_method == "deuna":
+            from services import deuna_service
+
+            if not deuna_service.is_configured():
+                if _dev_env():
+                    mark_pre_event_fee_paid(row, payment_method="simulate")
+                    await session.commit()
+                    return {
+                        "ok": True,
+                        "status": "paid",
+                        "fee_cents": breakdown["fee_cents"],
+                        "payment_method": "simulate",
+                        "breakdown": breakdown,
+                    }
+                row.pre_event_fee_status = "pending"
+                row.pre_event_fee_breakdown = stored
+                flag_modified(row, "pre_event_fee_breakdown")
+                await session.commit()
+                return {
+                    "ok": True,
+                    "status": "pending_gateway",
+                    "fee_cents": breakdown["fee_cents"],
+                    "payment_method": "deuna",
+                    "breakdown": stored,
+                    "message": (
+                        "DEUNA aún no está configurado. Registramos tu solicitud; "
+                        "el equipo TYS confirmará el cobro."
+                    ),
+                }
+            try:
+                first_name, last_name = deuna_service.split_buyer_name(
+                    org.get("company_name") or user.get("email") or "Organizer"
+                )
+                deuna = deuna_service.create_order(
+                    order_id=session_id,
+                    amount_cents=breakdown["fee_cents"],
+                    currency="USD",
+                    item_name="Cargo de plataforma TYS",
+                    item_description=row.title or event_id,
+                    email=user.get("email") or "",
+                    first_name=first_name,
+                    last_name=last_name,
+                    metadata={
+                        "tys_purpose": "pre_event_fee",
+                        "event_id": event_id,
+                        "organizer_id": org["id"],
+                    },
+                )
+            except deuna_service.DeunaError as e:
+                logger.error("DEUNA pre-event fee create_order failed: %s", type(e).__name__)
+                raise HTTPException(
+                    502,
+                    "No pudimos iniciar el pago con DEUNA. Intentá de nuevo en unos minutos.",
+                ) from e
+            stored["session_id"] = deuna.get("order_id") or session_id
+            row.pre_event_fee_status = "pending"
+            row.pre_event_fee_breakdown = stored
+            flag_modified(row, "pre_event_fee_breakdown")
+            await session.commit()
+            return {
+                "ok": True,
+                "status": "deuna_checkout",
+                "fee_cents": breakdown["fee_cents"],
+                "payment_method": "deuna",
+                "breakdown": stored,
+                "order_token": deuna.get("order_token"),
+                "public_api_key": deuna.get("public_api_key"),
+                "deuna_env": deuna.get("env"),
+                "checkout_js_url": deuna.get("checkout_js_url"),
+                "client_unique_id": stored["session_id"],
+                "message": "Completá el cargo de plataforma con DEUNA.",
+            }
+
+        raise HTTPException(400, f"Unsupported payment_method: {payment_method}")
 
 
 @router.post("/{event_id}/unpublish")
@@ -2326,3 +2473,31 @@ async def admin_force_cancel(
         )
         await session.commit()
     return {"ok": True, "status": "cancelled"}
+
+
+@admin_router.post("/{event_id}/mark-pre-event-fee-paid")
+async def admin_mark_pre_event_fee_paid(
+    event_id: str,
+    admin=Depends(require_role("super_admin")),
+):
+    from services.event_fees import mark_pre_event_fee_paid
+
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(select(Event).where(Event.id == event_id))
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        changed = mark_pre_event_fee_paid(row, payment_method="admin")
+        if changed:
+            session.add(
+                AuditLog(
+                    id=str(uuid.uuid4()),
+                    actor_user_id=admin["id"],
+                    action="event.pre_event_fee_paid",
+                    target_type="event",
+                    target_id=event_id,
+                    metadata_={"fee_cents": row.pre_event_fee_cents},
+                    created_at=_now(),
+                )
+            )
+        await session.commit()
+    return {"ok": True, "status": "paid", "changed": changed}

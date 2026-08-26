@@ -304,6 +304,14 @@ class DocumentTypeCreate(BaseModel):
     label: str = Field(min_length=2, max_length=80)
 
 
+class PlatformSettingsOut(BaseModel):
+    pre_event_fee_required: bool = False
+
+
+class PlatformSettingsUpdate(BaseModel):
+    pre_event_fee_required: bool
+
+
 class RegistrationCountryOut(TimestampedModel):
     code: str
     name: str

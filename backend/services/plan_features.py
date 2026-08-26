@@ -38,6 +38,7 @@ DEFAULT_FEATURES: Dict[str, Any] = {
     "event_fee_enabled": False,
     "event_fee_per_ticket_cents": 0,
     "event_fee_percent_bps": 0,
+    "pre_event_fee_required": False,
 }
 
 
@@ -166,17 +167,24 @@ def features_from_plan_row(row) -> Dict[str, Any]:
 async def get_plan_features_async(
     session: AsyncSession, plan_code: Optional[str]
 ) -> Dict[str, Any]:
-    if not plan_code:
-        return get_plan_features(None)
-    from orm_models import SubscriptionPlan
+    from services.platform_settings import is_pre_event_fee_required
 
-    result = await session.execute(
-        select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
-    )
-    row = result.scalar_one_or_none()
-    if not row:
-        return get_plan_features(plan_code)
-    return features_from_plan_row(row)
+    if not plan_code:
+        feats = get_plan_features(None)
+    else:
+        from orm_models import SubscriptionPlan
+
+        result = await session.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
+        )
+        row = result.scalar_one_or_none()
+        feats = (
+            get_plan_features(plan_code)
+            if not row
+            else features_from_plan_row(row)
+        )
+    feats["pre_event_fee_required"] = await is_pre_event_fee_required(session)
+    return feats
 
 
 def assert_feature(plan_code: Optional[str], feature: str) -> None:

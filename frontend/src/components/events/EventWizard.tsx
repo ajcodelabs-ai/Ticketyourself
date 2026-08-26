@@ -23,6 +23,7 @@ import EventContentPanel from "@/components/events/EventContentPanel";
 import TicketTypesPanel from "@/components/events/TicketTypesPanel";
 import EventFunctionsPanel from "@/components/events/EventFunctionsPanel";
 import SeasonPassPanel from "@/components/events/SeasonPassPanel";
+import PreEventFeeDialog from "@/components/events/PreEventFeeDialog";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import GuestListPanel from "@/components/events/GuestListPanel";
 import TicketDesignPanel from "@/components/events/TicketDesignPanel";
@@ -490,6 +491,8 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     const [activeStep, setActiveStep] = useState(initialStep);
     const [saving, setSaving] = useState(false);
     const [publishing, setPublishing] = useState(false);
+    const [feeDialogOpen, setFeeDialogOpen] = useState(false);
+    const [feeDialogSeed, setFeeDialogSeed] = useState(null);
     // Venue chosen in Localidades before the first save (create flow steps 1→2).
     const [pendingVenueId, setPendingVenueId] = useState<string | null>(null);
     const [eventId, setEventId] = useState(initial?.id || null);
@@ -659,6 +662,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             return null;
         }
         setSaving(true);
+        let savedEvent = currentEvent;
         try {
             let result;
             if (eventId) {
@@ -671,6 +675,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                 window.history.replaceState(null, "", `/app/eventos/${data.id}/editar`);
             }
             setCurrentEvent(result);
+            savedEvent = result;
 
             // Create flow: link the pending map after the draft exists (shape only;
             // localities/prices are configured next in the Localidades tab).
@@ -754,6 +759,15 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         } catch (e) {
             const status = e?.response?.status;
             const detail = e?.response?.data?.detail;
+            if (status === 402 && detail?.error === "pre_event_fee_required") {
+                const id = savedEvent?.id || eventId;
+                if (id) {
+                    setEventId(id);
+                    setFeeDialogSeed(detail);
+                    setFeeDialogOpen(true);
+                    return savedEvent;
+                }
+            }
             const msg = formatApiError(detail) || e.message;
             // Map common API failures onto wizard steps when possible.
             if (status === 422 && typeof detail === "string" && /publicar/i.test(detail)) {
@@ -1291,6 +1305,28 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     )}
                 </div>
             </div>
+            <PreEventFeeDialog
+                open={feeDialogOpen}
+                onOpenChange={setFeeDialogOpen}
+                eventId={eventId}
+                seed={feeDialogSeed}
+                onPaid={async () => {
+                    const id = eventId;
+                    if (!id) return;
+                    setPublishing(true);
+                    try {
+                        await api.post(`/events/me/${id}/publish`);
+                        toast.success("Evento publicado");
+                        navigate(`/app/eventos/${id}`);
+                    } catch (e) {
+                        toast.error(
+                            formatApiError(e?.response?.data?.detail) || e.message,
+                        );
+                    } finally {
+                        setPublishing(false);
+                    }
+                }}
+            />
         </div>
     );
 }

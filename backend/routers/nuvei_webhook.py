@@ -14,7 +14,7 @@ from sqlalchemy import select
 from audit import log_audit
 from database import AsyncSessionLocal
 from db_helpers import row_to_dict
-from orm_models import BillingIntent, Organizer, SubscriptionPlan, Tenant, TicketOrder
+from orm_models import BillingIntent, Event, Organizer, SubscriptionPlan, Tenant, TicketOrder
 from services import nuvei_service
 
 logger = logging.getLogger("tys.nuvei.webhook")
@@ -272,8 +272,53 @@ async def apply_nuvei_notification(
         )
         return "billing_completed"
 
+    from services.event_fees import find_event_by_fee_session, mark_pre_event_fee_paid
+
+    event_id = None
+    fee_cents = 0
+    already_paid = False
+    async with AsyncSessionLocal() as session:
+        found = await find_event_by_fee_session(
+            session, client_unique_id, reference
+        )
+        if found is not None:
+            event_id = found.id
+            fee_cents = int(found.pre_event_fee_cents or 0)
+            already_paid = (found.pre_event_fee_status or "") == "paid"
+
+    if event_id is not None:
+        if already_paid:
+            return "already_paid"
+        if fee_cents > 0 and not nuvei_service.amount_matches(amount, fee_cents):
+            logger.warning(
+                "Nuvei %s: amount mismatch for pre-event fee %s (reported=%s, "
+                "expected_cents=%s)",
+                source,
+                event_id,
+                amount,
+                fee_cents,
+            )
+            return "ignored_amount_mismatch"
+        async with AsyncSessionLocal() as session:
+            row = await session.scalar(select(Event).where(Event.id == event_id))
+            if row:
+                mark_pre_event_fee_paid(
+                    row,
+                    transaction_id=str(transaction_id) if transaction_id else None,
+                    payment_method="nuvei",
+                )
+                await session.commit()
+        await log_audit(
+            None,
+            f"nuvei.{source}",
+            "event",
+            event_id,
+            {"purpose": "pre_event_fee", "transaction_id": transaction_id},
+        )
+        return "pre_event_fee_paid"
+
     logger.warning(
-        "Nuvei %s: no order/intent for ref=%s cuid=%s",
+        "Nuvei %s: no order/intent/fee for ref=%s cuid=%s",
         source,
         reference,
         client_unique_id,
@@ -350,6 +395,9 @@ async def charge_nuvei_with_token(body: dict[str, Any]):
     order = None
     intent = None
     plan = None
+    fee_event_id = None
+    fee_event_cents = 0
+    fee_event_paid = False
     async with AsyncSessionLocal() as session:
         order_row = await session.scalar(
             select(TicketOrder).where(TicketOrder.order_number == client_unique_id)
@@ -368,11 +416,22 @@ async def charge_nuvei_with_token(body: dict[str, Any]):
                         SubscriptionPlan.code == intent.plan_code
                     )
                 )
+            else:
+                from services.event_fees import find_event_by_fee_session
 
-    if order is None and intent is None:
-        raise HTTPException(404, "No encontramos la orden o el plan asociado")
+                found = await find_event_by_fee_session(session, client_unique_id)
+                if found is not None:
+                    fee_event_id = found.id
+                    fee_event_cents = int(found.pre_event_fee_cents or 0)
+                    fee_event_paid = (found.pre_event_fee_status or "") == "paid"
+
+    if order is None and intent is None and fee_event_id is None:
+        raise HTTPException(404, "No encontramos la orden, el plan o el cargo asociado")
 
     if order is not None and order.get("status") == "paid":
+        return {"ok": True, "result": "already_paid"}
+
+    if fee_event_id is not None and fee_event_paid:
         return {"ok": True, "result": "already_paid"}
 
     if order is not None:
@@ -386,6 +445,14 @@ async def charge_nuvei_with_token(body: dict[str, Any]):
         email = order.get("buyer_email") or ""
         description = f"Orden {order.get('order_number')}"
         user_id = email or order["id"]
+    elif fee_event_id is not None:
+        amount_cents = fee_event_cents
+        if amount_cents <= 0:
+            raise HTTPException(422, "El cargo de plataforma no tiene un monto válido")
+        currency = "USD"
+        email = str(body.get("email") or "")
+        description = str(body.get("description") or f"Cargo plataforma {client_unique_id}")
+        user_id = str(body.get("user_id") or email or client_unique_id)
     else:
         # Billing: amount/currency are the plan's real price — never trust the
         # client's amount_cents, or a $0.01 charge could activate the full plan.
@@ -489,5 +556,5 @@ async def confirm_nuvei_payment(body: dict[str, Any]):
         parsed, source="confirm", checksum_verified=True
     )
     if result == "not_found":
-        raise HTTPException(404, "No encontramos la orden o el plan asociado al pago")
+        raise HTTPException(404, "No encontramos la orden, el plan o el cargo asociado al pago")
     return {"ok": True, "result": result}

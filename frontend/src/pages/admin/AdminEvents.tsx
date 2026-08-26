@@ -258,6 +258,29 @@ export default function AdminEvents() {
                                                     {formatCents(e.gmv_cents)}
                                                 </TableCell>
                                                 <TableCell className="text-right">
+                                                    <div className="flex justify-end gap-1">
+                                                    {e.pre_event_fee_status === "pending" && (
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={async () => {
+                                                                try {
+                                                                    await api.post(
+                                                                        `/admin/events/${e.id}/mark-pre-event-fee-paid`,
+                                                                    );
+                                                                    toast.success("Cargo de plataforma marcado como pagado");
+                                                                    load();
+                                                                } catch (err) {
+                                                                    toast.error(
+                                                                        formatApiError(err?.response?.data?.detail) ||
+                                                                            err.message,
+                                                                    );
+                                                                }
+                                                            }}
+                                                        >
+                                                            Marcar cargo pagado
+                                                        </Button>
+                                                    )}
                                                     {e.organizer_slug && (
                                                         <Button asChild variant="ghost" size="sm">
                                                             <a
@@ -269,6 +292,7 @@ export default function AdminEvents() {
                                                             </a>
                                                         </Button>
                                                     )}
+                                                    </div>
                                                 </TableCell>
                                             </TableRow>
                                         );

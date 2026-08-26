@@ -20,18 +20,22 @@ import {
     Eye,
     ArrowLeft,
     ScanQrCode,
+    Receipt,
 } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import ShareModal from "@/components/microsite/ShareModal";
 import EventSalesTabs from "@/components/events/EventSalesTabs";
 import PublishPendingDialog from "@/components/PublishPendingDialog";
+import PreEventFeeDialog from "@/components/events/PreEventFeeDialog";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePlanFeatures } from "@/hooks/queries/usePlanFeatures";
 import {
     EVENT_STATUS_META,
     formatEventDate,
     formatPriceLabel,
     eventPublicUrl,
 } from "@/lib/events";
+import { formatCents } from "@/lib/orders";
 
 const FALLBACK_IMG = "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=800";
 
@@ -39,10 +43,13 @@ export default function EventDetail() {
     const { event_id } = useParams();
     const navigate = useNavigate();
     const { organizer } = useAuth();
+    const { data: planFeatures } = usePlanFeatures();
     const [event, setEvent] = useState(null);
     const [loading, setLoading] = useState(true);
     const [shareOpen, setShareOpen] = useState(false);
     const [publishPendingOpen, setPublishPendingOpen] = useState(false);
+    const [feeDialogOpen, setFeeDialogOpen] = useState(false);
+    const [feeDialogSeed, setFeeDialogSeed] = useState(null);
 
     const load = async () => {
         try {
@@ -73,6 +80,13 @@ export default function EventDetail() {
     if (!event) return null;
 
     const status = EVENT_STATUS_META[event.status] || EVENT_STATUS_META.draft;
+    const feeEnabled = Boolean(
+        planFeatures?.pre_event_fee_required && planFeatures?.event_fee_enabled,
+    );
+    const feePending =
+        event.status === "draft" &&
+        (event.pre_event_fee_status === "pending" ||
+            (feeEnabled && event.pre_event_fee_status !== "paid" && event.pre_event_fee_status !== "waived"));
 
     const doAction = async (path, msg) => {
         // Pending orgs can't publish — short-circuit with explanatory dialog.
@@ -88,6 +102,11 @@ export default function EventDetail() {
             const code = e?.response?.data?.detail?.error;
             if (code === "organizer_pending_review") {
                 setPublishPendingOpen(true);
+                return;
+            }
+            if (code === "pre_event_fee_required") {
+                setFeeDialogSeed(e.response.data.detail);
+                setFeeDialogOpen(true);
                 return;
             }
             toast.error(formatApiError(e?.response?.data?.detail) || e.message);
@@ -152,6 +171,19 @@ export default function EventDetail() {
                         />
                     </div>
 
+                    {feePending && (
+                        <div
+                            className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-950"
+                            data-testid="pre-event-fee-notice"
+                        >
+                            Tu plan cobra un cargo de plataforma antes de publicar
+                            {event.pre_event_fee_cents
+                                ? ` (${formatCents(event.pre_event_fee_cents)})`
+                                : ""}
+                            . Pagalo con el botón de abajo.
+                        </div>
+                    )}
+
                     <div className="flex flex-wrap gap-2 pt-3">
                         <Button
                             onClick={() => navigate(`/app/eventos/${event.id}/editar`)}
@@ -198,6 +230,19 @@ export default function EventDetail() {
                         )}
                         {event.status === "draft" && (
                             <>
+                                {feePending && (
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => {
+                                            setFeeDialogSeed(null);
+                                            setFeeDialogOpen(true);
+                                        }}
+                                        data-testid="event-pay-platform-fee"
+                                    >
+                                        <Receipt className="h-4 w-4 mr-1.5" />
+                                        Pagar cargo de plataforma
+                                    </Button>
+                                )}
                                 <Button
                                     variant="outline"
                                     onClick={() => doAction("/publish", "Evento publicado")}
@@ -279,6 +324,15 @@ export default function EventDetail() {
                 open={publishPendingOpen}
                 onOpenChange={setPublishPendingOpen}
                 resource="evento"
+            />
+            <PreEventFeeDialog
+                open={feeDialogOpen}
+                onOpenChange={setFeeDialogOpen}
+                eventId={event.id}
+                seed={feeDialogSeed}
+                onPaid={async () => {
+                    await doAction("/publish", "Evento publicado");
+                }}
             />
         </div>
     );

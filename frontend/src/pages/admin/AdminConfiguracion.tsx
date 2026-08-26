@@ -38,6 +38,8 @@ export default function AdminConfiguracion() {
     const [newLabel, setNewLabel] = useState("");
     const [creating, setCreating] = useState(false);
     const [newCountry, setNewCountry] = useState({ code: "", name: "" });
+    const [preEventFeeRequired, setPreEventFeeRequired] = useState(false);
+    const [savingPlatform, setSavingPlatform] = useState(false);
 
     const countryOptions = useMemo(() => {
         return [
@@ -65,11 +67,13 @@ export default function AdminConfiguracion() {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [typesResp, list] = await Promise.all([
+            const [typesResp, list, platformResp] = await Promise.all([
                 api.get("/admin/settings/document-types"),
                 loadCountries(),
+                api.get("/admin/settings/platform").catch(() => ({ data: {} })),
             ]);
             setDocTypes(typesResp.data || []);
+            setPreEventFeeRequired(Boolean(platformResp.data?.pre_event_fee_required));
             await loadRequired(selectedCountry);
             if (selectedCountry !== GLOBAL) {
                 const row = list.find((c) => c.code === selectedCountry);
@@ -136,6 +140,28 @@ export default function AdminConfiguracion() {
                 : [...current, docType];
             return { ...prev, [orgType]: next };
         });
+    };
+
+    const savePlatformFee = async (enabled) => {
+        setSavingPlatform(true);
+        const previous = preEventFeeRequired;
+        setPreEventFeeRequired(enabled);
+        try {
+            const { data } = await api.put("/admin/settings/platform", {
+                pre_event_fee_required: enabled,
+            });
+            setPreEventFeeRequired(Boolean(data.pre_event_fee_required));
+            toast.success(
+                enabled
+                    ? "El cargo de plataforma quedó activo: hay que pagarlo para publicar."
+                    : "El cargo de plataforma quedó desactivado: se publica sin ese pago.",
+            );
+        } catch (err) {
+            setPreEventFeeRequired(previous);
+            toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+        } finally {
+            setSavingPlatform(false);
+        }
     };
 
     const saveDocs = async () => {
@@ -255,10 +281,40 @@ export default function AdminConfiguracion() {
                     Registro y documentos
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                    Configurá países de registro, compliance (UAFE/PEP) y qué documentos son
-                    obligatorios por país y tipo de organizador.
+                    Configurá países de registro, compliance (UAFE/PEP), documentos
+                    obligatorios y el cargo de plataforma al publicar eventos.
                 </p>
             </header>
+
+            <Card className="border-border/70" data-testid="platform-pre-event-fee-card">
+                <CardHeader>
+                    <CardTitle className="text-lg">Cargo de plataforma al publicar</CardTitle>
+                    <CardDescription>
+                        Interruptor global. Apagado: cualquier organizador publica sin pagar
+                        este cargo. Prendido: los planes que lo tengan habilitado lo cobran
+                        antes de publicar (montos en Admin → Planes).
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex items-center justify-between gap-4">
+                    <div>
+                        <Label htmlFor="pre-event-fee-required" className="text-sm font-medium">
+                            Exigir pago antes de publicar
+                        </Label>
+                        <p className="text-xs text-muted-foreground mt-1">
+                            {preEventFeeRequired
+                                ? "Activo: el organizador ve el diálogo de pago si su plan cobra el cargo."
+                                : "Desactivado: se publica el evento sin este cobro."}
+                        </p>
+                    </div>
+                    <Switch
+                        id="pre-event-fee-required"
+                        checked={preEventFeeRequired}
+                        disabled={loading || savingPlatform}
+                        onCheckedChange={savePlatformFee}
+                        data-testid="platform-pre-event-fee-switch"
+                    />
+                </CardContent>
+            </Card>
 
             <Card className="border-border/70" data-testid="document-type-create-card">
                 <CardHeader>

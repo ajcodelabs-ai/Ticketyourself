@@ -221,12 +221,18 @@ export default function AdminPlans() {
     const [editingCode, setEditingCode] = useState(null);
     const [form, setForm] = useState(EMPTY_FORM);
     const [saving, setSaving] = useState(false);
+    const [preEventFeeRequired, setPreEventFeeRequired] = useState(false);
+    const [savingPlatform, setSavingPlatform] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const { data } = await api.get("/admin/plans");
+            const [{ data }, platformResp] = await Promise.all([
+                api.get("/admin/plans"),
+                api.get("/admin/settings/platform").catch(() => ({ data: {} })),
+            ]);
             setPlans(data || []);
+            setPreEventFeeRequired(Boolean(platformResp.data?.pre_event_fee_required));
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail));
         } finally {
@@ -292,6 +298,28 @@ export default function AdminPlans() {
         }
     };
 
+    const savePlatformFee = async (enabled) => {
+        setSavingPlatform(true);
+        const previous = preEventFeeRequired;
+        setPreEventFeeRequired(enabled);
+        try {
+            const { data } = await api.put("/admin/settings/platform", {
+                pre_event_fee_required: enabled,
+            });
+            setPreEventFeeRequired(Boolean(data.pre_event_fee_required));
+            toast.success(
+                enabled
+                    ? "El cargo de plataforma quedó activo: hay que pagarlo para publicar."
+                    : "El cargo de plataforma quedó desactivado: se publica sin ese pago.",
+            );
+        } catch (err) {
+            setPreEventFeeRequired(previous);
+            toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+        } finally {
+            setSavingPlatform(false);
+        }
+    };
+
     const setField = (key) => (e) => {
         const val = e?.target?.type === "checkbox" ? e.target.checked : e?.target?.value ?? e;
         setForm((f) => ({ ...f, [key]: val }));
@@ -315,6 +343,28 @@ export default function AdminPlans() {
                     Nuevo plan
                 </Button>
             </header>
+
+            <Card className="border-border/70" data-testid="platform-pre-event-fee-card">
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Exigir cargo de plataforma al publicar</CardTitle>
+                    <CardDescription>
+                        Interruptor global. Apagado: se publica sin este pago. Prendido: solo
+                        los planes con “Cobro pre-evento” habilitado lo cobran (montos abajo
+                        al editar cada plan).
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex items-center justify-between gap-4 pt-0">
+                    <p className="text-sm text-muted-foreground">
+                        {preEventFeeRequired ? "Activo" : "Desactivado"}
+                    </p>
+                    <Switch
+                        checked={preEventFeeRequired}
+                        disabled={loading || savingPlatform}
+                        onCheckedChange={savePlatformFee}
+                        data-testid="platform-pre-event-fee-switch"
+                    />
+                </CardContent>
+            </Card>
 
             <Card className="border-border/70">
                 <CardContent className="pt-6">
@@ -663,8 +713,9 @@ export default function AdminPlans() {
                                     </Tooltip>
                                 </CardTitle>
                                 <CardDescription>
-                                    Se cobra antes de publicar / iniciar el evento: por entrada + % del
-                                    valor facturado estimado (aforo × precio).
+                                    Montos de este plan. Solo se cobran si el interruptor global
+                                    “Exigir cargo de plataforma” está activo. Apagado en el plan:
+                                    este plan publica sin cargo aunque el global esté prendido.
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-3 pb-4">
@@ -675,9 +726,9 @@ export default function AdminPlans() {
                                             setForm((f) => ({ ...f, event_fee_enabled: v }))
                                         }
                                     />
-                                    <FieldHint
+                                        <FieldHint
                                         label="Habilitado en este plan"
-                                        tip="Si está off, los eventos de este plan no pagan cargo pre-evento (status waived)."
+                                        tip="Si está off, los eventos de este plan no pagan cargo pre-evento aunque el interruptor global esté activo."
                                     />
                                 </div>
                                 <div className="grid sm:grid-cols-2 gap-3">

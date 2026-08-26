@@ -113,6 +113,17 @@ class SubscriptionPlan(Base):
     )
 
 
+class PlatformSetting(Base):
+    """Key/value platform flags editable by superadmin (JSONB value)."""
+
+    __tablename__ = "platform_settings"
+
+    key = Column(String(80), primary_key=True)
+    value = Column(JSONB, nullable=False, default=dict)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    updated_by = Column(String(36), nullable=True)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Payment method catalog (platform-wide)
 # ─────────────────────────────────────────────────────────────────────────────
