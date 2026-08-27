@@ -1804,7 +1804,9 @@ def _finalize_appeal_disk(
 
 def _write_appeal_bytes(abs_path: Path, content: bytes) -> None:
     """Write bytes under ASSETS_DIR; remove a partial file if the OS write fails."""
-    if not abs_path.is_relative_to(ASSETS_DIR.resolve()):
+    base = os.path.realpath(ASSETS_DIR)
+    target = os.path.realpath(abs_path)
+    if target != base and not target.startswith(base + os.sep):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
         abs_path.write_bytes(content)
@@ -1861,7 +1863,9 @@ async def _store_appeal_file(
         ext = ".pdf"
     rel_path = f"{organizer_id}/{event_id}/appeal_{asset_id}{ext}"
     abs_path = resolve_path_under(ASSETS_DIR, rel_path)
-    if abs_path is None or not abs_path.is_relative_to(ASSETS_DIR.resolve()):
+    base = os.path.realpath(ASSETS_DIR)
+    target = os.path.realpath(abs_path) if abs_path is not None else ""
+    if abs_path is None or (target != base and not target.startswith(base + os.sep)):
         raise HTTPException(status_code=403, detail="Forbidden")
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     _write_appeal_bytes(abs_path, content)

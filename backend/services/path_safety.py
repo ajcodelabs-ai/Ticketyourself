@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -9,8 +10,8 @@ def resolve_path_under(base_dir: Path, relative: str) -> Path | None:
     """Return *relative* resolved under *base_dir*, or None if it escapes."""
     if not relative:
         return None
-    base = base_dir.resolve()
-    resolved = (base / relative).resolve()
-    if not resolved.is_relative_to(base):
+    base = os.path.realpath(base_dir)
+    resolved = os.path.realpath(os.path.join(base, relative))
+    if resolved != base and not resolved.startswith(base + os.sep):
         return None
-    return resolved
+    return Path(resolved)
