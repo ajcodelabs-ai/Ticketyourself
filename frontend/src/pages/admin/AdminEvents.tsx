@@ -2,7 +2,7 @@
  * /admin/eventos — global events view across all organizers.
  */
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Loader2, Search, ExternalLink, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ const STATUS_OPTIONS = [
     { value: "published", label: "Publicado" },
     { value: "archived", label: "Archivado" },
     { value: "cancelled", label: "Cancelado" },
+    { value: "suspended", label: "Suspendido" },
 ];
 
 const CATEGORY_OPTIONS = [
@@ -47,10 +48,11 @@ const CATEGORY_OPTIONS = [
 ];
 
 export default function AdminEvents() {
+    const [params] = useSearchParams();
     const [data, setData] = useState({ items: [], total: 0 });
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
-    const [status, setStatus] = useState("all");
+    const [status, setStatus] = useState(params.get("status") || "all");
     const [category, setCategory] = useState("all");
     const [sort, setSort] = useState("created_at");
     const [direction, setDirection] = useState("desc");
@@ -226,7 +228,12 @@ export default function AdminEvents() {
                                         return (
                                             <TableRow key={e.id} data-testid={`admin-event-${e.slug}`}>
                                                 <TableCell>
-                                                    <div className="font-medium">{e.title}</div>
+                                                    <Link
+                                                        to={`/admin/eventos/${e.id}`}
+                                                        className="font-medium hover:text-primary"
+                                                    >
+                                                        {e.title}
+                                                    </Link>
                                                     <div className="text-xs text-muted-foreground">
                                                         /e/{e.slug}
                                                     </div>
@@ -249,6 +256,11 @@ export default function AdminEvents() {
                                                     <Badge className={meta.className || ""}>
                                                         {meta.label || e.status}
                                                     </Badge>
+                                                    {e.suspension_appeal?.status === "pending" && (
+                                                        <Badge className="ml-1 bg-sky-100 text-sky-900">
+                                                            Apelación
+                                                        </Badge>
+                                                    )}
                                                 </TableCell>
                                                 <TableCell className="text-right text-sm">
                                                     {e.tickets_sold || 0}
@@ -281,7 +293,7 @@ export default function AdminEvents() {
                                                             Marcar cargo pagado
                                                         </Button>
                                                     )}
-                                                    {e.organizer_slug && (
+                                                    {e.organizer_slug && e.status === "published" && (
                                                         <Button asChild variant="ghost" size="sm">
                                                             <a
                                                                 href={`/o/${e.organizer_slug}/e/${e.slug}`}
@@ -292,6 +304,9 @@ export default function AdminEvents() {
                                                             </a>
                                                         </Button>
                                                     )}
+                                                    <Button asChild variant="outline" size="sm">
+                                                        <Link to={`/admin/eventos/${e.id}`}>Ver</Link>
+                                                    </Button>
                                                     </div>
                                                 </TableCell>
                                             </TableRow>

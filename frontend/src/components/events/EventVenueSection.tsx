@@ -1,17 +1,14 @@
 /**
- * EventVenueSection — Mapa + Localidades (paso Localidades).
+ * EventVenueSection — pasos 4.1 Escenario y 4.2 Localidades.
  *
- * Flujo (create):
- *  1) Seleccioná el escenario (mapa = solo la forma)
- *  2) Guardá el evento
- *  3) Agregá localidades del evento (nombre, color, precios) y asignalas en el mapa
+ *  4.1 Seleccioná el escenario (mapa = solo la forma)
+ *  4.2 Creá localidades (tipo numerada o no numerada + asignación al mapa)
  *
- * Nombre / color / precios viven en el evento (`venue_layout.localities` +
+ * Nombre, color, tipo y precios viven en el evento (`venue_layout.localities` +
  * `locality_pricing`). El venue maestro solo aporta canvas + elementos.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { HexColorPicker } from "react-colorful";
 import {
     MapPin,
     Loader2,
@@ -27,7 +24,6 @@ import {
     Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -37,8 +33,6 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
     Tooltip,
     TooltipContent,
@@ -46,14 +40,14 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip";
 import api, { formatApiError } from "@/lib/api";
-import { venuesApi, eventVenueLayoutApi, computeCapacity, LOCALITY_PALETTE, newId } from "@/lib/venues";
+import { venuesApi, eventVenueLayoutApi, computeCapacity, unnumberedCapacityByLocality, newId } from "@/lib/venues";
 import EditorCanvas from "@/components/venues/EditorCanvas";
 import { useAuth } from "@/contexts/AuthContext";
-
-function dollarsToCents(v: string): number {
-    if (v === "" || v == null) return 0;
-    return Math.max(0, Math.round(parseFloat(v) * 100) || 0);
-}
+import { usePlanFeatures } from "@/hooks/queries/usePlanFeatures";
+import { LOCALITY_SEATING_TYPES, inferAttendanceFormatFromLocalities, normalizeLocalitySeatingType, planLayoutSeatingConflict, PLAN_SEATING_COPY } from "@/lib/attendanceFormat";
+import LocalityFormDialog from "@/components/events/LocalityFormDialog";
+import { PlanGateHint } from "@/components/plans/PlanGate";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 function centsToInput(cents: number | null | undefined): string {
     if (cents == null) return "";
@@ -124,216 +118,19 @@ function layoutAsLinkedVenue(event, tenantSlug) {
     };
 }
 
-function MoneyField({ label, tip, value, onChange, disabled = false, testid }) {
-    return (
-        <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground font-normal inline-flex items-center gap-1">
-                {label}
-                {tip ? <FieldTip text={tip} /> : null}
-            </Label>
-            <div className="relative">
-                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
-                <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    className="pl-6 h-9"
-                    value={value}
-                    onChange={(e) => onChange(e.target.value)}
-                    disabled={disabled}
-                    data-testid={testid}
-                />
-            </div>
-        </div>
-    );
-}
-
-const emptyDraftMoney = { price: "", vxs: "", service: "", admin: "", wallet: "" };
-
-function LocalityFormDialog({ open, onClose, onSubmit, initial, saving }) {
-    const [name, setName] = useState("");
-    const [color, setColor] = useState(LOCALITY_PALETTE[0]);
-    const [description, setDescription] = useState("");
-    const [money, setMoney] = useState(emptyDraftMoney);
-
-    useEffect(() => {
-        if (!open) return;
-        if (initial) {
-            setName(initial.name || "");
-            setColor(initial.color || LOCALITY_PALETTE[0]);
-            setDescription(initial.description || "");
-            setMoney({
-                price: centsToInput(initial.price_cents) || "",
-                vxs: centsToInput(initial.vxs_cents) || "",
-                service: centsToInput(initial.service_fee_cents) || "",
-                admin: centsToInput(initial.admin_fee_cents) || "",
-                wallet: centsToInput(initial.wallet_fee_cents) || "",
-            });
-        } else {
-            setName("");
-            setColor(LOCALITY_PALETTE[0]);
-            setDescription("");
-            setMoney(emptyDraftMoney);
-        }
-    }, [open, initial]);
-
-    const handleSubmit = () => {
-        if (!name.trim()) {
-            toast.error("Poné un nombre a la localidad");
-            return;
-        }
-        onSubmit({
-            name: name.trim(),
-            color,
-            description: description.trim() || null,
-            price_cents: dollarsToCents(money.price),
-            vxs_cents: dollarsToCents(money.vxs),
-            service_fee_cents: dollarsToCents(money.service),
-            admin_fee_cents: dollarsToCents(money.admin),
-            wallet_fee_cents: dollarsToCents(money.wallet),
-        });
-    };
-
-    return (
-        <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-            <DialogContent data-testid="locality-form-dialog">
-                <DialogHeader>
-                    <DialogTitle>{initial ? "Editar localidad" : "Nueva localidad"}</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-3 py-2">
-                    <div className="grid grid-cols-[auto_1fr] gap-3 items-end">
-                        <div className="space-y-1">
-                            <Label className="text-xs inline-flex items-center gap-1">
-                                Color
-                                <FieldTip text={LOCALITY_FIELD_TIPS.color} />
-                            </Label>
-                            <Popover>
-                                <PopoverTrigger asChild>
-                                    <button
-                                        type="button"
-                                        className="h-9 w-9 rounded-md ring-1 ring-border"
-                                        style={{ background: color }}
-                                        aria-label="Elegir color"
-                                        data-testid="locality-form-color"
-                                    />
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-2">
-                                    <HexColorPicker color={color} onChange={setColor} />
-                                    <div className="flex gap-1 mt-2 flex-wrap">
-                                        {LOCALITY_PALETTE.map((c) => (
-                                            <button
-                                                key={c}
-                                                type="button"
-                                                className="h-5 w-5 rounded ring-1 ring-border"
-                                                style={{ background: c }}
-                                                onClick={() => setColor(c)}
-                                            />
-                                        ))}
-                                    </div>
-                                </PopoverContent>
-                            </Popover>
-                        </div>
-                        <div className="space-y-1">
-                            <Label className="text-xs inline-flex items-center gap-1">
-                                Nombre
-                                <FieldTip text={LOCALITY_FIELD_TIPS.name} />
-                            </Label>
-                            <Input
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                placeholder="VIP, Platea, General…"
-                                autoFocus
-                                data-testid="locality-form-name"
-                            />
-                        </div>
-                    </div>
-                    <div className="space-y-1">
-                        <Label className="text-xs inline-flex items-center gap-1">
-                            Descripción
-                            <FieldTip text={LOCALITY_FIELD_TIPS.description} />
-                        </Label>
-                        <Input
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                            placeholder="Opcional"
-                            data-testid="locality-form-description"
-                        />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <MoneyField
-                            label="Precio Entrada"
-                            tip={LOCALITY_FIELD_TIPS.price}
-                            value={money.price}
-                            onChange={(v) => setMoney((m) => ({ ...m, price: v }))}
-                            testid="locality-form-price"
-                        />
-                        <MoneyField
-                            label="Cargo de servicio"
-                            tip={LOCALITY_FIELD_TIPS.service}
-                            value={money.service}
-                            onChange={(v) => setMoney((m) => ({ ...m, service: v }))}
-                            testid="locality-form-service"
-                        />
-                        <MoneyField
-                            label="TicketSeguro"
-                            tip={LOCALITY_FIELD_TIPS.admin}
-                            value={money.admin}
-                            onChange={(v) => setMoney((m) => ({ ...m, admin: v }))}
-                            testid="locality-form-admin"
-                        />
-                        <MoneyField
-                            label="Impuestos"
-                            tip={LOCALITY_FIELD_TIPS.vxs}
-                            value={money.vxs}
-                            onChange={(v) => setMoney((m) => ({ ...m, vxs: v }))}
-                            testid="locality-form-vxs"
-                        />
-                        <MoneyField
-                            label="Billetera Virtual"
-                            tip={LOCALITY_FIELD_TIPS.wallet}
-                            value={money.wallet}
-                            onChange={(v) => setMoney((m) => ({ ...m, wallet: v }))}
-                            testid="locality-form-wallet"
-                        />
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                        El comprador paga: Entrada + servicio + TicketSeguro + impuestos + billetera.
-                        El fee de TicketYourself aplica solo sobre la Entrada.
-                    </p>
-                </div>
-                <DialogFooter>
-                    <Button variant="ghost" onClick={onClose} disabled={saving}>
-                        Cancelar
-                    </Button>
-                    <Button onClick={handleSubmit} disabled={saving} data-testid="locality-form-submit">
-                        {saving ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
-                        {initial ? "Guardar" : "Crear localidad"}
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
-    );
-}
-
 function CreateFlowSteps({ selectedVenue, eventSaved }: { selectedVenue: boolean; eventSaved: boolean }) {
     const steps = [
         {
             n: 1,
-            title: "Selecciona el escenario",
+            title: "Seleccioná el escenario",
             done: selectedVenue,
             active: !selectedVenue,
         },
         {
             n: 2,
-            title: "Guarda el evento",
+            title: "Guardá el evento para crear localidades",
             done: eventSaved && selectedVenue,
             active: selectedVenue && !eventSaved,
-        },
-        {
-            n: 3,
-            title: "Agrega localidades",
-            done: false,
-            active: eventSaved && selectedVenue,
         },
     ];
     return (
@@ -362,6 +159,17 @@ function CreateFlowSteps({ selectedVenue, eventSaved }: { selectedVenue: boolean
     );
 }
 
+function PlanSeatingNotice({ conflict }: { conflict: "none" | "numbered_unused" | "numbered_only_blocked" }) {
+    if (conflict === "none") return null;
+    return (
+        <div data-testid="plan-seating-conflict" data-conflict={conflict}>
+            <PlanGateHint feature="numbered_seating">
+                {PLAN_SEATING_COPY[conflict]}
+            </PlanGateHint>
+        </div>
+    );
+}
+
 export default function EventVenueSection({
     event,
     disabled,
@@ -369,6 +177,8 @@ export default function EventVenueSection({
     onReturnFromVenueCreate = undefined,
     pendingVenueId = null,
     onPendingVenueChange = undefined,
+    panel = "all",
+    onFormatChange,
 }: {
     event: any;
     disabled?: boolean;
@@ -376,8 +186,13 @@ export default function EventVenueSection({
     onReturnFromVenueCreate?: unknown;
     pendingVenueId?: string | null;
     onPendingVenueChange?: (id: string | null) => void;
+    panel?: "all" | "escenario" | "localidades";
+    onFormatChange?: (format: string) => void;
 }) {
     const { organizer } = useAuth();
+    const { data: planFeatures } = usePlanFeatures();
+    // Escenario is always available. This flag only limits numbered localities.
+    const allowNumbered = planFeatures ? Boolean(planFeatures.numbered_seating) : true;
     const tenantSlug = organizer?.slug || event?.tenant_slug;
     const [venues, setVenues] = useState([]);
     const [linkedVenue, setLinkedVenue] = useState(null);
@@ -388,7 +203,10 @@ export default function EventVenueSection({
     const [formOpen, setFormOpen] = useState(false);
     const [editingLocality, setEditingLocality] = useState(null);
     const [savingForm, setSavingForm] = useState(false);
+    const [feeQuotes, setFeeQuotes] = useState({});
     const initializedRef = useRef(false);
+    const pricingType = event?.pricing_type || "paid";
+    const feeBearer = event?.platform_fee_bearer === "organizer" ? "organizer" : "buyer";
 
     const eventSaved = !!event?.id;
     const selectedVenueId = event?.venue_id || pendingVenueId || "";
@@ -457,6 +275,33 @@ export default function EventVenueSection({
         initializedRef.current = true;
     }, [linkedVenue, event?.locality_pricing]);
 
+    useEffect(() => {
+        if (panel === "escenario") return undefined;
+        const prices = [
+            ...new Set(
+                Object.values(pricing || {}).map((p) => Number(p?.price_cents || 0)),
+            ),
+        ];
+        if (!prices.length) {
+            setFeeQuotes({});
+            return undefined;
+        }
+        let alive = true;
+        api.post("/sales-fees/quote-batch", {
+            pricing_type: pricingType,
+            prices_cents: prices,
+        })
+            .then((r) => {
+                if (alive) setFeeQuotes(r.data?.quotes || {});
+            })
+            .catch(() => {
+                if (alive) setFeeQuotes({});
+            });
+        return () => {
+            alive = false;
+        };
+    }, [pricing, pricingType, panel]);
+
     const allLocalities = useMemo(() => linkedVenue?.localities || [], [linkedVenue]);
 
     const assignedCountByLocality = useMemo(() => {
@@ -469,6 +314,18 @@ export default function EventVenueSection({
     }, [linkedVenue]);
 
     const elements = useMemo(() => linkedVenue?.elements || [], [linkedVenue]);
+    const layoutElements = useMemo(
+        () =>
+            linkedVenue?.elements
+            || selectedVenueMeta?.elements
+            || event?.venue_layout?.elements
+            || [],
+        [linkedVenue, selectedVenueMeta, event?.venue_layout],
+    );
+    const seatingConflict = useMemo(
+        () => planLayoutSeatingConflict(layoutElements, allowNumbered),
+        [layoutElements, allowNumbered],
+    );
     const canvas = useMemo(
         () => linkedVenue?.canvas || { width: 1000, height: 600 },
         [linkedVenue],
@@ -492,13 +349,46 @@ export default function EventVenueSection({
         return r.data;
     };
 
-    const persistLocalities = async (nextLocalities) => {
+    const persistLayout = async (nextElements, nextLocalities) => {
         if (!event?.id || !linkedVenue) return null;
         return eventVenueLayoutApi.put(event.id, {
             canvas: linkedVenue.canvas || { width: 1000, height: 600 },
-            elements: linkedVenue.elements || [],
+            elements: nextElements,
             localities: nextLocalities,
         });
+    };
+
+    const persistLocalities = async (nextLocalities) => {
+        if (!linkedVenue) return null;
+        return persistLayout(linkedVenue.elements || [], nextLocalities);
+    };
+
+    const syncGaTicketTypes = async (eventId, localitiesList, pricingMap, layoutElements) => {
+        try {
+            const existing = (await api.get(`/events/me/${eventId}/ticket-types`)).data || [];
+            const byLoc = {};
+            for (const t of existing) {
+                if (t.venue_locality_id) byLoc[t.venue_locality_id] = t;
+            }
+            for (const loc of localitiesList) {
+                const seating = normalizeLocalitySeatingType(loc.seating_type);
+                if (seating === "numbered") continue;
+                const payload = {
+                    name: loc.name,
+                    color: loc.color,
+                    price_cents: pricingMap[loc.id]?.price_cents ?? loc.default_price_cents ?? 0,
+                    venue_locality_id: loc.id,
+                    capacity: unnumberedCapacityByLocality(layoutElements, loc.id) || undefined,
+                };
+                if (byLoc[loc.id]) {
+                    await api.put(`/events/me/${eventId}/ticket-types/${byLoc[loc.id].id}`, payload);
+                } else {
+                    await api.post(`/events/me/${eventId}/ticket-types`, payload);
+                }
+            }
+        } catch {
+            // Checkout still uses ticket types for GA; don't block locality save.
+        }
     };
 
     const pricingPayload = (pricingMap, localitiesList) =>
@@ -520,15 +410,24 @@ export default function EventVenueSection({
 
     const selectVenue = async (vid: string) => {
         if (!vid) return;
+        const v = venues.find((x) => x.id === vid);
+        const conflict = planLayoutSeatingConflict(v?.elements, allowNumbered);
+        const warnPlan = () => {
+            if (conflict !== "none") {
+                toast.warning(PLAN_SEATING_COPY[conflict], { duration: 8000 });
+            }
+        };
 
         // Create flow: remember selection until the event is saved.
         if (!event?.id) {
             onPendingVenueChange?.(vid);
-            toast.message("Escenario seleccionado. Guardá el evento para continuar.");
+            warnPlan();
+            if (conflict === "none") {
+                toast.message("Escenario seleccionado. Guardá el evento para continuar.");
+            }
             return;
         }
 
-        const v = venues.find((x) => x.id === vid);
         if (!v) return;
         setLoadingLink(true);
         try {
@@ -541,7 +440,10 @@ export default function EventVenueSection({
             onPendingVenueChange?.(null);
             onUpdated?.(r.data);
             initializedRef.current = false;
-            toast.success("Mapa vinculado — ahora creá las localidades del evento");
+            warnPlan();
+            if (conflict === "none") {
+                toast.success("Mapa vinculado — ahora creá las localidades del evento");
+            }
         } catch (e) {
             toast.error(formatApiError(e?.response?.data?.detail) || "No se pudo vincular el mapa.");
         } finally {
@@ -554,6 +456,23 @@ export default function EventVenueSection({
         setFormOpen(true);
     };
 
+    const saveFeeBearer = async (next) => {
+        if (!event?.id || next === feeBearer) return;
+        try {
+            const r = await api.put(`/events/me/${event.id}`, {
+                platform_fee_bearer: next,
+            });
+            onUpdated?.(r.data);
+            toast.success(
+                next === "organizer"
+                    ? "La comisión TYS la absorbés vos. El comprador no la ve."
+                    : "La comisión TYS se suma al total del comprador.",
+            );
+        } catch (e) {
+            toast.error(formatApiError(e?.response?.data?.detail) || "No se pudo guardar quién paga el fee.");
+        }
+    };
+
     const openEditForm = (loc) => {
         const p = pricing[loc.id] || {};
         setEditingLocality({
@@ -561,6 +480,7 @@ export default function EventVenueSection({
             name: loc.name,
             color: loc.color,
             description: loc.description,
+            seating_type: normalizeLocalitySeatingType(loc.seating_type),
             price_cents: p.price_cents,
             vxs_cents: p.vxs_cents,
             service_fee_cents: p.service_fee_cents,
@@ -574,20 +494,27 @@ export default function EventVenueSection({
         if (!linkedVenue) return;
         setSavingForm(true);
         try {
-            const isEdit = !!editingLocality?.id;
-            const locId = editingLocality?.id || newId();
+            const locId = values.id || editingLocality?.id || newId();
+            const isEdit = allLocalities.some((l) => l.id === locId);
+            const assigned = new Set(values.assigned_element_ids || []);
             const entry = {
                 id: locId,
                 name: values.name,
                 color: values.color,
                 description: values.description,
                 default_price_cents: values.price_cents,
+                seating_type: normalizeLocalitySeatingType(values.seating_type),
             };
             const nextLocalities = isEdit
                 ? allLocalities.map((l) => (l.id === locId ? { ...l, ...entry } : l))
                 : [...allLocalities, entry];
+            const nextElements = (linkedVenue.elements || []).map((e) => {
+                if (assigned.has(e.id)) return { ...e, locality_id: locId };
+                if (e.locality_id === locId) return { ...e, locality_id: null };
+                return e;
+            });
 
-            await persistLocalities(nextLocalities);
+            await persistLayout(nextElements, nextLocalities);
 
             const nextPricing = {
                 ...pricing,
@@ -607,8 +534,10 @@ export default function EventVenueSection({
                 locality_pricing: pricingPayload(nextPricing, nextLocalities),
                 seat_holds_window_minutes: event?.seat_holds_window_minutes || 10,
             });
+            await syncGaTicketTypes(event.id, nextLocalities, nextPricing, nextElements);
+            onFormatChange?.(inferAttendanceFormatFromLocalities(nextLocalities));
 
-            toast.success(isEdit ? "Localidad actualizada" : "Localidad creada");
+            toast.success(isEdit ? "Localidad actualizada" : "Localidad creada y asignada");
             setFormOpen(false);
             setEditingLocality(null);
         } catch (e) {
@@ -637,6 +566,7 @@ export default function EventVenueSection({
                 locality_pricing: pricingPayload(nextPricing, nextLocalities),
                 seat_holds_window_minutes: event?.seat_holds_window_minutes || 10,
             });
+            onFormatChange?.(inferAttendanceFormatFromLocalities(nextLocalities));
             toast.success("Localidad borrada");
         } catch (e) {
             toast.error(e?.response?.data?.detail || "No se pudo borrar la localidad.");
@@ -697,353 +627,417 @@ export default function EventVenueSection({
     const canManageLocalities = eventSaved && !!linkedVenue;
     const showCreateGate = !canManageLocalities;
 
-    if (venues.length === 0 && !linkedVenue && !pendingVenueId) {
-        return (
-            <div className="rounded-xl border-2 border-dashed p-8 bg-card text-center space-y-4" data-testid="venue-empty-state">
-                <div className="mx-auto h-14 w-14 rounded-full bg-teal-50 flex items-center justify-center">
-                    <Building2 className="h-7 w-7 text-teal-800" />
-                </div>
-                <div className="space-y-1">
-                    <h3 className="font-semibold text-lg">Todavía no tenés un mapa</h3>
-                    <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                        Creá un mapa (la forma del lugar), publicalo y volvé acá. Las localidades y precios
-                        los configurás por evento.
-                    </p>
-                </div>
-                <Button asChild size="lg" data-testid="venue-create-cta">
-                    <a href={venueCreateHref(event?.id)}>
-                        <PlusCircle className="h-5 w-5 mr-2" />
-                        Crear mapa
-                        <ArrowRight className="h-4 w-4 ml-2" />
-                    </a>
-                </Button>
+    const showEscenario = panel === "all" || panel === "escenario";
+    const showLocalidades = panel === "all" || panel === "localidades";
+
+    const emptyState = (
+        <div className="rounded-xl border-2 border-dashed p-8 bg-card text-center space-y-4" data-testid="venue-empty-state">
+            <div className="mx-auto h-14 w-14 rounded-full bg-teal-50 flex items-center justify-center">
+                <Building2 className="h-7 w-7 text-teal-800" />
             </div>
-        );
+            <div className="space-y-1">
+                <h3 className="font-semibold text-lg">Todavía no tenés un mapa</h3>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                    Creá un mapa (la forma del lugar), publicalo y volvé acá. Las localidades y precios
+                    los configurás por evento.
+                </p>
+            </div>
+            <Button asChild size="lg" data-testid="venue-create-cta">
+                <a href={venueCreateHref(event?.id)}>
+                    <PlusCircle className="h-5 w-5 mr-2" />
+                    Crear mapa
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                </a>
+            </Button>
+        </div>
+    );
+
+    const escenarioPanel = (
+        <div className="rounded-xl border bg-card p-5 space-y-4" data-testid="escenario-panel">
+            <div>
+                <h4 className="font-semibold text-base">Escenario</h4>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Elegí el mapa del lugar. En el paso siguiente creás las localidades y las asignás al plano.
+                </p>
+            </div>
+
+            <div className="space-y-1.5">
+                <Label className="text-xs">Mapa / Lugar *</Label>
+                <Select
+                    value={selectedVenueId || undefined}
+                    onValueChange={selectVenue}
+                    disabled={disabled || loadingLink || (event?.tickets_sold || 0) > 0}
+                >
+                    <SelectTrigger data-testid="wiz-venue-select">
+                        <SelectValue placeholder="Elegí un mapa publicado…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {venues.map((v) => (
+                            <SelectItem
+                                key={v.id}
+                                value={v.id}
+                                data-testid={`venue-opt-${v.slug}`}
+                            >
+                                <span className="inline-flex items-center gap-2">
+                                    <MapPin className="h-3.5 w-3.5 shrink-0" />
+                                    {v.name}
+                                </span>
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+                {(event?.tickets_sold || 0) > 0 && (
+                    <p
+                        className="text-[11px] text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5"
+                        data-testid="venue-locked-sales-reason"
+                    >
+                        El evento ya tiene {event.tickets_sold} ticket(s) vendido(s); no se puede cambiar el mapa.
+                    </p>
+                )}
+            </div>
+
+            <PlanSeatingNotice conflict={seatingConflict} />
+
+            {(selectedVenueMeta || linkedVenue) && (
+                <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                        variant="secondary"
+                        className="bg-emerald-50 text-emerald-800 border-emerald-200 font-normal max-w-full truncate"
+                        data-testid="venue-selected-badge"
+                    >
+                        {(linkedVenue || selectedVenueMeta)?.name}
+                    </Badge>
+                    {canManageLocalities && (
+                        <span className="text-[11px] text-muted-foreground">
+                            {allLocalities.length} localidad{allLocalities.length !== 1 ? "es" : ""}
+                        </span>
+                    )}
+                    {eventSaved && linkedVenue && (event?.tickets_sold || 0) === 0 && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={handleUnlink}
+                            disabled={disabled || loadingLink}
+                            data-testid="venue-change"
+                        >
+                            Cambiar mapa
+                        </Button>
+                    )}
+                    {!eventSaved && pendingVenueId && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => onPendingVenueChange?.(null)}
+                            data-testid="venue-clear-pending"
+                        >
+                            Quitar selección
+                        </Button>
+                    )}
+                </div>
+            )}
+
+            {loadingLink && (
+                <p className="text-xs text-muted-foreground flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Vinculando…
+                </p>
+            )}
+
+            {!eventSaved && (
+                <CreateFlowSteps
+                    selectedVenue={!!selectedVenueId}
+                    eventSaved={false}
+                />
+            )}
+
+            <Button variant="outline" size="sm" asChild data-testid="venue-create-link">
+                <a href={venueCreateHref(event?.id)}>
+                    <PlusCircle className="h-3.5 w-3.5 mr-1.5" /> Nuevo mapa
+                </a>
+            </Button>
+        </div>
+    );
+
+    const localidadesPanel = (
+        <section className="space-y-3 min-w-0" data-testid="localidades-panel">
+            {showCreateGate ? (
+                <div
+                    className="rounded-xl border bg-card min-h-[280px] flex flex-col items-center justify-center text-center p-8 gap-3"
+                    data-testid="localidades-save-gate"
+                >
+                    <div className="h-14 w-14 rounded-full bg-secondary flex items-center justify-center">
+                        <Layers className="h-7 w-7 text-muted-foreground" />
+                    </div>
+                    <div>
+                        <h3 className="font-semibold text-base">Creación de localidades</h3>
+                        <p className="text-sm text-muted-foreground mt-1.5 max-w-md mx-auto">
+                            {!selectedVenueId
+                                ? "Primero seleccioná un escenario en el paso 4.1. El mapa define la forma; nombre, tipo y precios son de este evento."
+                                : !eventSaved
+                                  ? "Guardá el borrador para vincular el mapa y después crear localidades (numerada o no numerada) asignándolas al plano."
+                                  : "Vinculando mapa…"}
+                        </p>
+                    </div>
+                    {selectedVenueId ? <PlanSeatingNotice conflict={seatingConflict} /> : null}
+                </div>
+            ) : (
+                <>
+                    <div className="flex flex-wrap items-end justify-between gap-2">
+                        <div>
+                            <h4 className="font-semibold">Localidades</h4>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                Cada localidad es numerada o no numerada, con su precio y
+                                asignación en el mapa. Un evento mixto se arma combinando ambos tipos.
+                            </p>
+                        </div>
+                        <div className="flex gap-2">
+                            <Button variant="outline" size="sm" asChild data-testid="venue-assign-map">
+                                <a href={eventMapHref(event.id)}>
+                                    <Wand2 className="h-4 w-4 mr-1.5" /> Mapa completo
+                                </a>
+                            </Button>
+                            <Button
+                                size="sm"
+                                onClick={openCreateForm}
+                                disabled={disabled || seatingConflict === "numbered_only_blocked"}
+                                data-testid="locality-add"
+                            >
+                                <PlusCircle className="h-4 w-4 mr-1.5" /> Nueva Localidad
+                            </Button>
+                        </div>
+                    </div>
+
+                    <PlanSeatingNotice conflict={seatingConflict} />
+
+                    <div className="rounded-xl border bg-card overflow-hidden min-w-0 max-w-full">
+                        <div className="px-4 py-2.5 border-b text-sm flex items-center justify-between">
+                            <span className="font-medium">Plano del evento</span>
+                            <button
+                                type="button"
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                                onClick={() => setMapOpen((v) => !v)}
+                            >
+                                {mapOpen ? "Ocultar" : "Mostrar"}
+                            </button>
+                        </div>
+                        {(mapOpen || panel === "localidades") && (
+                            <div className="min-w-0 max-w-full">
+                                <EditorCanvas
+                                    canvas={canvas}
+                                    elements={elements}
+                                    localitiesById={localitiesById}
+                                    selection={highlightLocality
+                                        ? elements.filter((e) => e.locality_id === highlightLocality).map((e) => e.id)
+                                        : []}
+                                    onSelect={onCanvasSelect}
+                                    onUpdate={() => {}}
+                                    onTransform={() => {}}
+                                    onContextMenu={() => {}}
+                                    onCanvasClick={() => setHighlightLocality(null)}
+                                    tool="select"
+                                    readOnly
+                                    height={280}
+                                    autoFitKey={event?.id ? `${event.id}:${event.venue_id || ""}` : undefined}
+                                />
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="space-y-3" data-testid="locality-pricing-table">
+                        {allLocalities.length === 0 ? (
+                            <div className="rounded-xl border-2 border-dashed p-6 text-center text-sm text-muted-foreground">
+                                {seatingConflict === "numbered_only_blocked"
+                                    ? "Este mapa solo tiene butacas y tu plan no las vende. Elegí un escenario con zonas de aforo o mejorá el plan."
+                                    : seatingConflict === "numbered_unused"
+                                      ? "Creá una localidad no numerada y asignala a las zonas de aforo. Las butacas de este mapa no se venden con tu plan actual."
+                                      : "Creá una localidad: elegí si es numerada o no numerada, y asignala al mapa en el mismo paso."}
+                            </div>
+                        ) : (
+                            <div className="rounded-xl border bg-card overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="border-b bg-secondary/40 text-xs text-muted-foreground">
+                                            <th className="text-left font-medium px-3 py-2 w-8">#</th>
+                                            <th className="text-left font-medium px-3 py-2">Nombre</th>
+                                            <th className="text-left font-medium px-3 py-2">Tipo</th>
+                                            <th className="text-left font-medium px-3 py-2">Color</th>
+                                            <th className="text-right font-medium px-3 py-2">
+                                                <span className="inline-flex items-center justify-end gap-1">
+                                                    Entrada
+                                                    <FieldTip text={LOCALITY_FIELD_TIPS.price} />
+                                                </span>
+                                            </th>
+                                            <th className="text-right font-medium px-3 py-2">
+                                                <span className="inline-flex items-center justify-end gap-1">
+                                                    Comisión TYS
+                                                    <FieldTip text="Comisión TYS por boleto: monto fijo o porcentaje, según la regla del admin para tu plan, tipo de evento y precio." />
+                                                </span>
+                                            </th>
+                                            <th className="text-right font-medium px-3 py-2">
+                                                <span className="inline-flex items-center justify-end gap-1">
+                                                    Servicio
+                                                    <FieldTip text={LOCALITY_FIELD_TIPS.service} />
+                                                </span>
+                                            </th>
+                                            <th className="text-right font-medium px-3 py-2">Asignados</th>
+                                            <th className="px-3 py-2 w-20" />
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {allLocalities.map((loc, idx) => {
+                                            const p = pricing[loc.id] || {};
+                                            const assigned = assignedCountByLocality[loc.id] || 0;
+                                            const highlighted = highlightLocality === loc.id;
+                                            const seating = normalizeLocalitySeatingType(loc.seating_type);
+                                            return (
+                                                <tr
+                                                    key={loc.id}
+                                                    className={`border-b last:border-0 ${highlighted ? "bg-teal-700/5" : ""}`}
+                                                    data-testid={`loc-row-${loc.id}`}
+                                                    onMouseEnter={() => setHighlightLocality(loc.id)}
+                                                >
+                                                    <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
+                                                    <td className="px-3 py-2 font-medium">{loc.name}</td>
+                                                    <td className="px-3 py-2">
+                                                        <Badge variant="outline" className="font-normal text-[10px]">
+                                                            {LOCALITY_SEATING_TYPES[seating]?.title || seating}
+                                                        </Badge>
+                                                    </td>
+                                                    <td className="px-3 py-2">
+                                                        <span
+                                                            className="inline-block h-4 w-4 rounded-sm ring-1 ring-border"
+                                                            style={{ background: loc.color }}
+                                                        />
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">
+                                                        ${centsToInput(p.price_cents) || "0.00"}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">
+                                                        {feeQuotes[String(p.price_cents || 0)]
+                                                            ? `$${centsToInput(feeQuotes[String(p.price_cents || 0)].fee_cents)}`
+                                                            : "—"}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">
+                                                        ${centsToInput(p.service_fee_cents) || "0.00"}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
+                                                        {assigned}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                                                        <Button
+                                                            size="icon"
+                                                            variant="ghost"
+                                                            className="h-7 w-7"
+                                                            onClick={() => openEditForm(loc)}
+                                                            disabled={disabled}
+                                                            data-testid={`loc-edit-${loc.id}`}
+                                                        >
+                                                            <Pencil className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                        <Button
+                                                            size="icon"
+                                                            variant="ghost"
+                                                            className="h-7 w-7"
+                                                            onClick={() => deleteLocalityRow(loc.id)}
+                                                            disabled={disabled || loadingLink}
+                                                            data-testid={`loc-delete-${loc.id}`}
+                                                        >
+                                                            <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                                                        </Button>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+
+                        {summary && (
+                            <p className="text-xs text-muted-foreground" data-testid="locality-summary">
+                                {summary.localityCount} localidad{summary.localityCount !== 1 ? "es" : ""}
+                                {" · "}
+                                capacidad {summary.capacity}
+                                {" · "}
+                                entradas desde ${summary.minPrice.toFixed(2)}
+                                {summary.minPrice !== summary.maxPrice && ` hasta $${summary.maxPrice.toFixed(2)}`}
+                            </p>
+                        )}
+
+                        {eventSaved && allLocalities.length > 0 && pricingType !== "free" ? (
+                            <div
+                                className="rounded-xl border bg-card p-4 space-y-3"
+                                data-testid="platform-fee-bearer"
+                            >
+                                <div>
+                                    <h4 className="text-sm font-semibold">¿Quién paga la comisión TYS?</h4>
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                        Se calcula por cada entrada según tu plan, el tipo de evento y el precio.
+                                        No incluye cargo de servicio ni TicketSeguro.
+                                    </p>
+                                </div>
+                                <RadioGroup
+                                    value={feeBearer}
+                                    onValueChange={(v) => !disabled && saveFeeBearer(v)}
+                                    className="grid sm:grid-cols-2 gap-2"
+                                    disabled={disabled}
+                                >
+                                    <label
+                                        className={`flex items-start gap-2 rounded-lg border p-3 cursor-pointer ${
+                                            feeBearer === "buyer" ? "border-teal-700 bg-teal-700/5" : ""
+                                        }`}
+                                    >
+                                        <RadioGroupItem value="buyer" id="fee-bearer-buyer" className="mt-0.5" />
+                                        <div>
+                                            <div className="text-sm font-medium">El comprador</div>
+                                            <p className="text-[11px] text-muted-foreground leading-snug">
+                                                Se suma al total en el checkout.
+                                            </p>
+                                        </div>
+                                    </label>
+                                    <label
+                                        className={`flex items-start gap-2 rounded-lg border p-3 cursor-pointer ${
+                                            feeBearer === "organizer" ? "border-teal-700 bg-teal-700/5" : ""
+                                        }`}
+                                    >
+                                        <RadioGroupItem value="organizer" id="fee-bearer-organizer" className="mt-0.5" />
+                                        <div>
+                                            <div className="text-sm font-medium">Yo (organizador)</div>
+                                            <p className="text-[11px] text-muted-foreground leading-snug">
+                                                El comprador paga solo la entrada; la comisión se descuenta de tu liquidación.
+                                            </p>
+                                        </div>
+                                    </label>
+                                </RadioGroup>
+                            </div>
+                        ) : null}
+                    </div>
+                </>
+            )}
+        </section>
+    );
+
+    if (venues.length === 0 && !linkedVenue && !pendingVenueId && showEscenario) {
+        return emptyState;
     }
 
     return (
-        <div className="grid lg:grid-cols-[minmax(240px,280px)_1fr] gap-4" data-testid="venue-localidades-layout">
-            {/* ── Left: Escenario ── */}
-            <aside className="rounded-xl border bg-card p-4 space-y-3 h-fit" data-testid="escenario-panel">
-                <div>
-                    <h4 className="font-semibold text-sm">Escenario</h4>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                        Lugar del evento — solo la forma del mapa
-                    </p>
-                </div>
-
-                <div className="space-y-1.5">
-                    <Label className="text-xs">Mapa / Lugar *</Label>
-                    <Select
-                        value={selectedVenueId || undefined}
-                        onValueChange={selectVenue}
-                        disabled={disabled || loadingLink || (event?.tickets_sold || 0) > 0}
-                    >
-                        <SelectTrigger data-testid="wiz-venue-select">
-                            <SelectValue placeholder="Elegí un mapa publicado…" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {venues.map((v) => (
-                                <SelectItem
-                                    key={v.id}
-                                    value={v.id}
-                                    data-testid={`venue-opt-${v.slug}`}
-                                >
-                                    <span className="inline-flex items-center gap-2">
-                                        <MapPin className="h-3.5 w-3.5 shrink-0" />
-                                        {v.name}
-                                    </span>
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                    {(event?.tickets_sold || 0) > 0 && (
-                        <p
-                            className="text-[11px] text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5"
-                            data-testid="venue-locked-sales-reason"
-                        >
-                            El evento ya tiene {event.tickets_sold} ticket(s) vendido(s); no se puede cambiar el mapa.
-                        </p>
-                    )}
-                </div>
-
-                {(selectedVenueMeta || linkedVenue) && (
-                    <div className="space-y-2">
-                        <Badge
-                            variant="secondary"
-                            className="bg-emerald-50 text-emerald-800 border-emerald-200 font-normal max-w-full truncate"
-                            data-testid="venue-selected-badge"
-                        >
-                            {(linkedVenue || selectedVenueMeta)?.name}
-                        </Badge>
-                        {canManageLocalities && (
-                            <p className="text-[11px] text-muted-foreground">
-                                {allLocalities.length} localidad{allLocalities.length !== 1 ? "es" : ""}
-                                {" · "}
-                                Mapa asignable
-                            </p>
-                        )}
-                        {eventSaved && linkedVenue && (event?.tickets_sold || 0) === 0 && (
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2 text-xs"
-                                onClick={handleUnlink}
-                                disabled={disabled || loadingLink}
-                                data-testid="venue-change"
-                            >
-                                Cambiar mapa
-                            </Button>
-                        )}
-                        {!eventSaved && pendingVenueId && (
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2 text-xs"
-                                onClick={() => onPendingVenueChange?.(null)}
-                                data-testid="venue-clear-pending"
-                            >
-                                Quitar selección
-                            </Button>
-                        )}
-                    </div>
-                )}
-
-                {loadingLink && (
-                    <p className="text-xs text-muted-foreground flex items-center gap-2">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Vinculando…
-                    </p>
-                )}
-
-                {!eventSaved && (
-                    <CreateFlowSteps
-                        selectedVenue={!!selectedVenueId}
-                        eventSaved={false}
-                    />
-                )}
-
-                <Button variant="outline" size="sm" className="w-full" asChild data-testid="venue-create-link">
-                    <a href={venueCreateHref(event?.id)}>
-                        <PlusCircle className="h-3.5 w-3.5 mr-1.5" /> Nuevo mapa
-                    </a>
-                </Button>
-            </aside>
-
-            {/* ── Right: Localidades ── */}
-            <section className="space-y-3 min-w-0" data-testid="localidades-panel">
-                {showCreateGate ? (
-                    <div
-                        className="rounded-xl border bg-card min-h-[280px] flex flex-col items-center justify-center text-center p-8 gap-3"
-                        data-testid="localidades-save-gate"
-                    >
-                        <div className="h-14 w-14 rounded-full bg-secondary flex items-center justify-center">
-                            <Layers className="h-7 w-7 text-muted-foreground" />
-                        </div>
-                        <div>
-                            <h3 className="font-semibold text-base">Localidades y Precios</h3>
-                            <p className="text-sm text-muted-foreground mt-1.5 max-w-md mx-auto">
-                                {!selectedVenueId
-                                    ? "Primero seleccioná un mapa en Escenario. El mapa solo define la forma; nombre, color y precios son de este evento."
-                                    : !eventSaved
-                                      ? "Una vez guardado el evento podrás agregar localidades, configurar precios y asignarlas en el mapa del escenario."
-                                      : "Vinculando mapa…"}
-                            </p>
-                        </div>
-                    </div>
-                ) : (
-                    <>
-                        <div className="flex flex-wrap items-end justify-between gap-2">
-                            <div>
-                                <h4 className="font-semibold">Localidades y Precios</h4>
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                    Configuración de este evento (no del mapa maestro). Podés usar solo
-                                    algunas zonas del plano.
-                                </p>
-                            </div>
-                            <div className="flex gap-2">
-                                <Button variant="outline" size="sm" asChild data-testid="venue-assign-map">
-                                    <a href={eventMapHref(event.id)}>
-                                        <Wand2 className="h-4 w-4 mr-1.5" /> Asignar en Mapa
-                                    </a>
-                                </Button>
-                                <Button size="sm" onClick={openCreateForm} data-testid="locality-add">
-                                    <PlusCircle className="h-4 w-4 mr-1.5" /> Nueva Localidad
-                                </Button>
-                            </div>
-                        </div>
-
-                        {/* Optional map preview */}
-                        <div className="rounded-xl border bg-card overflow-hidden min-w-0 max-w-full">
-                            <button
-                                type="button"
-                                className="w-full px-4 py-2.5 border-b text-left text-sm flex items-center justify-between hover:bg-secondary/40"
-                                onClick={() => setMapOpen((v) => !v)}
-                            >
-                                <span className="font-medium">Plano del evento</span>
-                                <span className="text-xs text-muted-foreground">
-                                    {mapOpen ? "Ocultar" : "Mostrar"} · forma del escenario
-                                </span>
-                            </button>
-                            {mapOpen && (
-                                <div className="min-w-0 max-w-full">
-                                    <EditorCanvas
-                                        canvas={canvas}
-                                        elements={elements}
-                                        localitiesById={localitiesById}
-                                        selection={highlightLocality
-                                            ? elements.filter((e) => e.locality_id === highlightLocality).map((e) => e.id)
-                                            : []}
-                                        onSelect={onCanvasSelect}
-                                        onUpdate={() => {}}
-                                        onTransform={() => {}}
-                                        onContextMenu={() => {}}
-                                        onCanvasClick={() => setHighlightLocality(null)}
-                                        tool="select"
-                                        readOnly
-                                        height={280}
-                                        autoFitKey={event?.id ? `${event.id}:${event.venue_id || ""}` : undefined}
-                                    />
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="space-y-3" data-testid="locality-pricing-table">
-                            {allLocalities.length === 0 ? (
-                                <div className="rounded-xl border-2 border-dashed p-6 text-center text-sm text-muted-foreground">
-                                    Todavía no creaste localidades para este evento. Creá las que necesités
-                                    (aunque el mapa tenga más secciones) y después asignalas en el mapa.
-                                </div>
-                            ) : (
-                                <div className="rounded-xl border bg-card overflow-x-auto">
-                                    <table className="w-full text-sm">
-                                        <thead>
-                                            <tr className="border-b bg-secondary/40 text-xs text-muted-foreground">
-                                                <th className="text-left font-medium px-3 py-2 w-8">#</th>
-                                                <th className="text-left font-medium px-3 py-2">Nombre</th>
-                                                <th className="text-left font-medium px-3 py-2">Color</th>
-                                                <th className="text-right font-medium px-3 py-2">
-                                                    <span className="inline-flex items-center justify-end gap-1">
-                                                        Entrada
-                                                        <FieldTip text={LOCALITY_FIELD_TIPS.price} />
-                                                    </span>
-                                                </th>
-                                                <th className="text-right font-medium px-3 py-2">
-                                                    <span className="inline-flex items-center justify-end gap-1">
-                                                        Servicio
-                                                        <FieldTip text={LOCALITY_FIELD_TIPS.service} />
-                                                    </span>
-                                                </th>
-                                                <th className="text-right font-medium px-3 py-2">
-                                                    <span className="inline-flex items-center justify-end gap-1">
-                                                        TicketSeguro
-                                                        <FieldTip text={LOCALITY_FIELD_TIPS.admin} />
-                                                    </span>
-                                                </th>
-                                                <th className="text-right font-medium px-3 py-2">
-                                                    <span className="inline-flex items-center justify-end gap-1">
-                                                        Impuestos
-                                                        <FieldTip text={LOCALITY_FIELD_TIPS.vxs} />
-                                                    </span>
-                                                </th>
-                                                <th className="text-right font-medium px-3 py-2">
-                                                    <span className="inline-flex items-center justify-end gap-1">
-                                                        Billetera
-                                                        <FieldTip text={LOCALITY_FIELD_TIPS.wallet} />
-                                                    </span>
-                                                </th>
-                                                <th className="text-right font-medium px-3 py-2">Asignados</th>
-                                                <th className="px-3 py-2 w-20" />
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {allLocalities.map((loc, idx) => {
-                                                const p = pricing[loc.id] || {};
-                                                const assigned = assignedCountByLocality[loc.id] || 0;
-                                                const highlighted = highlightLocality === loc.id;
-                                                return (
-                                                    <tr
-                                                        key={loc.id}
-                                                        className={`border-b last:border-0 ${highlighted ? "bg-teal-700/5" : ""}`}
-                                                        data-testid={`loc-row-${loc.id}`}
-                                                        onMouseEnter={() => setHighlightLocality(loc.id)}
-                                                    >
-                                                        <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
-                                                        <td className="px-3 py-2 font-medium">{loc.name}</td>
-                                                        <td className="px-3 py-2">
-                                                            <span
-                                                                className="inline-block h-4 w-4 rounded-sm ring-1 ring-border"
-                                                                style={{ background: loc.color }}
-                                                            />
-                                                        </td>
-                                                        <td className="px-3 py-2 text-right tabular-nums">
-                                                            ${centsToInput(p.price_cents) || "0.00"}
-                                                        </td>
-                                                        <td className="px-3 py-2 text-right tabular-nums">
-                                                            ${centsToInput(p.service_fee_cents) || "0.00"}
-                                                        </td>
-                                                        <td className="px-3 py-2 text-right tabular-nums">
-                                                            ${centsToInput(p.admin_fee_cents) || "0.00"}
-                                                        </td>
-                                                        <td className="px-3 py-2 text-right tabular-nums">
-                                                            ${centsToInput(p.vxs_cents) || "0.00"}
-                                                        </td>
-                                                        <td className="px-3 py-2 text-right tabular-nums">
-                                                            ${centsToInput(p.wallet_fee_cents) || "0.00"}
-                                                        </td>
-                                                        <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
-                                                            {assigned}
-                                                        </td>
-                                                        <td className="px-3 py-2 text-right whitespace-nowrap">
-                                                            <Button
-                                                                size="icon"
-                                                                variant="ghost"
-                                                                className="h-7 w-7"
-                                                                onClick={() => openEditForm(loc)}
-                                                                disabled={disabled}
-                                                                data-testid={`loc-edit-${loc.id}`}
-                                                            >
-                                                                <Pencil className="h-3.5 w-3.5" />
-                                                            </Button>
-                                                            <Button
-                                                                size="icon"
-                                                                variant="ghost"
-                                                                className="h-7 w-7"
-                                                                onClick={() => deleteLocalityRow(loc.id)}
-                                                                disabled={disabled || loadingLink}
-                                                                data-testid={`loc-delete-${loc.id}`}
-                                                            >
-                                                                <Trash2 className="h-3.5 w-3.5 text-red-600" />
-                                                            </Button>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
-
-                            {summary && (
-                                <p className="text-xs text-muted-foreground" data-testid="locality-summary">
-                                    {summary.localityCount} localidad{summary.localityCount !== 1 ? "es" : ""}
-                                    {" · "}
-                                    capacidad {summary.capacity}
-                                    {" · "}
-                                    entradas desde ${summary.minPrice.toFixed(2)}
-                                    {summary.minPrice !== summary.maxPrice && ` hasta $${summary.maxPrice.toFixed(2)}`}
-                                </p>
-                            )}
-                        </div>
-                    </>
-                )}
-            </section>
-
+        <div className="space-y-4" data-testid="venue-localidades-layout">
+            {showEscenario ? escenarioPanel : null}
+            {showLocalidades ? localidadesPanel : null}
             <LocalityFormDialog
                 open={formOpen}
                 onClose={() => { setFormOpen(false); setEditingLocality(null); }}
                 onSubmit={submitLocalityForm}
                 initial={editingLocality}
                 saving={savingForm}
+                canvas={canvas}
+                elements={elements}
+                localitiesById={localitiesById}
+                allowNumbered={allowNumbered}
+                pricingType={pricingType}
+                feeBearer={feeBearer}
             />
         </div>
     );

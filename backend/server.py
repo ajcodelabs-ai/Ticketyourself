@@ -30,6 +30,7 @@ from routers import oneshot_webhook as oneshot_webhook_router  # noqa: E402
 from routers import organizers as organizers_router  # noqa: E402
 from routers import payment_methods as payment_methods_router  # noqa: E402
 from routers import plans as plans_router  # noqa: E402
+from routers import sales_fees as sales_fees_router  # noqa: E402
 from routers import stripe_webhook as stripe_webhook_router  # noqa: E402
 from routers import tenants as tenants_router  # noqa: E402
 from seeds import run_seeds  # noqa: E402
@@ -60,6 +61,8 @@ app.include_router(tenants_router.router)
 app.include_router(auth_router.router)
 app.include_router(plans_router.router)
 app.include_router(plans_router.admin_router)
+app.include_router(sales_fees_router.router)
+app.include_router(sales_fees_router.admin_router)
 app.include_router(payment_methods_router.router)
 app.include_router(organizers_router.router)
 app.include_router(organizers_router.admin_router)
@@ -77,6 +80,7 @@ app.include_router(activation_router.admin_router)
 app.include_router(dev_router.router)
 from routers import admin_dashboard as admin_dashboard_router  # noqa: E402
 from routers import admin_exports as admin_exports_router  # noqa: E402
+from routers import admin_payments as admin_payments_router  # noqa: E402
 from routers import admin_venue_templates as admin_venue_templates_router  # noqa: E402
 from routers import dashboard as dashboard_router  # noqa: E402
 from routers import events as events_router  # noqa: E402
@@ -103,6 +107,7 @@ app.include_router(orders_router.router)
 app.include_router(tickets_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(admin_dashboard_router.router)
+app.include_router(admin_payments_router.router)
 app.include_router(admin_exports_router.router)
 app.include_router(venues_router.router)
 app.include_router(venues_router.public_router)

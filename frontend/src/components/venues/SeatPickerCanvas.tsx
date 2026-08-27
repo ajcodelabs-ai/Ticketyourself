@@ -38,6 +38,12 @@ export default function SeatPickerCanvas({
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [draggingPan, setDraggingPan] = useState(null);
+    const panRef = useRef({ x: 0, y: 0 });
+    useEffect(() => { panRef.current = pan; }, [pan]);
+    const spaceHeldRef = useRef(false);
+    const spaceDownRef = useRef(false);
+    const hoveringRef = useRef(false);
+    const [spaceHeld, setSpaceHeld] = useState(false);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -64,6 +70,36 @@ export default function SeatPickerCanvas({
             ro?.disconnect();
         };
     }, [height]);
+
+    useEffect(() => {
+        const isTyping = (e) => {
+            const tag = e.target?.tagName;
+            return tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable;
+        };
+        const onKeyDown = (e) => {
+            if (isTyping(e)) return;
+            if (e.code !== "Space" && e.key !== " ") return;
+            spaceDownRef.current = true;
+            if (!hoveringRef.current && !draggingPan) return;
+            e.preventDefault();
+            if (e.repeat) return;
+            spaceHeldRef.current = true;
+            setSpaceHeld(true);
+        };
+        const onKeyUp = (e) => {
+            if (e.code !== "Space" && e.key !== " ") return;
+            spaceDownRef.current = false;
+            spaceHeldRef.current = false;
+            setSpaceHeld(false);
+            setDraggingPan(null);
+        };
+        window.addEventListener("keydown", onKeyDown, true);
+        window.addEventListener("keyup", onKeyUp);
+        return () => {
+            window.removeEventListener("keydown", onKeyDown, true);
+            window.removeEventListener("keyup", onKeyUp);
+        };
+    }, [draggingPan]);
 
     // Auto-fit to element bbox (not raw canvas size) so clustered layouts center.
     useEffect(() => {
@@ -115,15 +151,15 @@ export default function SeatPickerCanvas({
         });
     }, []);
 
-    // Drag-to-pan (when clicking empty area)
+    // Pan only with Space or middle mouse so seat clicks stay precise.
     const handleMouseDown = (e) => {
-        const clickedEmpty = e.target === e.target.getStage()
-            || e.target.attrs.id === "bg-rect";
-        if (!clickedEmpty) return;
+        const button = e.evt?.button ?? 0;
+        if (!spaceHeldRef.current && button !== 1) return;
+        e.evt?.preventDefault?.();
         const stage = stageRef.current;
         const pointer = stage.getPointerPosition();
         if (!pointer) return;
-        setDraggingPan({ startX: pointer.x, startY: pointer.y, originPan: { ...pan } });
+        setDraggingPan({ startX: pointer.x, startY: pointer.y, originPan: { ...panRef.current } });
     };
     const handleMouseMove = () => {
         if (!draggingPan) return;
@@ -149,6 +185,14 @@ export default function SeatPickerCanvas({
             className="w-full max-w-full min-w-0 bg-slate-50 rounded-lg border relative overflow-hidden"
             style={{ height, maxWidth: "100%" }}
             data-testid="seat-picker"
+            onMouseEnter={() => {
+                hoveringRef.current = true;
+                if (spaceDownRef.current) {
+                    spaceHeldRef.current = true;
+                    setSpaceHeld(true);
+                }
+            }}
+            onMouseLeave={() => { hoveringRef.current = false; }}
         >
             <Stage
                 ref={stageRef}
@@ -163,7 +207,14 @@ export default function SeatPickerCanvas({
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
-                style={{ cursor: draggingPan ? "grabbing" : "default", display: "block", maxWidth: "100%" }}
+                style={{
+                    cursor: spaceHeld
+                        ? (draggingPan ? "grabbing" : "grab")
+                        : "default",
+                    display: "block",
+                    maxWidth: "100%",
+                    touchAction: "none",
+                }}
             >
                 <Layer listening={true}>
                     <Rect
@@ -270,8 +321,8 @@ export default function SeatPickerCanvas({
                                     x={pos.x} y={pos.y} radius={r}
                                     fill={fill} opacity={opacity}
                                     stroke="#fff" strokeWidth={1}
-                                    onClick={() => clickable && onToggleSeat(seat)}
-                                    onTap={() => clickable && onToggleSeat(seat)}
+                                    onClick={() => clickable && !spaceHeldRef.current && !draggingPan && onToggleSeat(seat)}
+                                    onTap={() => clickable && !spaceHeldRef.current && !draggingPan && onToggleSeat(seat)}
                                     onMouseEnter={(e) => {
                                         if (clickable) {
                                             e.target.getStage().container().style.cursor = "pointer";
@@ -301,7 +352,7 @@ export default function SeatPickerCanvas({
                         className="px-2 hover:bg-slate-100 rounded">+</button>
             </div>
             <div className="absolute top-2 left-2 text-xs text-muted-foreground bg-white/80 rounded px-2 py-1">
-                Click = elegir asiento · Drag = mover el mapa · Wheel = zoom
+                Click = asiento · Espacio + arrastrar = mover · Rueda = zoom
             </div>
         </div>
     );

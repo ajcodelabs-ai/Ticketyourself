@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import { venuesApi, VENUE_TYPES, STATUS_LABEL } from "@/lib/venues";
 import VenueTemplatePicker from "@/components/venues/VenueTemplatePicker";
 import VenueTemplateThumb from "@/components/venues/VenueTemplateThumb";
+import { PlanGateHint } from "@/components/plans/PlanGate";
 
 export default function Venues() {
     const navigate = useNavigate();
@@ -222,6 +223,12 @@ export default function Venues() {
                 </Button>
             </header>
 
+            {!canCreate && (
+                <PlanGateHint feature="max_venues">
+                    Llegaste al límite de {maxV} venue(s) de tu plan. Archivá uno o mejorá el plan para crear más.
+                </PlanGateHint>
+            )}
+
             {returnTo && (
                 <div className="rounded-xl border bg-card p-4 flex items-start gap-3 text-sm">
                     <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
@@ -244,13 +251,10 @@ export default function Venues() {
                             Empezá con un layout prediseñado y personalizalo.
                         </p>
                     </div>
-                    {!canCreate && limitReason && (
-                        <p
-                            className="text-xs text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2"
-                            data-testid="venue-templates-limit-reason"
-                        >
-                            {limitReason}
-                        </p>
+                    {!canCreate && (
+                        <div data-testid="venue-templates-limit-reason">
+                            <PlanGateHint feature="max_venues">{limitReason}</PlanGateHint>
+                        </div>
                     )}
                     {templatesLoading ? (
                         <p className="text-sm text-muted-foreground">Cargando plantillas…</p>

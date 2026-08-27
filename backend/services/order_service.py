@@ -230,8 +230,15 @@ def _ticket_fees_per_unit(event: dict) -> dict:
 
 
 def compute_totals(
-    *, event: dict, quantity: int, donation_amount_cents: int = 0
+    *,
+    event: dict,
+    quantity: int,
+    donation_amount_cents: int = 0,
+    sales_fee_rules: list | None = None,
+    plan_code: str | None = None,
 ) -> dict:
+    from services.sales_fees import apply_platform_fee
+
     pricing = event.get("pricing_type", "free")
     if pricing == "free":
         if donation_amount_cents > 0:
@@ -239,47 +246,55 @@ def compute_totals(
                 raise HTTPException(422, "Este evento no acepta aportes voluntarios")
             if donation_amount_cents < 100:
                 raise HTTPException(422, "El aporte mínimo es $1")
-            return {
+            totals = {
                 "unit_price_cents": donation_amount_cents,
                 "subtotal_cents": donation_amount_cents,
                 "fees_cents": 0,
                 "total_cents": donation_amount_cents,
                 "donation_amount_cents": donation_amount_cents,
             }
+            return apply_platform_fee(
+                totals,
+                event=event,
+                unit_prices=[donation_amount_cents],
+                sales_fee_rules=sales_fee_rules,
+                plan_code=plan_code,
+            )
         return {
             "unit_price_cents": 0,
             "subtotal_cents": 0,
             "fees_cents": 0,
             "total_cents": 0,
             "donation_amount_cents": 0,
+            "platform_fee_bearer": event.get("platform_fee_bearer") or "buyer",
         }
     if pricing == "donation":
         if donation_amount_cents < 100:
             raise HTTPException(422, "El aporte mínimo es $1")
         subtotal = donation_amount_cents
-        return {
+        totals = {
             "unit_price_cents": donation_amount_cents,
             "subtotal_cents": subtotal,
             "fees_cents": 0,
             "total_cents": subtotal,
             "donation_amount_cents": donation_amount_cents,
         }
+        return apply_platform_fee(
+            totals,
+            event=event,
+            unit_prices=[donation_amount_cents],
+            sales_fee_rules=sales_fee_rules,
+            plan_code=plan_code,
+        )
     unit = event.get("base_price_cents") or 0
     tf = _ticket_fees_per_unit(event)
-    per_ticket_extra = (
-        tf["service_fee_cents"]
-        + tf["ticketseguro_cents"]
-        + tf["tax_cents"]
-        + tf["wallet_fee_cents"]
-    )
     entrada = unit * quantity
     service = tf["service_fee_cents"] * quantity
     ticketseguro = tf["ticketseguro_cents"] * quantity
     tax = tf["tax_cents"] * quantity
     wallet = tf["wallet_fee_cents"] * quantity
     subtotal = entrada + service + ticketseguro + tax + wallet
-    fees = int(round(entrada * DEFAULT_FEE_PERCENT / 100))
-    return {
+    totals = {
         "unit_price_cents": unit,
         "subtotal_cents": subtotal,
         "entrada_cents": entrada,
@@ -289,10 +304,17 @@ def compute_totals(
         "vxs_cents": tax,  # Impuestos (legacy key for UI)
         "tax_cents": tax,
         "wallet_fee_cents": wallet,
-        "fees_cents": fees,
-        "total_cents": subtotal + fees,
+        "fees_cents": 0,
+        "total_cents": subtotal,
         "donation_amount_cents": 0,
     }
+    return apply_platform_fee(
+        totals,
+        event=event,
+        unit_prices=[unit] * max(0, int(quantity)),
+        sales_fee_rules=sales_fee_rules,
+        plan_code=plan_code,
+    )
 
 
 def locality_pricing_map(event: dict) -> dict:
@@ -329,11 +351,14 @@ def compute_totals_with_seats(
     event: dict,
     venue: dict,
     seat_ids: list[str],
+    sales_fee_rules: list | None = None,
+    plan_code: str | None = None,
 ) -> dict:
     """Per-locality pricing for seat-numbered events.
 
     Per seat the buyer pays entrada + cargo servicio + TicketSeguro + impuestos
-    + billetera. Platform fee (`TYS_FEE_PERCENT`) applies only to the entrada.
+    + billetera. Platform sales commission applies only to the entrada
+    (admin matrix, falling back to `TYS_FEE_PERCENT`).
     """
     from services.seats import seats_by_id
 
@@ -348,6 +373,7 @@ def compute_totals_with_seats(
     vxs_subtotal = 0
     wallet_subtotal = 0
     missing_loc = []
+    unit_prices: list[int] = []
     for sid in seat_ids:
         seat = by_id.get(sid)
         if not seat:
@@ -359,6 +385,7 @@ def compute_totals_with_seats(
             continue
         entrada = int(lp.get("price_cents") or 0)
         extras = locality_extra_fees(pricing_map, loc_id)
+        unit_prices.append(entrada)
         entrada_subtotal += entrada
         service_subtotal += extras["service_fee_cents"]
         admin_subtotal += extras["admin_fee_cents"]
@@ -373,9 +400,10 @@ def compute_totals_with_seats(
         )
     if missing_loc:
         raise HTTPException(422, f"El evento no tiene precio para: {set(missing_loc)}")
-    fees = int(round(entrada_subtotal * DEFAULT_FEE_PERCENT / 100))
+    from services.sales_fees import apply_platform_fee
+
     avg_unit = entrada_subtotal // max(1, len(seat_ids))
-    return {
+    totals = {
         # unit_price_cents = average entrada only (excludes service/admin/vxs/wallet)
         "unit_price_cents": avg_unit,
         "subtotal_cents": subtotal,
@@ -386,10 +414,17 @@ def compute_totals_with_seats(
         "vxs_cents": vxs_subtotal,
         "tax_cents": vxs_subtotal,
         "wallet_fee_cents": wallet_subtotal,
-        "fees_cents": fees,
-        "total_cents": subtotal + fees,
+        "fees_cents": 0,
+        "total_cents": subtotal,
         "donation_amount_cents": 0,
     }
+    return apply_platform_fee(
+        totals,
+        event=event,
+        unit_prices=unit_prices,
+        sales_fee_rules=sales_fee_rules,
+        plan_code=plan_code,
+    )
 
 
 # ── Create order ────────────────────────────────────────────────────────────

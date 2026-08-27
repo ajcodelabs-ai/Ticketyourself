@@ -408,21 +408,24 @@ export default function PurchaseModal({
     // ── Totals ────────────────────────────────────────────────────────────────
     const totals = useMemo(() => {
         if (!event) return { subtotal: 0, fees: 0, total: 0, discount: 0 };
+        const absorbs = event.platform_fee_bearer === "organizer";
+        const toBuyer = (fees) => (absorbs ? 0 : fees);
 
         let base: { subtotal: number; fees: number; total: number };
 
         if (isSeatNumbered) {
+            const fees = toBuyer(seatHoldsInfo.fees_cents || 0);
             base = {
                 subtotal: seatHoldsInfo.subtotal_cents,
-                fees: seatHoldsInfo.fees_cents,
-                total: seatHoldsInfo.total_cents,
+                fees,
+                total: (seatHoldsInfo.subtotal_cents || 0) + fees,
             };
         } else if (hasTypes && typeSelections.length > 0) {
             const subtotal = typeSelections.reduce((sum, sel) => {
                 const tt = ticketTypes.find((t) => t.id === sel.ticket_type_id);
                 return sum + (tt?.price_cents ?? 0) * sel.quantity;
             }, 0);
-            const fees = subtotal > 0 ? Math.round((subtotal * FEE_PERCENT) / 100) : 0;
+            const fees = toBuyer(subtotal > 0 ? Math.round((subtotal * FEE_PERCENT) / 100) : 0);
             base = { subtotal, fees, total: subtotal + fees };
         } else if (pricingType === "free") {
             const cents = optionalDonation
@@ -431,8 +434,7 @@ export default function PurchaseModal({
             base = { subtotal: cents, fees: 0, total: cents };
         } else if (pricingType === "donation") {
             const cents = Math.round(parseFloat(donation || "0") * 100);
-            const fees = cents > 0 ? Math.round((cents * FEE_PERCENT) / 100) : 0;
-            base = { subtotal: cents, fees, total: cents + fees };
+            base = { subtotal: cents, fees: 0, total: cents };
         } else {
             const unit = event.base_price_cents || 0;
             const tf = event.ticket_fees || {};
@@ -442,14 +444,17 @@ export default function PurchaseModal({
                 Number(tf.tax_cents || tf.vxs_cents || 0) +
                 Number(tf.wallet_fee_cents || 0);
             const subtotal = (unit + perExtra) * quantity;
-            const fees = Math.round((unit * quantity * FEE_PERCENT) / 100);
+            const fees = toBuyer(Math.round((unit * quantity * FEE_PERCENT) / 100));
             base = { subtotal, fees, total: subtotal + fees };
         }
 
         if (previewTotals) {
+            const previewAbsorbs =
+                (previewTotals.platform_fee_bearer || event.platform_fee_bearer) ===
+                "organizer";
             return {
                 subtotal: previewTotals.subtotal_cents,
-                fees: previewTotals.fees_cents,
+                fees: previewAbsorbs ? 0 : previewTotals.fees_cents,
                 total: previewTotals.total_cents,
                 discount: previewTotals.discount_total_cents || 0,
             };
@@ -1541,7 +1546,7 @@ export default function PurchaseModal({
                                 )}
                                 {totals.fees > 0 && (
                                     <Row
-                                        label={`Tarifa plataforma TYS (${FEE_PERCENT}%)`}
+                                        label="Comisión TYS"
                                         value={formatCents(totals.fees, event.currency)}
                                     />
                                 )}

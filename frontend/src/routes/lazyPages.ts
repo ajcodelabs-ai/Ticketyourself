@@ -44,9 +44,12 @@ export const AdminDashboard = lazy(() => import("@/pages/admin/AdminDashboard"))
 export const AdminOrganizers = lazy(() => import("@/pages/admin/AdminOrganizers"));
 export const AdminOrganizerDetail = lazy(() => import("@/pages/admin/AdminOrganizerDetail"));
 export const AdminPlans = lazy(() => import("@/pages/admin/AdminPlans"));
+export const AdminSalesFees = lazy(() => import("@/pages/admin/AdminSalesFees"));
+export const AdminPayments = lazy(() => import("@/pages/admin/AdminPayments"));
 export const AdminConfiguracion = lazy(() => import("@/pages/admin/AdminConfiguracion"));
 export const AdminFunnel = lazy(() => import("@/pages/admin/AdminFunnel"));
 export const AdminEvents = lazy(() => import("@/pages/admin/AdminEvents"));
+export const AdminEventDetail = lazy(() => import("@/pages/admin/AdminEventDetail"));
 export const AdminAuditLog = lazy(() => import("@/pages/admin/AdminAuditLog"));
 export const AdminReports = lazy(() => import("@/pages/admin/AdminReports"));
 export const AdminVenueTemplates = lazy(() => import("@/pages/admin/AdminVenueTemplates"));

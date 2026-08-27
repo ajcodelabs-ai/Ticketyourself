@@ -142,6 +142,10 @@ class TestPlanFeatures:
         assert f["numbered_seating"] is True
         assert f["manual_payments"] is True
         assert f["max_events"] == -1
+        unlocks = f.get("_unlocks") or {}
+        assert unlocks["numbered_seating"]["code"] == "profesional"
+        assert unlocks["verified_lists"]["code"] == "enterprise"
+        assert "Enterprise" in unlocks["verified_lists"]["name"]
 
 
 # ── 4. Event create/update + gallery ──────────────────────────────────────────
@@ -380,3 +384,134 @@ class TestAdminEventsEnriched:
             assert "organizer_slug" in e
             assert "gmv_cents" in e
             assert "fees_cents" in e
+
+    def test_admin_event_detail(self, admin_token, demo_event_id):
+        s = new_session()
+        s.headers.update(bearer(admin_token))
+        r = s.get(f"{API}/admin/events/{demo_event_id}")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["id"] == demo_event_id
+        assert "organizer" in body and body["organizer"]["slug"]
+        assert "sales" in body
+        assert "ticket_types" in body
+        assert "recent_orders" in body
+        assert "venue_layout" not in body
+        assert "venue_layout_summary" in body
+
+    def test_admin_event_detail_rbac(self, demo_token, demo_event_id):
+        s = new_session()
+        s.headers.update(bearer(demo_token))
+        r = s.get(f"{API}/admin/events/{demo_event_id}")
+        assert r.status_code in (401, 403)
+
+    def test_admin_suspend_hides_public_and_unsuspends(self, admin_token, demo_event_ids):
+        event_id = demo_event_ids[PAID_EVENT_SLUG]
+        s = new_session()
+        s.headers.update(bearer(admin_token))
+        before = s.get(f"{API}/admin/events/{event_id}")
+        assert before.status_code == 200
+        prev = before.json()["status"]
+        if prev == "cancelled":
+            pytest.skip("seed event is cancelled")
+        did = False
+        try:
+            r = s.post(
+                f"{API}/admin/events/{event_id}/suspend",
+                json={"comment": "Prueba de suspensión del super admin"},
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["status"] == "suspended"
+            did = True
+            detail = s.get(f"{API}/admin/events/{event_id}").json()
+            assert detail["status"] == "suspended"
+            assert detail["suspended_reason"]
+            pub = requests.get(
+                f"{API}/public/events/{DEMO_TENANT}/{PAID_EVENT_SLUG}", timeout=10
+            )
+            assert pub.status_code == 404
+            again = s.post(
+                f"{API}/admin/events/{event_id}/suspend",
+                json={"comment": "ya estaba"},
+            )
+            assert again.status_code == 409
+        finally:
+            if did:
+                restored = s.post(f"{API}/admin/events/{event_id}/unsuspend")
+                assert restored.status_code == 200, restored.text
+                assert restored.json()["status"] == prev
+
+    def test_organizer_cannot_appeal_if_not_suspended(self, demo_token, demo_event_id):
+        s = new_session()
+        s.headers.update(bearer(demo_token))
+        r = s.post(
+            f"{API}/events/me/{demo_event_id}/suspension-appeal",
+            files={"message": (None, "Esto no debería pasar porque no está suspendido.")},
+            headers={"Content-Type": None},
+        )
+        assert r.status_code == 409
+
+    def test_suspension_appeal_flow(self, admin_token, demo_token, demo_event_ids):
+        event_id = demo_event_ids[PAID_EVENT_SLUG]
+        admin = new_session()
+        admin.headers.update(bearer(admin_token))
+        org = new_session()
+        org.headers.update(bearer(demo_token))
+        before = admin.get(f"{API}/admin/events/{event_id}")
+        assert before.status_code == 200
+        prev = before.json()["status"]
+        if prev in ("cancelled", "suspended"):
+            pytest.skip("seed event not in a suspendable state")
+        did = False
+        try:
+            r = admin.post(
+                f"{API}/admin/events/{event_id}/suspend",
+                json={"comment": "Precios incorrectos en localidades"},
+            )
+            assert r.status_code == 200, r.text
+            did = True
+            appeal = org.post(
+                f"{API}/events/me/{event_id}/suspension-appeal",
+                files={
+                    "message": (
+                        None,
+                        "Corregí el precio de VIP a 25.00 y adjunto la autorización.",
+                    )
+                },
+                headers={"Content-Type": None},
+            )
+            assert appeal.status_code == 200, appeal.text
+            assert appeal.json()["suspension_appeal"]["status"] == "pending"
+            detail = admin.get(f"{API}/admin/events/{event_id}").json()
+            assert detail["suspension_appeal"]["status"] == "pending"
+            rej = admin.post(
+                f"{API}/admin/events/{event_id}/suspension-appeal/reject",
+                json={"comment": "Falta el permiso municipal"},
+            )
+            assert rej.status_code == 200, rej.text
+            again = org.post(
+                f"{API}/events/me/{event_id}/suspension-appeal",
+                files={
+                    "message": (
+                        None,
+                        "Adjunto el permiso municipal actualizado y ya corregí el precio.",
+                    )
+                },
+                headers={"Content-Type": None},
+            )
+            assert again.status_code == 200, again.text
+            acc = admin.post(
+                f"{API}/admin/events/{event_id}/suspension-appeal/accept",
+                json={"comment": "OK, reactivamos"},
+            )
+            assert acc.status_code == 200, acc.text
+            did = False
+            assert acc.json()["status"] == prev
+            pub = requests.get(
+                f"{API}/public/events/{DEMO_TENANT}/{PAID_EVENT_SLUG}", timeout=10
+            )
+            if prev == "published":
+                assert pub.status_code == 200
+        finally:
+            if did:
+                admin.post(f"{API}/admin/events/{event_id}/unsuspend")

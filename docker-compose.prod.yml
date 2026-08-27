@@ -26,6 +26,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tys}:${POSTGRES_PASSWORD:?must be set}@postgres:5432/${POSTGRES_DB:-tys_production}
       JWT_SECRET: ${JWT_SECRET:?must be set}
       ENV: ${ENV:-production}
+      # Never reset demo organizers/events/orders on boot in production.
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?must be set}
       TYS_FEE_PERCENT: ${TYS_FEE_PERCENT:-5}

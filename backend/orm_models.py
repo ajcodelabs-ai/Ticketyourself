@@ -113,6 +113,28 @@ class SubscriptionPlan(Base):
     )
 
 
+class SalesFeeRule(Base):
+    """Per-ticket platform commission: plan × pricing_type × ticket price range."""
+
+    __tablename__ = "sales_fee_rules"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    plan_code = Column(String(40), nullable=False, index=True)
+    pricing_type = Column(String(20), nullable=False)  # paid | free | donation
+    min_price_cents = Column(Integer, nullable=False, default=0)
+    # None = no upper bound (open-ended range)
+    max_price_cents = Column(Integer, nullable=True)
+    fee_fixed_cents = Column(Integer, nullable=False, default=0)
+    fee_percent_bps = Column(Integer, nullable=False, default=0)  # 100 = 1%
+    # Exclusive: "fixed" uses fee_fixed_cents; "percent" uses fee_percent_bps.
+    fee_mode = Column(String(20), nullable=False, default="percent")
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
 class PlatformSetting(Base):
     """Key/value platform flags editable by superadmin (JSONB value)."""
 
@@ -340,7 +362,14 @@ class Event(Base):
     description = Column(Text, nullable=True)
     short_description = Column(String(500), nullable=True)
     category = Column(String(40), nullable=False)
-    status = Column(String(20), nullable=False, default="draft")
+    status = Column(
+        String(20), nullable=False, default="draft"
+    )  # draft | published | sold_out | ended | cancelled | suspended
+    status_before_suspend = Column(String(20), nullable=True)
+    suspended_at = Column(DateTime(timezone=True), nullable=True)
+    suspended_reason = Column(Text, nullable=True)
+    # Organizer rebuttal while suspended: {status, message, files[], admin_note, ...}
+    suspension_appeal = Column(JSONB, nullable=True)
     pricing_type = Column(String(20), nullable=False, default="free")
     visibility = Column(String(20), nullable=False, default="public")
 
@@ -390,6 +419,9 @@ class Event(Base):
     # §4.2.1 Pagado — per-ticket fees for general (non-seated) events:
     # service_fee_cents, ticketseguro_cents, tax_cents, wallet_fee_cents
     ticket_fees = Column(JSONB, nullable=False, default=dict)
+    # Who covers the TYS sales commission from sales_fee_rules:
+    # buyer = added at checkout; organizer = deducted, buyer does not see it.
+    platform_fee_bearer = Column(String(20), nullable=False, default="buyer")
 
     # Media — Banner / Mediana (poster) / Pequeña (small) + gallery
     poster_url = Column(Text, nullable=True)
@@ -829,7 +861,7 @@ class EventAsset(Base):
     id = Column(String(36), primary_key=True, default=_uuid4)
     event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
     organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False)
-    kind = Column(String(20), nullable=False)  # poster | banner | small | gallery
+    kind = Column(String(20), nullable=False)  # poster | banner | small | gallery | appeal
     file_path = Column(String(500), nullable=False)
     mime_type = Column(String(100), nullable=True)
     size_bytes = Column(Integer, nullable=True)

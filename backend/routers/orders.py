@@ -28,6 +28,7 @@ from orm_models import Organizer
 from services import discount_service, order_service
 from services.event_venue import resolve_event_venue
 from services.pdf_service import render_ticket_pdf
+from services.sales_fees import apply_platform_fee, list_sales_fee_rules
 
 logger = logging.getLogger("tys.public_orders")
 router = APIRouter(prefix="/api/public/orders", tags=["public-orders"])
@@ -43,6 +44,15 @@ def _frontend_base(payload_origin: Optional[str]) -> str:
         return env_url
     # Last resort — must be absolute or Stripe rejects it.
     raise HTTPException(500, "FRONTEND_URL not configured and origin_url missing")
+
+
+async def _sales_fee_ctx(organizer: dict) -> dict:
+    async with AsyncSessionLocal() as session:
+        rules = await list_sales_fee_rules(session, active_only=True)
+    return {
+        "sales_fee_rules": rules,
+        "plan_code": organizer.get("plan_code") or organizer.get("signup_plan_code"),
+    }
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -110,18 +120,22 @@ def _apply_discount_breakdown(totals: dict, applied: list[dict]) -> dict:
     if not applied:
         return {**totals, "discounts_applied": [], "discount_total_cents": 0}
     discount_total = sum(int(a.get("amount_cents") or 0) for a in applied)
-    new_subtotal = max(0, int(totals.get("subtotal_cents") or 0) - discount_total)
-    # Re-apply 5% service fee on net (only when the original totals had fees,
-    # i.e. paid pricing — donations and free events leave fees at 0).
-    fees = totals.get("fees_cents") or 0
-    if fees > 0:
-        fees = int(round(new_subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
+    old_subtotal = int(totals.get("subtotal_cents") or 0)
+    new_subtotal = max(0, old_subtotal - discount_total)
+    original_fees = int(totals.get("fees_cents") or 0)
+    bearer = (totals.get("platform_fee_bearer") or "buyer").lower()
+    if original_fees > 0 and old_subtotal > 0:
+        fees = int(round(original_fees * new_subtotal / old_subtotal))
+    else:
+        fees = 0
+    buyer_fee = fees if bearer != "organizer" else 0
     return {
         **totals,
         "discount_total_cents": discount_total,
         "fees_cents": fees,
-        "total_cents": new_subtotal + fees,
+        "total_cents": new_subtotal + buyer_fee,
         "discounts_applied": applied,
+        "platform_fee_bearer": bearer,
     }
 
 
@@ -138,18 +152,22 @@ async def preview_order(payload: PreviewOrderBody):
     if event["status"] != "published":
         raise HTTPException(409, "El evento no está disponible para compra")
 
+    fee_ctx = await _sales_fee_ctx(organizer)
+
     # Gross totals (re-uses the existing pricing helpers so we never diverge).
     if payload.seat_ids and venue:
         totals = order_service.compute_totals_with_seats(
             event=event,
             venue=venue,
             seat_ids=payload.seat_ids,
+            **fee_ctx,
         )
         quantity = len(payload.seat_ids)
     else:
         totals = order_service.compute_totals(
             event=event,
             quantity=payload.quantity,
+            **fee_ctx,
         )
         quantity = payload.quantity
 
@@ -177,18 +195,17 @@ async def preview_order(payload: PreviewOrderBody):
         # Align gross totals with ticket-type pricing when seats aren't used.
         if not (payload.seat_ids and venue):
             subtotal = sum(it["price_cents"] for it in items)
-            fees = (
-                int(round(subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
-                if subtotal > 0 and event.get("pricing_type") == "paid"
-                else 0
+            unit_prices = [int(it.get("price_cents") or 0) for it in items]
+            totals = apply_platform_fee(
+                {
+                    **totals,
+                    "subtotal_cents": subtotal,
+                    "unit_price_cents": int(subtotal / max(1, len(items))),
+                },
+                event=event,
+                unit_prices=unit_prices,
+                **fee_ctx,
             )
-            totals = {
-                **totals,
-                "subtotal_cents": subtotal,
-                "fees_cents": fees,
-                "total_cents": subtotal + fees,
-                "unit_price_cents": int(subtotal / max(1, len(items))),
-            }
     applied, warnings = discount_service.evaluate_discounts(
         event=event,
         items=items,
@@ -246,6 +263,8 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
     if event["status"] != "published":
         raise HTTPException(409, "El evento no está disponible para compra")
 
+    fee_ctx = await _sales_fee_ctx(organizer)
+
     buyer = order_service.validate_buyer(payload.buyer.model_dump())
 
     # Phase 8 — multi-función: validate function_id belongs to this event and
@@ -298,6 +317,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             event=pricing_event,
             venue=venue,
             seat_ids=seat_ids,
+            **fee_ctx,
         )
         quantity = len(seat_ids)
         from services.seats import seats_by_id
@@ -339,6 +359,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         vxs_subtotal = 0
         wallet_subtotal = 0
         items_override = []
+        unit_prices: list[int] = []
         for sel in payload.ticket_type_selections:
             tt = tt_map[sel.ticket_type_id]
             override = function_overrides.get(sel.ticket_type_id)
@@ -389,6 +410,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
             admin_subtotal += admin * sel.quantity
             vxs_subtotal += vxs * sel.quantity
             wallet_subtotal += wallet * sel.quantity
+            unit_prices.extend([unit] * sel.quantity)
             items_override.append(
                 {
                     "ticket_type_id": tt["id"],
@@ -400,24 +422,29 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
                 }
             )
         quantity = sum(s.quantity for s in payload.ticket_type_selections)
-        fees = int(round(entrada_subtotal * order_service.DEFAULT_FEE_PERCENT / 100))
-        totals = {
-            "unit_price_cents": entrada_subtotal // max(1, quantity),
-            "subtotal_cents": subtotal,
-            "entrada_cents": entrada_subtotal,
-            "service_fee_cents": service_subtotal,
-            "admin_fee_cents": admin_subtotal,
-            "vxs_cents": vxs_subtotal,
-            "wallet_fee_cents": wallet_subtotal,
-            "fees_cents": fees,
-            "total_cents": subtotal + fees,
-            "donation_amount_cents": 0,
-        }
+        totals = apply_platform_fee(
+            {
+                "unit_price_cents": entrada_subtotal // max(1, quantity),
+                "subtotal_cents": subtotal,
+                "entrada_cents": entrada_subtotal,
+                "service_fee_cents": service_subtotal,
+                "admin_fee_cents": admin_subtotal,
+                "vxs_cents": vxs_subtotal,
+                "wallet_fee_cents": wallet_subtotal,
+                "fees_cents": 0,
+                "total_cents": subtotal,
+                "donation_amount_cents": 0,
+            },
+            event=event,
+            unit_prices=unit_prices,
+            **fee_ctx,
+        )
     else:
         totals = order_service.compute_totals(
             event=event,
             quantity=payload.quantity,
             donation_amount_cents=payload.donation_amount_cents or 0,
+            **fee_ctx,
         )
         quantity = payload.quantity
 

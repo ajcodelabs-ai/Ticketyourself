@@ -9,6 +9,8 @@
  *  - Alignment guides during drag (snap to neighboring centers/edges).
  *  - Right-click → onContextMenu callback (with element id + screen pos).
  *  - Grid lines moved to its own Layer for performance (listening=false).
+ *  - Pan: Space+drag (hand cursor) or middle-mouse drag. Empty drag does not pan
+ *    so clicks can select / assign localities.
  */
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Stage, Layer, Rect, Line, Group, Transformer } from "react-konva";
@@ -139,6 +141,19 @@ export default function EditorCanvas({
     const [containerSize, setContainerSize] = useState({ width: 0, height });
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
+    const panRef = useRef({ x: 0, y: 0 });
+    useEffect(() => { panRef.current = pan; }, [pan]);
+    const [spaceHeld, setSpaceHeld] = useState(false);
+    const [panning, setPanning] = useState(false);
+    const spaceHeldRef = useRef(false);
+    const spaceDownRef = useRef(false);
+    const hoveringRef = useRef(false);
+    const panDragRef = useRef<{
+        startX: number;
+        startY: number;
+        originPan: { x: number; y: number };
+        moved: boolean;
+    } | null>(null);
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [guides, setGuides] = useState<GuideLine[]>([]);
     const dragSnapshot = useRef<DragSnapshot | null>(null);
@@ -170,6 +185,26 @@ export default function EditorCanvas({
             ro?.disconnect();
         };
     }, [height]);
+
+    // Prevent the browser from stealing middle-click for autoscroll.
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return undefined;
+        const blockMiddle = (ev: MouseEvent) => {
+            if (ev.button === 1) ev.preventDefault();
+        };
+        el.addEventListener("mousedown", blockMiddle);
+        el.addEventListener("auxclick", blockMiddle);
+        const onWheel = (ev: WheelEvent) => {
+            ev.stopPropagation();
+        };
+        el.addEventListener("wheel", onWheel, { passive: false });
+        return () => {
+            el.removeEventListener("mousedown", blockMiddle);
+            el.removeEventListener("auxclick", blockMiddle);
+            el.removeEventListener("wheel", onWheel);
+        };
+    }, []);
 
     // Sync Transformer — only on single selection (multi-select uses group drag).
     useEffect(() => {
@@ -252,12 +287,29 @@ export default function EditorCanvas({
         return () => cancelAnimationFrame(raf);
     }, [autoFitKey, elements, containerSize.width, containerSize.height, fitToView]);
 
-    // Keyboard shortcuts: `F` (fit) and `0` (reset). Skip when typing.
+    // Keyboard: Space = temporary hand tool. `F` / `0` only in the editor.
     useEffect(() => {
-        if (readOnly) return undefined;
-        const onKey = (e) => {
-            const tag = e.target?.tagName;
-            if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable) return;
+        const isTyping = (e: KeyboardEvent) => {
+            const tag = (e.target as HTMLElement)?.tagName;
+            return tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable;
+        };
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.code === "Space" || e.key === " ") {
+                spaceDownRef.current = true;
+                // Hovering the map wins even if an input in a dialog still has focus.
+                if (!hoveringRef.current && !panDragRef.current) return;
+                e.preventDefault();
+                e.stopPropagation();
+                (e as KeyboardEvent & { stopImmediatePropagation?: () => void })
+                    .stopImmediatePropagation?.();
+                if (isTyping(e)) (e.target as HTMLElement)?.blur?.();
+                if (e.repeat) return;
+                spaceHeldRef.current = true;
+                setSpaceHeld(true);
+                return;
+            }
+            if (isTyping(e)) return;
+            if (readOnly) return;
             if (e.metaKey || e.ctrlKey || e.altKey) return;
             if (e.key === "f" || e.key === "F") {
                 e.preventDefault();
@@ -267,36 +319,125 @@ export default function EditorCanvas({
                 resetView();
             }
         };
-        window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
+        const onKeyUp = (e: KeyboardEvent) => {
+            if (e.code !== "Space" && e.key !== " ") return;
+            spaceDownRef.current = false;
+            spaceHeldRef.current = false;
+            setSpaceHeld(false);
+            panDragRef.current = null;
+            setPanning(false);
+        };
+        const onBlur = () => {
+            spaceDownRef.current = false;
+            spaceHeldRef.current = false;
+            setSpaceHeld(false);
+            panDragRef.current = null;
+            setPanning(false);
+        };
+        window.addEventListener("keydown", onKeyDown, true);
+        window.addEventListener("keyup", onKeyUp);
+        window.addEventListener("blur", onBlur);
+        return () => {
+            window.removeEventListener("keydown", onKeyDown, true);
+            window.removeEventListener("keyup", onKeyUp);
+            window.removeEventListener("blur", onBlur);
+        };
     }, [fitToView, resetView, readOnly]);
+
+    const startPan = (clientX: number, clientY: number) => {
+        const el = containerRef.current;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        panDragRef.current = {
+            startX: clientX - rect.left,
+            startY: clientY - rect.top,
+            originPan: { ...panRef.current },
+            moved: false,
+        };
+        setPanning(true);
+    };
+
+    const movePan = (clientX: number, clientY: number) => {
+        const drag = panDragRef.current;
+        const el = containerRef.current;
+        if (!drag || !el) return;
+        const rect = el.getBoundingClientRect();
+        const dx = clientX - rect.left - drag.startX;
+        const dy = clientY - rect.top - drag.startY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+        setPan({
+            x: drag.originPan.x + dx,
+            y: drag.originPan.y + dy,
+        });
+    };
+
+    const endPan = () => {
+        const drag = panDragRef.current;
+        if (!drag) return;
+        const wasClick = !drag.moved;
+        panDragRef.current = null;
+        setPanning(false);
+        if (wasClick && !readOnly && !spaceHeldRef.current) {
+            onSelect([], { additive: false });
+        }
+    };
+
+    useEffect(() => {
+        if (!panning) return undefined;
+        const onMove = (ev: PointerEvent) => movePan(ev.clientX, ev.clientY);
+        const onUp = () => endPan();
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        return () => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+        };
+    }, [panning]);
 
     const screenToWorld = (sx, sy) => ({
         x: (sx - pan.x) / zoom,
         y: (sy - pan.y) / zoom,
     });
 
-    // Stage-level mouse handling: empty-area click for tool placement OR marquee.
+    const isEmptyTarget = (target: Konva.Node | undefined) => {
+        if (!target) return false;
+        const stage = target.getStage?.();
+        return target === stage || target.attrs?.id === "bg-rect";
+    };
+
+    // Pan only with Space or middle-click. Empty click stays select / assign / marquee.
     const handleStageMouseDown = (e) => {
-        const clickedEmpty = e.target === e.target.getStage()
-            || e.target.attrs.id === "bg-rect";
+        const evt = e.evt as MouseEvent & TouchEvent;
+        const button = evt.button ?? 0;
+        const shift = !!evt.shiftKey;
+        const clickedEmpty = isEmptyTarget(e.target);
+        const touch = evt.touches?.[0];
+        const clientX = touch?.clientX ?? evt.clientX;
+        const clientY = touch?.clientY ?? evt.clientY;
+
+        if (button === 1 || spaceHeldRef.current) {
+            evt.preventDefault?.();
+            startPan(clientX, clientY);
+            return;
+        }
+
         if (!clickedEmpty || readOnly) return;
         const stage = stageRef.current;
-        const pointer = stage.getPointerPosition();
+        const pointer = stage?.getPointerPosition();
         if (!pointer) return;
         const world = screenToWorld(pointer.x, pointer.y);
         if (tool && tool !== "select") {
             onCanvasClick?.(tool, world);
             return;
         }
-        // Start marquee
         setMarquee({
             x: world.x, y: world.y, w: 0, h: 0,
-            additive: e.evt.shiftKey,
+            additive: shift,
         });
     };
 
     const handleStageMouseMove = () => {
+        if (panDragRef.current) return;
         if (!marquee) return;
         const stage = stageRef.current;
         const pointer = stage.getPointerPosition();
@@ -306,6 +447,7 @@ export default function EditorCanvas({
     };
 
     const handleStageMouseUp = () => {
+        if (panDragRef.current) return;
         if (!marquee) return;
         const { x, y, w, h, additive } = marquee;
         setMarquee(null);
@@ -328,6 +470,10 @@ export default function EditorCanvas({
 
     // ── Group drag handling ──────────────────────────────────────────────
     const handleElementDragStart = (el: VenueCanvasElement, node: Konva.Node) => {
+        if (spaceHeldRef.current || panDragRef.current) {
+            node.stopDrag?.();
+            return;
+        }
         // Multi-select + Transformer causes position desync; detach while dragging.
         const tr = transformerRef.current;
         if (tr && selection.length > 1) {
@@ -350,6 +496,10 @@ export default function EditorCanvas({
     };
 
     const handleElementDragMove = (el: VenueCanvasElement, node: Konva.Node) => {
+        if (spaceHeldRef.current || panDragRef.current) {
+            node.stopDrag?.();
+            return;
+        }
         if (!dragSnapshot.current) {
             handleElementDragStart(el, node);
         }
@@ -537,10 +687,26 @@ export default function EditorCanvas({
     return (
         <div
             ref={containerRef}
-            className="w-full max-w-full min-w-0 bg-slate-50 rounded-lg border relative overflow-hidden"
-            style={{ height, maxWidth: "100%" }}
+            className="w-full max-w-full min-w-0 bg-slate-50 rounded-lg border relative overflow-hidden outline-none"
+            style={{ height, maxWidth: "100%", userSelect: "none", overscrollBehavior: "contain" }}
             data-testid="venue-canvas-wrap"
             onContextMenu={(e) => e.preventDefault()}
+            onMouseEnter={() => {
+                hoveringRef.current = true;
+                if (spaceDownRef.current) {
+                    spaceHeldRef.current = true;
+                    setSpaceHeld(true);
+                }
+            }}
+            onMouseLeave={() => { hoveringRef.current = false; }}
+            onPointerDown={(e) => {
+                hoveringRef.current = true;
+                e.stopPropagation();
+                (e.currentTarget as HTMLElement).focus({ preventScroll: true });
+            }}
+            onWheel={(e) => e.stopPropagation()}
+            tabIndex={0}
+            title="Espacio + arrastrar para mover el mapa"
         >
             <Stage
                 ref={stageRef}
@@ -556,9 +722,14 @@ export default function EditorCanvas({
                 onMouseUp={handleStageMouseUp}
                 onTouchStart={handleStageMouseDown}
                 style={{
-                    cursor: tool && tool !== "select" ? "crosshair" : "default",
+                    cursor: spaceHeld
+                        ? (panning ? "grabbing" : "grab")
+                        : tool && tool !== "select" && !readOnly
+                          ? "crosshair"
+                          : "default",
                     display: "block",
                     maxWidth: "100%",
+                    touchAction: "none",
                 }}
             >
                 {/* Background + grid layer (no listening) */}
@@ -588,8 +759,9 @@ export default function EditorCanvas({
                             element={el}
                             locality={el.locality_id ? localitiesById[el.locality_id] : undefined}
                             selected={selection.includes(el.id)}
-                            draggable={!readOnly && (!tool || tool === "select")}
+                            draggable={!readOnly && (!tool || tool === "select") && !spaceHeld && !panning}
                             onClick={(e) => {
+                                if (spaceHeldRef.current || panDragRef.current) return;
                                 e.cancelBubble = true;
                                 const additive = e.evt?.ctrlKey || e.evt?.metaKey || e.evt?.shiftKey;
                                 onSelect([el.id], { additive });
@@ -659,6 +831,9 @@ export default function EditorCanvas({
                         className="px-2 hover:bg-slate-100 rounded"
                         data-testid="zoom-reset"
                         title="Volver a zoom 1:1 (0)">Reset</button>
+                <span className="hidden sm:inline text-muted-foreground pl-1" title="Espacio = mano">
+                    Espacio
+                </span>
             </div>
         </div>
     );

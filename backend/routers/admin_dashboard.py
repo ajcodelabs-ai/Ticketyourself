@@ -294,10 +294,20 @@ async def attention_items(session: AsyncSession = Depends(get_db)) -> Dict[str, 
         )
         or 0
     )
+    pending_event_appeals = (
+        await session.scalar(
+            select(func.count(Event.id)).where(
+                Event.status == "suspended",
+                Event.suspension_appeal["status"].astext == "pending",
+            )
+        )
+        or 0
+    )
     return {
         "pending_organizers": pending_organizers,
         "stale_manual_orders": stale_manual_orders,
         "past_due_subscriptions": past_due_subs,
+        "pending_event_appeals": pending_event_appeals,
     }
 
 

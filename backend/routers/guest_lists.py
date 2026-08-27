@@ -34,7 +34,7 @@ from database import get_db
 from db_helpers import row_to_dict
 from orm_models import Event, EventAccessCode, EventGuestListEntry, Organizer, Tenant
 from security import require_role
-from services.plan_features import assert_feature
+from services.plan_features import assert_feature_async
 
 router = APIRouter(tags=["access-control"])
 public_router = APIRouter(tags=["access-control-public"])
@@ -97,7 +97,7 @@ async def add_guest_list_entry(
 ):
     org = await _get_org(user, session)
     await _get_event_for_org(event_id, org.id, session)
-    assert_feature(org.plan_code, "verified_lists")
+    await assert_feature_async(session, org.plan_code, "verified_lists")
 
     entry = EventGuestListEntry(
         id=str(uuid.uuid4()),
@@ -154,7 +154,7 @@ async def import_guest_list(
 ):
     org = await _get_org(user, session)
     await _get_event_for_org(event_id, org.id, session)
-    assert_feature(org.plan_code, "verified_lists")
+    await assert_feature_async(session, org.plan_code, "verified_lists")
 
     if file.size and file.size > 10 * 1024 * 1024:
         raise HTTPException(413, "El archivo supera los 10MB")
@@ -263,7 +263,7 @@ async def create_access_code(
 ):
     org = await _get_org(user, session)
     await _get_event_for_org(event_id, org.id, session)
-    assert_feature(org.plan_code, "access_codes")
+    await assert_feature_async(session, org.plan_code, "access_codes")
 
     code = (body.code or "").strip().upper() or _gen_code()
     existing = await session.execute(

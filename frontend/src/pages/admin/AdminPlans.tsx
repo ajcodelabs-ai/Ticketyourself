@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -50,25 +51,58 @@ const EMPTY_FORM = {
     max_events: -1,
     max_events_year: -1,
     max_tickets_per_event: -1,
+    max_venues: 1,
+    max_gallery_images: 10,
     includes_numbered: false,
     includes_ai_design: false,
     includes_custom_domain: false,
     includes_marketing: false,
     allows_paid_events: true,
     allows_free_events: true,
-    // §4.2.7 — descuentos (viven en feature_flags del plan)
+    multi_function_events: false,
+    verified_lists: false,
+    access_codes: false,
+    microsite_custom_css: false,
     promo_codes: false,
     advanced_discounts: false,
     presale_discount: true,
     disability_discount: true,
     senior_discount: true,
-    access_types_text: "general,vip",
+    access_types: [],
     verification_fee_dollars: "10.00",
     event_fee_enabled: false,
     event_fee_per_ticket_dollars: "0.00",
     event_fee_percent_bps: 0,
     active: true,
 };
+
+/** Mirrors backend PLAN_OVERRIDES for flags that live in feature_flags, not columns. */
+const PLAN_RUNTIME_DEFAULTS = {
+    evento_unico: { max_venues: 1, max_gallery_images: 10 },
+    basico: { max_venues: 1, max_gallery_images: 10 },
+    profesional: {
+        max_venues: 5,
+        max_gallery_images: 20,
+        microsite_custom_css: true,
+        promo_codes: true,
+        advanced_discounts: true,
+    },
+    enterprise: {
+        max_venues: -1,
+        max_gallery_images: 50,
+        microsite_custom_css: true,
+        promo_codes: true,
+        advanced_discounts: true,
+        multi_function_events: true,
+        verified_lists: true,
+        access_codes: true,
+    },
+};
+
+function runtimeDefault(code, key, fallback) {
+    const row = PLAN_RUNTIME_DEFAULTS[code] || {};
+    return row[key] ?? fallback;
+}
 
 function centsToDollars(cents) {
     const n = Number(cents);
@@ -86,8 +120,9 @@ function dollarsToCents(value) {
 
 function planToForm(p) {
     const flags = p.feature_flags || {};
+    const code = p.code;
     return {
-        code: p.code,
+        code,
         name: p.name,
         description: p.description,
         price_dollars: centsToDollars(p.price_cents),
@@ -97,18 +132,39 @@ function planToForm(p) {
         max_events: p.max_events ?? -1,
         max_events_year: p.max_events_year ?? -1,
         max_tickets_per_event: p.max_tickets_per_event ?? -1,
+        max_venues: Number(flags.max_venues ?? runtimeDefault(code, "max_venues", 1)),
+        max_gallery_images: Number(
+            flags.max_gallery_images ?? runtimeDefault(code, "max_gallery_images", 10),
+        ),
         includes_numbered: Boolean(p.includes_numbered),
         includes_ai_design: Boolean(p.includes_ai_design),
         includes_custom_domain: Boolean(p.includes_custom_domain),
         includes_marketing: Boolean(p.includes_marketing),
         allows_paid_events: p.allows_paid_events !== false,
         allows_free_events: p.allows_free_events !== false,
-        promo_codes: flags.promo_codes ?? Boolean(p.includes_marketing),
-        advanced_discounts: flags.advanced_discounts ?? Boolean(p.includes_marketing),
+        multi_function_events: Boolean(
+            flags.multi_function_events ?? runtimeDefault(code, "multi_function_events", false),
+        ),
+        verified_lists: Boolean(
+            flags.verified_lists ?? runtimeDefault(code, "verified_lists", false),
+        ),
+        access_codes: Boolean(
+            flags.access_codes ?? runtimeDefault(code, "access_codes", false),
+        ),
+        microsite_custom_css: Boolean(
+            flags.microsite_custom_css ?? runtimeDefault(code, "microsite_custom_css", false),
+        ),
+        promo_codes: Boolean(
+            flags.promo_codes ?? runtimeDefault(code, "promo_codes", Boolean(p.includes_marketing)),
+        ),
+        advanced_discounts: Boolean(
+            flags.advanced_discounts
+                ?? runtimeDefault(code, "advanced_discounts", Boolean(p.includes_marketing)),
+        ),
         presale_discount: flags.presale_discount !== false,
         disability_discount: flags.disability_discount !== false,
         senior_discount: flags.senior_discount !== false,
-        access_types_text: (p.access_types || []).join(","),
+        access_types: Array.isArray(p.access_types) ? p.access_types : [],
         verification_fee_dollars: centsToDollars(p.verification_fee_cents ?? 0),
         event_fee_enabled: Boolean(p.event_fee_enabled),
         event_fee_per_ticket_dollars: centsToDollars(p.event_fee_per_ticket_cents ?? 0),
@@ -120,10 +176,6 @@ function planToForm(p) {
 function formToPayload(form, { includeCode } = { includeCode: false }) {
     const features = form.features_text
         .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    const access_types = form.access_types_text
-        .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
     const price_cents = dollarsToCents(form.price_dollars);
@@ -148,7 +200,7 @@ function formToPayload(form, { includeCode } = { includeCode: false }) {
         includes_marketing: form.includes_marketing,
         allows_paid_events: form.allows_paid_events,
         allows_free_events: form.allows_free_events,
-        access_types,
+        access_types: Array.isArray(form.access_types) ? form.access_types : [],
         verification_fee_cents,
         event_fee_enabled: form.event_fee_enabled,
         event_fee_per_ticket_cents,
@@ -160,6 +212,12 @@ function formToPayload(form, { includeCode } = { includeCode: false }) {
             presale_discount: Boolean(form.presale_discount),
             disability_discount: Boolean(form.disability_discount),
             senior_discount: Boolean(form.senior_discount),
+            multi_function_events: Boolean(form.multi_function_events),
+            verified_lists: Boolean(form.verified_lists),
+            access_codes: Boolean(form.access_codes),
+            microsite_custom_css: Boolean(form.microsite_custom_css),
+            max_venues: Number(form.max_venues),
+            max_gallery_images: Number(form.max_gallery_images),
         },
     };
     if (includeCode) payload.code = form.code.trim().toLowerCase();
@@ -191,17 +249,25 @@ function FieldHint({ label, tip, htmlFor }: { label: string; tip: string; htmlFo
 
 const MODULE_HINTS = {
     includes_numbered:
-        "Permite asientos numerados y el editor de venue. El organizador lo ve al crear eventos con mapa de butacas.",
+        "Permite localidades numeradas (el comprador elige butaca). El escenario / mapa está disponible en todos los planes; sin este flag solo se pueden crear localidades no numeradas.",
     includes_marketing:
-        "Desbloquea herramientas de marketing premium (módulo marketing). Sin esto, esas opciones aparecen bloqueadas o ‘mejorá tu plan’.",
+        "Desbloquea el módulo de marketing premium. Sin esto, esas opciones aparecen bloqueadas.",
     includes_ai_design:
         "Habilita el diseñador de tickets con IA en el panel del evento.",
     includes_custom_domain:
         "Permite dominio propio en el microsite (ej. entradas.suempresa.com).",
+    microsite_custom_css:
+        "Permite CSS personalizado en el editor del microsite.",
     allows_paid_events:
         "Si está off, el organizador no puede crear eventos Pagado ni Por Donación.",
     allows_free_events:
         "Si está off, el organizador no puede crear eventos Gratuitos.",
+    multi_function_events:
+        "Permite eventos multifunción y con subeventos (varias fechas o experiencias hijas).",
+    verified_lists:
+        "Permite restringir la compra a una lista de invitados (email o cédula).",
+    access_codes:
+        "Permite exigir un código de acceso para comprar.",
     promo_codes:
         "Permite códigos promocionales múltiples (cupo global / por comprador) en el paso Descuentos del wizard.",
     advanced_discounts:
@@ -334,14 +400,20 @@ export default function AdminPlans() {
                     </Badge>
                     <h1 className="text-3xl font-semibold tracking-tight">Planes</h1>
                     <p className="text-sm text-muted-foreground max-w-2xl">
-                        Creá y editá membresías: precio, cupos, fee de verificación, cobro
-                        pre-evento (por entrada y % del valor facturado) y módulos incluidos.
+                        Precio, cupos y qué funciones están activas para el organizador
+                        (wizard, localidades, microsite). Si un módulo está off, la UI lo
+                        muestra bloqueado con el plan que lo desbloquea.
                     </p>
                 </div>
-                <Button onClick={openCreate} data-testid="admin-plan-create-btn">
-                    <Plus className="h-4 w-4 mr-1" />
-                    Nuevo plan
-                </Button>
+                <div className="flex gap-2">
+                    <Button variant="outline" asChild>
+                        <Link to="/admin/comisiones">Comisión por venta</Link>
+                    </Button>
+                    <Button onClick={openCreate} data-testid="admin-plan-create-btn">
+                        <Plus className="h-4 w-4 mr-1" />
+                        Nuevo plan
+                    </Button>
+                </div>
             </header>
 
             <Card className="border-border/70" data-testid="platform-pre-event-fee-card">
@@ -554,13 +626,25 @@ export default function AdminPlans() {
                         </div>
                         <div className="space-y-1.5">
                             <FieldHint
-                                label="Tipos de acceso (csv)"
-                                tip="Lista separada por comas de modos de acceso permitidos (ej: general, vip, season). Guíá qué opciones de acceso/códigos puede usar el organizador según el plan."
+                                label="Venues / mapas (-1 ∞)"
+                                tip="Tope de mapas activos. Se valida al crear o clonar un venue. -1 = ilimitado."
                             />
                             <Input
-                                value={form.access_types_text}
-                                onChange={setField("access_types_text")}
-                                placeholder="general,vip,season"
+                                type="number"
+                                value={form.max_venues}
+                                onChange={setField("max_venues")}
+                                data-testid="admin-plan-max-venues"
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <FieldHint
+                                label="Imágenes galería / evento (-1 ∞)"
+                                tip="Tope de fotos en la galería del evento. -1 = ilimitado."
+                            />
+                            <Input
+                                type="number"
+                                value={form.max_gallery_images}
+                                onChange={setField("max_gallery_images")}
                             />
                         </div>
                         <div className="space-y-1.5 sm:col-span-2">
@@ -593,12 +677,16 @@ export default function AdminPlans() {
                             </CardHeader>
                             <CardContent className="grid sm:grid-cols-2 gap-2 pb-4">
                                 {[
-                                    ["includes_numbered", "Eventos numerados"],
-                                    ["includes_marketing", "Módulo marketing"],
-                                    ["includes_ai_design", "Diseño IA tickets"],
-                                    ["includes_custom_domain", "Dominio custom"],
+                                    ["includes_numbered", "Localidades numeradas"],
                                     ["allows_paid_events", "Pagado / Donación"],
                                     ["allows_free_events", "Gratuito"],
+                                    ["multi_function_events", "Multifunción / subeventos"],
+                                    ["verified_lists", "Lista de invitados"],
+                                    ["access_codes", "Código de acceso"],
+                                    ["includes_ai_design", "Diseño IA tickets"],
+                                    ["includes_custom_domain", "Dominio custom"],
+                                    ["microsite_custom_css", "CSS del microsite"],
+                                    ["includes_marketing", "Módulo marketing"],
                                 ].map(([key, label]) => (
                                     <div key={key} className="flex items-center gap-2">
                                         <Checkbox
@@ -607,6 +695,7 @@ export default function AdminPlans() {
                                             onCheckedChange={(v) =>
                                                 setForm((f) => ({ ...f, [key]: Boolean(v) }))
                                             }
+                                            data-testid={`admin-plan-flag-${key}`}
                                         />
                                         <FieldHint label={label} tip={MODULE_HINTS[key]} htmlFor={key} />
                                     </div>

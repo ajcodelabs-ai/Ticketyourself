@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -26,7 +26,7 @@ from database import get_db
 from db_helpers import get_organizer_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import Event, Organizer, SubscriptionPlan, Venue
 from security import get_current_user
-from services.plan_features import get_plan_features
+from services.plan_features import get_plan_features_async
 from slugs import normalize_slug
 
 logger = logging.getLogger("tys.venues")
@@ -110,6 +110,13 @@ class Locality(BaseModel):
     color: str = "#6366F1"
     description: Optional[str] = None
     default_price_cents: Optional[int] = None
+    # numbered = seats/tables; unnumbered = GA zones. Event mixed is inferred.
+    seating_type: Optional[Literal["numbered", "unnumbered"]] = "numbered"
+
+    @field_validator("seating_type", mode="before")
+    @classmethod
+    def _coerce_seating_type(cls, v):
+        return "unnumbered" if v == "unnumbered" else "numbered"
 
 
 class CanvasCfg(BaseModel):
@@ -196,6 +203,12 @@ class LocalityIn(BaseModel):
     color: str = "#6366F1"
     description: Optional[str] = None
     default_price_cents: Optional[int] = None
+    seating_type: Optional[Literal["numbered", "unnumbered"]] = "numbered"
+
+    @field_validator("seating_type", mode="before")
+    @classmethod
+    def _coerce_seating_type(cls, v):
+        return "unnumbered" if v == "unnumbered" else "numbered"
 
 
 # ───────────────────────── Helpers ─────────────────────────────────────────
@@ -445,7 +458,7 @@ async def list_venues(
     for v in items:
         v["events_count"] = counts.get(v["id"], 0)
 
-    features = get_plan_features(org.get("plan_code"))
+    features = await get_plan_features_async(session, org.get("plan_code"))
     return {
         "items": items,
         "total": len(items),
@@ -460,7 +473,7 @@ async def create_venue(
     org: Dict[str, Any] = Depends(require_organizer),
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    features = get_plan_features(org.get("plan_code"))
+    features = await get_plan_features_async(session, org.get("plan_code"))
     max_v = features.get("max_venues", 1)
     if max_v != -1:
         active = await _venue_count(org["id"], session)
@@ -516,7 +529,7 @@ async def create_from_template(
     org: Dict[str, Any] = Depends(require_organizer),
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    features = get_plan_features(org.get("plan_code"))
+    features = await get_plan_features_async(session, org.get("plan_code"))
     max_v = features.get("max_venues", 1)
     if max_v != -1:
         active = await _venue_count(org["id"], session)
@@ -725,7 +738,7 @@ async def duplicate_venue(
     org: Dict[str, Any] = Depends(require_organizer),
     session: AsyncSession = Depends(get_db),
 ):
-    features = get_plan_features(org.get("plan_code"))
+    features = await get_plan_features_async(session, org.get("plan_code"))
     max_v = features.get("max_venues", 1)
     if max_v != -1:
         active = await _venue_count(org["id"], session)
@@ -834,6 +847,7 @@ async def update_locality(
                 "color": body.color,
                 "description": body.description,
                 "default_price_cents": body.default_price_cents,
+                "seating_type": body.seating_type or loc.get("seating_type") or "numbered",
             }
             found = True
             break

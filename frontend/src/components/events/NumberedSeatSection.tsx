@@ -202,7 +202,8 @@ export default function NumberedSeatSection({
 
     const breakdown = selectedSeatBreakdown(selected, effectiveLocalityPricing);
     const subtotal = breakdown.subtotal_cents;
-    const fees = feesForEntrada(breakdown.entrada_cents);
+    const rawFees = feesForEntrada(breakdown.entrada_cents);
+    const fees = event?.platform_fee_bearer === "organizer" ? 0 : rawFees;
     const total = subtotal + fees;
 
     const handleReserveAndContinue = async () => {

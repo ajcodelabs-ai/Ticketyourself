@@ -69,6 +69,12 @@ export default function EventPublic() {
         [event],
     );
     const isMixed = attendanceFormat === "mixed";
+    const showSeatMap =
+        !!event?.venue_id &&
+        (attendanceFormat === "numbered" || attendanceFormat === "mixed");
+    const showGaZones =
+        attendanceFormat === "mixed" ||
+        (attendanceFormat === "general" && !!event?.venue_id);
 
     useEffect(() => {
         let alive = true;
@@ -136,9 +142,9 @@ export default function EventPublic() {
         return () => { alive = false; };
     }, [event?.id, event?.venue_id]);
 
-    // §4.2.4 Mixto — ticket types for unnumbered zones (sold by quantity).
+    // Unnumbered localities are sold by quantity (synced ticket types).
     useEffect(() => {
-        if (!event?.id || !isMixed) {
+        if (!event?.id || !showGaZones) {
             setGaTicketCount(0);
             return;
         }
@@ -156,7 +162,7 @@ export default function EventPublic() {
         return () => {
             alive = false;
         };
-    }, [event?.id, isMixed]);
+    }, [event?.id, showGaZones]);
 
     const url = useMemo(() => eventPublicUrl(slug, event_slug), [slug, event_slug]);
     // "Subevento" wording (independent add-on: sala VIP, cena, meet & greet)
@@ -509,7 +515,7 @@ export default function EventPublic() {
                 </div>
             )}
 
-            {event.venue_id && (!event.is_multi_function || !functions.length || selectedFunctionId) && (
+            {showSeatMap && (!event.is_multi_function || !functions.length || selectedFunctionId) && (
                 <NumberedSeatSection
                     tenantSlug={slug}
                     event={event}
@@ -523,15 +529,18 @@ export default function EventPublic() {
                 />
             )}
 
-            {isMixed && event.venue_id && (!event.is_multi_function || !functions.length || selectedFunctionId) && (
+            {showGaZones && event.venue_id && (!event.is_multi_function || !functions.length || selectedFunctionId) && (
                 <section
                     className="max-w-3xl mx-auto px-6 pb-16 space-y-3"
                     data-testid="event-public-mixed-ga"
                 >
-                    <h2 className="text-xl font-semibold">Zonas generales (sin asiento)</h2>
+                    <h2 className="text-xl font-semibold">
+                        {isMixed ? "Zonas generales (sin asiento)" : "Localidades"}
+                    </h2>
                     <p className="text-sm text-muted-foreground">
-                        Además del mapa numerado, podés comprar entradas de aforo general
-                        (sin butaca asignada).
+                        {isMixed
+                            ? "Además del mapa numerado, podés comprar entradas de aforo general (sin butaca asignada)."
+                            : "Elegí la cantidad de entradas por localidad. No hay asignación de butaca."}
                     </p>
                     {gaTicketCount > 0 ? (
                         <Button
@@ -553,7 +562,7 @@ export default function EventPublic() {
                         </Button>
                     ) : (
                         <p className="text-sm text-muted-foreground" data-testid="event-public-mixed-ga-empty">
-                            Todavía no hay tipos de entrada disponibles para zonas generales.
+                            Todavía no hay localidades no numeradas disponibles.
                         </p>
                     )}
                 </section>

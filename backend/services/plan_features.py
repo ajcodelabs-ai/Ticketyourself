@@ -27,6 +27,7 @@ DEFAULT_FEATURES: Dict[str, Any] = {
     "senior_discount": True,
     "gallery_uploads": True,
     "includes_marketing": False,
+    "microsite_custom_css": False,
     "allows_paid_events": True,
     "allows_free_events": True,
     "max_events": 5,
@@ -136,6 +137,8 @@ def features_from_plan_row(row) -> Dict[str, Any]:
     base.update(
         {
             "numbered_seating": bool(data.get("includes_numbered")),
+            # Venue/map linking is not gated; numbered_seating only limits
+            # numbered localities (seat picker) in the event wizard.
             "custom_domain": bool(data.get("includes_custom_domain")),
             "ai_ticket_design": bool(data.get("includes_ai_design")),
             "includes_marketing": bool(data.get("includes_marketing")),
@@ -164,6 +167,79 @@ def features_from_plan_row(row) -> Dict[str, Any]:
     return base
 
 
+# Boolean flags the UI can lock + point to a cheaper unlocking plan.
+_UNLOCK_BOOL_KEYS = (
+    "numbered_seating",
+    "multi_function_events",
+    "advanced_discounts",
+    "promo_codes",
+    "verified_lists",
+    "access_codes",
+    "custom_domain",
+    "ai_ticket_design",
+    "includes_marketing",
+    "allows_paid_events",
+    "allows_free_events",
+    "presale_discount",
+    "disability_discount",
+    "senior_discount",
+    "microsite_custom_css",
+)
+
+_UNLOCK_QUOTA_KEYS = (
+    "max_venues",
+    "max_events",
+    "max_tickets_per_event",
+    "max_gallery_images",
+)
+
+
+async def _active_plans_with_features(session: AsyncSession) -> list[tuple[Any, Dict[str, Any]]]:
+    from orm_models import SubscriptionPlan
+
+    result = await session.execute(
+        select(SubscriptionPlan)
+        .where(SubscriptionPlan.active.is_(True))
+        .order_by(SubscriptionPlan.price_cents.asc(), SubscriptionPlan.name.asc())
+    )
+    out: list[tuple[Any, Dict[str, Any]]] = []
+    for row in result.scalars().all():
+        out.append((row, features_from_plan_row(row)))
+    return out
+
+
+def _quota_beats(candidate: Any, current: Any) -> bool:
+    if current == -1:
+        return False
+    if candidate == -1:
+        return True
+    try:
+        return int(candidate) > int(current or 0)
+    except (TypeError, ValueError):
+        return False
+
+
+async def feature_unlock_map(
+    session: AsyncSession, current: Optional[Dict[str, Any]] = None
+) -> Dict[str, Dict[str, str]]:
+    """Cheapest active plan that enables each gated flag / higher quota."""
+    unlocks: Dict[str, Dict[str, str]] = {}
+    current = current or {}
+    for row, feats in await _active_plans_with_features(session):
+        entry = {"code": row.code, "name": row.name}
+        for key in _UNLOCK_BOOL_KEYS:
+            if key in unlocks:
+                continue
+            if feats.get(key) is True:
+                unlocks[key] = entry
+        for key in _UNLOCK_QUOTA_KEYS:
+            if key in unlocks:
+                continue
+            if _quota_beats(feats.get(key), current.get(key)):
+                unlocks[key] = entry
+    return unlocks
+
+
 async def get_plan_features_async(
     session: AsyncSession, plan_code: Optional[str]
 ) -> Dict[str, Any]:
@@ -184,6 +260,7 @@ async def get_plan_features_async(
             else features_from_plan_row(row)
         )
     feats["pre_event_fee_required"] = await is_pre_event_fee_required(session)
+    feats["_unlocks"] = await feature_unlock_map(session, feats)
     return feats
 
 

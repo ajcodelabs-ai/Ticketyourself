@@ -84,9 +84,56 @@ def test_attention_items(admin_token):
     )
     assert r.status_code == 200
     body = r.json()
-    for k in ("pending_organizers", "stale_manual_orders", "past_due_subscriptions"):
+    for k in (
+        "pending_organizers",
+        "stale_manual_orders",
+        "past_due_subscriptions",
+        "pending_event_appeals",
+    ):
         assert k in body
         assert isinstance(body[k], int)
+
+
+# ── Payments inbox ──────────────────────────────────────────────────────────
+def test_admin_payments_inbox(admin_token):
+    r = requests.get(
+        f"{API}/admin/payments?status=pending",
+        headers=bearer(admin_token),
+        timeout=15,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "items" in body and "total" in body and "summary" in body
+    assert "pending_count" in body["summary"]
+    assert "pending_cents" in body["summary"]
+    assert "pending_by_kind" in body["summary"]
+    for kind in ("verification", "plan", "pre_event", "ticket"):
+        assert kind in body["summary"]["pending_by_kind"]
+        bucket = body["summary"]["pending_by_kind"][kind]
+        assert "count" in bucket and "cents" in bucket
+    for item in body["items"]:
+        assert item["status"] == "pending"
+        assert item["kind"] in ("verification", "plan", "pre_event", "ticket")
+        assert "amount_cents" in item
+        assert "organizer_id" in item
+
+
+def test_admin_payments_filter_kind(admin_token):
+    r = requests.get(
+        f"{API}/admin/payments?status=all&kind=ticket&limit=10",
+        headers=bearer(admin_token),
+        timeout=15,
+    )
+    assert r.status_code == 200
+    for item in r.json()["items"]:
+        assert item["kind"] == "ticket"
+
+
+def test_admin_payments_rbac(demo_token):
+    r = requests.get(
+        f"{API}/admin/payments", headers=bearer(demo_token), timeout=10
+    )
+    assert r.status_code in (401, 403)
 
 
 # ── Organizers rich ─────────────────────────────────────────────────────────

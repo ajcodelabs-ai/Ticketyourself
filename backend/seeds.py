@@ -1,4 +1,14 @@
-"""Idempotent seed of admin user, plans, demo organizers + tenants."""
+"""Startup seeds.
+
+Catalogs (plans, payment methods, document types, countries, fee rules) are
+insert-if-missing and safe to run in every environment.
+
+Demo reset/cleanup (organizers, events, microsites, ephemeral orders) runs
+ONLY in local/preview sandboxes. Production and staging never wipe business
+data on boot — Alembic migrations also never restore row defaults.
+
+Override with SEED_DEMO_DATA=true|false.
+"""
 
 import logging
 import os
@@ -25,6 +35,7 @@ from orm_models import (
     PaymentMethodCatalog,
     RegistrationCountry,
     RequiredDocumentSet,
+    SalesFeeRule,
     SeatHold,
     SubscriptionPlan,
     Tenant,
@@ -50,6 +61,35 @@ DEFAULT_DOCUMENT_TYPES = {
 }
 
 logger = logging.getLogger("tys.seed")
+
+_TRUTHY = {"1", "true", "yes", "on"}
+_FALSY = {"0", "false", "no", "off"}
+_DEMO_SEED_ENVS = {"preview", "test"}
+
+
+def env_name() -> str:
+    return (os.environ.get("ENV") or "development").strip().lower()
+
+
+def is_production_env() -> bool:
+    return env_name() == "production"
+
+
+def demo_seed_enabled() -> bool:
+    """Whether destructive demo reset/cleanup may run on startup.
+
+    Default: on only for development* / preview / test. Production and
+    staging stay off even if demo accounts happen to exist in the DB.
+    """
+    flag = (os.environ.get("SEED_DEMO_DATA") or "").strip().lower()
+    if flag in _FALSY:
+        return False
+    if flag in _TRUTHY:
+        return True
+    env = env_name()
+    if is_production_env():
+        return False
+    return env.startswith("development") or env in _DEMO_SEED_ENVS
 
 
 def _now_iso() -> str:
@@ -293,10 +333,10 @@ async def _seed_payment_method_catalog() -> None:
                     )
                 )
             else:
+                # Keep operator toggles (is_active). Sync labels from code.
                 existing.name = item["name"]
                 existing.kind = item["kind"]
                 existing.sort_order = item["sort_order"]
-                existing.is_active = True
                 existing.description = item["description"]
                 existing.updated_at = now
         await session.commit()
@@ -305,9 +345,11 @@ async def _seed_payment_method_catalog() -> None:
         )
 
 
-async def _seed_admin() -> None:
+async def _seed_admin(*, overwrite_password: bool | None = None) -> None:
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@ticketyourself.com").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin123!")
+    if overwrite_password is None:
+        overwrite_password = demo_seed_enabled()
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.email == admin_email))
         existing = result.scalar_one_or_none()
@@ -325,11 +367,12 @@ async def _seed_admin() -> None:
             )
             await session.commit()
             logger.info("Seeded super_admin %s", admin_email)
-        else:
-            if not verify_password(admin_password, existing.password_hash):
-                existing.password_hash = hash_password(admin_password)
-                await session.commit()
-                logger.info("Updated super_admin password for %s", admin_email)
+        elif overwrite_password and not verify_password(
+            admin_password, existing.password_hash
+        ):
+            existing.password_hash = hash_password(admin_password)
+            await session.commit()
+            logger.info("Updated super_admin password for %s", admin_email)
 
 
 async def _seed_plans() -> None:
@@ -351,6 +394,44 @@ async def _seed_plans() -> None:
                 )
         await session.commit()
     logger.info("Seeded %d plans", len(PLANS))
+
+
+_SALES_FEE_DEFAULTS = [
+    # plan, min_cents, max_cents, mode, fixed_cents, bps
+    ("evento_unico", 0, None, "percent", 0, 500),
+    ("basico", 0, 1999, "percent", 0, 500),
+    ("basico", 2000, None, "percent", 0, 450),
+    ("profesional", 0, 1999, "percent", 0, 400),
+    ("profesional", 2000, None, "percent", 0, 300),
+    ("enterprise", 0, None, "percent", 0, 250),
+]
+
+
+async def _seed_sales_fee_rules() -> None:
+    """Idempotent: only insert the demo matrix when the table is empty."""
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(select(func.count(SalesFeeRule.id)))
+        if existing:
+            return
+        for plan_code, lo, hi, mode, fixed, bps in _SALES_FEE_DEFAULTS:
+            session.add(
+                SalesFeeRule(
+                    id=str(uuid.uuid4()),
+                    plan_code=plan_code,
+                    pricing_type="paid",
+                    min_price_cents=lo,
+                    max_price_cents=hi,
+                    fee_mode=mode,
+                    fee_fixed_cents=fixed,
+                    fee_percent_bps=bps,
+                    active=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        await session.commit()
+    logger.info("Seeded %d sales fee rules", len(_SALES_FEE_DEFAULTS))
 
 
 async def _seed_document_types() -> None:
@@ -564,8 +645,8 @@ async def _seed_demo_organizers() -> None:
 
 async def _reset_demo_organizers() -> None:
     """
-    Re-asserts the canonical state of the 3 demo organizers on every startup.
-    All in PostgreSQL.
+    Re-asserts the canonical state of the 3 demo organizers on every sandbox
+    startup. Gated by demo_seed_enabled() — never runs in production.
     """
     from sqlalchemy.orm import selectinload
 
@@ -986,8 +1067,9 @@ async def _seed_demo_microsites() -> None:
 
 async def _seed_demo_events() -> None:
     """
-    Three demo events for demo-org. Reset on every boot so the public microsite
-    showcases a realistic mix (paid + paid + free, varying dates).
+    Three demo events for demo-org. Reset on every sandbox boot so the public
+    microsite showcases a realistic mix (paid + paid + free, varying dates).
+    Gated by demo_seed_enabled() — never runs in production.
     """
     organizer = await get_organizer_by_slug("demo-org")
     if not organizer:
@@ -2281,14 +2363,26 @@ async def _backfill_discount_rule_ids() -> None:
 
 async def run_seeds() -> None:
     await _create_indexes()
-    await _cleanup_ephemeral_test_data()
-    await _cleanup_ephemeral_orders()
     await _seed_admin()
     await _seed_plans()
+    await _seed_sales_fee_rules()
     await _seed_payment_method_catalog()
     await _seed_document_types()
     await _seed_required_documents()
     await _seed_registration_countries()
+    await _backfill_discount_rule_ids()
+
+    if not demo_seed_enabled():
+        logger.info(
+            "Skipping demo/reset seeds (ENV=%s). Existing organizers, events, "
+            "orders and admin config are left untouched.",
+            env_name(),
+        )
+        return
+
+    logger.info("Demo/reset seeds enabled (ENV=%s)", env_name())
+    await _cleanup_ephemeral_test_data()
+    await _cleanup_ephemeral_orders()
     await _seed_demo_organizers()
     await _reset_demo_organizers()
     await _seed_demo_microsites()
@@ -2297,4 +2391,3 @@ async def run_seeds() -> None:
     await _seed_demo_venues()
     await _seed_venue_templates()
     await _seed_demo_numbered_event()
-    await _backfill_discount_rule_ids()

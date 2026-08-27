@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from sqlalchemy import delete, func, or_, select, text
@@ -25,6 +25,7 @@ from orm_models import (
     Event,
     EventAsset,
     EventCapacityReservation,
+    EventFunction,
     EventSeatAssignment,
     Organizer,
     SeasonPassPurchase,
@@ -34,17 +35,20 @@ from orm_models import (
     Ticket,
     TicketOrder,
     TicketScan,
+    TicketType,
 )
 from security import get_current_user, require_role
 from services.event_venue import (
     locality_structural_diff,
+    normalize_layout_localities,
+    plan_layout_seating_conflict,
     recalc_layout_capacity,
     resolve_event_venue,
     snapshot_from_venue,
     structural_diff,
 )
 from services.path_safety import resolve_path_under
-from services.plan_features import assert_feature
+from services.plan_features import assert_feature_async, get_plan_features_async
 from slugs import normalize_slug
 
 logger = logging.getLogger("tys.events")
@@ -60,6 +64,16 @@ ALLOWED_IMG_MIME = {
     "image/heif",
 }
 MAX_IMG_BYTES = 5 * 1024 * 1024
+ALLOWED_APPEAL_MIME = {
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+}
+MAX_APPEAL_BYTES = 10 * 1024 * 1024
+MAX_APPEAL_FILES = 5
 
 EventCategory = Literal[
     "music",
@@ -83,7 +97,9 @@ EventCategory = Literal[
     "nightlife",
     "other",
 ]
-EventStatus = Literal["draft", "published", "sold_out", "ended", "cancelled"]
+EventStatus = Literal[
+    "draft", "published", "sold_out", "ended", "cancelled", "suspended"
+]
 PricingType = Literal["free", "paid", "donation"]
 Visibility = Literal[
     "public", "private", "public_blocked"
@@ -395,6 +411,8 @@ class EventBase(BaseModel):
     optional_donation_enabled: bool = False
     # §4.2.1 Pagado — per-ticket fees (general / non-seated events)
     ticket_fees: Optional[dict] = None
+    # Comisión TYS: buyer la paga en checkout; organizer la absorbe.
+    platform_fee_bearer: Literal["buyer", "organizer"] = "buyer"
     # §4.2.8 — preguntas adicionales al comprador
     custom_questions: List[CustomQuestion] = Field(default_factory=list)
     # M4 — diseñador visual de tickets; courtesy null = hereda el diseño principal
@@ -471,6 +489,7 @@ class EventUpdate(BaseModel):
     raffle_enabled: Optional[bool] = None
     optional_donation_enabled: Optional[bool] = None
     ticket_fees: Optional[dict] = None
+    platform_fee_bearer: Optional[Literal["buyer", "organizer"]] = None
     custom_questions: Optional[List[CustomQuestion]] = None
     ticket_design: Optional[TicketDesign] = None
     courtesy_ticket_design: Optional[TicketDesign] = None
@@ -566,6 +585,62 @@ def _dev_env() -> bool:
     return os.environ.get("ENV", "").startswith("development")
 
 
+def _empty_appeal() -> dict:
+    return {"status": "none", "message": "", "files": []}
+
+
+def _appeal_of(row: Event) -> dict:
+    raw = row.suspension_appeal
+    if not isinstance(raw, dict):
+        return _empty_appeal()
+    files = raw.get("files") if isinstance(raw.get("files"), list) else []
+    return {
+        "status": raw.get("status") or "none",
+        "message": raw.get("message") or "",
+        "files": files,
+        "submitted_at": raw.get("submitted_at"),
+        "admin_note": raw.get("admin_note") or "",
+        "reviewed_at": raw.get("reviewed_at"),
+    }
+
+
+def _set_appeal(row: Event, data: dict) -> None:
+    row.suspension_appeal = data
+    flag_modified(row, "suspension_appeal")
+
+
+def _restore_status_after_suspend(row: Event) -> str:
+    restore = row.status_before_suspend or (
+        "published" if row.published_at else "draft"
+    )
+    if restore == "suspended":
+        restore = "published" if row.published_at else "draft"
+    return restore
+
+
+def _appeal_file_response(asset: EventAsset, event: Event):
+    abs_path = resolve_path_under(ASSETS_DIR, asset.file_path)
+    if abs_path is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not abs_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    appeal = _appeal_of(event)
+    filename = next(
+        (
+            f.get("original_filename")
+            for f in appeal["files"]
+            if f.get("id") == asset.id
+        ),
+        "evidencia",
+    )
+    return FileResponse(
+        abs_path,
+        media_type=asset.mime_type or "application/octet-stream",
+        filename=str(filename),
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
 async def _pre_event_fee_breakdown(session, org: dict, event_row) -> dict:
     from orm_models import SubscriptionPlan, TicketType
     from services.event_fees import calculate_pre_event_fee
@@ -608,7 +683,7 @@ async def _next_event_slug(organizer_id: str, base: str, session) -> str:
         suffix += 1
 
 
-def _publish_validation(doc: dict) -> None:
+def _publish_validation(doc: dict, *, allow_numbered: bool = True) -> None:
     missing = []
     if not doc.get("title"):
         missing.append("título")
@@ -619,9 +694,19 @@ def _publish_validation(doc: dict) -> None:
     if not doc.get("poster_url"):
         missing.append("poster")
     if doc.get("venue_id"):
+        layout = doc.get("venue_layout") or {}
+        seat_only_blocked = (
+            plan_layout_seating_conflict(layout.get("elements"), allow_numbered)
+            == "numbered_only_blocked"
+        )
+        if seat_only_blocked:
+            missing.append(
+                "un escenario con zonas de aforo (tu plan no incluye butacas numeradas)"
+            )
         pricing = doc.get("locality_pricing") or []
         if not pricing:
-            missing.append("precios por localidad (evento numerado)")
+            if not seat_only_blocked:
+                missing.append("precios por localidad (evento numerado)")
         else:
             missing_loc = [
                 lp
@@ -671,11 +756,8 @@ async def link_venue_to_event(
     from services.seats import active_localities
 
     org = await _require_approved_organizer(user)
-    assert_feature(
-        # signup_plan_code is unverified/self-declared — never used for feature gates
-        org.get("plan_code"),
-        "numbered_seating",
-    )
+    # Escenario (mapa) is available on every plan. `numbered_seating` only
+    # gates numbered localities (butacas), not linking a venue.
     async with AsyncSessionLocal() as session:
         row = await session.scalar(
             select(Event)
@@ -835,11 +917,21 @@ async def put_event_venue_layout(
                 404, "Este evento no tiene mapa; vinculá un venue primero."
             )
 
+        localities = normalize_layout_localities(body.localities)
+        feats = await get_plan_features_async(session, org.get("plan_code"))
+        if not feats.get("numbered_seating") and any(
+            loc.get("seating_type") == "numbered" for loc in localities
+        ):
+            raise HTTPException(
+                403,
+                "Tu plan no incluye localidades numeradas. Usá zonas de aforo o mejorá el plan.",
+            )
+
         sold = int(row.tickets_sold or 0)
         if sold > 0:
             if structural_diff(
                 old.get("elements") or [], body.elements
-            ) or locality_structural_diff(old.get("localities") or [], body.localities):
+            ) or locality_structural_diff(old.get("localities") or [], localities):
                 raise HTTPException(
                     409,
                     f"Hay {sold} ticket(s) vendido(s); no se pueden cambiar elementos estructurales del mapa.",
@@ -849,7 +941,7 @@ async def put_event_venue_layout(
             **old,
             "canvas": body.canvas or {},
             "elements": body.elements or [],
-            "localities": body.localities or [],
+            "localities": localities,
             "source_venue_id": row.source_venue_id or row.venue_id,
         }
         capacity = recalc_layout_capacity(layout)
@@ -869,7 +961,7 @@ async def put_event_venue_layout(
             if lp.get("locality_id")
         }
         new_pricing = []
-        for loc in body.localities or []:
+        for loc in localities:
             lid = loc.get("id")
             if not lid:
                 continue
@@ -1011,13 +1103,13 @@ async def get_discounts_report(event_id: str, user=Depends(get_current_user)):
     return {"rules": report}
 
 
-def _assert_access_type_allowed(
-    plan_code: Optional[str], access_type: Optional[str]
+async def _assert_access_type_allowed(
+    session, plan_code: Optional[str], access_type: Optional[str]
 ) -> None:
     if access_type == "verified_list":
-        assert_feature(plan_code, "verified_lists")
+        await assert_feature_async(session, plan_code, "verified_lists")
     elif access_type == "access_code":
-        assert_feature(plan_code, "access_codes")
+        await assert_feature_async(session, plan_code, "access_codes")
 
 
 async def _assert_pricing_type_allowed(
@@ -1100,11 +1192,13 @@ async def _normalize_payment_methods_or_400(
 @router.post("", status_code=201)
 async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
     org = await _require_approved_organizer(user)
-    if payload.access_params:
-        _assert_access_type_allowed(
-            org.get("plan_code"), payload.access_params.access_type
-        )
     async with AsyncSessionLocal() as session:
+        if payload.access_params:
+            await _assert_access_type_allowed(
+                session,
+                org.get("plan_code"),
+                payload.access_params.access_type,
+            )
         await _assert_pricing_type_allowed(
             session,
             org.get("plan_code"),
@@ -1179,6 +1273,7 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
                 if payload.pricing_type == "paid" and payload.ticket_fees
                 else {}
             ),
+            platform_fee_bearer=payload.platform_fee_bearer or "buyer",
             custom_questions=[q.model_dump() for q in payload.custom_questions],
             multi_function_mode=payload.multi_function_mode,
             payment_methods=payment_methods,
@@ -1259,8 +1354,10 @@ async def update_my_event(
             )
         if "access_params" in diff and payload.access_params is not None:
             diff["access_params"] = payload.access_params.model_dump()
-            _assert_access_type_allowed(
-                org.get("plan_code"), payload.access_params.access_type
+            await _assert_access_type_allowed(
+                session,
+                org.get("plan_code"),
+                payload.access_params.access_type,
             )
         if "pricing_type" in diff:
             await _assert_pricing_type_allowed(
@@ -1327,7 +1424,22 @@ async def publish_event(event_id: str, user=Depends(get_current_user)):
         )
         if not row:
             raise HTTPException(status_code=404, detail="Event not found")
-        _publish_validation(row_to_dict(row))
+        if row.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "event_suspended",
+                    "message": (
+                        "Este evento está suspendido por Ticket Yourself. "
+                        "No se puede publicar hasta que el super admin lo reactive."
+                    ),
+                },
+            )
+        feats = await get_plan_features_async(session, org.get("plan_code"))
+        _publish_validation(
+            row_to_dict(row),
+            allow_numbered=bool(feats.get("numbered_seating")),
+        )
 
         # Pre-event platform fee (configurable per plan)
         breakdown = await _pre_event_fee_breakdown(session, org, row)
@@ -1589,7 +1701,9 @@ async def pay_pre_event_fee(
                     },
                 )
             except deuna_service.DeunaError as e:
-                logger.error("DEUNA pre-event fee create_order failed: %s", type(e).__name__)
+                logger.error(
+                    "DEUNA pre-event fee create_order failed: %s", type(e).__name__
+                )
                 raise HTTPException(
                     502,
                     "No pudimos iniciar el pago con DEUNA. Intentá de nuevo en unos minutos.",
@@ -1625,6 +1739,17 @@ async def unpublish_event(event_id: str, user=Depends(get_current_user)):
         )
         if not row:
             raise HTTPException(status_code=404, detail="Event not found")
+        if row.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "event_suspended",
+                    "message": (
+                        "Este evento está suspendido por Ticket Yourself. "
+                        "No se puede despublicar ni republicar hasta reactivarlo."
+                    ),
+                },
+            )
         row.status = "draft"
         row.updated_at = _now()
         await session.commit()
@@ -1641,9 +1766,230 @@ async def cancel_event(event_id: str, user=Depends(get_current_user)):
         if not row:
             raise HTTPException(status_code=404, detail="Event not found")
         row.status = "cancelled"
+        row.status_before_suspend = None
+        row.suspended_at = None
+        row.suspended_reason = None
         row.updated_at = _now()
         await session.commit()
     return {"ok": True, "status": "cancelled"}
+
+
+def _unlink_asset_file(file_path: str | None) -> None:
+    """Best-effort delete of one relative path under ASSETS_DIR."""
+    if not file_path:
+        return
+    abs_path = resolve_path_under(ASSETS_DIR, file_path)
+    if abs_path and abs_path.exists():
+        try:
+            abs_path.unlink()
+        except OSError:
+            logger.warning("Could not delete appeal file %s", file_path)
+
+
+def _finalize_appeal_disk(
+    *, committed: bool, written: List[str], obsolete: List[str]
+) -> None:
+    """Keep disk in sync with the DB transaction outcome.
+
+    New files are written before commit; old files stay on disk until commit
+    succeeds. A rollback must drop the new files and leave the old ones.
+    """
+    if committed:
+        for rel in obsolete:
+            _unlink_asset_file(rel)
+        return
+    for rel in written:
+        _unlink_asset_file(rel)
+
+
+def _write_appeal_bytes(abs_path: Path, content: bytes) -> None:
+    """Write bytes; remove a partial file if the OS write fails."""
+    try:
+        abs_path.write_bytes(content)
+    except OSError:
+        try:
+            if abs_path.exists():
+                abs_path.unlink()
+        except OSError:
+            logger.warning("Could not remove partial appeal file %s", abs_path)
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo guardar el archivo de evidencia",
+        ) from None
+
+
+async def _pop_appeal_asset_rows(session, event_id: str) -> List[str]:
+    """Delete appeal EventAsset rows. Return relative paths to unlink after commit."""
+    rows = (
+        (
+            await session.execute(
+                select(EventAsset).where(
+                    EventAsset.event_id == event_id, EventAsset.kind == "appeal"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    paths: List[str] = []
+    for asset in rows:
+        if asset.file_path:
+            paths.append(asset.file_path)
+        await session.delete(asset)
+    return paths
+
+
+async def _store_appeal_file(
+    event_id: str, organizer_id: str, file: UploadFile
+) -> dict:
+    if file.content_type not in ALLOWED_APPEAL_MIME:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"Tipo no permitido: {file.content_type or 'desconocido'}. "
+                "Aceptados: PDF, JPEG, PNG, WEBP."
+            ),
+        )
+    content = await file.read()
+    if len(content) > MAX_APPEAL_BYTES:
+        raise HTTPException(status_code=413, detail="Archivo supera los 10MB")
+    asset_id = str(uuid.uuid4())
+    ext = mimetypes.guess_extension(file.content_type) or ".bin"
+    if file.content_type == "application/pdf":
+        ext = ".pdf"
+    rel_path = f"{organizer_id}/{event_id}/appeal_{asset_id}{ext}"
+    abs_path = ASSETS_DIR / rel_path
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_appeal_bytes(abs_path, content)
+    return {
+        "id": asset_id,
+        "file_path": rel_path,
+        "mime_type": file.content_type,
+        "size_bytes": len(content),
+        "original_filename": (file.filename or "archivo").replace("/", "_")[:120],
+    }
+
+
+@router.post("/{event_id}/suspension-appeal")
+async def submit_suspension_appeal(
+    event_id: str,
+    message: str = Form(..., min_length=10, max_length=2000),
+    files: Optional[List[UploadFile]] = File(default=None),
+    user=Depends(get_current_user),
+):
+    """Organizer rebuttal: explain a mistake / attach evidence while suspended."""
+    org = await _require_approved_organizer(user)
+    if files is None:
+        uploads: List[UploadFile] = []
+    elif isinstance(files, list):
+        uploads = files
+    else:
+        uploads = [files]
+    if len(uploads) > MAX_APPEAL_FILES:
+        raise HTTPException(
+            status_code=422, detail=f"Máximo {MAX_APPEAL_FILES} archivos"
+        )
+    stored_meta: List[dict] = []
+    written_rel_paths: List[str] = []
+    obsolete_rel_paths: List[str] = []
+    appeal: dict = _empty_appeal()
+    committed = False
+    try:
+        async with AsyncSessionLocal() as session:
+            row = await session.scalar(
+                select(Event).where(
+                    Event.id == event_id, Event.organizer_id == org["id"]
+                )
+            )
+            if not row:
+                raise HTTPException(status_code=404, detail="Event not found")
+            if row.status != "suspended":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Sólo se puede apelar un evento suspendido",
+                )
+            # Drop old DB rows now; leave their files on disk until commit.
+            obsolete_rel_paths = await _pop_appeal_asset_rows(session, event_id)
+            for up in uploads:
+                if not up.filename:
+                    continue
+                meta = await _store_appeal_file(event_id, org["id"], up)
+                written_rel_paths.append(meta["file_path"])
+                session.add(
+                    EventAsset(
+                        id=meta["id"],
+                        event_id=event_id,
+                        organizer_id=org["id"],
+                        kind="appeal",
+                        file_path=meta["file_path"],
+                        mime_type=meta["mime_type"],
+                        size_bytes=meta["size_bytes"],
+                        uploaded_at=_now(),
+                    )
+                )
+                stored_meta.append(
+                    {
+                        "id": meta["id"],
+                        "original_filename": meta["original_filename"],
+                        "mime_type": meta["mime_type"],
+                        "size_bytes": meta["size_bytes"],
+                    }
+                )
+            appeal = {
+                "status": "pending",
+                "message": message.strip(),
+                "files": stored_meta,
+                "submitted_at": _now().isoformat(),
+                "admin_note": "",
+                "reviewed_at": None,
+            }
+            _set_appeal(row, appeal)
+            row.updated_at = _now()
+            session.add(
+                AuditLog(
+                    id=str(uuid.uuid4()),
+                    actor_user_id=user["id"],
+                    action="event.suspension_appealed",
+                    target_type="event",
+                    target_id=event_id,
+                    metadata_={"files": len(stored_meta)},
+                    created_at=_now(),
+                )
+            )
+            await session.commit()
+            committed = True
+    finally:
+        _finalize_appeal_disk(
+            committed=committed,
+            written=written_rel_paths,
+            obsolete=obsolete_rel_paths,
+        )
+    return {"ok": True, "suspension_appeal": appeal}
+
+
+@router.get("/{event_id}/suspension-appeal/files/{asset_id}")
+async def download_my_appeal_file(
+    event_id: str,
+    asset_id: str,
+    user=Depends(get_current_user),
+):
+    org = await _require_approved_organizer(user)
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        asset = await session.scalar(
+            select(EventAsset).where(
+                EventAsset.id == asset_id,
+                EventAsset.event_id == event_id,
+                EventAsset.kind == "appeal",
+            )
+        )
+    if not asset:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    return _appeal_file_response(asset, row)
 
 
 @router.delete("/{event_id}", status_code=204)
@@ -1960,6 +2306,8 @@ async def serve_event_asset(asset_id: str):
             select(EventAsset).where(EventAsset.id == asset_id)
         )
     if not _asset_row:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if _asset_row.kind == "appeal":
         raise HTTPException(status_code=404, detail="Asset not found")
     abs_path = resolve_path_under(ASSETS_DIR, _asset_row.file_path)
     if abs_path is None:
@@ -2447,6 +2795,358 @@ class ForceCancelBody(BaseModel):
     comment: str = Field(default="", max_length=400)
 
 
+class SuspendEventBody(BaseModel):
+    comment: str = Field(..., min_length=3, max_length=400)
+
+
+def _clear_suspend_fields(row: Event) -> None:
+    row.status_before_suspend = None
+    row.suspended_at = None
+    row.suspended_reason = None
+
+
+def _layout_summary(layout: Any) -> dict:
+    if not isinstance(layout, dict) or not layout:
+        return {
+            "has_layout": False,
+            "localities_count": 0,
+            "capacity_calculated": None,
+        }
+    locs = layout.get("localities") or []
+    return {
+        "has_layout": True,
+        "localities_count": len(locs) if isinstance(locs, list) else 0,
+        "capacity_calculated": layout.get("capacity_calculated"),
+    }
+
+
+@admin_router.get("/{event_id}")
+async def admin_get_event(
+    event_id: str,
+    _admin=Depends(require_role("super_admin")),
+):
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(select(Event).where(Event.id == event_id))
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        event = row_to_dict(row)
+        layout = event.pop("venue_layout", None)
+        event["venue_layout_summary"] = _layout_summary(layout)
+        loc_names = {}
+        if isinstance(layout, dict):
+            for loc in layout.get("localities") or []:
+                if isinstance(loc, dict) and loc.get("id"):
+                    loc_names[loc["id"]] = loc.get("name") or loc["id"]
+        priced = []
+        for lp in event.get("locality_pricing") or []:
+            if not isinstance(lp, dict):
+                continue
+            item = dict(lp)
+            item.setdefault("name", loc_names.get(item.get("locality_id")))
+            priced.append(item)
+        event["locality_pricing"] = priced
+
+        org = await session.scalar(
+            select(Organizer).where(Organizer.id == row.organizer_id)
+        )
+        tt_rows = (
+            (
+                await session.execute(
+                    select(TicketType)
+                    .where(TicketType.event_id == event_id)
+                    .order_by(TicketType.sort_order.asc(), TicketType.created_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        fn_rows = (
+            (
+                await session.execute(
+                    select(EventFunction)
+                    .where(EventFunction.event_id == event_id)
+                    .order_by(
+                        EventFunction.sort_order.asc(), EventFunction.starts_at.asc()
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        paid = (
+            await session.execute(
+                select(
+                    func.count(TicketOrder.id),
+                    func.coalesce(func.sum(TicketOrder.total_cents), 0),
+                    func.coalesce(func.sum(TicketOrder.fees_cents), 0),
+                ).where(
+                    TicketOrder.event_id == event_id,
+                    TicketOrder.status == "paid",
+                )
+            )
+        ).one()
+        pending_count = (
+            await session.scalar(
+                select(func.count(TicketOrder.id)).where(
+                    TicketOrder.event_id == event_id,
+                    TicketOrder.status.in_(
+                        ("pending", "pending_gateway", "pending_manual_payment")
+                    ),
+                )
+            )
+            or 0
+        )
+        recent = (
+            (
+                await session.execute(
+                    select(TicketOrder)
+                    .where(TicketOrder.event_id == event_id)
+                    .order_by(TicketOrder.created_at.desc())
+                    .limit(20)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    organizer = None
+    if org:
+        organizer = {
+            "id": org.id,
+            "company_name": org.company_name,
+            "slug": org.slug,
+            "email": org.email,
+            "status": org.status,
+            "plan_code": org.plan_code,
+        }
+
+    event["organizer"] = organizer
+    event["ticket_types"] = [row_to_dict(t) for t in tt_rows]
+    event["functions"] = [row_to_dict(f) for f in fn_rows]
+    event["sales"] = {
+        "orders_paid": int(paid[0] or 0),
+        "orders_pending": int(pending_count or 0),
+        "gmv_cents": int(paid[1] or 0),
+        "fees_cents": int(paid[2] or 0),
+        "tickets_sold": int(event.get("tickets_sold") or 0),
+    }
+    event["recent_orders"] = [
+        {
+            "id": o.id,
+            "order_number": o.order_number,
+            "status": o.status,
+            "payment_method": o.payment_method,
+            "buyer_email": o.buyer_email,
+            "total_cents": int(o.total_cents or 0),
+            "fees_cents": int(o.fees_cents or 0),
+            "created_at": o.created_at,
+            "paid_at": o.paid_at,
+        }
+        for o in recent
+    ]
+    return event
+
+
+@admin_router.post("/{event_id}/suspend")
+async def admin_suspend_event(
+    event_id: str,
+    payload: SuspendEventBody,
+    admin=Depends(require_role("super_admin")),
+):
+    obsolete_rel_paths: List[str] = []
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(select(Event).where(Event.id == event_id))
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        if row.status == "cancelled":
+            raise HTTPException(
+                status_code=409,
+                detail="No se puede suspender un evento cancelado",
+            )
+        if row.status == "suspended":
+            raise HTTPException(status_code=409, detail="El evento ya está suspendido")
+        now = _now()
+        row.status_before_suspend = row.status
+        row.status = "suspended"
+        row.suspended_at = now
+        row.suspended_reason = payload.comment.strip()
+        obsolete_rel_paths = await _pop_appeal_asset_rows(session, event_id)
+        _set_appeal(row, _empty_appeal())
+        row.updated_at = now
+        session.add(
+            AuditLog(
+                id=str(uuid.uuid4()),
+                actor_user_id=admin["id"],
+                action="event.suspended",
+                target_type="event",
+                target_id=event_id,
+                metadata_={
+                    "comment": payload.comment.strip(),
+                    "status_before": row.status_before_suspend,
+                },
+                created_at=now,
+            )
+        )
+        await session.commit()
+    for rel in obsolete_rel_paths:
+        _unlink_asset_file(rel)
+    return {"ok": True, "status": "suspended"}
+
+
+@admin_router.post("/{event_id}/unsuspend")
+async def admin_unsuspend_event(
+    event_id: str,
+    admin=Depends(require_role("super_admin")),
+):
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(select(Event).where(Event.id == event_id))
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        if row.status != "suspended":
+            raise HTTPException(status_code=409, detail="El evento no está suspendido")
+        restore = row.status_before_suspend or (
+            "published" if row.published_at else "draft"
+        )
+        if restore == "suspended":
+            restore = "published" if row.published_at else "draft"
+        now = _now()
+        row.status = restore
+        appeal = _appeal_of(row)
+        if appeal["status"] == "pending":
+            appeal["status"] = "accepted"
+            appeal["reviewed_at"] = now.isoformat()
+            appeal["admin_note"] = (
+                appeal.get("admin_note") or "Reactivado por el super admin"
+            )
+            _set_appeal(row, appeal)
+        _clear_suspend_fields(row)
+        row.updated_at = now
+        session.add(
+            AuditLog(
+                id=str(uuid.uuid4()),
+                actor_user_id=admin["id"],
+                action="event.unsuspended",
+                target_type="event",
+                target_id=event_id,
+                metadata_={"restored_status": restore},
+                created_at=now,
+            )
+        )
+        await session.commit()
+    return {"ok": True, "status": restore}
+
+
+class AppealReviewBody(BaseModel):
+    comment: str = Field(default="", max_length=400)
+
+
+@admin_router.get("/{event_id}/suspension-appeal/files/{asset_id}")
+async def admin_download_appeal_file(
+    event_id: str,
+    asset_id: str,
+    _admin=Depends(require_role("super_admin")),
+):
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(select(Event).where(Event.id == event_id))
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        asset = await session.scalar(
+            select(EventAsset).where(
+                EventAsset.id == asset_id,
+                EventAsset.event_id == event_id,
+                EventAsset.kind == "appeal",
+            )
+        )
+    if not asset:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    return _appeal_file_response(asset, row)
+
+
+@admin_router.post("/{event_id}/suspension-appeal/accept")
+async def admin_accept_suspension_appeal(
+    event_id: str,
+    payload: AppealReviewBody,
+    admin=Depends(require_role("super_admin")),
+):
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(select(Event).where(Event.id == event_id))
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        if row.status != "suspended":
+            raise HTTPException(status_code=409, detail="El evento no está suspendido")
+        appeal = _appeal_of(row)
+        if appeal["status"] != "pending":
+            raise HTTPException(
+                status_code=409, detail="No hay una apelación pendiente"
+            )
+        restore = _restore_status_after_suspend(row)
+        now = _now()
+        appeal["status"] = "accepted"
+        appeal["admin_note"] = (payload.comment or "").strip()
+        appeal["reviewed_at"] = now.isoformat()
+        _set_appeal(row, appeal)
+        row.status = restore
+        _clear_suspend_fields(row)
+        row.updated_at = now
+        session.add(
+            AuditLog(
+                id=str(uuid.uuid4()),
+                actor_user_id=admin["id"],
+                action="event.suspension_appeal_accepted",
+                target_type="event",
+                target_id=event_id,
+                metadata_={"restored_status": restore, "comment": payload.comment},
+                created_at=now,
+            )
+        )
+        await session.commit()
+    return {"ok": True, "status": restore}
+
+
+@admin_router.post("/{event_id}/suspension-appeal/reject")
+async def admin_reject_suspension_appeal(
+    event_id: str,
+    payload: AppealReviewBody,
+    admin=Depends(require_role("super_admin")),
+):
+    note = (payload.comment or "").strip()
+    if len(note) < 3:
+        raise HTTPException(
+            status_code=422, detail="Indicá por qué se rechaza la apelación"
+        )
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(select(Event).where(Event.id == event_id))
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        if row.status != "suspended":
+            raise HTTPException(status_code=409, detail="El evento no está suspendido")
+        appeal = _appeal_of(row)
+        if appeal["status"] != "pending":
+            raise HTTPException(
+                status_code=409, detail="No hay una apelación pendiente"
+            )
+        now = _now()
+        appeal["status"] = "rejected"
+        appeal["admin_note"] = note
+        appeal["reviewed_at"] = now.isoformat()
+        _set_appeal(row, appeal)
+        row.updated_at = now
+        session.add(
+            AuditLog(
+                id=str(uuid.uuid4()),
+                actor_user_id=admin["id"],
+                action="event.suspension_appeal_rejected",
+                target_type="event",
+                target_id=event_id,
+                metadata_={"comment": note},
+                created_at=now,
+            )
+        )
+        await session.commit()
+    return {"ok": True, "status": "suspended", "suspension_appeal": appeal}
+
+
 @admin_router.post("/{event_id}/force-cancel")
 async def admin_force_cancel(
     event_id: str,
@@ -2459,6 +3159,7 @@ async def admin_force_cancel(
             raise HTTPException(status_code=404, detail="Event not found")
         now = _now()
         row.status = "cancelled"
+        _clear_suspend_fields(row)
         row.updated_at = now
         session.add(
             AuditLog(

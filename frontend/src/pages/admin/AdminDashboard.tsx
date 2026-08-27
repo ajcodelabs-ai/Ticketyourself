@@ -141,7 +141,7 @@ export default function AdminDashboard() {
                             </CardDescription>
                         </div>
                     </CardHeader>
-                    <CardContent className="grid sm:grid-cols-3 gap-3 text-sm">
+                    <CardContent className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
                         <AttentionChip
                             value={attention.pending_organizers}
                             label="Organizadores pendientes"
@@ -151,7 +151,7 @@ export default function AdminDashboard() {
                         <AttentionChip
                             value={attention.stale_manual_orders}
                             label="Órdenes manuales >24h sin confirmar"
-                            to="/admin/eventos"
+                            to="/admin/pagos?kind=ticket&status=pending"
                             testid="attention-stale-orders"
                         />
                         <AttentionChip
@@ -159,6 +159,12 @@ export default function AdminDashboard() {
                             label="Suscripciones past_due"
                             to="/admin/organizadores?subscription_status=past_due"
                             testid="attention-past-due"
+                        />
+                        <AttentionChip
+                            value={attention.pending_event_appeals || 0}
+                            label="Apelaciones de eventos"
+                            to="/admin/eventos?status=suspended"
+                            testid="attention-event-appeals"
                         />
                     </CardContent>
                 </Card>

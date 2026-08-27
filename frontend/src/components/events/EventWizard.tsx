@@ -5,7 +5,7 @@
  *  1. General — info principal · descripción · keywords · contenido avanzado
  *  2. Fechas y ventas — fechas · ventana de venta · límites/eTicket · Funciones
  *  3. Media — portada · principal · miniatura · gallery · Diseño de ticket
- *  4. Localidades — Dónde · precios/aforo · tipos de ticket · abono (si aplica)
+ *  4. Localidades — 4.1 escenario · 4.2 localidades (tipo + mapa)
  *  5. Formas de pago
  *  6. Descuentos
  *  7. Accesos — visibilidad · quién puede comprar · lista/códigos
@@ -20,9 +20,7 @@ import EventVenueSection from "@/components/events/EventVenueSection";
 import DiscountRulesPanel from "@/components/events/DiscountRulesPanel";
 import CustomQuestionsPanel from "@/components/events/CustomQuestionsPanel";
 import EventContentPanel from "@/components/events/EventContentPanel";
-import TicketTypesPanel from "@/components/events/TicketTypesPanel";
 import EventFunctionsPanel from "@/components/events/EventFunctionsPanel";
-import SeasonPassPanel from "@/components/events/SeasonPassPanel";
 import PreEventFeeDialog from "@/components/events/PreEventFeeDialog";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import GuestListPanel from "@/components/events/GuestListPanel";
@@ -73,8 +71,6 @@ import {
     Ticket,
     ScanQrCode,
     Mail,
-    MapPinned,
-    Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -103,6 +99,8 @@ import {
 } from "@/components/ui/tooltip";
 import api, { formatApiError } from "@/lib/api";
 import { usePlanFeatures } from "@/hooks/queries/usePlanFeatures";
+import { planLockLabel } from "@/lib/planUnlock";
+import { PlanGateHint, UpgradePlanButton } from "@/components/plans/PlanGate";
 import {
     defaultPaymentMethods,
     GATEWAY_STUB_CODES,
@@ -128,8 +126,8 @@ import {
     localInputToIso,
 } from "@/lib/events";
 import {
-    ATTENDANCE_FORMATS,
     inferAttendanceFormat,
+    planLayoutSeatingConflict,
 } from "@/lib/attendanceFormat";
 
 const DEFAULT_TZ = import.meta.env.VITE_DEFAULT_TIMEZONE || "America/Guayaquil";
@@ -164,6 +162,11 @@ const STEPS = [
 const MEDIA_SUBSTEPS = [
     { id: "images", label: "Imágenes", num: "3.1" },
     { id: "ticket", label: "Diseño de ticket", num: "3.2" },
+];
+
+const LOCALIDADES_SUBSTEPS = [
+    { id: "escenario", label: "Escenario", num: "4.1" },
+    { id: "localidades", label: "Localidades", num: "4.2" },
 ];
 
 /** Legacy ?tab= values → current step ids (deep-links / bookmarks). */
@@ -232,6 +235,7 @@ function makeInitial(d) {
             sales_window_preset_start: "immediate",
             sales_window_preset_end: "at_start",
             pricing_type: "free",
+            platform_fee_bearer: "buyer",
             base_price_dollars: "",
             currency: "USD",
             capacity: "",
@@ -270,21 +274,7 @@ function makeInitial(d) {
     const startsIso = d.starts_at || null;
     const endsIso = d.ends_at || null;
     const durInfer = inferDurationPreset(startsIso, endsIso);
-    const attendanceFormat = (() => {
-        const saved = d.access_params?.attendance_format;
-        if (d.venue_id) {
-            const inferred = inferAttendanceFormat(d);
-            if (saved === "mixed" || inferred === "mixed") return "mixed";
-            if (saved === "numbered") return "numbered";
-            return inferred;
-        }
-        if (saved === "numbered" || saved === "general" || saved === "mixed") {
-            return saved;
-        }
-        return !d.venue_id && !!d.venue_name && d.pricing_type !== undefined
-            ? "general"
-            : "numbered";
-    })();
+    const attendanceFormat = inferAttendanceFormat(d);
     return {
         title: d.title || "",
         description: d.description || "",
@@ -306,6 +296,7 @@ function makeInitial(d) {
         sales_window_preset_end:
             d.sales_window_preset_end || inferSalesEndPreset(startsIso, d.sales_end),
         pricing_type: d.pricing_type || "free",
+        platform_fee_bearer: d.platform_fee_bearer === "organizer" ? "organizer" : "buyer",
         base_price_dollars:
             d.base_price_cents != null ? (d.base_price_cents / 100).toFixed(2) : "",
         currency: d.currency || "USD",
@@ -339,7 +330,7 @@ function makeInitial(d) {
         custom_questions: d.custom_questions || [],
         ticket_design: d.ticket_design || null,
         courtesy_ticket_design: d.courtesy_ticket_design || null,
-        // PRD §4.2.4 — general = no map; numbered/mixed use venue.
+        // Attendance format is inferred from localities (numbered / general / mixed).
         no_seating_mode: attendanceFormat === "general",
         attendance_format: attendanceFormat,
         venue_id: d.venue_id || null,
@@ -393,6 +384,8 @@ function makeInitial(d) {
 export default function EventWizard({ initial = null, mode = "create" }) {
     const navigate = useNavigate();
     const { organizer } = useAuth();
+    const { data: planFeatures } = usePlanFeatures();
+    const allowNumbered = planFeatures ? Boolean(planFeatures.numbered_seating) : true;
     const [searchParams, setSearchParams] = useSearchParams();
     const [form, setForm] = useState(() => makeInitial(initial));
     const formRef = useRef(form);
@@ -421,47 +414,36 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         };
     }, []);
 
-    // Phase 9.5 — fetch venue localities so the discounts panel (and ticket
-    // types) can offer a locality select with the event's actual configured
-    // price (not just the venue template's default).
+    // Event-owned localities from the snapshot (master venue is shape-only).
     useEffect(() => {
-        if (!currentEvent?.venue_id) {
+        const layout = currentEvent?.venue_layout;
+        if (!currentEvent?.venue_id || !layout) {
             setVenueLocalities([]);
             return;
         }
-        api.get(`/venues/me/${currentEvent.venue_id}`)
-            .then((r) => {
-                const elements = r.data.elements || [];
-                const elementsLocs = new Set();
-                for (const el of elements) {
-                    if (el.locality_id) elementsLocs.add(el.locality_id);
+        const elements = layout.elements || [];
+        const pricingByLocality = {};
+        for (const lp of currentEvent.locality_pricing || []) {
+            pricingByLocality[lp.locality_id] = lp;
+        }
+        setVenueLocalities(
+            (layout.localities || []).map((l) => {
+                const lp = pricingByLocality[l.id];
+                let capacity = 0;
+                try {
+                    capacity = capacityByLocality(elements, l.id);
+                } catch {
+                    capacity = 0;
                 }
-                const pricingByLocality = {};
-                for (const lp of currentEvent.locality_pricing || []) {
-                    pricingByLocality[lp.locality_id] = lp;
-                }
-                setVenueLocalities(
-                    (r.data.localities || [])
-                        .filter((l) => elementsLocs.has(l.id))
-                        .map((l) => {
-                            const lp = pricingByLocality[l.id];
-                            let capacity = 0;
-                            try {
-                                capacity = capacityByLocality(elements, l.id);
-                            } catch {
-                                capacity = 0;
-                            }
-                            return {
-                                ...l,
-                                price_cents: lp?.price_cents ?? l.default_price_cents ?? 0,
-                                max_tickets_per_purchase: lp?.max_tickets_per_purchase ?? null,
-                                capacity,
-                            };
-                        }),
-                );
-            })
-            .catch(() => setVenueLocalities([]));
-    }, [currentEvent?.venue_id, currentEvent?.locality_pricing]);
+                return {
+                    ...l,
+                    price_cents: lp?.price_cents ?? l.default_price_cents ?? 0,
+                    max_tickets_per_purchase: lp?.max_tickets_per_purchase ?? null,
+                    capacity,
+                };
+            }),
+        );
+    }, [currentEvent?.venue_id, currentEvent?.venue_layout, currentEvent?.locality_pricing]);
 
     // For numbered events, `venue_name` is set server-side from the linked venue
     // rather than typed by the organizer. Whenever `currentEvent` refreshes
@@ -502,6 +484,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     const [gallery, setGallery] = useState(initial?.gallery_urls || []);
     const [uploadingKind, setUploadingKind] = useState(null);
     const [mediaSubStep, setMediaSubStep] = useState("images"); // images | ticket
+    const [localidadesSubStep, setLocalidadesSubStep] = useState("escenario"); // escenario | localidades
 
     useEffect(() => {
         if (initial) {
@@ -517,38 +500,11 @@ export default function EventWizard({ initial = null, mode = "create" }) {
 
     const lockCritical = mode === "edit" && (initial?.tickets_sold || 0) > 0;
 
-    // Live sale window — computed straight from the (possibly unsaved) form
-    // state, same as buildPayload() does, so ticket types reflect whatever is
-    // set in "Fechas y ventas" even before the first save.
-    const liveSaleWindow = useMemo(() => {
-        const startsIso = form.starts_at ? localInputToIso(form.starts_at, form.timezone) : null;
-        return {
-            sale_start: computeSalesStart(
-                startsIso,
-                form.sales_window_preset_start,
-                form.sales_start_custom ? localInputToIso(form.sales_start_custom, form.timezone) : null,
-            ),
-            sale_end: computeSalesEnd(
-                startsIso,
-                form.sales_window_preset_end,
-                form.sales_end_custom ? localInputToIso(form.sales_end_custom, form.timezone) : null,
-            ),
-        };
-    }, [
-        form.starts_at,
-        form.sales_window_preset_start,
-        form.sales_window_preset_end,
-        form.sales_start_custom,
-        form.sales_end_custom,
-    ]);
-
-    // When a venue is selected (linked or pending before first save), checkout
-    // uses the seat map — ticket types / season pass stay hidden inside Localidades.
     const hasVenueSelected = !!(form.venue_id || currentEvent?.venue_id || pendingVenueId);
 
     const stepStatus = useMemo(
-        () => evalStepStatus(form, poster, currentEvent, pendingVenueId),
-        [form, poster, currentEvent, pendingVenueId],
+        () => evalStepStatus(form, poster, currentEvent, pendingVenueId, allowNumbered),
+        [form, poster, currentEvent, pendingVenueId, allowNumbered],
     );
 
     const validationCtx = useMemo(
@@ -558,8 +514,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             currentEvent,
             pendingVenueId,
             organizerStatus: organizer?.status || null,
+            allowNumbered,
         }),
-        [form, poster, currentEvent, pendingVenueId, organizer?.status],
+        [form, poster, currentEvent, pendingVenueId, organizer?.status, allowNumbered],
     );
 
     // Drop resolved issues as the organizer fills them in.
@@ -588,6 +545,13 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             cursor[keys[keys.length - 1]] = value;
             return next;
         });
+    };
+
+    const handleEventUpdated = (e) => {
+        setCurrentEvent(e);
+        if (e?.platform_fee_bearer) {
+            update("platform_fee_bearer", e.platform_fee_bearer);
+        }
     };
 
     const showIssues = (issues, modeLabel) => {
@@ -694,6 +658,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     update("no_seating_mode", false);
                     if (form.attendance_format === "general") {
                         update("attendance_format", "numbered");
+                    }
+                    if (activeStep === "localidades") {
+                        setLocalidadesSubStep("localidades");
                     }
                 } catch (linkErr) {
                     toast.error(
@@ -890,11 +857,45 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         setSearchParams(params, { replace: true });
     };
     const idx = STEPS.findIndex((s) => s.id === activeStep);
-    const goPrev = () => handleTabChange(STEPS[Math.max(0, idx - 1)].id);
-    const goNext = () => handleTabChange(STEPS[Math.min(STEPS.length - 1, idx + 1)].id);
+    const goPrev = () => {
+        if (activeStep === "localidades" && localidadesSubStep === "localidades") {
+            setLocalidadesSubStep("escenario");
+            return;
+        }
+        if (activeStep === "media" && mediaSubStep === "ticket") {
+            setMediaSubStep("images");
+            return;
+        }
+        handleTabChange(STEPS[Math.max(0, idx - 1)].id);
+    };
+    const goNext = () => {
+        if (activeStep === "media" && mediaSubStep === "images") {
+            setMediaSubStep("ticket");
+            return;
+        }
+        if (activeStep === "localidades" && localidadesSubStep === "escenario") {
+            setLocalidadesSubStep("localidades");
+            return;
+        }
+        handleTabChange(STEPS[Math.min(STEPS.length - 1, idx + 1)].id);
+    };
 
     return (
         <div className="space-y-4" data-testid="event-wizard">
+            {currentEvent?.status === "suspended" && (
+                <div
+                    className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-950"
+                    data-testid="wizard-suspended-banner"
+                >
+                    Este evento está suspendido
+                    {currentEvent.suspended_reason
+                        ? `: ${currentEvent.suspended_reason}`
+                        : "."}{" "}
+                    Guardá las correcciones (precios, fechas, textos) y después, en el
+                    detalle del evento, enviá tu respuesta al super admin. No se puede
+                    publicar hasta que lo reactiven.
+                </div>
+            )}
             <Tabs value={activeStep} onValueChange={handleTabChange}>
                 {/* Mobile: compact progress bar (hidden on lg+) */}
                 <div className="lg:hidden flex items-center gap-3 rounded-xl border bg-card px-4 py-2.5">
@@ -1043,50 +1044,105 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                             </div>
                         </TabsContent>
                         <TabsContent value="localidades">
-                            <div className="space-y-5">
-                                <DondeBlock
-                                    form={form}
-                                    update={update}
-                                    disabled={lockCritical}
-                                    currentEvent={currentEvent}
-                                />
-                                <SectionVenueLocalidades
-                                    form={form}
-                                    update={update}
-                                    disabled={lockCritical}
-                                    event={currentEvent}
-                                    onEventUpdated={setCurrentEvent}
-                                    onJumpToInfo={() => handleTabChange("general")}
-                                    onReturnFromVenueCreate={venuesList}
-                                    pendingVenueId={pendingVenueId}
-                                    onPendingVenueChange={setPendingVenueId}
-                                />
-                                {((!hasVenueSelected && form.attendance_format === "general")
-                                    || form.attendance_format === "mixed") && (
-                                    <div className="space-y-5">
-                                        {form.attendance_format === "mixed" && (
-                                            <p
-                                                className="text-xs text-muted-foreground rounded-lg border bg-secondary/30 px-3 py-2"
-                                                data-testid="mixed-ga-hint"
-                                            >
-                                                Mixto: el mapa cubre asientos numerados; abajo definí
-                                                tipos de entrada para las zonas no numeradas (aforo
-                                                general).
-                                            </p>
-                                        )}
-                                        <TicketTypesPanel
-                                            eventId={eventId}
-                                            localities={venueLocalities}
-                                            eventSaleWindow={liveSaleWindow}
-                                            timezone={form.timezone}
+                            <div className="space-y-5" data-testid="localidades-substeps">
+                                <div className="lg:hidden flex flex-wrap items-center justify-between gap-3">
+                                    <p className="text-xs text-muted-foreground">
+                                        Localidades · paso{" "}
+                                        <strong className="text-foreground">
+                                            {localidadesSubStep === "escenario" ? "1" : "2"} de 2
+                                        </strong>
+                                    </p>
+                                    <div
+                                        className="inline-flex rounded-lg border bg-card p-0.5"
+                                        role="tablist"
+                                        aria-label="Subpasos de Localidades"
+                                    >
+                                        <button
+                                            type="button"
+                                            role="tab"
+                                            aria-selected={localidadesSubStep === "escenario"}
+                                            onClick={() => setLocalidadesSubStep("escenario")}
+                                            className={`rounded-md px-3 py-1.5 text-sm transition ${
+                                                localidadesSubStep === "escenario"
+                                                    ? "bg-primary text-primary-foreground shadow-sm"
+                                                    : "text-muted-foreground hover:text-foreground"
+                                            }`}
+                                            data-testid="localidades-substep-escenario"
+                                        >
+                                            4.1 Escenario
+                                        </button>
+                                        <button
+                                            type="button"
+                                            role="tab"
+                                            aria-selected={localidadesSubStep === "localidades"}
+                                            onClick={() => setLocalidadesSubStep("localidades")}
+                                            className={`rounded-md px-3 py-1.5 text-sm transition ${
+                                                localidadesSubStep === "localidades"
+                                                    ? "bg-primary text-primary-foreground shadow-sm"
+                                                    : "text-muted-foreground hover:text-foreground"
+                                            }`}
+                                            data-testid="localidades-substep-localidades"
+                                        >
+                                            4.2 Localidades
+                                            {(currentEvent?.venue_layout?.localities || []).length > 0 && (
+                                                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" />
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {localidadesSubStep === "escenario" ? (
+                                    <div className="space-y-4">
+                                        <EventVenueSection
+                                            event={currentEvent}
+                                            disabled={lockCritical}
+                                            onUpdated={handleEventUpdated}
+                                            onReturnFromVenueCreate={venuesList}
+                                            pendingVenueId={pendingVenueId}
+                                            onPendingVenueChange={setPendingVenueId}
+                                            panel="escenario"
+                                            onFormatChange={(fmt) => {
+                                                update("attendance_format", fmt);
+                                                update("no_seating_mode", false);
+                                            }}
                                         />
-                                        {form.attendance_format === "general" && (
-                                            <SeasonPassPanel
-                                                eventId={eventId}
-                                                hasVenue={false}
-                                                timezone={form.timezone}
-                                            />
-                                        )}
+                                        <div className="flex justify-end border-t pt-4">
+                                            <Button
+                                                type="button"
+                                                onClick={() => setLocalidadesSubStep("localidades")}
+                                                data-testid="localidades-goto-localidades"
+                                            >
+                                                Continuar a 4.2 Localidades
+                                                <ChevronRight className="h-4 w-4 ml-1" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        <EventVenueSection
+                                            event={currentEvent}
+                                            disabled={lockCritical}
+                                            onUpdated={handleEventUpdated}
+                                            onReturnFromVenueCreate={venuesList}
+                                            pendingVenueId={pendingVenueId}
+                                            onPendingVenueChange={setPendingVenueId}
+                                            panel="localidades"
+                                            onFormatChange={(fmt) => {
+                                                update("attendance_format", fmt);
+                                                update("no_seating_mode", false);
+                                            }}
+                                        />
+                                        <div className="flex justify-between border-t pt-4">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={() => setLocalidadesSubStep("escenario")}
+                                                data-testid="localidades-goto-escenario"
+                                            >
+                                                <ChevronLeft className="h-4 w-4 mr-1" />
+                                                Volver a 4.1 Escenario
+                                            </Button>
+                                        </div>
                                     </div>
                                 )}
                             </div>
@@ -1139,8 +1195,14 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                     setMediaSubStep(subId);
                                     if (activeStep !== "media") handleTabChange("media");
                                 };
+                                const goLocalidadesSub = (subId) => {
+                                    setLocalidadesSubStep(subId);
+                                    if (activeStep !== "localidades") handleTabChange("localidades");
+                                };
                                 const imagesOk = !!poster;
                                 const ticketOk = !!form.ticket_design?.elements?.length;
+                                const escenarioOk = hasVenueSelected;
+                                const locsOk = (currentEvent?.venue_layout?.localities || []).length > 0;
 
                                 return (
                                     <div key={s.id} className="w-full space-y-0.5">
@@ -1152,6 +1214,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             data-testid={`tab-${s.id}`}
                                             onClick={() => {
                                                 if (s.id === "media") setMediaSubStep("images");
+                                                if (s.id === "localidades") setLocalidadesSubStep("escenario");
                                             }}
                                         >
                                             <StepIcon status={st} size="md" />
@@ -1184,6 +1247,52 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                                                     : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                                                             }`}
                                                             data-testid={`tab-media-${sub.id}`}
+                                                            aria-current={subActive ? "step" : undefined}
+                                                        >
+                                                            <span
+                                                                className={`h-3.5 w-3.5 shrink-0 rounded-full border flex items-center justify-center ${
+                                                                    subDone
+                                                                        ? "border-emerald-500 bg-emerald-500/15 text-emerald-600"
+                                                                        : "border-muted-foreground/40"
+                                                                }`}
+                                                            >
+                                                                {subDone && (
+                                                                    <Check className="h-2.5 w-2.5" />
+                                                                )}
+                                                            </span>
+                                                            <span className="tabular-nums shrink-0 opacity-70">
+                                                                {sub.num}
+                                                            </span>
+                                                            <span className="leading-tight truncate">
+                                                                {sub.label}
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+
+                                        {s.id === "localidades" && (
+                                            <div
+                                                className="pl-3 ml-2 border-l border-border/70 space-y-0.5"
+                                                data-testid="localidades-sidebar-substeps"
+                                            >
+                                                {LOCALIDADES_SUBSTEPS.map((sub) => {
+                                                    const subActive =
+                                                        isActive && localidadesSubStep === sub.id;
+                                                    const subDone =
+                                                        sub.id === "escenario" ? escenarioOk : locsOk;
+                                                    return (
+                                                        <button
+                                                            key={sub.id}
+                                                            type="button"
+                                                            onClick={() => goLocalidadesSub(sub.id)}
+                                                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition ${
+                                                                subActive
+                                                                    ? "bg-primary/15 text-primary font-medium"
+                                                                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                                                            }`}
+                                                            data-testid={`tab-localidades-${sub.id}`}
                                                             aria-current={subActive ? "step" : undefined}
                                                         >
                                                             <span
@@ -1291,7 +1400,11 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     ) : (
                         <Button
                             onClick={() => persist(true)}
-                            disabled={saving || publishing}
+                            disabled={
+                                saving ||
+                                publishing ||
+                                currentEvent?.status === "suspended"
+                            }
                             className="bg-primary"
                             data-testid="wizard-publish"
                         >
@@ -1332,7 +1445,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-function evalStepStatus(form, poster, currentEvent, pendingVenueId = null) {
+function evalStepStatus(form, poster, currentEvent, pendingVenueId = null, allowNumbered = true) {
     const s: Record<string, string | undefined> = {};
 
     const titleOk = form.title?.length >= 2;
@@ -1340,11 +1453,9 @@ function evalStepStatus(form, poster, currentEvent, pendingVenueId = null) {
     const durationOk = form.duration_preset && form.duration_preset !== "custom"
         ? true
         : Number(form.duration_minutes_custom || 0) > 0;
-    const whereOk = form.no_seating_mode
-        ? !!form.venue_name
-        : !!(form.venue_id || currentEvent?.venue_id || pendingVenueId);
+    const whereOk = !!(form.venue_id || currentEvent?.venue_id || pendingVenueId);
 
-    // General: title only; location lives in Localidades (DondeBlock).
+    // General: title only; location lives in Localidades (escenario).
     s.general = titleOk ? "ok" : "error";
 
     // Fechas y ventas: start + duration required.
@@ -1356,22 +1467,21 @@ function evalStepStatus(form, poster, currentEvent, pendingVenueId = null) {
         ? "ok"
         : "warn";
 
-    // Localidades: seated → venue_id; general → venue_name + pricing rules.
-    const pricingOk =
-        form.pricing_type === "free"
-        || (form.pricing_type === "paid" && Number(form.base_price_dollars) > 0)
-        || form.pricing_type === "donation";
-    s.localidades = form.no_seating_mode
-        ? !whereOk
-            ? "warn"
-            : pricingOk
+    // Localidades: escenario vinculado; localidades creadas marcan ok.
+    const hasLocalities = (currentEvent?.venue_layout?.localities || []).length > 0
+        || (currentEvent?.locality_pricing || []).length > 0;
+    const seatOnlyBlocked =
+        planLayoutSeatingConflict(
+            currentEvent?.venue_layout?.elements,
+            allowNumbered,
+        ) === "numbered_only_blocked";
+    s.localidades = !whereOk
+        ? "warn"
+        : seatOnlyBlocked
+          ? "error"
+          : hasLocalities
             ? "ok"
-            : form.pricing_type === "paid" && !Number(form.base_price_dollars)
-            ? "error"
-            : "warn"
-        : whereOk
-        ? "ok"
-        : "warn";
+            : "warn";
 
     // Payments: at least one catalog code (free events skip this step)
     const enabledCodes = resolveEnabledPaymentCodes(form.payment_methods, {
@@ -1439,6 +1549,7 @@ function buildPayload(form) {
         sales_window_preset_start: form.sales_window_preset_start,
         sales_window_preset_end: form.sales_window_preset_end,
         pricing_type: form.pricing_type,
+        platform_fee_bearer: form.platform_fee_bearer === "organizer" ? "organizer" : "buyer",
         base_price_cents:
             form.pricing_type === "free"
                 ? 0
@@ -1568,7 +1679,10 @@ function SectionGeneral({ form, update, disabled }) {
         if (!fallback || fallback.value === form.pricing_type) return;
         update("pricing_type", fallback.value);
         toast.message("Tipo de recaudación ajustado a tu plan", {
-            description: `«${opt.title}» no está incluido. Se cambió a ${fallback.title}.`,
+            description: `«${opt.title}» ${planLockLabel(
+                planFeatures,
+                opt.requiresPaid ? "allows_paid_events" : "allows_free_events",
+            )}. Se cambió a ${fallback.title}.`,
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to plan + selected type
     }, [planFeatures, form.pricing_type]);
@@ -1730,9 +1844,14 @@ function SectionGeneral({ form, update, disabled }) {
                                                 {!allowed && (
                                                     <Badge
                                                         variant="outline"
-                                                        className="text-[10px] font-normal"
+                                                        className="text-[10px] font-normal border-amber-300 text-amber-950 bg-amber-50"
                                                     >
-                                                        Plan
+                                                        {planLockLabel(
+                                                            planFeatures,
+                                                            opt.requiresPaid
+                                                                ? "allows_paid_events"
+                                                                : "allows_free_events",
+                                                        )}
                                                     </Badge>
                                                 )}
                                             </div>
@@ -1743,6 +1862,16 @@ function SectionGeneral({ form, update, disabled }) {
                                     );
                                 })}
                             </div>
+                            {!allowsPaid && (
+                                <PlanGateHint feature="allows_paid_events" className="mt-2">
+                                    Eventos pagados y por donación: {planLockLabel(planFeatures, "allows_paid_events")}.
+                                </PlanGateHint>
+                            )}
+                            {!allowsFree && (
+                                <PlanGateHint feature="allows_free_events" className="mt-2">
+                                    Eventos gratuitos: {planLockLabel(planFeatures, "allows_free_events")}.
+                                </PlanGateHint>
+                            )}
                         </div>
 
                         {form.pricing_type === "free" && (
@@ -1937,8 +2066,7 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
         if (structure === "single") return;
         update("event_structure", "single");
         toast.message("Tipo de evento ajustado a tu plan", {
-            description:
-                "Multifunción y subeventos requieren un plan superior. Se dejó Evento único.",
+            description: `Multifunción y subeventos: ${planLockLabel(planFeatures, "multi_function_events")}. Se dejó Evento único.`,
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [planFeatures, structure]);
@@ -2011,7 +2139,7 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
                         onSelect={() => setStructure("multi")}
                         testid="event-structure-multi"
                         disabled={disabled || !allowsMulti}
-                        badge={!allowsMulti ? "Plan Enterprise" : undefined}
+                        badge={!allowsMulti ? planLockLabel(planFeatures, "multi_function_events") : undefined}
                     />
                     <ChoiceCard
                         icon={CalendarClock}
@@ -2021,9 +2149,14 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
                         onSelect={() => setStructure("subevent")}
                         testid="event-structure-subevent"
                         disabled={disabled || !allowsMulti}
-                        badge={!allowsMulti ? "Plan Enterprise" : undefined}
+                        badge={!allowsMulti ? planLockLabel(planFeatures, "multi_function_events") : undefined}
                     />
                 </div>
+                {!allowsMulti && (
+                    <PlanGateHint feature="multi_function_events">
+                        Multifunción y subeventos: {planLockLabel(planFeatures, "multi_function_events")}.
+                    </PlanGateHint>
+                )}
 
                 <input
                     type="hidden"
@@ -2455,334 +2588,7 @@ function SalesConfigBlock({ form, update, disabled }) {
     );
 }
 
-function DondeBlock({
-    form,
-    update,
-    disabled,
-    currentEvent,
-}) {
-    const { data: planFeatures } = usePlanFeatures();
-    const allowsNumbered = planFeatures ? Boolean(planFeatures.numbered_seating) : false;
-    const format = form.attendance_format || (form.no_seating_mode ? "general" : "numbered");
-    const linkedVenueId = currentEvent?.venue_id || form.venue_id || null;
-    const isDonation = form.pricing_type === "donation";
 
-    // Numbered/mixed default for new events. Donation without a linked map
-    // must stay general (buyer picks amount; no seat map).
-    useEffect(() => {
-        if (isDonation && format !== "general" && !linkedVenueId) {
-            update("attendance_format", "general");
-            update("no_seating_mode", true);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isDonation, linkedVenueId]);
-
-    useEffect(() => {
-        if (!planFeatures) return;
-        if (allowsNumbered) return;
-        if (format === "general" || linkedVenueId) return;
-        update("attendance_format", "general");
-        update("no_seating_mode", true);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [planFeatures, allowsNumbered, format, linkedVenueId]);
-
-    const handleFormatChange = (next: "numbered" | "general" | "mixed") => {
-        if (next !== "general" && isDonation) {
-            toast.error(
-                "Los eventos de donación no admiten venue con asientos numerados.",
-            );
-            return;
-        }
-        if (next !== "general" && !allowsNumbered) {
-            toast.error(
-                "Tu plan no incluye asientos numerados. Mejorá tu plan para usar Numerado o Mixto.",
-            );
-            return;
-        }
-        if (next === "general" && linkedVenueId) {
-            toast.error(
-                "Para cambiar a no numerado primero desvinculá el mapa más abajo.",
-            );
-            return;
-        }
-        update("attendance_format", next);
-        update("no_seating_mode", next === "general");
-    };
-
-    return (
-        <div className="space-y-4 rounded-xl border p-5 bg-card" data-testid="info-donde-block">
-            <div>
-                <h3 className="font-semibold text-base">1. Formato de asistencia</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                    Numerado (mapa), no numerado (cantidad) o mixto (ambos en el mismo evento).
-                </p>
-            </div>
-
-            <div className="grid sm:grid-cols-3 gap-3" data-testid="attendance-format">
-                <ChoiceCard
-                    icon={MapPinned}
-                    title={ATTENDANCE_FORMATS.numbered.title}
-                    description={ATTENDANCE_FORMATS.numbered.description}
-                    selected={format === "numbered"}
-                    onSelect={() => handleFormatChange("numbered")}
-                    testid="attendance-format-numbered"
-                    disabled={disabled || (isDonation && format === "general") || !allowsNumbered}
-                    badge={!allowsNumbered ? "Plan con mapa" : undefined}
-                />
-                <ChoiceCard
-                    icon={Users}
-                    title={ATTENDANCE_FORMATS.general.title}
-                    description={ATTENDANCE_FORMATS.general.description}
-                    selected={format === "general"}
-                    onSelect={() => handleFormatChange("general")}
-                    testid="attendance-format-general"
-                    disabled={disabled || !!linkedVenueId}
-                />
-                <ChoiceCard
-                    icon={Layers}
-                    title={ATTENDANCE_FORMATS.mixed.title}
-                    description={ATTENDANCE_FORMATS.mixed.description}
-                    selected={format === "mixed"}
-                    onSelect={() => handleFormatChange("mixed")}
-                    testid="attendance-format-mixed"
-                    disabled={disabled || (isDonation && format === "general") || !allowsNumbered}
-                    badge={!allowsNumbered ? "Plan con mapa" : undefined}
-                />
-            </div>
-
-            {/* Compat e2e / legacy: toggle mirror for general vs seated */}
-            <input
-                type="hidden"
-                data-testid="wiz-seated-toggle"
-                value={format === "general" ? "0" : "1"}
-                readOnly
-            />
-
-            {format === "general" && (
-                <GeneralLocationFields form={form} update={update} disabled={disabled} />
-            )}
-        </div>
-    );
-}
-
-function GeneralLocationFields({ form, update, disabled }) {
-    return (
-        <div className="space-y-3" data-testid="general-location-fields">
-            <Field label="Nombre del lugar *">
-                <Input
-                    value={form.venue_name}
-                    onChange={(e) => update("venue_name", e.target.value)}
-                    disabled={disabled}
-                    placeholder="Ej: Centro Cultural Metropolitano"
-                    data-testid="wiz-venue-name"
-                />
-            </Field>
-            <div className="grid sm:grid-cols-2 gap-3">
-                <Field label="Dirección">
-                    <Input
-                        value={form.venue_address}
-                        onChange={(e) => update("venue_address", e.target.value)}
-                        disabled={disabled}
-                        placeholder="Calle García Moreno N3-50"
-                        data-testid="wiz-venue-address"
-                    />
-                </Field>
-                <Field label="Ciudad">
-                    <Input
-                        value={form.venue_city}
-                        onChange={(e) => update("venue_city", e.target.value)}
-                        disabled={disabled}
-                        data-testid="wiz-venue-city"
-                    />
-                </Field>
-            </div>
-        </div>
-    );
-}
-
-// ── Section: Venue y localidades (mapa + precios, o precio general) ─────────
-function SectionVenueLocalidades({
-    form,
-    update,
-    disabled,
-    event,
-    onEventUpdated,
-    onJumpToInfo,
-    onReturnFromVenueCreate,
-    pendingVenueId = null,
-    onPendingVenueChange,
-}) {
-    const hasVenue = !!(event?.venue_id || pendingVenueId);
-    const format = form.attendance_format || (form.no_seating_mode ? "general" : "numbered");
-    const isGeneralMode = format === "general" && !hasVenue;
-    const seatedMode = format !== "general";
-
-    return (
-        <div className="space-y-5" data-testid="section-venue-localidades">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                <span className="text-muted-foreground">
-                    Recaudación:{" "}
-                    <strong className="text-foreground">
-                        {PRICING_LABELS[form.pricing_type] || form.pricing_type}
-                    </strong>
-                    {" · "}
-                    Formato:{" "}
-                    <strong className="text-foreground">
-                        {ATTENDANCE_FORMATS[format]?.title || format}
-                    </strong>
-                </span>
-                {onJumpToInfo && (
-                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={onJumpToInfo}>
-                        Cambiar en General
-                    </Button>
-                )}
-            </div>
-
-            {isGeneralMode && (
-                <div className="space-y-3 rounded-xl border p-5 bg-card">
-                    <div>
-                        <h3 className="font-semibold text-base">2. Precio y capacidad</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                            {form.pricing_type === "donation"
-                                ? "El comprador elige el monto. El aforo no es obligatorio."
-                                : "Un solo precio para todo el evento (sin mapa de asientos)."}
-                        </p>
-                    </div>
-                    <div className="grid sm:grid-cols-2 gap-4">
-                        {form.pricing_type !== "donation" && (
-                            <div className="space-y-1.5">
-                                <Label className="text-xs">Precio (USD)</Label>
-                                {form.pricing_type === "free" ? (
-                                    <p className="text-sm text-muted-foreground h-9 flex items-center">
-                                        Sin costo
-                                    </p>
-                                ) : (
-                                    <div className="relative">
-                                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                                            $
-                                        </span>
-                                        <Input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            className="pl-6"
-                                            value={form.base_price_dollars}
-                                            onChange={(e) =>
-                                                update("base_price_dollars", e.target.value)
-                                            }
-                                            disabled={disabled}
-                                            data-testid="wiz-price"
-                                        />
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        <div className="space-y-1.5">
-                            <div className="flex items-center justify-between">
-                                <Label className="text-xs">Capacidad</Label>
-                                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                    <Switch
-                                        checked={
-                                            form.pricing_type === "donation" ||
-                                            form.unlimited_capacity
-                                        }
-                                        onCheckedChange={(v) => update("unlimited_capacity", v)}
-                                        disabled={disabled || form.pricing_type === "donation"}
-                                        data-testid="wiz-unlimited"
-                                    />
-                                    Sin límite
-                                </label>
-                            </div>
-                            <Input
-                                type="number"
-                                min="0"
-                                value={
-                                    form.pricing_type === "donation" || form.unlimited_capacity
-                                        ? ""
-                                        : form.capacity
-                                }
-                                onChange={(e) => update("capacity", e.target.value)}
-                                disabled={
-                                    form.unlimited_capacity || form.pricing_type === "donation"
-                                }
-                                placeholder={
-                                    form.pricing_type === "donation" || form.unlimited_capacity
-                                        ? "Sin límite"
-                                        : "ej: 100"
-                                }
-                                data-testid="wiz-capacity"
-                            />
-                        </div>
-                    </div>
-                    {form.pricing_type === "paid" && (
-                        <div className="space-y-2 pt-2 border-t">
-                            <Label className="text-xs">Fees por ticket (PRD §4.2.1)</Label>
-                            <div className="grid sm:grid-cols-2 gap-3">
-                                {(
-                                    [
-                                        ["service_fee_dollars", "Cargo de servicio"],
-                                        ["ticketseguro_dollars", "TicketSeguro"],
-                                        ["tax_dollars", "Impuestos"],
-                                        ["wallet_dollars", "Billetera Virtual"],
-                                    ] as const
-                                ).map(([key, label]) => (
-                                    <div key={key} className="space-y-1">
-                                        <Label className="text-[11px] text-muted-foreground">
-                                            {label}
-                                        </Label>
-                                        <div className="relative">
-                                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                                                $
-                                            </span>
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                step="0.01"
-                                                className="pl-6"
-                                                value={form.ticket_fees?.[key] || ""}
-                                                onChange={(e) =>
-                                                    update("ticket_fees", {
-                                                        ...(form.ticket_fees || {}),
-                                                        [key]: e.target.value,
-                                                    })
-                                                }
-                                                disabled={disabled}
-                                                data-testid={`wiz-fee-${key}`}
-                                            />
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {seatedMode && (
-                <div className="space-y-3">
-                    <div>
-                        <h3 className="font-semibold text-base">2. Escenario y localidades</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                            {format === "mixed"
-                                ? "En Mixto: usá asientos en el mapa y zonas no numeradas; los tipos de entrada GA van debajo."
-                                : "El mapa es solo la forma. Nombre, color y precios son de este evento; podés usar un subconjunto de las secciones del plano."}
-                        </p>
-                    </div>
-                    <EventVenueSection
-                        event={event}
-                        disabled={disabled}
-                        onUpdated={onEventUpdated}
-                        onReturnFromVenueCreate={onReturnFromVenueCreate}
-                        pendingVenueId={pendingVenueId}
-                        onPendingVenueChange={onPendingVenueChange}
-                    />
-                </div>
-            )}
-        </div>
-    );
-}
-
-// ── Section: Media ──────────────────────────────────────────────────────────
 function SectionMedia({
     poster,
     banner,
@@ -3385,8 +3191,12 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                             <div className="font-medium">Ley de discapacidad (Ecuador)</div>
                             <p className="text-xs text-muted-foreground mt-0.5">
                                 {d.disability_law.percent || 50}% con verificación documental en compra.
-                                {!allowsDisability && " · Requiere plan con este módulo."}
                             </p>
+                            {!allowsDisability && (
+                                <div className="mt-2">
+                                    <PlanGateHint feature="disability_discount" />
+                                </div>
+                            )}
                         </div>
                         <Switch
                             checked={d.disability_law.enabled}
@@ -3415,8 +3225,12 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                             <p className="text-xs text-muted-foreground mt-0.5">
                                 {d.senior_law?.percent || 50}% desde {d.senior_law?.min_age || 65} años,
                                 con cédula en checkout.
-                                {!allowsSenior && " · Requiere plan con este módulo."}
                             </p>
+                            {!allowsSenior && (
+                                <div className="mt-2">
+                                    <PlanGateHint feature="senior_discount" />
+                                </div>
+                            )}
                         </div>
                         <Switch
                             checked={!!d.senior_law?.enabled}
@@ -3478,8 +3292,12 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                             <div className="font-medium">Preventa</div>
                             <p className="text-xs text-muted-foreground mt-0.5">
                                 Porcentaje automático hasta una fecha límite.
-                                {!allowsPresale && " · Requiere plan con este módulo."}
                             </p>
+                            {!allowsPresale && (
+                                <div className="mt-2">
+                                    <PlanGateHint feature="presale_discount" />
+                                </div>
+                            )}
                         </div>
                         <Switch
                             checked={d.presale.enabled}
@@ -3534,9 +3352,6 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                     <h4 className="text-sm font-medium">2. Descuentos del evento</h4>
                     <p className="text-xs text-muted-foreground">
                         Códigos múltiples y reglas automáticas (NxM, fijo, por forma de pago).
-                        {!allowsPromo && !allowsAdvanced && (
-                            <> · Tu plan no incluye códigos ni reglas avanzadas.</>
-                        )}
                     </p>
                 </div>
                 {(allowsPromo || allowsAdvanced) ? (
@@ -3549,9 +3364,10 @@ function SectionDiscounts({ form, update, venueLocalities = [], eventId = null }
                         allowAdvanced={allowsAdvanced}
                     />
                 ) : (
-                    <p className="text-sm text-muted-foreground rounded-lg border bg-secondary/30 px-3 py-2">
-                        Mejorá tu plan para usar códigos promocionales o descuentos avanzados.
-                    </p>
+                    <PlanGateHint feature="promo_codes">
+                        Códigos promocionales y reglas automáticas:{" "}
+                        {planLockLabel(planFeatures, "promo_codes")}.
+                    </PlanGateHint>
                 )}
             </section>
 
@@ -3685,7 +3501,6 @@ const ACCESS_TYPE_OPTIONS = [
         title: "Lista de invitados",
         description: "Solo quienes estén en la lista (email o cédula).",
         requiredFeature: "verified_lists",
-        upgradeLabel: "Plan Enterprise",
     },
     {
         value: "access_code",
@@ -3693,7 +3508,6 @@ const ACCESS_TYPE_OPTIONS = [
         title: "Código de acceso",
         description: "El comprador ingresa un código para poder comprar.",
         requiredFeature: "access_codes",
-        upgradeLabel: "Plan Enterprise",
     },
 ];
 
@@ -3738,7 +3552,7 @@ function SectionAccess({ form, update, eventId }) {
         if (!opt?.requiredFeature || planFeatures[opt.requiredFeature]) return;
         update("access_params.access_type", "open");
         toast.message("Acceso ajustado a tu plan", {
-            description: `«${opt.title}» requiere ${opt.upgradeLabel}. Se cambió a Compra abierta.`,
+            description: `«${opt.title}» ${planLockLabel(planFeatures, opt.requiredFeature)}. Se cambió a Compra abierta.`,
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to plan + selected type
     }, [planFeatures, ap.access_type]);
@@ -3798,7 +3612,8 @@ function SectionAccess({ form, update, eventId }) {
                                 onSelect={() => update("access_params.access_type", opt.value)}
                                 testid={`access-type-${opt.value}`}
                                 disabled={!allowed}
-                                badge={!allowed ? opt.upgradeLabel : undefined}
+                                badge={!allowed ? planLockLabel(planFeatures, opt.requiredFeature) : undefined}
+                                footer={!allowed ? <UpgradePlanButton feature={opt.requiredFeature} /> : null}
                             />
                         );
                     })}
@@ -3904,48 +3719,55 @@ function ChoiceCard({
     testid,
     disabled = false,
     badge = undefined,
+    footer = null,
 }) {
     return (
-        <button
-            type="button"
-            onClick={onSelect}
-            disabled={disabled}
-            data-testid={testid}
-            aria-disabled={disabled || undefined}
-            className={`rounded-xl border bg-card p-4 text-left transition w-full ${
-                selected
-                    ? "border-foreground/30 ring-1 ring-foreground/10"
-                    : "border-border hover:border-foreground/20"
-            } ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
-        >
-            <div className="flex items-start gap-3">
-                <div
-                    className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 ${
-                        selected ? "bg-teal-50 text-teal-800" : "bg-secondary text-muted-foreground"
-                    }`}
-                >
-                    <Icon className="h-4 w-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <div className="font-medium text-sm">{title}</div>
-                        {selected && !disabled && (
-                            <Badge variant="secondary" className="text-[10px] font-normal">
-                                Activo
-                            </Badge>
-                        )}
-                        {badge && (
-                            <Badge variant="outline" className="text-[10px] font-normal">
-                                {badge}
-                            </Badge>
-                        )}
+        <div className="flex flex-col gap-2 min-w-0">
+            <button
+                type="button"
+                onClick={onSelect}
+                disabled={disabled}
+                data-testid={testid}
+                aria-disabled={disabled || undefined}
+                className={`rounded-xl border bg-card p-4 text-left transition w-full ${
+                    selected
+                        ? "border-foreground/30 ring-1 ring-foreground/10"
+                        : "border-border hover:border-foreground/20"
+                } ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+            >
+                <div className="flex items-start gap-3">
+                    <div
+                        className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 ${
+                            selected ? "bg-teal-50 text-teal-800" : "bg-secondary text-muted-foreground"
+                        }`}
+                    >
+                        <Icon className="h-4 w-4" />
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                        {description}
-                    </p>
+                    <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <div className="font-medium text-sm">{title}</div>
+                            {selected && !disabled && (
+                                <Badge variant="secondary" className="text-[10px] font-normal">
+                                    Activo
+                                </Badge>
+                            )}
+                            {badge && (
+                                <Badge
+                                    variant="outline"
+                                    className="text-[10px] font-normal border-amber-300 text-amber-950 bg-amber-50"
+                                >
+                                    {badge}
+                                </Badge>
+                            )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                            {description}
+                        </p>
+                    </div>
                 </div>
-            </div>
-        </button>
+            </button>
+            {footer}
+        </div>
     );
 }
 

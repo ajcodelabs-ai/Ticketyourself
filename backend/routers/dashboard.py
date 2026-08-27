@@ -22,7 +22,7 @@ from database import AsyncSessionLocal
 from db_helpers import get_microsite_by_organizer, get_organizer_by_id, row_to_dict
 from orm_models import Event, SubscriptionPlan, TicketOrder
 from security import get_current_user
-from services.plan_features import get_plan_features
+from services.plan_features import features_from_plan_row, get_plan_features
 
 logger = logging.getLogger("tys.dashboard")
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -49,6 +49,7 @@ async def my_dashboard(user=Depends(get_current_user)) -> Dict[str, Any]:
 
     # ── Plan info ─────────────────────────────────────────────────────────
     plan = None
+    plan_row = None
     if organizer.get("plan_id"):
         async with AsyncSessionLocal() as pg:
             plan_result = await pg.execute(
@@ -173,7 +174,9 @@ async def my_dashboard(user=Depends(get_current_user)) -> Dict[str, Any]:
 
     # ── Plan features ─────────────────────────────────────────────────────
     plan_code = plan["code"] if plan else None
-    features = get_plan_features(plan_code)
+    features = (
+        features_from_plan_row(plan_row) if plan_row else get_plan_features(plan_code)
+    )
 
     return {
         "organizer": {

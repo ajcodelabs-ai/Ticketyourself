@@ -3,6 +3,7 @@
  * Phase 6b: extended to handle 7 element kinds + multi-select alignment +
  * distribute + z-index controls.
  */
+import { useEffect, useRef, useState } from "react";
 import {
     Trash2, AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
     AlignStartVertical, AlignCenterVertical, AlignEndVertical,
@@ -166,9 +167,13 @@ export default function PropertiesPanel({
 
             {el.kind === "unnumbered_zone" && (
                 <Field label="Capacidad">
-                    <Input type="number" min={1} value={el.capacity || 0} disabled={readOnly} className="h-8"
-                           data-testid="prop-capacity"
-                           onChange={(e) => onUpdate(el.id, { capacity: Math.max(1, Number(e.target.value)) })} />
+                    <ClampedNumberInput
+                        value={el.capacity ?? 1}
+                        min={1}
+                        disabled={readOnly}
+                        testid="prop-capacity"
+                        onCommit={(n) => onUpdate(el.id, { capacity: n })}
+                    />
                 </Field>
             )}
 
@@ -179,9 +184,14 @@ export default function PropertiesPanel({
                                onChange={(e) => onUpdate(el.id, { row_label: e.target.value })} />
                     </Field>
                     <Field label={`Asientos (1-200): ${el.seats_count}`}>
-                        <Input type="number" min={1} max={200} value={el.seats_count || 1}
-                               disabled={readOnly} className="h-8" data-testid="prop-seats-count"
-                               onChange={(e) => onUpdate(el.id, { seats_count: Math.max(1, Math.min(200, Number(e.target.value))) })} />
+                        <ClampedNumberInput
+                            value={el.seats_count || 1}
+                            min={1}
+                            max={200}
+                            disabled={readOnly}
+                            testid="prop-seats-count"
+                            onCommit={(n) => onUpdate(el.id, { seats_count: n })}
+                        />
                     </Field>
                     <Field label="Separación (px)">
                         <Input type="number" min={16} max={64} value={el.seat_spacing || 24}
@@ -352,6 +362,68 @@ function Field({ label, children }) {
             <Label className="text-xs">{label}</Label>
             {children}
         </div>
+    );
+}
+
+/** Local draft so clearing a digit (50 → 0 → 90) is not clamped to min on every keystroke. */
+function ClampedNumberInput({
+    value,
+    min = 1,
+    max,
+    disabled,
+    onCommit,
+    testid,
+}: {
+    value: number;
+    min?: number;
+    max?: number;
+    disabled?: boolean;
+    onCommit: (n: number) => void;
+    testid?: string;
+}) {
+    const [draft, setDraft] = useState(String(value ?? min));
+    const focusedRef = useRef(false);
+
+    useEffect(() => {
+        if (!focusedRef.current) setDraft(String(value ?? min));
+    }, [value, min]);
+
+    const commit = () => {
+        focusedRef.current = false;
+        let next = parseInt(draft, 10);
+        if (!Number.isFinite(next)) next = min;
+        next = Math.max(min, next);
+        if (max != null) next = Math.min(max, next);
+        setDraft(String(next));
+        if (next !== value) onCommit(next);
+    };
+
+    return (
+        <Input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            min={min}
+            max={max}
+            value={draft}
+            disabled={disabled}
+            className="h-8"
+            data-testid={testid}
+            onFocus={() => { focusedRef.current = true; }}
+            onChange={(e) => {
+                const raw = e.target.value;
+                if (raw === "") {
+                    setDraft("");
+                    return;
+                }
+                if (!/^\d+$/.test(raw)) return;
+                setDraft(raw);
+            }}
+            onBlur={commit}
+            onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+        />
     );
 }
 
