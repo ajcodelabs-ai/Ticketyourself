@@ -142,7 +142,9 @@ class PlatformSetting(Base):
 
     key = Column(String(80), primary_key=True)
     value = Column(JSONB, nullable=False, default=dict)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
     updated_by = Column(String(36), nullable=True)
 
 
@@ -861,7 +863,9 @@ class EventAsset(Base):
     id = Column(String(36), primary_key=True, default=_uuid4)
     event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
     organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False)
-    kind = Column(String(20), nullable=False)  # poster | banner | small | gallery | appeal
+    kind = Column(
+        String(20), nullable=False
+    )  # poster | banner | small | gallery | appeal
     file_path = Column(String(500), nullable=False)
     mime_type = Column(String(100), nullable=True)
     size_bytes = Column(Integer, nullable=True)

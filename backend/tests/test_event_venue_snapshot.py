@@ -120,7 +120,12 @@ def test_plan_layout_seating_conflict():
 def test_locality_structural_diff_mixed_equals_numbered():
     from services.event_venue import normalize_layout_localities
 
-    loc = {"id": "l1", "color": "#111", "default_price_cents": 1000, "seating_type": "mixed"}
+    loc = {
+        "id": "l1",
+        "color": "#111",
+        "default_price_cents": 1000,
+        "seating_type": "mixed",
+    }
     numbered = {**loc, "seating_type": "numbered"}
     unnumbered = {**loc, "seating_type": "unnumbered"}
     assert locality_structural_diff([loc], [numbered]) is False

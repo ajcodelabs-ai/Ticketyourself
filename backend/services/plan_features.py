@@ -276,11 +276,7 @@ async def get_plan_features_async(
             select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
         )
         row = result.scalar_one_or_none()
-        feats = (
-            get_plan_features(plan_code)
-            if not row
-            else features_from_plan_row(row)
-        )
+        feats = get_plan_features(plan_code) if not row else features_from_plan_row(row)
     feats["pre_event_fee_required"] = await is_pre_event_fee_required(session)
     feats["_unlocks"] = await feature_unlock_map(session, feats)
     return feats

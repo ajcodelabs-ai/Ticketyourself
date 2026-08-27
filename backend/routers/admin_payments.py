@@ -182,12 +182,16 @@ async def list_payments(
         ver_statuses = _status_list(status, ["pending"], ["paid"])
         if ver_statuses:
             rows = (
-                await session.execute(
-                    select(Organizer).where(
-                        Organizer.verification_fee_status.in_(ver_statuses)
+                (
+                    await session.execute(
+                        select(Organizer).where(
+                            Organizer.verification_fee_status.in_(ver_statuses)
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for org in rows:
                 st = "paid" if org.verification_fee_status == "paid" else "pending"
                 items.append(
@@ -209,9 +213,7 @@ async def list_payments(
                 )
 
     if "plan" in want:
-        plan_statuses = _status_list(
-            status, list(PENDING_PLAN_STATUSES), ["completed"]
-        )
+        plan_statuses = _status_list(status, list(PENDING_PLAN_STATUSES), ["completed"])
         if plan_statuses:
             stmt = (
                 select(BillingIntent, Organizer, SubscriptionPlan)
@@ -282,9 +284,7 @@ async def list_payments(
                 )
 
     if "ticket" in want:
-        order_statuses = _status_list(
-            status, list(PENDING_ORDER_STATUSES), ["paid"]
-        )
+        order_statuses = _status_list(status, list(PENDING_ORDER_STATUSES), ["paid"])
         if order_statuses:
             stmt = (
                 select(TicketOrder, Event, Organizer)

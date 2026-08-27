@@ -68,7 +68,10 @@ function enabledCodes(event) {
         return pm.enabled_codes;
     }
     return Object.entries(pm)
-        .filter(([, v]) => v && typeof v === "object" && v.enabled)
+        .filter(
+            ([, v]) =>
+                v && typeof v === "object" && (v as { enabled?: boolean }).enabled,
+        )
         .map(([k]) => k);
 }
 

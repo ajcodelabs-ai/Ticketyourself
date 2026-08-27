@@ -69,9 +69,7 @@ def _normalize_or_422(mode: str, fixed: int, bps: int) -> tuple[str, int, int]:
 
 def _validate_range(min_cents: int, max_cents: Optional[int]) -> None:
     if max_cents is not None and max_cents < min_cents:
-        raise HTTPException(
-            422, "El precio máximo debe ser mayor o igual al mínimo."
-        )
+        raise HTTPException(422, "El precio máximo debe ser mayor o igual al mínimo.")
 
 
 async def _assert_plan_exists(session: AsyncSession, code: str) -> None:

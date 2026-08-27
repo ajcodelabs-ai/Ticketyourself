@@ -130,9 +130,7 @@ def test_admin_payments_filter_kind(admin_token):
 
 
 def test_admin_payments_rbac(demo_token):
-    r = requests.get(
-        f"{API}/admin/payments", headers=bearer(demo_token), timeout=10
-    )
+    r = requests.get(f"{API}/admin/payments", headers=bearer(demo_token), timeout=10)
     assert r.status_code in (401, 403)
 
 

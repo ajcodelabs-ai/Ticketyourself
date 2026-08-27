@@ -405,7 +405,9 @@ class TestAdminEventsEnriched:
         r = s.get(f"{API}/admin/events/{demo_event_id}")
         assert r.status_code in (401, 403)
 
-    def test_admin_suspend_hides_public_and_unsuspends(self, admin_token, demo_event_ids):
+    def test_admin_suspend_hides_public_and_unsuspends(
+        self, admin_token, demo_event_ids
+    ):
         event_id = demo_event_ids[PAID_EVENT_SLUG]
         s = new_session()
         s.headers.update(bearer(admin_token))
@@ -446,7 +448,9 @@ class TestAdminEventsEnriched:
         s.headers.update(bearer(demo_token))
         r = s.post(
             f"{API}/events/me/{demo_event_id}/suspension-appeal",
-            files={"message": (None, "Esto no debería pasar porque no está suspendido.")},
+            files={
+                "message": (None, "Esto no debería pasar porque no está suspendido.")
+            },
             headers={"Content-Type": None},
         )
         assert r.status_code == 409

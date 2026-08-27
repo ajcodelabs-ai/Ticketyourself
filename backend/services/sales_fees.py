@@ -127,9 +127,7 @@ def quote_one(
 ) -> Dict[str, Any]:
     ptype = (pricing_type or "paid").lower()
     price = max(0, int(price_cents or 0))
-    rule = match_rule(
-        rules, plan_code=plan_code, pricing_type=ptype, price_cents=price
-    )
+    rule = match_rule(rules, plan_code=plan_code, pricing_type=ptype, price_cents=price)
     if rule:
         fee = fee_cents_for_price(price, rule)
         mode = resolve_fee_mode(rule)

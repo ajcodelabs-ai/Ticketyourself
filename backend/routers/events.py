@@ -1858,7 +1858,9 @@ async def _store_appeal_file(
     if file.content_type == "application/pdf":
         ext = ".pdf"
     rel_path = f"{organizer_id}/{event_id}/appeal_{asset_id}{ext}"
-    abs_path = ASSETS_DIR / rel_path
+    abs_path = resolve_path_under(ASSETS_DIR, rel_path)
+    if abs_path is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     _write_appeal_bytes(abs_path, content)
     return {

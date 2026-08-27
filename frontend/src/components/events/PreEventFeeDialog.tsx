@@ -34,6 +34,7 @@ type FeeBreakdown = {
     current_status?: string;
     simulate_allowed?: boolean;
     message?: string;
+    breakdown?: Partial<FeeBreakdown>;
 };
 
 type Props = {

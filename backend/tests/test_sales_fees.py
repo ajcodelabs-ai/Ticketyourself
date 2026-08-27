@@ -10,7 +10,6 @@ from services.sales_fees import (
     resolve_platform_fee,
 )
 
-
 RULES = [
     {
         "id": "r1",

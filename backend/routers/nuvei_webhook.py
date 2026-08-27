@@ -14,7 +14,14 @@ from sqlalchemy import select
 from audit import log_audit
 from database import AsyncSessionLocal
 from db_helpers import row_to_dict
-from orm_models import BillingIntent, Event, Organizer, SubscriptionPlan, Tenant, TicketOrder
+from orm_models import (
+    BillingIntent,
+    Event,
+    Organizer,
+    SubscriptionPlan,
+    Tenant,
+    TicketOrder,
+)
 from services import nuvei_service
 
 logger = logging.getLogger("tys.nuvei.webhook")
@@ -278,9 +285,7 @@ async def apply_nuvei_notification(
     fee_cents = 0
     already_paid = False
     async with AsyncSessionLocal() as session:
-        found = await find_event_by_fee_session(
-            session, client_unique_id, reference
-        )
+        found = await find_event_by_fee_session(session, client_unique_id, reference)
         if found is not None:
             event_id = found.id
             fee_cents = int(found.pre_event_fee_cents or 0)
@@ -451,7 +456,9 @@ async def charge_nuvei_with_token(body: dict[str, Any]):
             raise HTTPException(422, "El cargo de plataforma no tiene un monto válido")
         currency = "USD"
         email = str(body.get("email") or "")
-        description = str(body.get("description") or f"Cargo plataforma {client_unique_id}")
+        description = str(
+            body.get("description") or f"Cargo plataforma {client_unique_id}"
+        )
         user_id = str(body.get("user_id") or email or client_unique_id)
     else:
         # Billing: amount/currency are the plan's real price — never trust the
@@ -556,5 +563,7 @@ async def confirm_nuvei_payment(body: dict[str, Any]):
         parsed, source="confirm", checksum_verified=True
     )
     if result == "not_found":
-        raise HTTPException(404, "No encontramos la orden, el plan o el cargo asociado al pago")
+        raise HTTPException(
+            404, "No encontramos la orden, el plan o el cargo asociado al pago"
+        )
     return {"ok": True, "result": result}

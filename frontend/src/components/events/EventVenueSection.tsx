@@ -50,6 +50,15 @@ import { PlanGateHint } from "@/components/plans/PlanGate";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { centsToInput } from "@/lib/money";
 
+type LocalityPricingEntry = {
+    price_cents?: number;
+    service_fee_cents?: number;
+    admin_fee_cents?: number;
+    vxs_cents?: number;
+    wallet_fee_cents?: number;
+    max_per_purchase?: number | null;
+};
+
 function FieldTip({ text }: { text: string }) {
     return (
         <TooltipProvider delayDuration={150}>
@@ -195,7 +204,7 @@ export default function EventVenueSection({
     const [loadingLink, setLoadingLink] = useState(false);
     const [highlightLocality, setHighlightLocality] = useState(null);
     const [mapOpen, setMapOpen] = useState(false);
-    const [pricing, setPricing] = useState({});
+    const [pricing, setPricing] = useState<Record<string, LocalityPricingEntry>>({});
     const [formOpen, setFormOpen] = useState(false);
     const [editingLocality, setEditingLocality] = useState(null);
     const [savingForm, setSavingForm] = useState(false);

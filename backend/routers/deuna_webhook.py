@@ -321,5 +321,7 @@ async def confirm_deuna_payment(body: dict[str, Any]):
         source="confirm",
     )
     if result == "not_found":
-        raise HTTPException(404, "No encontramos la orden, el plan o el cargo asociado al pago")
+        raise HTTPException(
+            404, "No encontramos la orden, el plan o el cargo asociado al pago"
+        )
     return {"ok": True, "result": result}

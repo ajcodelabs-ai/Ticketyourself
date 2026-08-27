@@ -847,7 +847,9 @@ async def update_locality(
                 "color": body.color,
                 "description": body.description,
                 "default_price_cents": body.default_price_cents,
-                "seating_type": body.seating_type or loc.get("seating_type") or "numbered",
+                "seating_type": body.seating_type
+                or loc.get("seating_type")
+                or "numbered",
             }
             found = True
             break
