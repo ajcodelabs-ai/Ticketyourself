@@ -1804,9 +1804,9 @@ def _finalize_appeal_disk(
 
 def _write_appeal_bytes(abs_path: Path, content: bytes) -> None:
     """Write bytes under ASSETS_DIR; remove a partial file if the OS write fails."""
-    base = os.path.realpath(ASSETS_DIR)
+    base = os.path.realpath(ASSETS_DIR) + os.sep
     resolved = os.path.realpath(abs_path)
-    if resolved != base and not resolved.startswith(base + os.sep):
+    if not resolved.startswith(base):
         raise HTTPException(status_code=403, detail="Forbidden")
     abs_path = Path(resolved)
     try:
@@ -1866,9 +1866,9 @@ async def _store_appeal_file(
     abs_path = resolve_path_under(ASSETS_DIR, rel_path)
     if abs_path is None:
         raise HTTPException(status_code=403, detail="Forbidden")
-    base = os.path.realpath(ASSETS_DIR)
+    base = os.path.realpath(ASSETS_DIR) + os.sep
     resolved = os.path.realpath(abs_path)
-    if resolved != base and not resolved.startswith(base + os.sep):
+    if not resolved.startswith(base):
         raise HTTPException(status_code=403, detail="Forbidden")
     abs_path = Path(resolved)
     abs_path.parent.mkdir(parents=True, exist_ok=True)

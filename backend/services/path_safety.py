@@ -10,8 +10,8 @@ def resolve_path_under(base_dir: Path, relative: str) -> Path | None:
     """Return *relative* resolved under *base_dir*, or None if it escapes."""
     if not relative:
         return None
-    base = os.path.realpath(base_dir)
+    base = os.path.realpath(base_dir) + os.sep
     resolved = os.path.realpath(os.path.join(base, relative))
-    if resolved != base and not resolved.startswith(base + os.sep):
+    if not resolved.startswith(base):
         return None
     return Path(resolved)
