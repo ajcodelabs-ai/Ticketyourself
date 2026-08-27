@@ -24,6 +24,8 @@ from models import (
     DocumentTypeOut,
     OrganizerOut,
     OrganizersList,
+    PlatformSettingsOut,
+    PlatformSettingsUpdate,
     RegistrationCountryCreate,
     RegistrationCountryOut,
     RegistrationCountryUpdate,
@@ -32,8 +34,6 @@ from models import (
     RequiredDocumentsOut,
     RequiredDocumentsUpdate,
     SuspendBody,
-    PlatformSettingsOut,
-    PlatformSettingsUpdate,
 )
 from orm_models import (
     BillingIntent,

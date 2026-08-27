@@ -222,8 +222,8 @@ async def apply_deuna_notification(
         )
         return "billing_completed"
 
-    from services.event_fees import find_event_by_fee_session, mark_pre_event_fee_paid
     from orm_models import Event
+    from services.event_fees import find_event_by_fee_session, mark_pre_event_fee_paid
 
     event_id = None
     already_paid = False
