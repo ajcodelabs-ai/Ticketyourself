@@ -71,6 +71,7 @@ import {
     Ticket,
     ScanQrCode,
     Mail,
+    ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -115,13 +116,11 @@ import {
 import { venuesApi } from "@/lib/venues";
 import { assetUrl } from "@/lib/microsite";
 import { useAuth } from "@/contexts/AuthContext";
-import {
-    EventMediaCompositePreview,
-    MediaSlotMock,
-} from "@/components/events/EventMediaPreview";
+import { MediaSlotMock } from "@/components/events/EventMediaPreview";
 import {
     EVENT_CATEGORIES,
     PRICING_LABELS,
+    eventPublicUrl,
     isoToLocalInput,
     localInputToIso,
 } from "@/lib/events";
@@ -1009,6 +1008,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             onDeleteGallery={deleteGalleryAt}
                                             onReorderGallery={reorderGallery}
                                             eventId={eventId}
+                                            tenantSlug={organizer?.slug || currentEvent?.tenant_slug}
+                                            eventSlug={currentEvent?.slug}
+                                            isPublished={currentEvent?.status === "published"}
                                         />
                                         <div className="flex justify-end border-t pt-4">
                                             <Button
@@ -1733,7 +1735,7 @@ function SectionGeneral({ form, update, disabled }) {
                     <div>
                         <h4 className="text-sm font-medium">1. Información principal</h4>
                         <p className="text-xs text-muted-foreground">
-                            Datos que identifican el evento en el microsite.
+                            Datos que identifican el evento en tu página.
                         </p>
                     </div>
                     <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
@@ -1770,7 +1772,7 @@ function SectionGeneral({ form, update, disabled }) {
                                 label={
                                     <LabelWithTip
                                         text="Prioridad"
-                                        tip="Si tenés varios eventos en el microsite, un número más alto aparece más arriba en el listado. Podés dejarlo en 0 si el orden por fecha te alcanza."
+                                        tip="Si tenés varios eventos en tu página, un número más alto aparece más arriba en el listado. Podés dejarlo en 0 si el orden por fecha te alcanza."
                                     />
                                 }
                             >
@@ -2005,7 +2007,7 @@ function SectionGeneral({ form, update, disabled }) {
                                 </div>
                             ) : (
                                 <p className="text-xs text-muted-foreground mt-1.5">
-                                    Opcional · ayudan a buscar el evento en el microsite.
+                                    Opcional · ayudan a buscar el evento en tu página.
                                 </p>
                             )}
                         </Field>
@@ -2599,8 +2601,12 @@ function SectionMedia({
     onDeleteGallery,
     onReorderGallery,
     eventId: _eventId,
+    tenantSlug,
+    eventSlug,
+    isPublished,
 }) {
     const readyCount = [banner, poster, small].filter(Boolean).length;
+    const canPreview = isPublished && tenantSlug && eventSlug;
 
     return (
         <div className="space-y-5" data-testid="section-media">
@@ -2608,8 +2614,8 @@ function SectionMedia({
                 <div>
                     <h3 className="font-semibold text-base">Imágenes del evento</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        Cada número del mapa indica dónde aparece el arte. La imagen
-                        principal es obligatoria para publicar.
+                        La imagen principal es obligatoria para publicar. Portada,
+                        miniatura y galería son opcionales.
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-1.5 text-[11px]">
@@ -2624,14 +2630,6 @@ function SectionMedia({
                 </div>
             </div>
 
-            <EventMediaCompositePreview
-                poster={poster}
-                banner={banner}
-                small={small}
-                gallery={gallery}
-                assetUrl={assetUrl}
-            />
-
             {/* Imagen principal (poster) — required */}
             <div className="rounded-xl border bg-card p-4 sm:p-5">
                 <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
@@ -2644,9 +2642,33 @@ function SectionMedia({
                             )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            ② Cards del microsite y ticket PDF · cuadrada · recomendado 1080×1080
+                            ② Cards de tu página y ticket PDF · cuadrada · recomendado 1080×1080
                         </p>
                     </div>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!canPreview}
+                        title={
+                            !tenantSlug || !eventSlug
+                                ? "Guardá el evento para poder previsualizarlo"
+                                : !isPublished
+                                  ? "Publicá el evento para poder previsualizarlo"
+                                  : "Abrir la página pública del evento"
+                        }
+                        onClick={() => {
+                            if (!canPreview) return;
+                            const url = eventPublicUrl(tenantSlug, eventSlug);
+                            if (url) {
+                                window.open(url, "_blank", "noopener,noreferrer");
+                            }
+                        }}
+                        data-testid="wiz-media-preview"
+                    >
+                        <ExternalLink className="h-4 w-4 mr-1.5" />
+                        Previsualizar
+                    </Button>
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-start gap-4">
                     <div className="max-w-xs w-full">
@@ -2752,7 +2774,7 @@ function SectionMedia({
             {readyCount === 0 && (
                 <p className="text-xs text-muted-foreground">
                     Tip: empezá por la <strong>imagen principal</strong>; es la que más se ve
-                    en el microsite y el ticket.
+                    en tu página y el ticket.
                 </p>
             )}
         </div>
@@ -3477,7 +3499,7 @@ const VISIBILITY_OPTIONS = [
         value: "public",
         icon: Globe,
         title: "Público",
-        description: "Aparece en tu microsite y es indexable por buscadores.",
+        description: "Aparece en tu página y es indexable por buscadores.",
     },
     {
         value: "private",
@@ -3562,7 +3584,7 @@ function SectionAccess({ form, update, eventId }) {
             <div>
                 <h3 className="font-semibold text-base">Visibilidad y control de acceso</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Quién ve el evento en el microsite, quién puede comprar y cómo se valida la entrada.
+                    Quién ve el evento en tu página, quién puede comprar y cómo se valida la entrada.
                     {" · "}
                     <strong className="text-foreground">{visibilityLabel}</strong>
                     {" · "}
@@ -3574,7 +3596,7 @@ function SectionAccess({ form, update, eventId }) {
                 <div>
                     <h4 className="text-sm font-medium">1. Visibilidad</h4>
                     <p className="text-xs text-muted-foreground">
-                        Define si el evento aparece en tu microsite y es indexable.
+                        Define si el evento aparece en tu página y es indexable.
                     </p>
                 </div>
                 <div className="grid sm:grid-cols-2 gap-3" data-testid="access-visibility">
