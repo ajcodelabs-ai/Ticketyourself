@@ -44,7 +44,44 @@ describe("collectEventWizardIssues", () => {
         expect(issues).toHaveLength(0);
     });
 
-    it("requires poster and venue name to publish general event", () => {
+    it("blocks publish when plan cannot sell a seat-only map", () => {
+        const issues = collectEventWizardIssues({
+            form: baseForm({ venue_id: "v1" }),
+            poster: "/x.jpg",
+            currentEvent: {
+                venue_id: "v1",
+                venue_layout: { elements: [{ kind: "seat_row_straight" }] },
+                locality_pricing: [],
+            },
+            mode: "publish",
+            organizerStatus: "approved",
+            allowNumbered: false,
+        });
+        expect(issues.map((i) => i.code)).toContain("plan_numbered_blocked");
+    });
+
+    it("does not block a mixed map when the plan has no numbered seating", () => {
+        const issues = collectEventWizardIssues({
+            form: baseForm({ venue_id: "v1" }),
+            poster: "/x.jpg",
+            currentEvent: {
+                venue_id: "v1",
+                venue_layout: {
+                    elements: [
+                        { kind: "seat_row_straight" },
+                        { kind: "unnumbered_zone" },
+                    ],
+                },
+                locality_pricing: [{ locality_id: "l1", price_cents: 0 }],
+            },
+            mode: "publish",
+            organizerStatus: "approved",
+            allowNumbered: false,
+        });
+        expect(issues.map((i) => i.code)).not.toContain("plan_numbered_blocked");
+    });
+
+    it("requires poster and escenario to publish", () => {
         const issues = collectEventWizardIssues({
             form: baseForm({ venue_name: "" }),
             poster: null,
@@ -53,7 +90,7 @@ describe("collectEventWizardIssues", () => {
             organizerStatus: "approved",
         });
         expect(issues.map((i) => i.code)).toEqual(
-            expect.arrayContaining(["poster", "venue_name"]),
+            expect.arrayContaining(["poster", "venue"]),
         );
     });
 

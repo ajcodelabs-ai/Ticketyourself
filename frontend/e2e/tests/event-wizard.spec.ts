@@ -58,28 +58,16 @@ test.describe("Event wizard", () => {
     await expect(page.getByTestId("event-title-input")).toHaveValue(title);
   });
 
-  test("Paid event without price shows error on localidades step (#7 fix)", async ({ page }) => {
+  test("Localidades step has 4.1 escenario and 4.2 localidades substeps", async ({ page }) => {
     await page.goto("/app/eventos/nuevo");
     await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
 
-    // Pricing type lives in General; seated toggle lives in Localidades.
-    await page.getByTestId("wiz-pricing-paid").click();
-    await page.waitForTimeout(300);
-
     await page.getByTestId("tab-localidades").click();
-    await page.waitForTimeout(300);
+    await expect(page.getByTestId("localidades-substeps")).toBeVisible();
+    await expect(page.getByTestId("escenario-panel")).toBeVisible();
 
-    await page.getByTestId("attendance-format-general").click();
-    await page.waitForTimeout(300);
-
-    // General-admission mode also requires a venue name before `whereOk`
-    // passes — otherwise the step short-circuits to "warn" and the price
-    // check below never runs.
-    await page.getByTestId("wiz-venue-name").fill("Test Venue");
-    await page.waitForTimeout(500);
-
-    const errorSvg = page.getByTestId("tab-localidades").locator(".lucide-triangle-alert");
-    await expect(errorSvg).toBeVisible({ timeout: 5_000 });
+    await page.getByTestId("localidades-goto-localidades").click();
+    await expect(page.getByTestId("localidades-panel")).toBeVisible();
   });
 
   // Regression coverage for client feedback (items 6, 7, 8):
@@ -128,8 +116,10 @@ test.describe("Event wizard", () => {
     const accessCode = page.getByTestId("access-type-access_code");
     await expect(verified).toBeDisabled();
     await expect(accessCode).toBeDisabled();
-    await expect(verified).toContainText("Plan Enterprise");
-    await expect(accessCode).toContainText("Plan Enterprise");
+    await expect(verified).toContainText("Disponible en");
+    await expect(accessCode).toContainText("Disponible en");
+    await expect(page.getByTestId("upgrade-plan-verified_lists")).toBeVisible();
+    await expect(page.getByTestId("upgrade-plan-access_codes")).toBeVisible();
 
     // Open remains available; link_only / público bloqueado removed (PRD §4.2.2).
     await expect(page.getByTestId("access-type-open")).toBeEnabled();

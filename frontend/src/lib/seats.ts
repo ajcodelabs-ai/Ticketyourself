@@ -133,15 +133,3 @@ export function selectedSeatBreakdown(selectedSeats, localityPricing) {
 export function selectedSubtotalCents(selectedSeats, localityPricing) {
     return selectedSeatBreakdown(selectedSeats, localityPricing).subtotal_cents;
 }
-
-export const FEE_PERCENT = 5; // mirrors backend DEFAULT_FEE_PERCENT
-
-/** Platform fee on entrada only (not on service/admin cargos). */
-export function feesForEntrada(entradaCents) {
-    return Math.round((entradaCents * FEE_PERCENT) / 100);
-}
-
-/** @deprecated Prefer feesForEntrada — kept for callers that still pass full subtotal. */
-export function feesForSubtotal(subtotal) {
-    return Math.round((subtotal * FEE_PERCENT) / 100);
-}

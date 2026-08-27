@@ -156,4 +156,53 @@ def locality_structural_diff(
             return True
         if a.get("default_price_cents") != b.get("default_price_cents"):
             return True
+        if _normalize_seating_type(a.get("seating_type")) != _normalize_seating_type(
+            b.get("seating_type")
+        ):
+            return True
     return False
+
+
+_SEAT_KINDS = frozenset(
+    {
+        "seat_row_straight",
+        "seat_row_curved",
+        "seat_individual",
+        "table_round",
+        "table_rect",
+    }
+)
+
+
+def plan_layout_seating_conflict(
+    elements: List[Dict[str, Any]] | None, allow_numbered: bool
+) -> str:
+    """How a layout collides with a plan that has no numbered seating.
+
+    none — no seats, or the plan allows butacas.
+    numbered_unused — mixed map: GA zones can sell; seats stay unsellable.
+    numbered_only_blocked — seat-only map cannot be published/sold.
+    """
+    if allow_numbered:
+        return "none"
+    seats = any((e or {}).get("kind") in _SEAT_KINDS for e in elements or [])
+    if not seats:
+        return "none"
+    zones = any((e or {}).get("kind") == "unnumbered_zone" for e in elements or [])
+    return "numbered_unused" if zones else "numbered_only_blocked"
+
+
+def _normalize_seating_type(value: Any) -> str:
+    """Localities are numbered or unnumbered. Legacy `mixed` ≡ numbered."""
+    return "unnumbered" if value == "unnumbered" else "numbered"
+
+
+def normalize_layout_localities(
+    localities: List[Dict[str, Any]] | None,
+) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for loc in localities or []:
+        next_loc = dict(loc)
+        next_loc["seating_type"] = _normalize_seating_type(next_loc.get("seating_type"))
+        out.append(next_loc)
+    return out

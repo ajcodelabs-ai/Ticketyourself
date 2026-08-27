@@ -15,13 +15,13 @@ import {
 
 export default function ZoneConfigDialog({ open, onClose, onConfirm, localities }) {
     const [label, setLabel] = useState("Zona");
-    const [capacity, setCapacity] = useState(50);
+    const [capacity, setCapacity] = useState("50");
     const [locality_id, setLocality] = useState(localities[0]?.id || "__none");
 
     useEffect(() => {
         if (open) {
             setLabel("Zona");
-            setCapacity(50);
+            setCapacity("50");
             setLocality(localities[0]?.id || "__none");
         }
     }, [open, localities]);
@@ -46,10 +46,15 @@ export default function ZoneConfigDialog({ open, onClose, onConfirm, localities 
                     <div className="space-y-1">
                         <Label className="text-xs">Capacidad</Label>
                         <Input
-                            type="number"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
                             min={1}
                             value={capacity}
-                            onChange={(e) => setCapacity(Math.max(1, Number(e.target.value)))}
+                            onChange={(e) => {
+                                const raw = e.target.value;
+                                if (raw === "" || /^\d+$/.test(raw)) setCapacity(raw);
+                            }}
                             data-testid="zone-dialog-capacity"
                         />
                     </div>
@@ -83,11 +88,12 @@ export default function ZoneConfigDialog({ open, onClose, onConfirm, localities 
                     <Button
                         onClick={() =>
                             onConfirm({
-                                label, capacity,
+                                label,
+                                capacity: Math.max(1, parseInt(capacity, 10) || 1),
                                 locality_id: locality_id === "__none" ? null : locality_id,
                             })
                         }
-                        disabled={!label.trim() || capacity < 1}
+                        disabled={!label.trim() || !capacity || parseInt(capacity, 10) < 1}
                         data-testid="zone-dialog-submit"
                     >
                         Crear zona

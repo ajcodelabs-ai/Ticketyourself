@@ -72,6 +72,7 @@ export default function EventsList() {
                         <SelectItem value="draft">Borradores</SelectItem>
                         <SelectItem value="published">Publicados</SelectItem>
                         <SelectItem value="cancelled">Cancelados</SelectItem>
+                        <SelectItem value="suspended">Suspendidos</SelectItem>
                         <SelectItem value="ended">Finalizados</SelectItem>
                     </SelectContent>
                 </Select>

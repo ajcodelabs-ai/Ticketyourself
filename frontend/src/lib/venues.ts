@@ -188,6 +188,7 @@ export function newLocality(name = "Localidad", colorIdx = 0) {
         color: LOCALITY_PALETTE[colorIdx % LOCALITY_PALETTE.length],
         description: null,
         default_price_cents: null,
+        seating_type: "numbered",
     };
 }
 
@@ -210,6 +211,14 @@ export function computeCapacity(elements) {
 
 export function capacityByLocality(elements, locality_id) {
     return elements.reduce((s, e) => (e.locality_id === locality_id ? s + elementSeats(e) : s), 0);
+}
+
+/** GA ticket-type capacity: only unnumbered zones, never numbered seats. */
+export function unnumberedCapacityByLocality(elements, locality_id) {
+    return (elements || []).reduce((s, e) => {
+        if (e.locality_id !== locality_id || e.kind !== "unnumbered_zone") return s;
+        return s + (e.capacity || 0);
+    }, 0);
 }
 
 export function elementAcceptsLocality(kind) {

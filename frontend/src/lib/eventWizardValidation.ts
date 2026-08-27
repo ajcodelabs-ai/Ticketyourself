@@ -4,6 +4,7 @@
  */
 
 import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
+import { planLayoutSeatingConflict } from "@/lib/attendanceFormat";
 
 /**
  * @param {'draft' | 'publish'} mode
@@ -16,6 +17,7 @@ export function collectEventWizardIssues({
     pendingVenueId = null,
     mode = "draft",
     organizerStatus = null,
+    allowNumbered = true,
 }) {
     const issues = [];
     const push = (step, code, message) => {
@@ -91,7 +93,6 @@ export function collectEventWizardIssues({
         );
     }
 
-    const seated = !form?.no_seating_mode;
     const hasVenue = !!(
         form?.venue_id ||
         currentEvent?.venue_id ||
@@ -99,63 +100,54 @@ export function collectEventWizardIssues({
     );
     const localityPricing = currentEvent?.locality_pricing || [];
 
-    if (seated) {
-        if (!hasVenue) {
-            push(
-                "localidades",
-                "venue",
-                "Vinculá un mapa (venue) publicado en Localidades.",
-            );
-        } else if (pendingVenueId && !currentEvent?.venue_id) {
-            push(
-                "localidades",
-                "locality_pricing_pending",
-                "Guardá el borrador para vincular el mapa y después configurá los precios por localidad.",
-            );
-        } else if (!localityPricing.length) {
-            push(
-                "localidades",
-                "locality_pricing",
-                "Configurá el precio de cada localidad en Localidades.",
-            );
-        } else {
-            const invalid = localityPricing.filter(
-                (lp) => lp.price_cents == null || Number(lp.price_cents) < 0,
-            );
-            if (invalid.length) {
-                push(
-                    "localidades",
-                    "locality_price_invalid",
-                    "Hay localidades sin precio válido. Revisá la tabla de precios.",
-                );
-            }
-            const hasPaidLocality = localityPricing.some(
-                (lp) => Number(lp.price_cents) > 0,
-            );
-            if (hasPaidLocality && form?.pricing_type === "free") {
-                push(
-                    "general",
-                    "pricing_type_mismatch",
-                    "Tenés localidades con precio pero el tipo de recaudación es Gratuito. Cambialo a Pagado en General.",
-                );
-            }
-        }
+    if (!hasVenue) {
+        push(
+            "localidades",
+            "venue",
+            "Seleccioná un escenario (mapa) publicado en Localidades → 4.1.",
+        );
+    } else if (pendingVenueId && !currentEvent?.venue_id) {
+        push(
+            "localidades",
+            "locality_pricing_pending",
+            "Guardá el borrador para vincular el mapa y después creá las localidades en 4.2.",
+        );
+    } else if (
+        planLayoutSeatingConflict(
+            currentEvent?.venue_layout?.elements,
+            allowNumbered,
+        ) === "numbered_only_blocked"
+    ) {
+        push(
+            "localidades",
+            "plan_numbered_blocked",
+            "Este escenario solo tiene asientos numerados y tu plan no incluye butacas. Elegí un mapa con zonas de aforo o mejorá el plan.",
+        );
+    } else if (!localityPricing.length) {
+        push(
+            "localidades",
+            "locality_pricing",
+            "Creá al menos una localidad con precio en Localidades → 4.2.",
+        );
     } else {
-        if (!(form?.venue_name || "").trim()) {
+        const invalid = localityPricing.filter(
+            (lp) => lp.price_cents == null || Number(lp.price_cents) < 0,
+        );
+        if (invalid.length) {
             push(
                 "localidades",
-                "venue_name",
-                "Indicá el nombre del lugar en Localidades.",
+                "locality_price_invalid",
+                "Hay localidades sin precio válido. Revisá la tabla de precios.",
             );
         }
-        if (
-            form?.pricing_type === "paid" &&
-            !(Number(form?.base_price_dollars) > 0)
-        ) {
+        const hasPaidLocality = localityPricing.some(
+            (lp) => Number(lp.price_cents) > 0,
+        );
+        if (hasPaidLocality && form?.pricing_type === "free") {
             push(
-                "localidades",
-                "base_price",
-                "Definí el precio base del evento (mayor a $0) en Localidades.",
+                "general",
+                "pricing_type_mismatch",
+                "Tenés localidades con precio pero el tipo de recaudación es Gratuito. Cambialo a Pagado en General.",
             );
         }
     }

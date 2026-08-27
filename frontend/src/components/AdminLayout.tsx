@@ -21,6 +21,8 @@ import {
     Shield,
     LayoutTemplate,
     Settings,
+    Percent,
+    Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,6 +45,8 @@ const NAV_ITEMS = [
     { to: "/admin/eventos", label: "Eventos", icon: TicketIcon, testid: "nav-admin-events" },
     { to: "/admin/venue-templates", label: "Plantillas venues", icon: LayoutTemplate, testid: "nav-admin-venue-templates" },
     { to: "/admin/planes", label: "Planes", icon: DollarSign, testid: "nav-admin-plans" },
+    { to: "/admin/comisiones", label: "Comisiones", icon: Percent, testid: "nav-admin-sales-fees" },
+    { to: "/admin/pagos", label: "Pagos", icon: Wallet, testid: "nav-admin-payments" },
     { to: "/admin/configuracion", label: "Configuración", icon: Settings, testid: "nav-admin-config" },
     { to: "/admin/funnel", label: "Funnel", icon: TrendingUp, testid: "nav-admin-funnel" },
     { to: "/admin/auditoria", label: "Auditoría", icon: FileText, testid: "nav-admin-audit" },

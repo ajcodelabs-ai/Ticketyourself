@@ -2,6 +2,7 @@
  * /app/configuracion — Phase 5. 3 tabs: Perfil / Plan y facturación / Seguridad.
  */
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
     Tabs,
@@ -22,12 +23,21 @@ import {
     User,
     Lock,
     ExternalLink,
+    Sparkles,
 } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatCents } from "@/lib/orders";
 
 export default function Configuracion() {
+    const [searchParams, setSearchParams] = useSearchParams();
+    const tab = searchParams.get("tab") || "profile";
+    const setTab = (next: string) => {
+        const params = new URLSearchParams(searchParams);
+        params.set("tab", next);
+        setSearchParams(params, { replace: true });
+    };
+
     return (
         <div className="space-y-6" data-testid="configuracion-page">
             <header>
@@ -36,7 +46,7 @@ export default function Configuracion() {
                     Ajustes de tu cuenta
                 </h1>
             </header>
-            <Tabs defaultValue="profile">
+            <Tabs value={tab} onValueChange={setTab}>
                 <TabsList>
                     <TabsTrigger value="profile" data-testid="cfg-tab-profile">
                         <User className="h-3.5 w-3.5 mr-1.5" />
@@ -143,13 +153,20 @@ function ProfileTab() {
 }
 
 function PlanTab() {
+    const [searchParams] = useSearchParams();
+    const highlightCode = searchParams.get("upgrade");
     const [data, setData] = useState(null);
+    const [plans, setPlans] = useState([]);
     const [loading, setLoading] = useState(true);
     const [openingPortal, setOpeningPortal] = useState(false);
+    const [payingCode, setPayingCode] = useState(null);
 
     useEffect(() => {
-        api.get("/dashboard/me")
-            .then((r) => setData(r.data))
+        Promise.all([api.get("/dashboard/me"), api.get("/plans")])
+            .then(([dash, catalog]) => {
+                setData(dash.data);
+                setPlans(catalog.data || []);
+            })
             .catch(() => {})
             .finally(() => setLoading(false));
     }, []);
@@ -157,21 +174,44 @@ function PlanTab() {
     const openPortal = async () => {
         setOpeningPortal(true);
         try {
-            const { data } = await api.post("/billing/portal", {
+            const { data: portal } = await api.post("/billing/portal", {
                 return_url: window.location.href,
             });
-            window.location.href = data.portal_url;
+            window.location.href = portal.portal_url;
         } catch (e) {
             toast.error(formatApiError(e?.response?.data?.detail) || e.message);
             setOpeningPortal(false);
         }
     };
 
+    const startUpgrade = async (plan_code: string) => {
+        setPayingCode(plan_code);
+        try {
+            const { data: checkout } = await api.post("/billing/checkout-session", {
+                plan_code,
+                origin_url: window.location.origin,
+                payment_method: "stripe",
+            });
+            if (checkout?.checkout_url) {
+                window.location.href = checkout.checkout_url;
+                return;
+            }
+            toast.message(checkout?.message || "Registramos tu solicitud de cambio de plan.");
+        } catch (e) {
+            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
+        } finally {
+            setPayingCode(null);
+        }
+    };
+
     if (loading) return <Loader2 className="h-5 w-5 animate-spin" />;
     if (!data) return null;
     const { organizer, plan } = data;
+    const currentCode = organizer.plan_code || plan?.code;
+    const upgrades = plans.filter((p) => p.code !== currentCode);
 
     return (
+        <div className="space-y-4">
         <Card>
             <CardHeader>
                 <CardTitle className="text-lg">Plan actual</CardTitle>
@@ -233,6 +273,71 @@ function PlanTab() {
                 </div>
             </CardContent>
         </Card>
+
+        {upgrades.length > 0 && (
+            <Card data-testid="cfg-upgrade-plans">
+                <CardHeader>
+                    <CardTitle className="text-lg">Mejorar plan</CardTitle>
+                    <CardDescription>
+                        Elegí un plan con las funciones que te faltan. El cobro se hace por Stripe.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="grid sm:grid-cols-2 gap-3">
+                    {upgrades.map((p) => {
+                        const highlighted = highlightCode === p.code;
+                        return (
+                            <div
+                                key={p.code}
+                                data-testid={`cfg-upgrade-${p.code}`}
+                                className={`rounded-xl border p-4 space-y-3 ${
+                                    highlighted
+                                        ? "border-amber-400 bg-amber-50/60 ring-1 ring-amber-200"
+                                        : "bg-card"
+                                }`}
+                            >
+                                <div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <h3 className="font-semibold">{p.name}</h3>
+                                        {highlighted && (
+                                            <Badge
+                                                variant="outline"
+                                                className="text-[10px] border-amber-300 text-amber-950 bg-white"
+                                            >
+                                                Recomendado para desbloquear
+                                            </Badge>
+                                        )}
+                                    </div>
+                                    <p className="text-sm text-muted-foreground mt-1">
+                                        {formatCents(p.price_cents)}
+                                        {p.billing_period === "monthly" && " / mes"}
+                                        {p.billing_period === "one_time" && " pago único"}
+                                    </p>
+                                    {p.description && (
+                                        <p className="text-xs text-muted-foreground mt-1 leading-snug">
+                                            {p.description}
+                                        </p>
+                                    )}
+                                </div>
+                                <Button
+                                    size="sm"
+                                    onClick={() => startUpgrade(p.code)}
+                                    disabled={payingCode === p.code}
+                                    data-testid={`cfg-upgrade-cta-${p.code}`}
+                                >
+                                    {payingCode === p.code ? (
+                                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                                    ) : (
+                                        <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                                    )}
+                                    Mejorar a {p.name}
+                                </Button>
+                            </div>
+                        );
+                    })}
+                </CardContent>
+            </Card>
+        )}
+        </div>
     );
 }
 

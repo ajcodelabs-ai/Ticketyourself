@@ -104,9 +104,12 @@ export default function AppRoutes() {
             <Route path="/admin/organizadores" element={<AdminArea><LazyPage page={Pages.AdminOrganizers} /></AdminArea>} />
             <Route path="/admin/organizadores/:id" element={<AdminArea><LazyPage page={Pages.AdminOrganizerDetail} /></AdminArea>} />
             <Route path="/admin/planes" element={<AdminArea><LazyPage page={Pages.AdminPlans} /></AdminArea>} />
+            <Route path="/admin/comisiones" element={<AdminArea><LazyPage page={Pages.AdminSalesFees} /></AdminArea>} />
+            <Route path="/admin/pagos" element={<AdminArea><LazyPage page={Pages.AdminPayments} /></AdminArea>} />
             <Route path="/admin/configuracion" element={<AdminArea><LazyPage page={Pages.AdminConfiguracion} /></AdminArea>} />
             <Route path="/admin/funnel" element={<AdminArea><LazyPage page={Pages.AdminFunnel} /></AdminArea>} />
             <Route path="/admin/eventos" element={<AdminArea><LazyPage page={Pages.AdminEvents} /></AdminArea>} />
+            <Route path="/admin/eventos/:id" element={<AdminArea><LazyPage page={Pages.AdminEventDetail} /></AdminArea>} />
             <Route path="/admin/auditoria" element={<AdminArea><LazyPage page={Pages.AdminAuditLog} /></AdminArea>} />
             <Route path="/admin/reportes" element={<AdminArea><LazyPage page={Pages.AdminReports} /></AdminArea>} />
             <Route path="/admin/venue-templates" element={<AdminArea><LazyPage page={Pages.AdminVenueTemplates} /></AdminArea>} />

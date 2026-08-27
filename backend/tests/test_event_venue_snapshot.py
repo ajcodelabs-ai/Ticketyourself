@@ -105,6 +105,34 @@ def test_locality_structural_diff_detects_color():
     assert locality_structural_diff(old, new) is True
 
 
+def test_plan_layout_seating_conflict():
+    from services.event_venue import plan_layout_seating_conflict
+
+    seats = [{"kind": "seat_individual"}]
+    mixed = [{"kind": "seat_row_straight"}, {"kind": "unnumbered_zone"}]
+    zones = [{"kind": "unnumbered_zone"}]
+    assert plan_layout_seating_conflict(seats, True) == "none"
+    assert plan_layout_seating_conflict(zones, False) == "none"
+    assert plan_layout_seating_conflict(mixed, False) == "numbered_unused"
+    assert plan_layout_seating_conflict(seats, False) == "numbered_only_blocked"
+
+
+def test_locality_structural_diff_mixed_equals_numbered():
+    from services.event_venue import normalize_layout_localities
+
+    loc = {
+        "id": "l1",
+        "color": "#111",
+        "default_price_cents": 1000,
+        "seating_type": "mixed",
+    }
+    numbered = {**loc, "seating_type": "numbered"}
+    unnumbered = {**loc, "seating_type": "unnumbered"}
+    assert locality_structural_diff([loc], [numbered]) is False
+    assert locality_structural_diff([loc], [unnumbered]) is True
+    assert normalize_layout_localities([loc])[0]["seating_type"] == "numbered"
+
+
 def test_compute_capacity_and_recalc():
     els = _sample_venue()["elements"]
     assert compute_capacity(els) == 5

@@ -14,6 +14,8 @@ import { Textarea } from "@/components/ui/textarea";
 import api, { formatApiError } from "@/lib/api";
 import { assetUrl } from "@/lib/microsite";
 import { canUseCustomCss } from "@/lib/micrositeSeo";
+import { PlanGateHint } from "@/components/plans/PlanGate";
+import { usePlanFeatures } from "@/hooks/queries/usePlanFeatures";
 
 export function SeoPanel({
     microsite,
@@ -32,7 +34,10 @@ export function SeoPanel({
 }) {
     const seo = (microsite.seo || {}) as Record<string, string | null>;
     const branding = (microsite.branding || {}) as Record<string, string>;
-    const customCssAllowed = canUseCustomCss(planCode);
+    const { data: planFeatures } = usePlanFeatures();
+    const customCssAllowed = planFeatures
+        ? Boolean(planFeatures.microsite_custom_css)
+        : canUseCustomCss(planCode);
 
     return (
         <div className="space-y-5" data-testid="seo-panel">
@@ -131,8 +136,8 @@ export function SeoPanel({
                 <div className="flex items-center justify-between">
                     <Label>CSS personalizado</Label>
                     {!customCssAllowed && (
-                        <span className="text-[10px] uppercase tracking-wide text-amber-600">
-                            Plan Profesional+
+                        <span className="text-[10px] uppercase tracking-wide text-amber-700">
+                            Bloqueado
                         </span>
                     )}
                 </div>
@@ -145,15 +150,19 @@ export function SeoPanel({
                     placeholder={
                         customCssAllowed
                             ? "/* .ms-hero { ... } */"
-                            : "Disponible en plan Profesional o Enterprise"
+                            : "Disponible en un plan superior"
                     }
                     className="font-mono text-xs"
                     data-testid="seo-custom-css"
                 />
-                {customCssAllowed && (
+                {customCssAllowed ? (
                     <p className="text-xs text-muted-foreground">
                         Máx. 8000 caracteres. Sin scripts ni @import.
                     </p>
+                ) : (
+                    <PlanGateHint feature="microsite_custom_css">
+                        CSS personalizado del microsite: disponible en Profesional o Enterprise.
+                    </PlanGateHint>
                 )}
             </div>
         </div>

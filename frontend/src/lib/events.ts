@@ -35,6 +35,7 @@ export const EVENT_STATUS_META = {
     sold_out: { label: "Agotado", className: "bg-violet-100 text-violet-800" },
     ended: { label: "Finalizado", className: "bg-zinc-200 text-zinc-700" },
     cancelled: { label: "Cancelado", className: "bg-red-100 text-red-800" },
+    suspended: { label: "Suspendido", className: "bg-orange-100 text-orange-900" },
 };
 
 export const PRICING_LABELS = {

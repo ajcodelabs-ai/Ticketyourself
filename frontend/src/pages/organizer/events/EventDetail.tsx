@@ -27,6 +27,7 @@ import ShareModal from "@/components/microsite/ShareModal";
 import EventSalesTabs from "@/components/events/EventSalesTabs";
 import PublishPendingDialog from "@/components/PublishPendingDialog";
 import PreEventFeeDialog from "@/components/events/PreEventFeeDialog";
+import SuspensionAppealPanel from "@/components/events/SuspensionAppealPanel";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePlanFeatures } from "@/hooks/queries/usePlanFeatures";
 import {
@@ -102,6 +103,13 @@ export default function EventDetail() {
             const code = e?.response?.data?.detail?.error;
             if (code === "organizer_pending_review") {
                 setPublishPendingOpen(true);
+                return;
+            }
+            if (code === "event_suspended") {
+                toast.error(
+                    e.response?.data?.detail?.message ||
+                        "Este evento está suspendido por Ticket Yourself.",
+                );
                 return;
             }
             if (code === "pre_event_fee_required") {
@@ -290,6 +298,10 @@ export default function EventDetail() {
                     </div>
                 </div>
             </div>
+
+            {event.status === "suspended" && (
+                <SuspensionAppealPanel event={event} onSubmitted={load} />
+            )}
 
             {event.description && (
                 <Card>

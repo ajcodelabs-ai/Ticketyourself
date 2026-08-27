@@ -61,6 +61,9 @@ services:
       PGBOUNCER: "true"   # tells database.py to disable asyncpg statement cache
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       ENV: ${ENV:-development_local}
+      # true: reset demo-org events/orgs on every boot (local/tests).
+      # false: same as production — catalogs only, no data wipe.
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-localhost}
       TYS_FEE_PERCENT: ${TYS_FEE_PERCENT:-5}

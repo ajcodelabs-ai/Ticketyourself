@@ -222,8 +222,8 @@ async def apply_deuna_notification(
         )
         return "billing_completed"
 
-    from services.event_fees import find_event_by_fee_session, mark_pre_event_fee_paid
     from orm_models import Event
+    from services.event_fees import find_event_by_fee_session, mark_pre_event_fee_paid
 
     event_id = None
     already_paid = False
@@ -321,5 +321,7 @@ async def confirm_deuna_payment(body: dict[str, Any]):
         source="confirm",
     )
     if result == "not_found":
-        raise HTTPException(404, "No encontramos la orden, el plan o el cargo asociado al pago")
+        raise HTTPException(
+            404, "No encontramos la orden, el plan o el cargo asociado al pago"
+        )
     return {"ok": True, "result": result}

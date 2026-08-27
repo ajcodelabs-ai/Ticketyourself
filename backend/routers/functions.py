@@ -433,9 +433,9 @@ async def create_function(
     session: AsyncSession = Depends(get_db),
 ):
     org = await _get_org(user, session)
-    from services.plan_features import assert_feature
+    from services.plan_features import assert_feature_async
 
-    assert_feature(org.plan_code, "multi_function_events")
+    await assert_feature_async(session, org.plan_code, "multi_function_events")
     event = await _get_event_for_org(event_id, org.id, session)
     await _check_schedule_conflict(
         event_id,

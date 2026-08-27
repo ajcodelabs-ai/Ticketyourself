@@ -182,7 +182,7 @@ async def get_my_events(
     if not event_ids:
         return []
     result = await session.execute(
-        select(Event).where(Event.id.in_(event_ids), Event.status == "published")
+        select(Event).where(Event.id.in_(event_ids), Event.status != "cancelled")
     )
     events = result.scalars().all()
     return [row_to_dict(e) for e in events]

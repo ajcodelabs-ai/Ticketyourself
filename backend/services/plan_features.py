@@ -5,6 +5,7 @@ Endpoints can call `assert_feature(plan_code, "xxx")` or use async helpers that
 load the SubscriptionPlan row for admin-editable overrides.
 """
 
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
@@ -27,6 +28,7 @@ DEFAULT_FEATURES: Dict[str, Any] = {
     "senior_discount": True,
     "gallery_uploads": True,
     "includes_marketing": False,
+    "microsite_custom_css": False,
     "allows_paid_events": True,
     "allows_free_events": True,
     "max_events": 5,
@@ -136,6 +138,8 @@ def features_from_plan_row(row) -> Dict[str, Any]:
     base.update(
         {
             "numbered_seating": bool(data.get("includes_numbered")),
+            # Venue/map linking is not gated; numbered_seating only limits
+            # numbered localities (seat picker) in the event wizard.
             "custom_domain": bool(data.get("includes_custom_domain")),
             "ai_ticket_design": bool(data.get("includes_ai_design")),
             "includes_marketing": bool(data.get("includes_marketing")),
@@ -164,6 +168,100 @@ def features_from_plan_row(row) -> Dict[str, Any]:
     return base
 
 
+# Boolean flags the UI can lock + point to a cheaper unlocking plan.
+_UNLOCK_BOOL_KEYS = (
+    "numbered_seating",
+    "multi_function_events",
+    "advanced_discounts",
+    "promo_codes",
+    "verified_lists",
+    "access_codes",
+    "custom_domain",
+    "ai_ticket_design",
+    "includes_marketing",
+    "allows_paid_events",
+    "allows_free_events",
+    "presale_discount",
+    "disability_discount",
+    "senior_discount",
+    "microsite_custom_css",
+)
+
+_UNLOCK_QUOTA_KEYS = (
+    "max_venues",
+    "max_events",
+    "max_tickets_per_event",
+    "max_gallery_images",
+)
+
+
+_PLANS_CACHE_TTL_S = 30.0
+_plans_cache: Optional[list[Dict[str, Any]]] = None
+_plans_cache_ts: float = 0.0
+
+
+async def _active_plans_with_features(
+    session: AsyncSession,
+) -> list[Dict[str, Any]]:
+    global _plans_cache, _plans_cache_ts
+    now = time.monotonic()
+    if _plans_cache is not None and (now - _plans_cache_ts) < _PLANS_CACHE_TTL_S:
+        return _plans_cache
+
+    from orm_models import SubscriptionPlan
+
+    result = await session.execute(
+        select(SubscriptionPlan)
+        .where(SubscriptionPlan.active.is_(True))
+        .order_by(SubscriptionPlan.price_cents.asc(), SubscriptionPlan.name.asc())
+    )
+    out = []
+    for row in result.scalars().all():
+        out.append(
+            {
+                "code": row.code,
+                "name": row.name,
+                "features": features_from_plan_row(row),
+            }
+        )
+    _plans_cache = out
+    _plans_cache_ts = now
+    return out
+
+
+def _quota_beats(candidate: Any, current: Any) -> bool:
+    if current == -1:
+        return False
+    if candidate == -1:
+        return True
+    try:
+        return int(candidate) > int(current or 0)
+    except (TypeError, ValueError):
+        return False
+
+
+async def feature_unlock_map(
+    session: AsyncSession, current: Optional[Dict[str, Any]] = None
+) -> Dict[str, Dict[str, str]]:
+    """Cheapest active plan that enables each gated flag / higher quota."""
+    unlocks: Dict[str, Dict[str, str]] = {}
+    current = current or {}
+    for plan in await _active_plans_with_features(session):
+        entry = {"code": plan["code"], "name": plan["name"]}
+        feats = plan["features"]
+        for key in _UNLOCK_BOOL_KEYS:
+            if key in unlocks:
+                continue
+            if feats.get(key) is True:
+                unlocks[key] = entry
+        for key in _UNLOCK_QUOTA_KEYS:
+            if key in unlocks:
+                continue
+            if _quota_beats(feats.get(key), current.get(key)):
+                unlocks[key] = entry
+    return unlocks
+
+
 async def get_plan_features_async(
     session: AsyncSession, plan_code: Optional[str]
 ) -> Dict[str, Any]:
@@ -178,12 +276,9 @@ async def get_plan_features_async(
             select(SubscriptionPlan).where(SubscriptionPlan.code == plan_code)
         )
         row = result.scalar_one_or_none()
-        feats = (
-            get_plan_features(plan_code)
-            if not row
-            else features_from_plan_row(row)
-        )
+        feats = get_plan_features(plan_code) if not row else features_from_plan_row(row)
     feats["pre_event_fee_required"] = await is_pre_event_fee_required(session)
+    feats["_unlocks"] = await feature_unlock_map(session, feats)
     return feats
 
 
@@ -192,7 +287,8 @@ def assert_feature(plan_code: Optional[str], feature: str) -> None:
     if not get_plan_features(plan_code).get(feature, False):
         raise HTTPException(
             403,
-            f"Tu plan actual no incluye esta función ({feature}). Mejorá tu plan para usarla.",
+            f"Tu plan actual no incluye esta función ({feature}). "
+            "Mejorá tu plan para usarla.",
         )
 
 
@@ -204,5 +300,6 @@ async def assert_feature_async(
     if not feats.get(feature, False):
         raise HTTPException(
             403,
-            f"Tu plan actual no incluye esta función ({feature}). Mejorá tu plan para usarla.",
+            f"Tu plan actual no incluye esta función ({feature}). "
+            "Mejorá tu plan para usarla.",
         )
