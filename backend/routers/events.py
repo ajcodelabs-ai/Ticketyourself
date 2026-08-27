@@ -2071,7 +2071,14 @@ async def _store_event_image(
     asset_id = str(uuid.uuid4())
     ext = mimetypes.guess_extension(file.content_type) or ".bin"
     rel_path = f"{organizer_id}/{event_id}/{kind}_{asset_id}{ext}"
-    abs_path = ASSETS_DIR / rel_path
+    abs_path = resolve_path_under(ASSETS_DIR, rel_path)
+    if abs_path is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    base = os.path.realpath(ASSETS_DIR) + os.sep
+    resolved = os.path.realpath(abs_path)
+    if not resolved.startswith(base):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    abs_path = Path(resolved)
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     abs_path.write_bytes(content)
 
