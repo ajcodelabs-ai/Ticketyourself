@@ -119,7 +119,7 @@ const FIELD_LABELS: Record<string, string> = {
     org_type: "Tipo de organización",
     phone: "Teléfono",
     country: "País",
-    slug: "URL del microsite",
+    slug: "URL de tu página",
     title: "Título",
     starts_at: "Fecha de inicio",
     ends_at: "Fecha de fin",

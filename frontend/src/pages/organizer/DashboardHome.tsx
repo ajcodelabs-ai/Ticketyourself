@@ -270,7 +270,7 @@ export default function DashboardHome() {
                     <CardHeader>
                         <CardTitle className="text-lg flex items-center gap-2">
                             <Globe className="h-5 w-5 text-primary" />
-                            Tu microsite
+                            Tu página
                         </CardTitle>
                         <CardDescription>
                             <code

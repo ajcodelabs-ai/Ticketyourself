@@ -18,7 +18,7 @@ import {
 const FEATURES = [
     {
         icon: Globe,
-        title: "Microsite propio",
+        title: "Página propia",
         desc: `Cada organizador tiene su URL única (slug.${PUBLIC_DOMAIN}) con branding e info de sus eventos.`,
     },
     {
@@ -78,7 +78,7 @@ export default function Landing() {
                             </span>
                         </h1>
                         <p className="text-base sm:text-lg text-muted-foreground max-w-xl">
-                            Ticket Yourself te da microsite propio, cobros con Stripe,
+                            Ticket Yourself te da tu propia página, cobros con Stripe,
                             tickets con QR y reportes — listo en minutos. Sin código.
                         </p>
                         <div className="flex flex-col gap-3 pt-2">

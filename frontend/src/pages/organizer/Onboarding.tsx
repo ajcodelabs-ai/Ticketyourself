@@ -359,7 +359,7 @@ export default function Onboarding() {
                         <CardDescription>
                             El equipo TYS revisará tu cuenta (normalmente en 48 h laborables) y te
                             avisamos por correo. Mientras tanto podés configurar venues, eventos y
-                            el microsite; la publicación queda bloqueada hasta la aprobación. Si
+                            tu página; la publicación queda bloqueada hasta la aprobación. Si
                             tenés dudas, escribinos a{" "}
                             <a
                                 href="mailto:soporte@ticketyourself.com"

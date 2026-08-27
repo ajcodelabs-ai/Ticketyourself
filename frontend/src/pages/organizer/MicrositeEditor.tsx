@@ -104,7 +104,7 @@ export default function MicrositeEditor() {
             })
             .catch((e) => {
                 if (e?.response?.status === 403) {
-                    toast.error("Tu cuenta debe estar aprobada para editar el microsite.");
+                    toast.error("Tu cuenta debe estar aprobada para editar tu página.");
                     navigate("/app/dashboard", { replace: true });
                     return;
                 }
@@ -234,7 +234,7 @@ export default function MicrositeEditor() {
             const data = fresh.data;
             if (!data.blocks?.length) data.blocks = resolveBlocks(data);
             setMicrosite(data);
-            toast.success(data.published ? "Microsite publicado" : "Microsite despublicado");
+            toast.success(data.published ? "Página publicada" : "Página despublicada");
         } catch (e) {
             const code = e?.response?.data?.detail?.error;
             if (code === "organizer_pending_review") {
@@ -280,7 +280,7 @@ export default function MicrositeEditor() {
             {/* Header compacto */}
             <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
                 <div>
-                    <h1 className="text-xl sm:text-2xl font-semibold">Diseñador de microsite</h1>
+                    <h1 className="text-xl sm:text-2xl font-semibold">Diseñador de tu página</h1>
                     <p className="text-sm text-muted-foreground">
                         {microsite.published ? (
                             <>
@@ -566,7 +566,7 @@ export default function MicrositeEditor() {
                     <DialogHeader className="px-5 py-3 border-b shrink-0">
                         <DialogTitle className="text-base flex items-center gap-2">
                             <Maximize2 className="h-4 w-4 text-primary" />
-                            Vista grande del microsite
+                            Vista grande de tu página
                         </DialogTitle>
                     </DialogHeader>
                     <div className="flex-1 bg-secondary/30 overflow-auto p-4">

@@ -19,7 +19,7 @@ import {
 const RESOURCE_LABELS = {
     evento: "este evento",
     venue: "este venue",
-    microsite: "tu microsite",
+    microsite: "tu página",
 };
 
 export default function PublishPendingDialog({ open, onOpenChange, resource = "evento" }) {

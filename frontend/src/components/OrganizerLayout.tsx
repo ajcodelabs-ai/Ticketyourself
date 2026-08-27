@@ -50,7 +50,7 @@ const NAV_ITEMS = [
     },
     {
         to: "/app/microsite",
-        label: "Microsite",
+        label: "Mi página",
         icon: Palette,
         testid: "nav-microsite",
     },
@@ -151,7 +151,7 @@ export default function OrganizerLayout({ children }) {
                             className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950"
                         >
                             Tu cuenta está en revisión por TYS. Podés configurar todo, pero no
-                            publicar eventos, venues ni el microsite hasta la aprobación.{" "}
+                            publicar eventos, venues ni tu página hasta la aprobación.{" "}
                             <Link
                                 to="/onboarding"
                                 className="font-medium underline underline-offset-2"

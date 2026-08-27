@@ -618,7 +618,7 @@ export function PublishPanel({
     return (
         <div className="space-y-4" data-testid="publish-panel">
             <div className="flex items-center justify-between rounded-lg border p-3">
-                <Label htmlFor="published-switch">Microsite publicado</Label>
+                <Label htmlFor="published-switch">Página publicada</Label>
                 <Switch
                     id="published-switch"
                     checked={Boolean(microsite.published)}

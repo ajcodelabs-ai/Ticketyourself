@@ -77,7 +77,7 @@ export default function Dashboard() {
                 />
                 <QuickCard
                     icon={<Globe className="h-5 w-5" />}
-                    title="Tu microsite"
+                    title="Tu página"
                     value={publicMicrositeHost(organizer.slug)}
                     sub="Activo cuando aprobemos tu cuenta"
                     testid="card-slug"
@@ -96,7 +96,7 @@ export default function Dashboard() {
                     <CardHeader>
                         <CardTitle className="text-lg flex items-center gap-2">
                             <Globe className="h-5 w-5 text-primary" />
-                            Tu microsite
+                            Tu página
                         </CardTitle>
                         <CardDescription>
                             Publicado en{" "}
@@ -121,7 +121,7 @@ export default function Dashboard() {
                         >
                             <Link to="/microsite/editor">
                                 <Edit3 className="h-4 w-4 mr-1.5" />
-                                Editar microsite
+                                Editar página
                             </Link>
                         </Button>
                         <Button
@@ -154,7 +154,7 @@ export default function Dashboard() {
                     />
                     <FuturePlaceholder
                         icon={<Globe className="h-5 w-5" />}
-                        title="Editar microsite"
+                        title="Editar página"
                         desc="Disponible cuando tu cuenta esté aprobada."
                         testid="dash-future-site"
                     />
@@ -224,7 +224,7 @@ function StatusCard({ organizer }) {
                             Tu cuenta está aprobada
                         </CardTitle>
                         <CardDescription className="text-emerald-800">
-                            Tu microsite estará disponible en{" "}
+                            Tu página estará disponible en{" "}
                             <code
                                 className="bg-emerald-100 px-1.5 py-0.5 rounded font-mono"
                                 data-testid="approved-public-host"
