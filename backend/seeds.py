@@ -126,7 +126,7 @@ PLANS = [
         "features": [
             "1 evento",
             "Hasta 200 tickets",
-            "Microsite del evento",
+            "Página del evento",
             "Soporte por email",
         ],
         "max_events": 1,
@@ -146,7 +146,7 @@ PLANS = [
         "features": [
             "Hasta 5 eventos activos",
             "Hasta 500 tickets por evento",
-            "Microsite del organizador",
+            "Página del organizador",
             "Reportes básicos",
         ],
         "max_events": 5,

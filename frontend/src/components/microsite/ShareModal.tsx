@@ -34,7 +34,7 @@ export default function ShareModal({ open, onOpenChange, url, companyName, heroS
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-md" data-testid="share-modal">
                 <DialogHeader>
-                    <DialogTitle>Compartir microsite</DialogTitle>
+                    <DialogTitle>Compartir página</DialogTitle>
                     <DialogDescription>
                         Pegá el link en tus redes o escaneá el QR para abrirlo desde el celular.
                     </DialogDescription>

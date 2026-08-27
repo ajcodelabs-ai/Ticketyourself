@@ -30,7 +30,7 @@ const PLANS = [
         name: "Básico",
         price: 20,
         bullets: [
-            "Microsite del organizador",
+            "Página del organizador",
             "Hasta 3 eventos activos",
             "Reportes básicos",
         ],
