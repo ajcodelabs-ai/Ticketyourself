@@ -29,17 +29,8 @@ import {
 import EditorCanvas from "@/components/venues/EditorCanvas";
 import { PlanLockBadge, UpgradePlanButton } from "@/components/plans/PlanGate";
 import api from "@/lib/api";
+import { centsToInput, dollarsToCents } from "@/lib/money";
 import { formatQuoteLabel } from "@/lib/salesFees";
-
-function dollarsToCents(v: string): number {
-    if (v === "" || v == null) return 0;
-    return Math.max(0, Math.round(parseFloat(v) * 100) || 0);
-}
-
-function centsToInput(cents: number | null | undefined): string {
-    if (cents == null) return "";
-    return (cents / 100).toFixed(2);
-}
 
 function FieldTip({ text }: { text: string }) {
     return (
@@ -261,11 +252,11 @@ export default function LocalityFormDialog({
             description: description.trim() || null,
             seating_type: seatingType,
             assigned_element_ids: assignedIds,
-            price_cents: dollarsToCents(money.price),
-            vxs_cents: dollarsToCents(money.vxs),
-            service_fee_cents: dollarsToCents(money.service),
-            admin_fee_cents: dollarsToCents(money.admin),
-            wallet_fee_cents: dollarsToCents(money.wallet),
+            price_cents: dollarsToCents(money.price) ?? 0,
+            vxs_cents: dollarsToCents(money.vxs) ?? 0,
+            service_fee_cents: dollarsToCents(money.service) ?? 0,
+            admin_fee_cents: dollarsToCents(money.admin) ?? 0,
+            wallet_fee_cents: dollarsToCents(money.wallet) ?? 0,
         });
     };
 

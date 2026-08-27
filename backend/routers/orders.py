@@ -163,47 +163,61 @@ async def preview_order(payload: PreviewOrderBody):
             **fee_ctx,
         )
         quantity = len(payload.seat_ids)
-    else:
-        totals = order_service.compute_totals(
+        items = discount_service.items_from_payload(
             event=event,
-            quantity=payload.quantity,
-            **fee_ctx,
+            venue=venue,
+            seat_ids=payload.seat_ids,
+            quantity=quantity,
         )
+    else:
         quantity = payload.quantity
-
-    items = discount_service.items_from_payload(
-        event=event,
-        venue=venue,
-        seat_ids=payload.seat_ids,
-        quantity=quantity,
-    )
-    if payload.ticket_type_selections:
-        from orm_models import TicketType as _TTModel
-
-        async with AsyncSessionLocal() as pg:
-            tt_ids = [s.ticket_type_id for s in payload.ticket_type_selections]
-            result = await pg.execute(
-                select(_TTModel).where(
-                    _TTModel.id.in_(tt_ids), _TTModel.event_id == event["id"]
-                )
-            )
-            tt_map = {r.id: row_to_dict(r) for r in result.scalars().all()}
-        items = discount_service.items_from_ticket_types(
-            selections=[s.model_dump() for s in payload.ticket_type_selections],
-            ticket_types_by_id=tt_map,
+        items = discount_service.items_from_payload(
+            event=event,
+            venue=venue,
+            seat_ids=payload.seat_ids,
+            quantity=quantity,
         )
-        # Align gross totals with ticket-type pricing when seats aren't used.
-        if not (payload.seat_ids and venue):
+        if payload.ticket_type_selections:
+            from orm_models import TicketType as _TTModel
+
+            async with AsyncSessionLocal() as pg:
+                tt_ids = [s.ticket_type_id for s in payload.ticket_type_selections]
+                result = await pg.execute(
+                    select(_TTModel).where(
+                        _TTModel.id.in_(tt_ids), _TTModel.event_id == event["id"]
+                    )
+                )
+                tt_map = {r.id: row_to_dict(r) for r in result.scalars().all()}
+            items = discount_service.items_from_ticket_types(
+                selections=[s.model_dump() for s in payload.ticket_type_selections],
+                ticket_types_by_id=tt_map,
+            )
+            # Ticket-type pricing: unit prices come from each type, not from
+            # `payload.quantity` × base price, so build the gross totals here
+            # (no redundant fee pass over `compute_totals`).
             subtotal = sum(it["price_cents"] for it in items)
             unit_prices = [int(it.get("price_cents") or 0) for it in items]
             totals = apply_platform_fee(
                 {
-                    **totals,
-                    "subtotal_cents": subtotal,
                     "unit_price_cents": int(subtotal / max(1, len(items))),
+                    "subtotal_cents": subtotal,
+                    "entrada_cents": subtotal,
+                    "service_fee_cents": 0,
+                    "admin_fee_cents": 0,
+                    "vxs_cents": 0,
+                    "wallet_fee_cents": 0,
+                    "fees_cents": 0,
+                    "total_cents": subtotal,
+                    "donation_amount_cents": 0,
                 },
                 event=event,
                 unit_prices=unit_prices,
+                **fee_ctx,
+            )
+        else:
+            totals = order_service.compute_totals(
+                event=event,
+                quantity=quantity,
                 **fee_ctx,
             )
     applied, warnings = discount_service.evaluate_discounts(

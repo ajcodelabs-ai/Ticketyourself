@@ -2,22 +2,15 @@
  * TYS per-ticket sales commission helpers (admin matrix).
  */
 
+import { centsToDollars } from "@/lib/money";
+
+export { centsToDollars, dollarsToCents } from "@/lib/money";
+
 export const PRICING_TYPE_LABELS = {
     paid: "Pagado",
     free: "Gratuito",
     donation: "Donación",
 };
-
-export function centsToDollars(cents) {
-    return ((Number(cents) || 0) / 100).toFixed(2);
-}
-
-export function dollarsToCents(raw) {
-    if (raw === "" || raw == null) return 0;
-    const n = parseFloat(raw);
-    if (Number.isNaN(n)) return null;
-    return Math.max(0, Math.round(n * 100));
-}
 
 /** "4.50" percent → 450 bps. */
 export function percentToBps(raw) {

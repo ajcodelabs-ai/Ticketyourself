@@ -95,7 +95,9 @@ def _matches_q(item: dict, q: str) -> bool:
     return q in blob
 
 
-def _status_list(status: StatusFilter, pending: Sequence[str], paid: Sequence[str]) -> List[str]:
+def _status_list(
+    status: StatusFilter, pending: Sequence[str], paid: Sequence[str]
+) -> List[str]:
     out: List[str] = []
     if status in ("pending", "all"):
         out.extend(pending)
@@ -104,7 +106,9 @@ def _status_list(status: StatusFilter, pending: Sequence[str], paid: Sequence[st
     return out
 
 
-async def _count_sum(session: AsyncSession, count_col, sum_col, *where) -> Dict[str, int]:
+async def _count_sum(
+    session: AsyncSession, count_col, sum_col, *where
+) -> Dict[str, int]:
     stmt = select(func.count(count_col), func.coalesce(func.sum(sum_col), 0))
     for clause in where:
         stmt = stmt.where(clause)
@@ -198,7 +202,9 @@ async def list_payments(
                         title="Pago de verificación",
                         reference=None,
                         created_at=org.approved_at or org.created_at,
-                        extra={"action": "mark_verification" if st == "pending" else None},
+                        extra={
+                            "action": "mark_verification" if st == "pending" else None
+                        },
                     )
                 )
 

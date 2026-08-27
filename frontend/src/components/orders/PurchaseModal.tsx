@@ -48,7 +48,6 @@ import type { NuveiCheckoutConfig } from "@/lib/nuvei";
 import DeunaCheckoutPanel from "@/components/orders/DeunaCheckoutPanel";
 import type { DeunaCheckoutConfig } from "@/lib/deuna";
 
-const FEE_PERCENT = 5;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function activeMethodsFor(event) {
@@ -205,6 +204,7 @@ export default function PurchaseModal({
         fees_cents: number;
         total_cents: number;
         discount_total_cents: number;
+        platform_fee_bearer?: string;
         discounts_applied?: Array<{ name: string; type: string; amount_cents: number }>;
     } | null>(null);
     const [lawCategory, setLawCategory] = useState<"" | "disability" | "senior">("");
@@ -425,8 +425,9 @@ export default function PurchaseModal({
                 const tt = ticketTypes.find((t) => t.id === sel.ticket_type_id);
                 return sum + (tt?.price_cents ?? 0) * sel.quantity;
             }, 0);
-            const fees = toBuyer(subtotal > 0 ? Math.round((subtotal * FEE_PERCENT) / 100) : 0);
-            base = { subtotal, fees, total: subtotal + fees };
+            // Fee comes from the backend preview (per-plan matrix). Show a
+            // neutral 0 until `previewTotals` arrives, never a client-side guess.
+            base = { subtotal, fees: 0, total: subtotal };
         } else if (pricingType === "free") {
             const cents = optionalDonation
                 ? Math.round(parseFloat(donation || "0") * 100)
@@ -444,8 +445,7 @@ export default function PurchaseModal({
                 Number(tf.tax_cents || tf.vxs_cents || 0) +
                 Number(tf.wallet_fee_cents || 0);
             const subtotal = (unit + perExtra) * quantity;
-            const fees = toBuyer(Math.round((unit * quantity * FEE_PERCENT) / 100));
-            base = { subtotal, fees, total: subtotal + fees };
+            base = { subtotal, fees: 0, total: subtotal };
         }
 
         if (previewTotals) {
@@ -462,10 +462,7 @@ export default function PurchaseModal({
         if (appliedPromo) {
             const discount = appliedPromo.amount_cents || 0;
             const subtotalAfterDiscount = Math.max(0, base.subtotal - discount);
-            const fees = base.fees > 0
-                ? Math.round((subtotalAfterDiscount * FEE_PERCENT) / 100)
-                : 0;
-            return { ...base, discount, fees, total: subtotalAfterDiscount + fees };
+            return { ...base, discount, total: subtotalAfterDiscount + base.fees };
         }
         return { ...base, discount: 0 };
     }, [

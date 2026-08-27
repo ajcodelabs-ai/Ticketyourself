@@ -231,7 +231,13 @@ async def admin_delete_rule(
     if not row:
         raise HTTPException(404, "Regla no encontrada")
     await session.delete(row)
-    await log_audit(admin["id"], "sales_fee_rule.deleted", "sales_fee_rule", rule_id, {})
+    await log_audit(
+        admin["id"],
+        "sales_fee_rule.deleted",
+        "sales_fee_rule",
+        rule_id,
+        {},
+    )
     return None
 
 

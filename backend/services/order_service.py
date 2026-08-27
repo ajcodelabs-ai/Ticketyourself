@@ -7,7 +7,6 @@ step to `finalize_paid_order` so the path is single-sourced.
 """
 
 import logging
-import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -24,7 +23,6 @@ logger = logging.getLogger("tys.orders")
 
 RESERVATION_TTL_MIN = 15
 MANUAL_RESERVATION_TTL_HOURS = 48  # transfer / cash buyers get 48h to complete
-DEFAULT_FEE_PERCENT = float(os.environ.get("TYS_FEE_PERCENT", "5"))
 MAX_QUANTITY = 10
 ORDER_PREFIX = "TYS-"
 VALID_PAYMENT_METHODS = (

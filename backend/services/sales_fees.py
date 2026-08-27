@@ -137,8 +137,12 @@ def quote_one(
             "matched": True,
             "fee_cents": fee,
             "fee_mode": mode,
-            "fee_fixed_cents": int(rule.get("fee_fixed_cents") or 0) if mode == "fixed" else 0,
-            "fee_percent_bps": int(rule.get("fee_percent_bps") or 0) if mode == "percent" else 0,
+            "fee_fixed_cents": (
+                int(rule.get("fee_fixed_cents") or 0) if mode == "fixed" else 0
+            ),
+            "fee_percent_bps": (
+                int(rule.get("fee_percent_bps") or 0) if mode == "percent" else 0
+            ),
             "rule_id": rule.get("id"),
             "plan_code": plan_code,
             "pricing_type": ptype,

@@ -12,11 +12,11 @@ from fastapi import HTTPException
 
 from routers.events import CustomQuestion, LocalityPriceIn
 from services.order_service import (
-    DEFAULT_FEE_PERCENT,
     compute_totals_with_seats,
     locality_fee_cents,
     locality_pricing_map,
 )
+from services.sales_fees import FALLBACK_PERCENT
 
 
 def test_locality_price_in_includes_fees():
@@ -90,7 +90,7 @@ def test_compute_totals_with_seats_fees_on_entrada_only():
     assert totals["service_fee_cents"] == 200
     assert totals["admin_fee_cents"] == 100
     assert totals["subtotal_cents"] == 3300
-    expected_fees = int(round(3000 * DEFAULT_FEE_PERCENT / 100))
+    expected_fees = int(round(3000 * FALLBACK_PERCENT / 100))
     assert totals["fees_cents"] == expected_fees
     assert totals["total_cents"] == 3300 + expected_fees
 

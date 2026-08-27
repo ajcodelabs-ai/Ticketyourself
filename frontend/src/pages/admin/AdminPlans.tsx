@@ -32,6 +32,7 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import api, { formatApiError } from "@/lib/api";
+import { centsToDollars, dollarsToCents } from "@/lib/money";
 import {
     Tooltip,
     TooltipContent,
@@ -102,20 +103,6 @@ const PLAN_RUNTIME_DEFAULTS = {
 function runtimeDefault(code, key, fallback) {
     const row = PLAN_RUNTIME_DEFAULTS[code] || {};
     return row[key] ?? fallback;
-}
-
-function centsToDollars(cents) {
-    const n = Number(cents);
-    if (!Number.isFinite(n)) return "0.00";
-    return (n / 100).toFixed(2);
-}
-
-function dollarsToCents(value) {
-    const raw = String(value ?? "").trim().replace(",", ".");
-    if (!raw) return 0;
-    const n = Number.parseFloat(raw);
-    if (!Number.isFinite(n) || n < 0) return null;
-    return Math.round(n * 100);
 }
 
 function planToForm(p) {

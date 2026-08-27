@@ -48,11 +48,7 @@ import { LOCALITY_SEATING_TYPES, inferAttendanceFormatFromLocalities, normalizeL
 import LocalityFormDialog from "@/components/events/LocalityFormDialog";
 import { PlanGateHint } from "@/components/plans/PlanGate";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-
-function centsToInput(cents: number | null | undefined): string {
-    if (cents == null) return "";
-    return (cents / 100).toFixed(2);
-}
+import { centsToInput } from "@/lib/money";
 
 function FieldTip({ text }: { text: string }) {
     return (
