@@ -10,9 +10,7 @@ def resolve_path_under(base_dir: Path, relative: str) -> Path | None:
     if not relative:
         return None
     base = base_dir.resolve()
-    try:
-        resolved = (base / relative).resolve()
-        resolved.relative_to(base)
-    except (ValueError, OSError):
+    resolved = (base / relative).resolve()
+    if not resolved.is_relative_to(base):
         return None
     return resolved

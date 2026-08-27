@@ -47,8 +47,8 @@ def test_commit_drops_old_files_and_keeps_new_ones(assets_dir):
     assert new.exists()
 
 
-def test_write_appeal_bytes_removes_partial_file(tmp_path, monkeypatch):
-    target = tmp_path / "partial.pdf"
+def test_write_appeal_bytes_removes_partial_file(assets_dir, monkeypatch):
+    target = assets_dir / "partial.pdf"
 
     def boom(self, data):
         with open(self, "wb") as fh:
