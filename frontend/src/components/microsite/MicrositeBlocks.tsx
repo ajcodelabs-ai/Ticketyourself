@@ -17,6 +17,7 @@ import { sanitizeHtml, isSafeHref } from "@/lib/sanitizeHtml";
 import api from "@/lib/api";
 import { assetUrl } from "@/lib/microsite";
 import EventCard from "@/components/events/EventCard";
+import { formatEventDate } from "@/lib/events";
 import {
     Accordion,
     AccordionContent,
@@ -61,6 +62,22 @@ const SOCIAL_ICON = {
 };
 
 const SPACER_HEIGHT = { sm: "py-8", md: "py-16", lg: "py-24" };
+
+/** Stable hash targets for hero CTAs (`#events`, `#contact`). Block UUID stays in data-block-id. */
+function sectionAnchorProps(anchor: string, blockId?: string, testid?: string) {
+    return {
+        id: anchor,
+        "data-block-id": blockId,
+        "data-ms-anchor": anchor,
+        ...(testid ? { "data-testid": testid } : {}),
+    };
+}
+
+function eventStartMs(event: { starts_at?: string }): number | null {
+    if (!event?.starts_at) return null;
+    const ms = new Date(event.starts_at).getTime();
+    return Number.isFinite(ms) ? ms : null;
+}
 
 export function HeroBlockView({
     microsite,
@@ -234,8 +251,12 @@ export function EventsBlockView({
     useEffect(() => {
         if (!tenantSlug) return;
         let alive = true;
-        api.get(`/public/events?tenant_slug=${tenantSlug}`)
-            .then((r) => alive && setEvents(r.data?.items || []))
+        api.get("/public/events", { params: { tenant_slug: tenantSlug } })
+            .then((r) => {
+                const data = r.data;
+                const items = Array.isArray(data) ? data : data?.items || [];
+                if (alive) setEvents(items);
+            })
             .catch(() => alive && setEvents([]));
         return () => {
             alive = false;
@@ -250,7 +271,10 @@ export function EventsBlockView({
 
     if (events === null) {
         return (
-            <section className="py-[var(--ms-space-section)] bg-secondary/40">
+            <section
+                {...sectionAnchorProps("events", blockId, "ms-events-loading")}
+                className="py-[var(--ms-space-section)] bg-secondary/40"
+            >
                 <div className="max-w-5xl mx-auto px-6 text-center text-muted-foreground">
                     Cargando eventos…
                 </div>
@@ -258,48 +282,36 @@ export function EventsBlockView({
         );
     }
     if (events.length === 0) {
-        return (
-            <section
-                id={blockId ? `block-${blockId}` : "events"}
-                className="py-[var(--ms-space-section)] bg-secondary/40"
-                data-testid="ms-events-empty"
-            >
-                <div className="max-w-5xl mx-auto px-6 sm:px-10 text-center">
-                    <p className="text-sm uppercase tracking-widest text-muted-foreground">
-                        Próximamente
-                    </p>
-                    <h2 className="text-3xl md:text-4xl font-semibold mt-2 mb-3">
-                        Eventos en preparación
-                    </h2>
-                    <p className="text-muted-foreground max-w-xl mx-auto">
-                        Estamos cargando los próximos eventos. Volvé pronto o seguinos en redes
-                        sociales para no perderte ninguno.
-                    </p>
-                </div>
-            </section>
-        );
+        return <EmptyEventsSection blockId={blockId} />;
     }
 
     const now = Date.now();
     const byPriorityThenDate = (a, b) => {
         const pd = (Number(b.priority) || 0) - (Number(a.priority) || 0);
         if (pd !== 0) return pd;
-        return new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime();
+        const ta = eventStartMs(a) ?? Number.MAX_SAFE_INTEGER;
+        const tb = eventStartMs(b) ?? Number.MAX_SAFE_INTEGER;
+        return ta - tb;
     };
     const upcoming = events
-        .filter((e) => new Date(e.starts_at).getTime() > now)
+        .filter((e) => {
+            const t = eventStartMs(e);
+            return t === null || t > now;
+        })
         .sort(byPriorityThenDate);
     const past = events
-        .filter((e) => new Date(e.starts_at).getTime() <= now)
+        .filter((e) => {
+            const t = eventStartMs(e);
+            return t !== null && t <= now;
+        })
         .sort(byPriorityThenDate);
     const isList = layout === "list";
     const cols = isList ? "grid-cols-1 max-w-2xl mx-auto" : "sm:grid-cols-2 lg:grid-cols-3";
 
     return (
         <section
-            id={blockId ? `block-${blockId}` : "events"}
-            className="py-[var(--ms-space-section)]"
-            data-testid="ms-events-section"
+            {...sectionAnchorProps("events", blockId, "ms-events-section")}
+            className="py-[var(--ms-space-section)] scroll-mt-6"
         >
             <div className="max-w-6xl mx-auto px-6 sm:px-10 space-y-12">
                 {upcoming.length > 0 && (
@@ -341,10 +353,35 @@ export function EventsBlockView({
     );
 }
 
+function EmptyEventsSection({ blockId }: { blockId?: string }) {
+    return (
+        <section
+            {...sectionAnchorProps("events", blockId, "ms-events-empty")}
+            className="py-[var(--ms-space-section)] bg-secondary/40 scroll-mt-6"
+        >
+            <div className="max-w-5xl mx-auto px-6 sm:px-10 text-center">
+                <p className="text-sm uppercase tracking-widest text-muted-foreground">
+                    Próximamente
+                </p>
+                <h2 className="text-3xl md:text-4xl font-semibold mt-2 mb-3">
+                    Eventos en preparación
+                </h2>
+                <p className="text-muted-foreground max-w-xl mx-auto">
+                    Estamos cargando los próximos eventos. Volvé pronto o seguinos en redes
+                    sociales para no perderte ninguno.
+                </p>
+            </div>
+        </section>
+    );
+}
+
 function FeaturedEventView({ tenantSlug, blockId, events }) {
     if (events === null) {
         return (
-            <section className="py-[var(--ms-space-section)] bg-secondary/40">
+            <section
+                {...sectionAnchorProps("events", blockId, "ms-events-loading")}
+                className="py-[var(--ms-space-section)] bg-secondary/40"
+            >
                 <div className="max-w-5xl mx-auto px-6 text-center text-muted-foreground">
                     Cargando eventos…
                 </div>
@@ -355,24 +392,26 @@ function FeaturedEventView({ tenantSlug, blockId, events }) {
     const byPriorityThenDate = (a, b) => {
         const pd = (Number(b.priority) || 0) - (Number(a.priority) || 0);
         if (pd !== 0) return pd;
-        return new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime();
+        const ta = eventStartMs(a) ?? Number.MAX_SAFE_INTEGER;
+        const tb = eventStartMs(b) ?? Number.MAX_SAFE_INTEGER;
+        return ta - tb;
     };
     const upcoming = (events || [])
-        .filter((e) => new Date(e.starts_at).getTime() > now)
+        .filter((e) => {
+            const t = eventStartMs(e);
+            return t === null || t > now;
+        })
         .sort(byPriorityThenDate);
     const event = upcoming[0] || events?.[0] || null;
-    if (!event) return null;
+    if (!event) return <EmptyEventsSection blockId={blockId} />;
 
-    const formatted = new Intl.DateTimeFormat("es-EC", {
-        day: "2-digit",
-        month: "long",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    }).format(new Date(event.starts_at));
+    const formatted = formatEventDate(event.starts_at, event.timezone);
 
     return (
-        <section id={blockId ? `block-${blockId}` : "events"} className="py-[var(--ms-space-section)] px-6">
+        <section
+            {...sectionAnchorProps("events", blockId, "ms-events-section")}
+            className="py-[var(--ms-space-section)] px-6 scroll-mt-6"
+        >
             <div className="max-w-3xl mx-auto rounded-[var(--ms-radius)] border bg-card overflow-hidden shadow-[var(--ms-shadow)]">
                 {event.poster_url && (
                     <img
@@ -424,9 +463,8 @@ export function ContactBlockView({
 
     return (
         <section
-            id={blockId ? `block-${blockId}` : "contact"}
-            className="py-[var(--ms-space-section)]"
-            data-testid="ms-contact"
+            {...sectionAnchorProps("contact", blockId, "ms-contact")}
+            className="py-[var(--ms-space-section)] scroll-mt-6"
         >
             <div className="max-w-3xl mx-auto px-6 sm:px-10">
                 <h2 className="text-2xl md:text-3xl font-semibold mb-6">Contacto</h2>

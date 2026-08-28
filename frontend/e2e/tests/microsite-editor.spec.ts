@@ -62,9 +62,34 @@ test.describe("Microsite editor", () => {
 
       await page.reload();
       await expect(page.getByTestId("microsite-editor")).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByTestId("ms-hero-title")).toHaveText(newTitle);
+    await expect(page.getByTestId("ms-hero-title")).toHaveText(newTitle);
     } finally {
       await patchMicrositeContent(page, { hero_title: originalTitle });
+    }
+  });
+
+  test("Picking a template from the gallery applies colors and keeps the title", async ({ page }) => {
+    const original = await getMicrosite(page);
+    try {
+      await page.goto("/app/microsite");
+      await expect(page.getByTestId("quick-setup-panel")).toBeVisible({ timeout: 15_000 });
+      await page.getByTestId("open-template-gallery").click();
+      await expect(page.getByTestId("template-gallery")).toBeVisible();
+      await page.getByTestId("template-card-evento_unico").click();
+      await expect(page.getByTestId("color-primary")).toHaveValue("#9f1239");
+      await page.getByTestId("setup-section-copy").getByRole("button").click();
+      await expect(page.getByTestId("quick-hero-title")).toHaveValue(original.content?.hero_title || "");
+    } finally {
+      const token = await getToken(page);
+      await page.request.put(`${BACKEND_URL}/api/microsite/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        data: {
+          template: original.template,
+          branding: original.branding,
+          content: original.content,
+          blocks: original.blocks,
+        },
+      });
     }
   });
 
@@ -103,5 +128,24 @@ test.describe("Microsite editor", () => {
     const openCalls = await page.evaluate(() => (window as any).__openCalls);
     expect(openCalls.length).toBe(0);
     expect(page.url()).toContain("/o/demo-org");
+  });
+});
+
+test.describe("Public microsite events", () => {
+  // Regression: the events section used id={`block-${uuid}`} while the hero CTA
+  // href is `#events`, so "Ver próximos eventos" was a no-op and the list
+  // (below the about block) looked missing.
+  test("Hero CTA scrolls to published events", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 640 });
+    await page.goto("/o/demo-org");
+
+    const events = page.getByTestId("ms-events-section");
+    await expect(events).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator("[data-testid^='event-card-']").first()).toBeVisible();
+
+    const cta = page.getByTestId("ms-hero-cta");
+    await expect(cta).toBeVisible();
+    await cta.click();
+    await expect(events).toBeInViewport();
   });
 });

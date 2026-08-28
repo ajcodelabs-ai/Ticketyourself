@@ -438,56 +438,41 @@ function ThemeSwatchGroup({
 
 export function ThemePanel({
     microsite,
-    onApplyTemplate,
     onUpdateBranding,
     uploadAsset,
     uploadingAsset,
+    onOpenGallery,
 }: {
     microsite: Record<string, unknown>;
-    onApplyTemplate: (code: string) => void;
+    onApplyTemplate?: (code: string) => void;
     onUpdateBranding: (patch: Record<string, string>) => void;
     uploadAsset: (file: File, type: string) => void;
     uploadingAsset: string | null;
+    onOpenGallery?: () => void;
 }) {
     const branding = (microsite.branding || {}) as Record<string, string>;
-
-    const categories = [...new Set(TEMPLATE_OPTIONS.map((t) => t.category))];
+    const preset = TEMPLATE_OPTIONS.find((t) => t.code === microsite.template) || TEMPLATE_OPTIONS[0];
 
     return (
         <div className="space-y-5" data-testid="theme-panel">
-            <div>
-                <h3 className="text-sm font-semibold mb-2">Plantillas rápidas</h3>
-                <p className="text-xs text-muted-foreground mb-3">
-                    Aplicá un diseño prearmado. Podés reordenar y personalizar después.
+            <div className="rounded-xl border p-3 space-y-2">
+                <h3 className="text-sm font-semibold">Plantilla</h3>
+                <p className="text-sm">
+                    {preset.name}
+                    <span className="block text-xs text-muted-foreground font-normal mt-0.5">
+                        {preset.description}
+                    </span>
                 </p>
-                {categories.map((cat) => (
-                    <div key={cat} className="mb-4">
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">
-                            {cat}
-                        </p>
-                        <div className="space-y-2">
-                            {TEMPLATE_OPTIONS.filter((t) => t.category === cat).map((t) => {
-                                const active = microsite.template === t.code;
-                                return (
-                                    <button
-                                        key={t.code}
-                                        type="button"
-                                        onClick={() => onApplyTemplate(t.code)}
-                                        className={`w-full text-left p-3 rounded-lg border transition text-sm ${
-                                            active
-                                                ? "border-primary ring-1 ring-primary/30 bg-primary/5"
-                                                : "border-border hover:border-primary/50"
-                                        }`}
-                                        data-testid={`template-${t.code}`}
-                                    >
-                                        <div className="font-medium">{t.name}</div>
-                                        <div className="text-xs text-muted-foreground">{t.description}</div>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                ))}
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => onOpenGallery?.()}
+                    data-testid="theme-open-gallery"
+                >
+                    Ver plantillas
+                </Button>
             </div>
 
             <div className="space-y-4 pt-2 border-t">

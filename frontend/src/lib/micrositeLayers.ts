@@ -220,7 +220,10 @@ export function resolveHeroLayers(
                     : def.role === "subtitle"
                       ? content.hero_subtitle ?? merged.content
                       : content.hero_cta_text ?? merged.content,
-            href: def.role === "cta" ? content.hero_cta_href ?? merged.href : merged.href,
+            href:
+                def.role === "cta"
+                    ? content.hero_cta_href || merged.href || "#events"
+                    : merged.href,
         });
     });
 

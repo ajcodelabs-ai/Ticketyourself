@@ -103,6 +103,35 @@ class TestMicrositeMe:
         r = requests.get(f"{API}/microsite/me")
         assert r.status_code == 401
 
+    def test_put_content_accepts_reserved_tld_email(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"content": {"contact_email": "hola@demo-org.test"}},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["content"]["contact_email"] == "hola@demo-org.test"
+
+    def test_put_content_rejects_malformed_email(self, demo_token):
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"content": {"contact_email": "no-es-un-email"}},
+        )
+        assert r.status_code == 422
+
+    def test_put_template_with_existing_content_succeeds(self, demo_token):
+        current = requests.get(f"{API}/microsite/me", headers=bearer(demo_token))
+        assert current.status_code == 200
+        content = dict(current.json().get("content") or {})
+        r = requests.put(
+            f"{API}/microsite/me",
+            headers=bearer(demo_token),
+            json={"template": "cronologico", "content": content},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["template"] == "cronologico"
+
     def test_put_template_valid(self, demo_token):
         r = requests.put(
             f"{API}/microsite/me",
