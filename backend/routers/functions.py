@@ -347,7 +347,10 @@ class EventFunctionUpdate(BaseModel):
     capacity: Optional[int] = None
     sort_order: Optional[int] = None
     status: Optional[str] = None
-    kind: Optional[Literal["function", "subevent"]] = None
+    kind: Optional[Literal["function", "subevent"]] = Field(
+        default=None,
+        description="Ignored on update — kind is immutable after creation.",
+    )
     ticket_type_overrides: Optional[List[FunctionTicketTypeOverride]] = None
 
 
