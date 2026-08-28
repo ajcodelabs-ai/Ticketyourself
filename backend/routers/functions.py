@@ -558,7 +558,9 @@ async def update_function(
     )
 
     overrides = body.ticket_type_overrides
-    update_data = body.model_dump(exclude_none=True, exclude={"ticket_type_overrides", "kind"})
+    update_data = body.model_dump(
+        exclude_none=True, exclude={"ticket_type_overrides", "kind"}
+    )
     for field, val in update_data.items():
         setattr(func, field, val)
     # Multifunción inherits venue/capacity from the event. exclude_none=True

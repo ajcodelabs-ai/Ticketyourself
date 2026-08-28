@@ -124,7 +124,23 @@ const SEATING_CARDS = [
     { ...LOCALITY_SEATING_TYPES.unnumbered, icon: Users },
 ];
 
-function MoneyField({ label, tip, value, onChange, testid, required, onRemove }) {
+function MoneyField({
+    label,
+    tip,
+    value,
+    onChange,
+    testid,
+    required,
+    onRemove,
+}: {
+    label: string;
+    tip?: string;
+    value: string;
+    onChange: (v: string) => void;
+    testid: string;
+    required?: boolean;
+    onRemove?: () => void;
+}) {
     return (
         <div className="space-y-1">
             <div className="flex items-center justify-between gap-2 min-h-4">
