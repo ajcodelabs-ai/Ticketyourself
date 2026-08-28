@@ -4,10 +4,13 @@ import {
     useContext,
     useEffect,
     useMemo,
+    useRef,
     useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, tokenStore } from "@/lib/api";
+import { queryKeys } from "@/lib/queryKeys";
 
 const AuthContext = createContext(null);
 
@@ -16,11 +19,32 @@ export function AuthProvider({ children }) {
     const [organizer, setOrganizer] = useState(null);
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
+    const queryClient = useQueryClient();
 
-    const setSession = useCallback((data) => {
-        setUser(data?.user || null);
-        setOrganizer(data?.organizer || null);
-    }, []);
+    // Tracks the plan_code we last saw so a resync only drops the cached
+    // plan-features permissions when the plan actually changed (an admin
+    // edit, a completed checkout, or switching to a different organizer
+    // account) — not on every focus/storage resync, which would defeat the
+    // point of usePlanFeatures' staleTime.
+    const planCodeRef = useRef(null);
+    const syncPlanFeaturesCache = useCallback(
+        (planCode) => {
+            const next = planCode ?? null;
+            if (next === planCodeRef.current) return;
+            planCodeRef.current = next;
+            queryClient.invalidateQueries({ queryKey: queryKeys.plans.features });
+        },
+        [queryClient],
+    );
+
+    const setSession = useCallback(
+        (data) => {
+            setUser(data?.user || null);
+            setOrganizer(data?.organizer || null);
+            syncPlanFeaturesCache(data?.organizer?.plan_code);
+        },
+        [syncPlanFeaturesCache],
+    );
 
     const checkSession = useCallback(async () => {
         // Skip /me when there is no token; saves a 401 round-trip on cold load.
@@ -150,6 +174,7 @@ export function AuthProvider({ children }) {
         try {
             const { data } = await api.get("/organizers/me");
             setOrganizer(data);
+            syncPlanFeaturesCache(data?.plan_code);
             return data;
         } catch (err) {
             // Organizer profile is optional (e.g. super-admin user).
@@ -157,7 +182,7 @@ export function AuthProvider({ children }) {
             console.warn("refreshOrganizer failed:", err?.message);
             if (throwOnError) throw err;
         }
-    }, []);
+    }, [syncPlanFeaturesCache]);
 
     const value = useMemo(
         () => ({
