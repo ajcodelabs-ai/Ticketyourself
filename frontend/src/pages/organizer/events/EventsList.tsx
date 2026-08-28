@@ -101,7 +101,7 @@ export default function EventsList() {
                         </h3>
                         <p className="text-sm text-muted-foreground max-w-md mx-auto">
                             Creá tu primer evento — definí fecha, lugar, precio y poster.
-                            Cuando esté listo, publicalo y aparecerá en tu microsite público.
+                            Cuando esté listo, publicalo y aparecerá en tu página pública.
                         </p>
                         <Button
                             onClick={() => navigate("/app/eventos/nuevo")}

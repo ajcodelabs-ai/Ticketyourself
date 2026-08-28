@@ -514,7 +514,7 @@ export default function Register() {
                         </div>
 
                         <div className="space-y-2">
-                            <Label htmlFor="slug-input">URL de tu microsite</Label>
+                            <Label htmlFor="slug-input">URL de tu página</Label>
                             <div className="flex flex-wrap gap-1 items-center">
                                 <Input
                                     id="slug-input"

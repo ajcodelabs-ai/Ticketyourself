@@ -44,7 +44,7 @@ export function SeoPanel({
             <div>
                 <h3 className="text-sm font-semibold">SEO y redes sociales</h3>
                 <p className="text-xs text-muted-foreground">
-                    Cómo aparece tu microsite en Google, WhatsApp y redes al compartir el link.
+                    Cómo aparece tu página en Google, WhatsApp y redes al compartir el link.
                 </p>
             </div>
 

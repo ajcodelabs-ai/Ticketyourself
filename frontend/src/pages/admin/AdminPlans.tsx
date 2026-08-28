@@ -242,9 +242,9 @@ const MODULE_HINTS = {
     includes_ai_design:
         "Habilita el diseñador de tickets con IA en el panel del evento.",
     includes_custom_domain:
-        "Permite dominio propio en el microsite (ej. entradas.suempresa.com).",
+        "Permite dominio propio en tu página (ej. entradas.suempresa.com).",
     microsite_custom_css:
-        "Permite CSS personalizado en el editor del microsite.",
+        "Permite CSS personalizado en el editor de tu página.",
     allows_paid_events:
         "Si está off, el organizador no puede crear eventos Pagado ni Por Donación.",
     allows_free_events:
@@ -388,7 +388,7 @@ export default function AdminPlans() {
                     <h1 className="text-3xl font-semibold tracking-tight">Planes</h1>
                     <p className="text-sm text-muted-foreground max-w-2xl">
                         Precio, cupos y qué funciones están activas para el organizador
-                        (wizard, localidades, microsite). Si un módulo está off, la UI lo
+                        (wizard, localidades, página). Si un módulo está off, la UI lo
                         muestra bloqueado con el plan que lo desbloquea.
                     </p>
                 </div>
@@ -657,7 +657,7 @@ export default function AdminPlans() {
                                             </button>
                                         </TooltipTrigger>
                                         <TooltipContent className="max-w-xs text-xs">
-                                            Flags que desbloquean funciones reales en el panel del organizador (wizard, microsite, tickets). Si está off, la UI muestra bloqueo o upgrade.
+                                            Flags que desbloquean funciones reales en el panel del organizador (wizard, página, tickets). Si está off, la UI muestra bloqueo o upgrade.
                                         </TooltipContent>
                                     </Tooltip>
                                 </CardTitle>
@@ -672,7 +672,7 @@ export default function AdminPlans() {
                                     ["access_codes", "Código de acceso"],
                                     ["includes_ai_design", "Diseño IA tickets"],
                                     ["includes_custom_domain", "Dominio custom"],
-                                    ["microsite_custom_css", "CSS del microsite"],
+                                    ["microsite_custom_css", "CSS de tu página"],
                                     ["includes_marketing", "Módulo marketing"],
                                 ].map(([key, label]) => (
                                     <div key={key} className="flex items-center gap-2">
