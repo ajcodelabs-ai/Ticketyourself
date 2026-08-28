@@ -1,7 +1,7 @@
 /**
  * Order/ticket helpers — shared between PurchaseModal, OrderSuccess and EventDetail.
  */
-import { previewMicrositePath } from "@/lib/config";
+import { previewMicrositeSubpath } from "@/lib/config";
 
 export const ORDER_STATUS_META = {
     pending: { label: "Pendiente", className: "bg-amber-100 text-amber-800" },
@@ -59,11 +59,11 @@ export function formatCents(cents, currency = "USD") {
 }
 
 export function orderSuccessPath(slug, orderNumber) {
-    return `${previewMicrositePath(slug)}/orden/${orderNumber}`;
+    return previewMicrositeSubpath(slug, `/orden/${orderNumber}`);
 }
 
 export function orderCancelPath(slug, orderNumber) {
-    return `${previewMicrositePath(slug)}/orden/${orderNumber}/cancelado`;
+    return previewMicrositeSubpath(slug, `/orden/${orderNumber}/cancelado`);
 }
 
 export function ticketPdfUrl(orderNumber, ticketId) {

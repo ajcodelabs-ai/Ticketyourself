@@ -2,6 +2,7 @@
  * Individual microsite block renderers — shared by public view and editor preview.
  */
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
     Instagram,
     Facebook,
@@ -17,7 +18,7 @@ import { sanitizeHtml, isSafeHref } from "@/lib/sanitizeHtml";
 import api from "@/lib/api";
 import { assetUrl } from "@/lib/microsite";
 import EventCard from "@/components/events/EventCard";
-import { formatEventDate } from "@/lib/events";
+import { formatEventDate, eventPublicPath } from "@/lib/events";
 import {
     Accordion,
     AccordionContent,
@@ -426,12 +427,12 @@ function FeaturedEventView({ tenantSlug, blockId, events }) {
                     <p className="text-foreground/80 leading-relaxed">
                         {event.description || event.short_description}
                     </p>
-                    <a
-                        href={`/o/${tenantSlug}/e/${event.slug}`}
+                    <Link
+                        to={eventPublicPath(tenantSlug, event.slug)}
                         className="inline-block mt-4 px-6 py-3 rounded-full bg-primary text-primary-foreground font-medium hover:opacity-90"
                     >
                         Comprar entradas
-                    </a>
+                    </Link>
                 </div>
             </div>
         </section>

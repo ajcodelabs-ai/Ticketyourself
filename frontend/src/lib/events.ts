@@ -2,7 +2,7 @@
  * Event helpers — categories, status meta, formatting, public URL builder.
  * Single source of truth so the editor + listing + microsite renderer stay in sync.
  */
-import { previewMicrositePath, publicMicrositeUrl } from "@/lib/config";
+import { previewMicrositePath, previewMicrositeSubpath, publicMicrositeUrl } from "@/lib/config";
 
 const DEFAULT_TZ = import.meta.env.VITE_DEFAULT_TIMEZONE || "America/Guayaquil";
 
@@ -82,7 +82,7 @@ export function formatEventDate(iso, timezone = DEFAULT_TZ) {
 
 export function eventPublicPath(tenantSlug, eventSlug) {
     if (!tenantSlug || !eventSlug) return "/";
-    return `${previewMicrositePath(tenantSlug)}/e/${eventSlug}`;
+    return previewMicrositeSubpath(tenantSlug, `/e/${eventSlug}`);
 }
 
 export function eventPublicUrl(tenantSlug, eventSlug) {

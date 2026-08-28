@@ -34,6 +34,14 @@ export function previewMicrositePath(slug) {
     return `/o/${slug}`;
 }
 
+// Appends a sub-path (e.g. "/e/my-event") to previewMicrositePath's result.
+// previewMicrositePath alone can return a bare "/" (tenant's own subdomain root) —
+// naive concatenation then doubles the slash into "//e/my-event", which browsers
+// parse as a protocol-relative URL to a bogus host "e" instead of a same-site path.
+export function previewMicrositeSubpath(slug, suffix) {
+    return `${previewMicrositePath(slug).replace(/\/+$/, "")}${suffix}`;
+}
+
 // True when the current page is actually served from PUBLIC_DOMAIN (or a subdomain
 // of it) — i.e. wildcard DNS is confirmed live for this environment. False on
 // localhost, IPs, and the Emergent preview domain, where subdomain links wouldn't
