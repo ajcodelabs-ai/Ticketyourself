@@ -358,7 +358,7 @@ export default function Onboarding() {
                         </CardTitle>
                         <CardDescription>
                             El equipo TYS revisará tu cuenta (normalmente en 48 h laborables) y te
-                            avisamos por correo. Mientras tanto podés configurar venues, eventos y
+                            avisamos por correo. Mientras tanto podés configurar escenarios, eventos y
                             tu página; la publicación queda bloqueada hasta la aprobación. Si
                             tenés dudas, escribinos a{" "}
                             <a

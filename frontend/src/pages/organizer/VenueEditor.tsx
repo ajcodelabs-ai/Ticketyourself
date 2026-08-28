@@ -151,7 +151,7 @@ export default function VenueEditor() {
                 toast.error(
                     isEventScope
                         ? "No pudimos cargar el mapa del evento."
-                        : (isAdminTemplate ? "No pudimos cargar la plantilla." : "No pudimos cargar el venue."),
+                        : (isAdminTemplate ? "No pudimos cargar la plantilla." : "No pudimos cargar el escenario."),
                 );
                 navigate(listPath);
             } finally {
@@ -514,7 +514,7 @@ export default function VenueEditor() {
                 setVenue(updated);
                 dirtyRef.current = false;
                 setDirty(false);
-                if (!silent) toast.success(isAdminTemplate ? "Plantilla guardada" : "Venue guardado");
+                if (!silent) toast.success(isAdminTemplate ? "Plantilla guardada" : "Escenario guardado");
             }
         } catch (e) {
             const detail = e?.response?.data?.detail;
@@ -522,7 +522,7 @@ export default function VenueEditor() {
                 toast.error(
                     isEventScope
                         ? (typeof detail === "string" ? detail : "Mapa bloqueado: hay tickets vendidos.")
-                        : "Venue bloqueado: hay eventos con ventas activas.",
+                        : "Escenario bloqueado: hay eventos con ventas activas.",
                 );
             } else if (typeof detail === "string") {
                 toast.error(detail);
@@ -589,12 +589,12 @@ export default function VenueEditor() {
         }
         try {
             await venuesApi.publish(venue.id);
-            toast.success("Venue publicado");
+            toast.success("Escenario publicado");
             const v = await venuesApi.get(venue.id);
             setVenue(v);
             // Came here from the event wizard → bounce back to the linked tab.
             if (returnTo) {
-                toast.success("Volvemos a tu evento para vincular este venue");
+                toast.success("Volvemos a tu evento para vincular este escenario");
                 navigate(returnTo, { replace: true });
             }
         } catch (e) {
@@ -874,7 +874,7 @@ export default function VenueEditor() {
                     <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" />
                     <p>
                         Cuando termines, hacé clic en <strong className="text-foreground">Publicar</strong> para
-                        volver a tu evento y vincular este venue.
+                        volver a tu evento y vincular este escenario.
                     </p>
                 </div>
             )}
@@ -884,7 +884,7 @@ export default function VenueEditor() {
                     <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" />
                     <p>
                         Estás editando la <strong className="text-foreground">copia del mapa de este evento</strong>.
-                        Los cambios no afectan el venue maestro ni otros eventos.
+                        Los cambios no afectan el escenario maestro ni otros eventos.
                     </p>
                 </div>
             )}
@@ -896,7 +896,7 @@ export default function VenueEditor() {
                         <p className="font-medium text-amber-900">
                             {isEventScope
                                 ? "Mapa bloqueado para cambios estructurales"
-                                : "Venue bloqueado para cambios estructurales"}
+                                : "Escenario bloqueado para cambios estructurales"}
                         </p>
                         <p className="text-amber-800 text-xs mt-0.5">
                             {isEventScope

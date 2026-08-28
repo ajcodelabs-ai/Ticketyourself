@@ -349,7 +349,7 @@ export default function AdminEventDetail() {
                             : ""}
                     </p>
                     <p className="text-muted-foreground">
-                        {event.venue_name || "Sin venue"}
+                        {event.venue_name || "Sin escenario"}
                         {event.venue_city ? ` · ${event.venue_city}` : ""}
                         {event.venue_address ? ` · ${event.venue_address}` : ""}
                     </p>

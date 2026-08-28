@@ -101,10 +101,10 @@ export default function AdminVenueTemplates() {
                     <Badge variant="secondary" className="text-orange-700 bg-orange-100">
                         Admin · Plantillas
                     </Badge>
-                    <h1 className="text-2xl font-bold">Plantillas de venues</h1>
+                    <h1 className="text-2xl font-bold">Plantillas de escenarios</h1>
                     <p className="text-sm text-muted-foreground max-w-2xl">
-                        Diseñá layouts reutilizables que los organizadores pueden clonar al crear sus venues.
-                        No cuentan contra el límite de venues del organizador hasta que las usen.
+                        Diseñá layouts reutilizables que los organizadores pueden clonar al crear sus escenarios.
+                        No cuentan contra el límite de escenarios del organizador hasta que las usen.
                     </p>
                 </div>
                 <Button
@@ -224,7 +224,7 @@ export default function AdminVenueTemplates() {
             <Dialog open={showNew} onOpenChange={setShowNew}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Nueva plantilla de venue</DialogTitle>
+                        <DialogTitle>Nueva plantilla de escenario</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-3 py-2">
                         <div className="space-y-1">

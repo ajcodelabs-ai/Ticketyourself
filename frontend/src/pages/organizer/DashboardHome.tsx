@@ -215,7 +215,7 @@ export default function DashboardHome() {
                                     <TableRow>
                                         <TableHead>Evento</TableHead>
                                         <TableHead>Fecha</TableHead>
-                                        <TableHead>Venue</TableHead>
+                                        <TableHead>Escenario</TableHead>
                                         <TableHead className="text-right">Vendidos</TableHead>
                                         <TableHead></TableHead>
                                     </TableRow>

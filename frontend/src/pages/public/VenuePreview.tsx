@@ -26,7 +26,7 @@ export default function VenuePreview() {
                 const v = await venuesApi.publicGet(tenantSlug, venueSlug);
                 if (mounted) setVenue(v);
             } catch (e) {
-                if (mounted) setError(e?.response?.status === 404 ? "Venue no encontrado" : "Error cargando venue");
+                if (mounted) setError(e?.response?.status === 404 ? "Escenario no encontrado" : "Error cargando escenario");
             } finally {
                 if (mounted) setLoading(false);
             }
@@ -51,7 +51,7 @@ export default function VenuePreview() {
         return (
             <div className="min-h-screen flex flex-col items-center justify-center text-slate-500 gap-2 p-6">
                 <MapPin className="h-10 w-10 text-slate-300" />
-                <p className="font-medium">{error || "Venue no disponible"}</p>
+                <p className="font-medium">{error || "Escenario no disponible"}</p>
             </div>
         );
     }

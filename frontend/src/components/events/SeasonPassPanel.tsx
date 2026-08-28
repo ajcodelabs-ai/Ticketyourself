@@ -242,9 +242,9 @@ export default function SeasonPassPanel({ eventId, hasVenue = false, timezone = 
                 <div className="flex items-start gap-2 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs">
                     <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                     <span>
-                        <strong>Disponible solo para eventos sin venue numerado.</strong>{" "}
+                        <strong>Disponible solo para eventos sin escenario numerado.</strong>{" "}
                         El abono de temporada requiere que las funciones sean de admisión general
-                        (sin selección de asiento específico). Desvinculá el venue para habilitarlo.
+                        (sin selección de asiento específico). Desvinculá el escenario para habilitarlo.
                     </span>
                 </div>
             )}

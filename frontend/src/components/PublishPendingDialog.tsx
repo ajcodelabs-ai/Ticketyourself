@@ -18,7 +18,7 @@ import {
 
 const RESOURCE_LABELS = {
     evento: "este evento",
-    venue: "este venue",
+    venue: "este escenario",
     microsite: "tu página",
 };
 
