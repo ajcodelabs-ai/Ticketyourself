@@ -116,7 +116,7 @@ const MODE_LABELS = {
         addButton: "Agregar subevento",
         panelTitle: "Subeventos del evento",
         panelSubtitle:
-            "Agrega experiencias independientes (sala VIP, cena, meet & greet). Cada una puede tener su propio venue, aforo y precios — y puede coincidir en horario con el evento principal u otros subeventos.",
+            "Agrega experiencias independientes (sala VIP, cena, meet & greet). Cada una puede tener su propio escenario, aforo y precios — y puede coincidir en horario con el evento principal u otros subeventos.",
         emptyTitle: "Aún no hay subeventos.",
         emptyHint: "Agregá uno si tu evento incluye experiencias que se compran por separado.",
         namePlaceholder: "Cena VIP — Sábado 14 de junio",
@@ -525,7 +525,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                         <div className="space-y-3 rounded-lg border p-4">
                             <p className="text-sm font-medium">{DL.venueSectionTitle}</p>
                             <p className="text-xs text-muted-foreground -mt-2">
-                                Opcional. Si es diferente al venue principal del evento.
+                                Opcional. Si es diferente al escenario principal del evento.
                             </p>
                             <div className="space-y-1.5">
                                 <Label>Nombre del lugar</Label>

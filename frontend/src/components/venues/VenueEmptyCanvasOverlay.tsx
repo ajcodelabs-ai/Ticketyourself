@@ -61,7 +61,7 @@ export default function VenueEmptyCanvasOverlay({
                         className="absolute top-2 right-2 h-7 w-7 p-0 text-muted-foreground"
                         onClick={onDismiss}
                         data-testid="venue-empty-canvas-dismiss"
-                        aria-label="Cerrar y dibujar mi propio venue"
+                        aria-label="Cerrar y dibujar mi propio escenario"
                     >
                         <X className="h-4 w-4" />
                     </Button>

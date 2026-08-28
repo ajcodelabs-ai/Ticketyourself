@@ -56,7 +56,7 @@ export default function Venues() {
             setMaxV(data.max_venues);
             setActiveCount(data.active_count);
         } catch {
-            toast.error("No pudimos cargar tus venues.");
+            toast.error("No pudimos cargar tus escenarios.");
         } finally {
             setLoading(false);
         }
@@ -95,7 +95,7 @@ export default function Venues() {
 
     const canCreate = maxV === -1 || activeCount < maxV;
     const limitReason = !canCreate
-        ? `Llegaste al límite de ${maxV} venue(s) de tu plan. Archivá uno para crear otro.`
+        ? `Llegaste al límite de ${maxV} escenario(s) de tu plan. Archivá uno para crear otro.`
         : null;
 
     const editorUrl = (venueId, extraParams = {}) => {
@@ -110,10 +110,10 @@ export default function Venues() {
         if (!newName.trim()) return;
         try {
             const v = await venuesApi.create({ name: newName, type: newType });
-            toast.success("Venue creado");
+            toast.success("Escenario creado");
             navigate(editorUrl(v.id, { blank: "1" }));
         } catch (e) {
-            toast.error(e?.response?.data?.detail || "Error al crear venue");
+            toast.error(e?.response?.data?.detail || "Error al crear escenario");
         }
     };
 
@@ -133,7 +133,7 @@ export default function Venues() {
 
     const promptTemplateName = (tpl) => {
         if (!canCreate) {
-            toast.error(`Tu plan permite hasta ${maxV} venue(s). Archivá uno para usar una plantilla.`);
+            toast.error(`Tu plan permite hasta ${maxV} escenario(s). Archivá uno para usar una plantilla.`);
             return;
         }
         setPendingTemplate(tpl);
@@ -145,7 +145,7 @@ export default function Venues() {
     const handleDuplicate = async (v) => {
         try {
             await venuesApi.duplicate(v.id);
-            toast.success("Venue duplicado");
+            toast.success("Escenario duplicado");
             reload();
         } catch (e) {
             toast.error(e?.response?.data?.detail || "Error al duplicar");
@@ -155,7 +155,7 @@ export default function Venues() {
     const handleArchive = async (v) => {
         try {
             await venuesApi.archive(v.id);
-            toast.success("Venue archivado");
+            toast.success("Escenario archivado");
             reload();
         } catch {
             toast.error("No se pudo archivar");
@@ -166,7 +166,7 @@ export default function Venues() {
         if (!confirmDelete) return;
         try {
             await venuesApi.remove(confirmDelete.id);
-            toast.success("Venue eliminado");
+            toast.success("Escenario eliminado");
             setConfirmDelete(null);
             reload();
         } catch (e) {
@@ -178,7 +178,7 @@ export default function Venues() {
     const handleUseTemplate = async () => {
         if (!pendingTemplate || !newName.trim()) return;
         if (!canCreate) {
-            toast.error(`Tu plan permite hasta ${maxV} venue(s). Archivá uno para usar una plantilla.`);
+            toast.error(`Tu plan permite hasta ${maxV} escenario(s). Archivá uno para usar una plantilla.`);
             return;
         }
         setUsingTemplate(pendingTemplate.id);
@@ -186,7 +186,7 @@ export default function Venues() {
             const v = await venuesApi.fromTemplate(pendingTemplate.id, {
                 name: newName.trim(),
             });
-            toast.success("Venue creado desde plantilla");
+            toast.success("Escenario creado desde plantilla");
             closeCreateDialog();
             navigate(editorUrl(v.id));
         } catch (e) {
@@ -216,7 +216,7 @@ export default function Venues() {
                     onClick={() => openCreateDialog("template")}
                     disabled={!canCreate}
                     data-testid="venues-create-btn"
-                    title={!canCreate ? `Llegaste al límite de ${maxV} venues de tu plan` : ""}
+                    title={!canCreate ? `Llegaste al límite de ${maxV} escenarios de tu plan` : ""}
                 >
                     <Plus className="h-4 w-4 mr-1.5" />
                     Nuevo escenario
@@ -233,7 +233,7 @@ export default function Venues() {
                 <div className="rounded-xl border bg-card p-4 flex items-start gap-3 text-sm">
                     <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
                     <p className="text-muted-foreground">
-                        Estás creando un venue para tu evento. Elegí una plantilla o empezá en blanco,
+                        Estás creando un escenario para tu evento. Elegí una plantilla o empezá en blanco,
                         diseñá el mapa y <strong className="text-foreground">publicá</strong> —
                         te llevamos de vuelta al evento.
                     </p>

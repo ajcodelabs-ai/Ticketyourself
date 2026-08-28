@@ -603,7 +603,7 @@ export default function AdminPlans() {
                         <div className="space-y-1.5">
                             <FieldHint
                                 label="Aforo máx / evento (-1 ∞)"
-                                tip="Máximo de boletos/asientos por evento. -1 = sin tope. Afecta tipos de ticket y capacidad del venue en el wizard."
+                                tip="Máximo de boletos/asientos por evento. -1 = sin tope. Afecta tipos de ticket y capacidad del escenario en el wizard."
                             />
                             <Input
                                 type="number"
@@ -613,8 +613,8 @@ export default function AdminPlans() {
                         </div>
                         <div className="space-y-1.5">
                             <FieldHint
-                                label="Venues / mapas (-1 ∞)"
-                                tip="Tope de mapas activos. Se valida al crear o clonar un venue. -1 = ilimitado."
+                                label="Escenarios / mapas (-1 ∞)"
+                                tip="Tope de mapas activos. Se valida al crear o clonar un escenario. -1 = ilimitado."
                             />
                             <Input
                                 type="number"

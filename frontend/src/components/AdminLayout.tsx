@@ -43,7 +43,7 @@ const NAV_ITEMS = [
     { to: "/admin", label: "Dashboard global", icon: LayoutDashboard, testid: "nav-admin-dashboard", exact: true },
     { to: "/admin/organizadores", label: "Organizadores", icon: Users, testid: "nav-admin-organizers" },
     { to: "/admin/eventos", label: "Eventos", icon: TicketIcon, testid: "nav-admin-events" },
-    { to: "/admin/venue-templates", label: "Plantillas venues", icon: LayoutTemplate, testid: "nav-admin-venue-templates" },
+    { to: "/admin/venue-templates", label: "Plantillas escenarios", icon: LayoutTemplate, testid: "nav-admin-venue-templates" },
     { to: "/admin/planes", label: "Planes", icon: DollarSign, testid: "nav-admin-plans" },
     { to: "/admin/comisiones", label: "Comisiones", icon: Percent, testid: "nav-admin-sales-fees" },
     { to: "/admin/pagos", label: "Pagos", icon: Wallet, testid: "nav-admin-payments" },

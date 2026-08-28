@@ -345,7 +345,7 @@ export default function TicketTypesPanel({
                             fields got asked once manually and then silently overwritten. */}
                         {localities.length > 0 && (
                             <div className="space-y-1.5">
-                                <Label>Localidad del venue</Label>
+                                <Label>Localidad del escenario</Label>
                                 <Select
                                     value={form.venue_locality_id || "__none__"}
                                     onValueChange={(v) => {

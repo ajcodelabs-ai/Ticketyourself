@@ -90,22 +90,22 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
         setLoading(true);
         try {
             const res = await api.put(`/events/me/${event.id}/venue`, body);
-            toast.success("Venue vinculado al evento");
+            toast.success("Escenario vinculado al evento");
             onUpdated?.(res.data);
             setOpen(false);
         } catch (e) {
-            toast.error(e?.response?.data?.detail || "No se pudo vincular el venue.");
+            toast.error(e?.response?.data?.detail || "No se pudo vincular el escenario.");
         } finally {
             setLoading(false);
         }
     };
 
     const handleUnlink = async () => {
-        if (!window.confirm("¿Desvincular el venue del evento? Volverá a ser no numerado.")) return;
+        if (!window.confirm("¿Desvincular el escenario del evento? Volverá a ser no numerado.")) return;
         setLoading(true);
         try {
             await api.delete(`/events/me/${event.id}/venue`);
-            toast.success("Venue desvinculado");
+            toast.success("Escenario desvinculado");
             onUpdated?.({ ...event, venue_id: null, venue_slug: null, locality_pricing: [] });
         } catch (e) {
             toast.error(e?.response?.data?.detail || "No se pudo desvincular.");
@@ -121,10 +121,10 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
             <header className="flex items-center justify-between mb-2">
                 <div>
                     <h3 className="font-semibold text-sm flex items-center gap-1.5">
-                        <MapPin className="h-4 w-4" /> Venue con asientos numerados
+                        <MapPin className="h-4 w-4" /> Escenario con asientos numerados
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                        Si vinculás un venue, el evento usa el mapa interactivo y se ignora el precio base.
+                        Si vinculás un escenario, el evento usa el mapa interactivo y se ignora el precio base.
                     </p>
                 </div>
                 {currentVenue ? (
@@ -193,7 +193,7 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
             ) : (
                 <Button onClick={openDialog} variant="outline" size="sm"
                         disabled={disabled || loading} data-testid="venue-link-attach">
-                    <LinkIcon className="h-4 w-4 mr-1.5" /> Vincular venue
+                    <LinkIcon className="h-4 w-4 mr-1.5" /> Vincular escenario
                 </Button>
             )}
 
@@ -201,19 +201,19 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogContent className="max-w-lg">
                     <DialogHeader>
-                        <DialogTitle>Vincular venue + precios por localidad</DialogTitle>
+                        <DialogTitle>Vincular escenario + precios por localidad</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-3 py-2">
                         <div className="space-y-1">
-                            <Label className="text-xs">Venue publicado</Label>
+                            <Label className="text-xs">Escenario publicado</Label>
                             <Select value={pickerVenueId} onValueChange={handleSelectVenue}>
                                 <SelectTrigger data-testid="venue-picker-select">
-                                    <SelectValue placeholder="Elegí un venue" />
+                                    <SelectValue placeholder="Elegí un escenario" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {venues.length === 0 && (
                                         <SelectItem value="__none" disabled>
-                                            No tenés venues publicados. Andá a /app/venues primero.
+                                            No tenés escenarios publicados. Andá a /app/venues primero.
                                         </SelectItem>
                                     )}
                                     {venues.map((v) => (
@@ -227,7 +227,7 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
                         {pickedVenue && (
                             <>
                                 <p className="text-xs text-muted-foreground">
-                                    Definí el precio por cada localidad activa del venue:
+                                    Definí el precio por cada localidad activa del escenario:
                                 </p>
                                 <div className="rounded-md border divide-y">
                                     {(pickedVenue.localities || [])
