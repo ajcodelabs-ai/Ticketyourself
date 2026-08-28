@@ -1183,7 +1183,6 @@ async def _seed_demo_events() -> None:
         "max_per_purchase": 10,
         "min_per_purchase": 1,
         "max_per_email": None,
-        "refund_window_hours": 24,
         "show_buyer_name_on_ticket": True,
     }
 
@@ -2140,7 +2139,6 @@ async def _seed_demo_numbered_event() -> None:
         "max_per_purchase": 10,
         "min_per_purchase": 1,
         "max_per_email": None,
-        "refund_window_hours": 24,
         "show_buyer_name_on_ticket": True,
     }
 

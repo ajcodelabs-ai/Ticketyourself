@@ -3,7 +3,7 @@
  *
  * 8 sections (sidebar stepper):
  *  1. General — info principal · descripción · keywords · contenido avanzado
- *  2. Fechas y ventas — fechas · ventana de venta · límites/eTicket · Funciones
+ *  2. Fechas y ventas — fechas · ventana de venta · límites y envío del eTicket · Funciones
  *  3. Media — portada · principal · miniatura · gallery · Diseño de ticket
  *  4. Localidades — 4.1 escenario · 4.2 localidades (tipo + mapa)
  *  5. Formas de pago
@@ -68,7 +68,6 @@ import {
     Link2,
     Users,
     KeyRound,
-    Ticket,
     ScanQrCode,
     Mail,
     ExternalLink,
@@ -203,12 +202,19 @@ function defaultAccessParams() {
         max_per_purchase: 10,
         min_per_purchase: 1,
         max_per_email: null,
-        refund_window_hours: 24,
         show_buyer_name_on_ticket: true,
         ticket_validation: "qr",
         allow_continue_without_code: false,
         attendance_format: "numbered",
     };
+}
+
+function normalizeTicketDeliveryMode(mode) {
+    if (mode === "horas_antes" || mode === "fecha_especifica" || mode === "al_momento") {
+        return mode;
+    }
+    // Legacy "manual" (e-ticket off) is no longer a choice — QR always goes out.
+    return "al_momento";
 }
 
 function makeInitial(d) {
@@ -365,7 +371,7 @@ function makeInitial(d) {
             allow_continue_without_code: !!d.access_params?.allow_continue_without_code,
         },
         content: normalizeEventContent(d.content),
-        ticket_delivery_mode: d.ticket_delivery_mode || "al_momento",
+        ticket_delivery_mode: normalizeTicketDeliveryMode(d.ticket_delivery_mode),
         ticket_delivery_hours: d.ticket_delivery_hours != null ? String(d.ticket_delivery_hours) : "",
         ticket_delivery_at: d.ticket_delivery_at ? isoToLocalInput(d.ticket_delivery_at, d.timezone) : "",
         multi_function_mode: d.multi_function_mode || "function",
@@ -1595,6 +1601,7 @@ function buildPayload(form) {
             const format =
                 form.attendance_format
                 || (form.no_seating_mode ? "general" : "numbered");
+            delete ap.refund_window_hours;
             return {
                 ...ap,
                 access_type: accessType,
@@ -1605,13 +1612,15 @@ function buildPayload(form) {
             };
         })(),
         content: form.content,
-        ticket_delivery_mode: form.ticket_delivery_mode || "al_momento",
+        ticket_delivery_mode: normalizeTicketDeliveryMode(form.ticket_delivery_mode),
         ticket_delivery_hours:
-            form.ticket_delivery_mode === "horas_antes" && form.ticket_delivery_hours
+            normalizeTicketDeliveryMode(form.ticket_delivery_mode) === "horas_antes"
+            && form.ticket_delivery_hours
                 ? parseInt(form.ticket_delivery_hours, 10)
                 : null,
         ticket_delivery_at:
-            form.ticket_delivery_mode === "fecha_especifica" && form.ticket_delivery_at
+            normalizeTicketDeliveryMode(form.ticket_delivery_mode) === "fecha_especifica"
+            && form.ticket_delivery_at
                 ? localInputToIso(form.ticket_delivery_at, tz)
                 : null,
         multi_function_mode:
@@ -2043,87 +2052,83 @@ function SectionGeneral({ form, update, disabled }) {
     );
 }
 
+/** Subeventos (VIP, cena) stay implemented but off the wizard until a later phase. */
+const SHOW_SUBEVENT_STRUCTURE = false;
+
 function SectionFechas({ form, update, disabled, eventId, localities }) {
     const { data: planFeatures } = usePlanFeatures();
     const allowsMulti = planFeatures ? Boolean(planFeatures.multi_function_events) : false;
     const durationLabel =
         DURATION_PRESETS.find((p) => p.key === form.duration_preset)?.label
         || form.duration_preset;
-    const salesStartLabel =
-        SALES_START_PRESETS.find((p) => p.key === form.sales_window_preset_start)?.label
-        || form.sales_window_preset_start;
     const structure = form.event_structure || "single";
     const structureLabel =
         structure === "multi"
             ? "Multifunción"
-            : structure === "subevent"
+            : SHOW_SUBEVENT_STRUCTURE && structure === "subevent"
               ? "Con subeventos"
               : "Evento único";
-    const maxPer = form.access_params?.max_per_purchase ?? 10;
 
-    // Fail closed: if plan doesn't allow multi/subevent, force single.
+    // Fail closed: if plan doesn't allow multifunción, force single.
+    // Subeventos are hidden for now — leftover drafts map onto multifunción.
     useEffect(() => {
         if (!planFeatures) return;
-        if (planFeatures.multi_function_events) return;
-        if (structure === "single") return;
-        update("event_structure", "single");
-        toast.message("Tipo de evento ajustado a tu plan", {
-            description: `Multifunción y subeventos: ${planLockLabel(planFeatures, "multi_function_events")}. Se dejó Evento único.`,
-        });
+        if (!planFeatures.multi_function_events) {
+            if (structure === "single") return;
+            update("event_structure", "single");
+            toast.message("Tipo de evento ajustado a tu plan", {
+                description: `Multifunción: ${planLockLabel(planFeatures, "multi_function_events")}. Se dejó Evento único.`,
+            });
+            return;
+        }
+        if (!SHOW_SUBEVENT_STRUCTURE && structure === "subevent") {
+            update("event_structure", "multi");
+            update("multi_function_mode", "function");
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [planFeatures, structure]);
 
     const setStructure = (value) => {
         if (value !== "single" && !allowsMulti) return;
+        if (value === "subevent" && !SHOW_SUBEVENT_STRUCTURE) return;
         update("event_structure", value);
         if (value === "multi") update("multi_function_mode", "function");
         if (value === "subevent") update("multi_function_mode", "subevent");
     };
 
     return (
-        <div className="space-y-6" data-testid="section-fechas">
+        <div className="space-y-8" data-testid="section-fechas">
             <div>
                 <h3 className="font-semibold text-base">Fechas y ventas</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Cuándo ocurre el evento, ventana de venta y límites de compra.
+                    En este orden: cuándo ocurre → una o varias funciones → cómo se vende.
                     {form.starts_at && (
                         <>
-                            {" · Inicio: "}
+                            {" · "}
                             <strong className="text-foreground">
                                 {form.starts_at.replace("T", " ")}
                             </strong>
+                            {durationLabel ? ` · ${durationLabel}` : ""}
+                            {` · ${structureLabel}`}
                         </>
                     )}
-                    {durationLabel && (
-                        <>
-                            {" · "}
-                            <strong className="text-foreground">{durationLabel}</strong>
-                        </>
-                    )}
-                    {" · Máx. "}
-                    <strong className="text-foreground">{maxPer}</strong>
-                    {"/orden · "}
-                    <strong className="text-foreground">{structureLabel}</strong>
-                    {" · Venta: "}
-                    <strong className="text-foreground">{salesStartLabel}</strong>
                 </p>
             </div>
 
-            <div className="grid lg:grid-cols-2 gap-6 items-start">
-                <CuandoBlock form={form} update={update} disabled={disabled} />
-                <SalesConfigBlock form={form} update={update} disabled={disabled} />
-            </div>
+            <CuandoBlock form={form} update={update} disabled={disabled} />
 
             <section className="space-y-3" data-testid="event-structure-block">
                 <div>
-                    <h4 className="text-sm font-medium">3. Tipo de estructura</h4>
+                    <h4 className="text-sm font-medium">2. Tipo de estructura</h4>
                     <p className="text-xs text-muted-foreground">
-                        Evento único, multifunción o con subeventos. Las franjas de ingreso
-                        por aforo quedan para una fase posterior.
+                        Una sola función, o el mismo evento en varios horarios del mismo escenario.
                     </p>
                 </div>
 
-                <div className="grid sm:grid-cols-3 gap-3" data-testid="event-structure">
+                <div
+                    className={`grid gap-3 ${SHOW_SUBEVENT_STRUCTURE ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}
+                    data-testid="event-structure"
+                >
                     <ChoiceCard
                         icon={CalendarClock}
                         title="Evento único"
@@ -2136,13 +2141,14 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
                     <ChoiceCard
                         icon={CalendarClock}
                         title="Multifunción"
-                        description="El mismo evento se repite en varias fechas u horarios."
+                        description="El mismo evento se repite en varias fechas u horarios, en el mismo escenario."
                         selected={structure === "multi"}
                         onSelect={() => setStructure("multi")}
                         testid="event-structure-multi"
                         disabled={disabled || !allowsMulti}
                         badge={!allowsMulti ? planLockLabel(planFeatures, "multi_function_events") : undefined}
                     />
+                    {SHOW_SUBEVENT_STRUCTURE && (
                     <ChoiceCard
                         icon={CalendarClock}
                         title="Con subeventos"
@@ -2153,10 +2159,11 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
                         disabled={disabled || !allowsMulti}
                         badge={!allowsMulti ? planLockLabel(planFeatures, "multi_function_events") : undefined}
                     />
+                    )}
                 </div>
                 {!allowsMulti && (
                     <PlanGateHint feature="multi_function_events">
-                        Multifunción y subeventos: {planLockLabel(planFeatures, "multi_function_events")}.
+                        Multifunción: {planLockLabel(planFeatures, "multi_function_events")}.
                     </PlanGateHint>
                 )}
 
@@ -2196,70 +2203,61 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
                     </div>
                 )}
             </section>
+
+            <section className="space-y-3" data-testid="sales-section">
+                <div>
+                    <h4 className="text-sm font-medium">3. Ventas</h4>
+                    <p className="text-xs text-muted-foreground">
+                        Cuándo se puede comprar y cuántas entradas por orden.
+                    </p>
+                </div>
+                <div className="grid lg:grid-cols-2 gap-4 items-start">
+                    <SalesWindowBlock form={form} update={update} disabled={disabled} />
+                    <SalesConfigBlock form={form} update={update} disabled={disabled} />
+                </div>
+            </section>
         </div>
     );
 }
 
 function CuandoBlock({ form, update, disabled }) {
-    const startsValid = !!form.starts_at;
     return (
-        <div data-testid="info-cuando-block" className="space-y-6">
-            <section className="space-y-3">
-                <div>
-                    <h4 className="text-sm font-medium">1. Fechas del evento</h4>
-                    <p className="text-xs text-muted-foreground">
-                        Inicio, duración y zona horaria.
-                    </p>
-                </div>
-                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
-                    <div className="grid sm:grid-cols-2 gap-3">
-                        <Field label="Fecha y hora de inicio *">
-                            <DateTimePicker
-                                value={form.starts_at}
-                                onChange={(v) => update("starts_at", v)}
-                                disabled={disabled}
-                                placeholder="Elegí cuándo empieza"
-                                data-testid="wiz-starts"
-                            />
-                        </Field>
-                        <Field label="Duración *">
-                            <Select
-                                value={form.duration_preset}
-                                onValueChange={(v) => update("duration_preset", v)}
-                                disabled={disabled}
-                            >
-                                <SelectTrigger data-testid="wiz-duration-preset">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {DURATION_PRESETS.map((p) => (
-                                        <SelectItem key={p.key} value={p.key}>
-                                            {p.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </Field>
-                    </div>
-                    {form.duration_preset === "custom" && (
-                        <Field label="Duración personalizada (minutos)">
-                            <Input
-                                type="number"
-                                min="5"
-                                step="5"
-                                value={form.duration_minutes_custom || ""}
-                                onChange={(e) =>
-                                    update(
-                                        "duration_minutes_custom",
-                                        parseInt(e.target.value || "0", 10),
-                                    )
-                                }
-                                disabled={disabled}
-                                placeholder="Ej: 90"
-                                data-testid="wiz-duration-custom"
-                            />
-                        </Field>
-                    )}
+        <div data-testid="info-cuando-block" className="space-y-3">
+            <div>
+                <h4 className="text-sm font-medium">1. Fechas del evento</h4>
+                <p className="text-xs text-muted-foreground">
+                    Inicio, duración y zona horaria.
+                </p>
+            </div>
+            <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <Field label="Fecha y hora de inicio *">
+                        <DateTimePicker
+                            value={form.starts_at}
+                            onChange={(v) => update("starts_at", v)}
+                            disabled={disabled}
+                            placeholder="Elegí cuándo empieza"
+                            data-testid="wiz-starts"
+                        />
+                    </Field>
+                    <Field label="Duración *">
+                        <Select
+                            value={form.duration_preset}
+                            onValueChange={(v) => update("duration_preset", v)}
+                            disabled={disabled}
+                        >
+                            <SelectTrigger data-testid="wiz-duration-preset">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {DURATION_PRESETS.map((p) => (
+                                    <SelectItem key={p.key} value={p.key}>
+                                        {p.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </Field>
                     <Field label="Zona horaria">
                         <Select
                             value={form.timezone}
@@ -2279,119 +2277,128 @@ function CuandoBlock({ form, update, disabled }) {
                         </Select>
                     </Field>
                 </div>
-            </section>
+                {form.duration_preset === "custom" && (
+                    <Field label="Duración personalizada (minutos)">
+                        <Input
+                            type="number"
+                            min="5"
+                            step="5"
+                            value={form.duration_minutes_custom || ""}
+                            onChange={(e) =>
+                                update(
+                                    "duration_minutes_custom",
+                                    parseInt(e.target.value || "0", 10),
+                                )
+                            }
+                            disabled={disabled}
+                            placeholder="Ej: 90"
+                            data-testid="wiz-duration-custom"
+                        />
+                    </Field>
+                )}
+            </div>
+        </div>
+    );
+}
 
-            <section className="space-y-3">
-                <div>
-                    <h4 className="text-sm font-medium flex items-center gap-2">
-                        <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                        Ventana de venta
-                    </h4>
-                    <p className="text-xs text-muted-foreground">
-                        Cuándo se habilita y se cierra la compra (o reserva si es gratuito).
-                    </p>
-                </div>
-                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
-                    {!startsValid && (
-                        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-                            Definí primero la fecha de inicio para habilitar estos presets.
-                        </p>
-                    )}
-                    <div className="grid sm:grid-cols-2 gap-3">
-                        <Field label="Inicio de ventas">
-                            <Select
-                                value={form.sales_window_preset_start}
-                                onValueChange={(v) => update("sales_window_preset_start", v)}
-                                disabled={disabled || !startsValid}
-                            >
-                                <SelectTrigger data-testid="wiz-sales-start-preset">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {SALES_START_PRESETS.map((p) => (
-                                        <SelectItem key={p.key} value={p.key}>
-                                            {p.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </Field>
-                        <Field label="Fin de ventas">
-                            <Select
-                                value={form.sales_window_preset_end}
-                                onValueChange={(v) => update("sales_window_preset_end", v)}
-                                disabled={disabled || !startsValid}
-                            >
-                                <SelectTrigger data-testid="wiz-sales-end-preset">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {SALES_END_PRESETS.map((p) => (
-                                        <SelectItem key={p.key} value={p.key}>
-                                            {p.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </Field>
-                    </div>
+function SalesWindowBlock({ form, update, disabled }) {
+    const startsValid = !!form.starts_at;
+    return (
+        <div
+            data-testid="sales-window-block"
+            className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 h-full"
+        >
+            <div>
+                <p className="text-sm font-medium">Ventana de venta</p>
+                <p className="text-xs text-muted-foreground">
+                    Cuándo se habilita y se cierra la compra (o reserva si es gratuito).
+                </p>
+            </div>
+            {!startsValid && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                    Definí primero la fecha de inicio para habilitar estos presets.
+                </p>
+            )}
+            <div className="grid sm:grid-cols-2 gap-3">
+                <Field label="Inicio de ventas">
+                    <Select
+                        value={form.sales_window_preset_start}
+                        onValueChange={(v) => update("sales_window_preset_start", v)}
+                        disabled={disabled || !startsValid}
+                    >
+                        <SelectTrigger data-testid="wiz-sales-start-preset">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {SALES_START_PRESETS.map((p) => (
+                                <SelectItem key={p.key} value={p.key}>
+                                    {p.label}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </Field>
+                <Field label="Fin de ventas">
+                    <Select
+                        value={form.sales_window_preset_end}
+                        onValueChange={(v) => update("sales_window_preset_end", v)}
+                        disabled={disabled || !startsValid}
+                    >
+                        <SelectTrigger data-testid="wiz-sales-end-preset">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {SALES_END_PRESETS.map((p) => (
+                                <SelectItem key={p.key} value={p.key}>
+                                    {p.label}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </Field>
+            </div>
 
-                    {form.sales_window_preset_start === "custom" && (
-                        <Field label="Inicio de ventas — fecha personalizada">
-                            <DateTimePicker
-                                value={form.sales_start_custom}
-                                onChange={(v) => update("sales_start_custom", v)}
-                                disabled={disabled}
-                                placeholder="Inicio de ventas"
-                                data-testid="wiz-sales-start-custom"
-                            />
-                        </Field>
-                    )}
-                    {form.sales_window_preset_end === "custom" && (
-                        <Field label="Fin de ventas — fecha personalizada">
-                            <DateTimePicker
-                                value={form.sales_end_custom}
-                                onChange={(v) => update("sales_end_custom", v)}
-                                disabled={disabled}
-                                placeholder="Fin de ventas"
-                                data-testid="wiz-sales-end-custom"
-                            />
-                        </Field>
-                    )}
-                </div>
-            </section>
+            {form.sales_window_preset_start === "custom" && (
+                <Field label="Inicio de ventas — fecha personalizada">
+                    <DateTimePicker
+                        value={form.sales_start_custom}
+                        onChange={(v) => update("sales_start_custom", v)}
+                        disabled={disabled}
+                        placeholder="Inicio de ventas"
+                        data-testid="wiz-sales-start-custom"
+                    />
+                </Field>
+            )}
+            {form.sales_window_preset_end === "custom" && (
+                <Field label="Fin de ventas — fecha personalizada">
+                    <DateTimePicker
+                        value={form.sales_end_custom}
+                        onChange={(v) => update("sales_end_custom", v)}
+                        disabled={disabled}
+                        placeholder="Fin de ventas"
+                        data-testid="wiz-sales-end-custom"
+                    />
+                </Field>
+            )}
         </div>
     );
 }
 
 function SalesConfigBlock({ form, update, disabled }) {
     const ap = form.access_params || defaultAccessParams();
-    const deliveryMode = form.ticket_delivery_mode || "al_momento";
-    const eticketEnabled = deliveryMode !== "manual";
-
-    const setEticketEnabled = (on) => {
-        if (on) {
-            update(
-                "ticket_delivery_mode",
-                deliveryMode === "manual" ? "al_momento" : deliveryMode,
-            );
-        } else {
-            update("ticket_delivery_mode", "manual");
-        }
-    };
+    const deliveryMode = normalizeTicketDeliveryMode(form.ticket_delivery_mode);
 
     return (
-        <section className="space-y-3" data-testid="sales-config-block">
+        <div
+            className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 h-full"
+            data-testid="sales-config-block"
+        >
             <div>
-                <h4 className="text-sm font-medium flex items-center gap-2">
-                    <Ticket className="h-4 w-4 text-muted-foreground" />
-                    2. Configuración de ventas
-                </h4>
+                <p className="text-sm font-medium">Límites y eTicket</p>
                 <p className="text-xs text-muted-foreground">
-                    Límites por orden y envío del eTicket.
+                    Tope por orden y cuándo se envía el QR.
                 </p>
             </div>
-            <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
                 <div className="grid sm:grid-cols-2 gap-3">
                     <Field
                         label={
@@ -2477,116 +2484,60 @@ function SalesConfigBlock({ form, update, disabled }) {
                     />
                 </Field>
 
-                <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                    <div className="text-sm min-w-0">
-                        <div className="font-medium">E-Ticket</div>
-                        <div className="text-xs text-muted-foreground">
-                            Enviar QR por email al comprador
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs text-muted-foreground">
-                            {eticketEnabled ? "Habilitado" : "Manual"}
-                        </span>
-                        <Switch
-                            checked={eticketEnabled}
-                            onCheckedChange={setEticketEnabled}
+                <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                    <Field label="Cuándo se envía el eTicket">
+                        <Select
+                            value={deliveryMode}
+                            onValueChange={(v) => update("ticket_delivery_mode", v)}
                             disabled={disabled}
-                            data-testid="access-eticket-enabled"
-                        />
-                    </div>
-                </div>
-
-                {eticketEnabled && (
-                    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
-                        <Field label="Cuándo se envía el eTicket">
-                            <Select
-                                value={deliveryMode}
-                                onValueChange={(v) => update("ticket_delivery_mode", v)}
+                        >
+                            <SelectTrigger data-testid="access-delivery-mode">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="al_momento">
+                                    Al momento de la compra
+                                </SelectItem>
+                                <SelectItem value="horas_antes">
+                                    X horas antes del evento
+                                </SelectItem>
+                                <SelectItem value="fecha_especifica">
+                                    En una fecha específica
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </Field>
+                    {deliveryMode === "horas_antes" && (
+                        <Field label="Horas antes del evento">
+                            <Input
+                                type="number"
+                                min="1"
+                                max="720"
+                                value={form.ticket_delivery_hours}
+                                onChange={(e) =>
+                                    update("ticket_delivery_hours", e.target.value)
+                                }
+                                placeholder="24"
                                 disabled={disabled}
-                            >
-                                <SelectTrigger data-testid="access-delivery-mode">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="al_momento">
-                                        Al momento de la compra
-                                    </SelectItem>
-                                    <SelectItem value="horas_antes">
-                                        X horas antes del evento
-                                    </SelectItem>
-                                    <SelectItem value="fecha_especifica">
-                                        En una fecha específica
-                                    </SelectItem>
-                                </SelectContent>
-                            </Select>
+                                data-testid="access-delivery-hours"
+                            />
                         </Field>
-                        {deliveryMode === "horas_antes" && (
-                            <Field label="Horas antes del evento">
-                                <Input
-                                    type="number"
-                                    min="1"
-                                    max="720"
-                                    value={form.ticket_delivery_hours}
-                                    onChange={(e) =>
-                                        update("ticket_delivery_hours", e.target.value)
-                                    }
-                                    placeholder="24"
-                                    disabled={disabled}
-                                    data-testid="access-delivery-hours"
-                                />
-                            </Field>
-                        )}
-                        {deliveryMode === "fecha_especifica" && (
-                            <Field label="Fecha y hora de envío">
-                                <Input
-                                    type="datetime-local"
-                                    value={form.ticket_delivery_at}
-                                    onChange={(e) =>
-                                        update("ticket_delivery_at", e.target.value)
-                                    }
-                                    disabled={disabled}
-                                    data-testid="access-delivery-at"
-                                />
-                            </Field>
-                        )}
-                    </div>
-                )}
-
-                <Field label="Reembolsos hasta X horas antes del evento">
-                    <Input
-                        type="number"
-                        min="0"
-                        value={ap.refund_window_hours}
-                        onChange={(e) =>
-                            update(
-                                "access_params.refund_window_hours",
-                                parseInt(e.target.value || "0", 10),
-                            )
-                        }
-                        disabled={disabled}
-                        data-testid="access-refund-window"
-                    />
-                </Field>
-
-                <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                    <div className="text-sm min-w-0">
-                        <div className="font-medium">Mostrar nombre del comprador en el ticket</div>
-                        <div className="text-xs text-muted-foreground">
-                            Útil para tickets nominativos
-                        </div>
-                    </div>
-                    <Switch
-                        checked={ap.show_buyer_name_on_ticket}
-                        onCheckedChange={(v) =>
-                            update("access_params.show_buyer_name_on_ticket", v)
-                        }
-                        disabled={disabled}
-                        data-testid="access-show-name"
-                    />
+                    )}
+                    {deliveryMode === "fecha_especifica" && (
+                        <Field label="Fecha y hora de envío">
+                            <Input
+                                type="datetime-local"
+                                value={form.ticket_delivery_at}
+                                onChange={(e) =>
+                                    update("ticket_delivery_at", e.target.value)
+                                }
+                                disabled={disabled}
+                                data-testid="access-delivery-at"
+                            />
+                        </Field>
+                    )}
                 </div>
-            </div>
-        </section>
+        </div>
     );
 }
 
@@ -2794,13 +2745,37 @@ function SectionTicketDesign({ form, update, eventId }) {
     const [showCourtesy, setShowCourtesy] = useState(
         () => !!form.courtesy_ticket_design?.elements?.length,
     );
+    const ap = form.access_params || defaultAccessParams();
+    const showBuyerName = ap.show_buyer_name_on_ticket !== false;
+
+    const buyerNameToggle = (
+        <div className="flex items-center justify-between gap-3 rounded-xl border bg-card p-4">
+            <div className="text-sm min-w-0">
+                <div className="font-medium">Mostrar nombre del comprador en el ticket</div>
+                <div className="text-xs text-muted-foreground">
+                    Útil para tickets nominativos. Si está apagado, el PDF no imprime el nombre.
+                </div>
+            </div>
+            <Switch
+                checked={showBuyerName}
+                onCheckedChange={(v) =>
+                    update("access_params.show_buyer_name_on_ticket", v)
+                }
+                data-testid="access-show-name"
+            />
+        </div>
+    );
+
     if (!eventId) {
         return (
-            <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground" data-testid="section-ticket-design">
-                <p className="font-medium text-foreground">Diseño del ticket</p>
-                <p className="mt-1">
-                    Guardá primero la información general del evento para poder diseñar el ticket.
-                </p>
+            <div className="space-y-4" data-testid="section-ticket-design">
+                {buyerNameToggle}
+                <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
+                    <p className="font-medium text-foreground">Diseño del ticket</p>
+                    <p className="mt-1">
+                        Guardá primero la información general del evento para poder diseñar el ticket.
+                    </p>
+                </div>
             </div>
         );
     }
@@ -2811,12 +2786,14 @@ function SectionTicketDesign({ form, update, eventId }) {
             <div>
                 <h3 className="font-semibold text-base">Diseño del ticket</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Elegí una plantilla y tu logo. Si no diseñás nada, se usa el formato estándar de TYS.
+                    Elegí una plantilla A4 (PDF por email). Si no diseñás nada, se usa el formato estándar de TYS.
                     {hasMainDesign && (
                         <> · <strong className="text-foreground">Plantilla activa</strong></>
                     )}
                 </p>
             </div>
+
+            {buyerNameToggle}
 
             <div className="rounded-xl border p-4 sm:p-5 bg-card space-y-3">
                 <TicketDesignPanel
@@ -2840,7 +2817,7 @@ function SectionTicketDesign({ form, update, eventId }) {
                         setShowCourtesy(v);
                         if (!v) {
                             update("courtesy_ticket_design", {
-                                format: form.courtesy_ticket_design?.format || "digital",
+                                format: form.courtesy_ticket_design?.format || "a4",
                                 background_color: form.courtesy_ticket_design?.background_color || "#ffffff",
                                 background_url: form.courtesy_ticket_design?.background_url || null,
                                 elements: [],
@@ -3800,7 +3777,7 @@ function SectionParams({ form, update, venueLocalities = [] }) {
     return (
         <div className="space-y-6" data-testid="section-params">
             <div>
-                <h3 className="font-semibold text-base">Parámetros del evento</h3>
+                <h3 className="font-semibold text-base">Campos Personalizados</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
                     Campos extra que se solicitarán al cliente durante la compra (nombre, talla, etc.).
                     {questionsCount > 0 && (

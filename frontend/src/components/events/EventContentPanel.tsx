@@ -37,7 +37,7 @@ export default function EventContentPanel({ content, update, disabled = false })
                         Reglas y políticas
                     </div>
                     <p className="text-sm text-muted-foreground mt-1">
-                        Condiciones de asistencia, reembolsos y normas del evento.
+                        Condiciones de asistencia y normas del evento.
                     </p>
                 </header>
                 <RichTextEditor

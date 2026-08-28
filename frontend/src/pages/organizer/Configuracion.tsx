@@ -1,5 +1,5 @@
 /**
- * /app/configuracion — Phase 5. 3 tabs: Perfil / Plan y facturación / Seguridad.
+ * /app/configuracion — 3 tabs. Default: Plan y facturación.
  */
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -31,7 +31,7 @@ import { formatCents } from "@/lib/orders";
 
 export default function Configuracion() {
     const [searchParams, setSearchParams] = useSearchParams();
-    const tab = searchParams.get("tab") || "profile";
+    const tab = searchParams.get("tab") || "plan";
     const setTab = (next: string) => {
         const params = new URLSearchParams(searchParams);
         params.set("tab", next);
@@ -48,14 +48,16 @@ export default function Configuracion() {
             </header>
             <Tabs value={tab} onValueChange={setTab}>
                 <TabsList>
-                    <TabsTrigger value="profile" data-testid="cfg-tab-profile">
-                        <User className="h-3.5 w-3.5 mr-1.5" />
-                        Perfil
-                    </TabsTrigger>
                     <TabsTrigger value="plan" data-testid="cfg-tab-plan">
                         <CreditCard className="h-3.5 w-3.5 mr-1.5" />
                         Plan y facturación
                     </TabsTrigger>
+                    
+                    <TabsTrigger value="profile" data-testid="cfg-tab-profile">
+                        <User className="h-3.5 w-3.5 mr-1.5" />
+                        Perfil
+                    </TabsTrigger>
+                    
                     <TabsTrigger value="security" data-testid="cfg-tab-security">
                         <Lock className="h-3.5 w-3.5 mr-1.5" />
                         Seguridad

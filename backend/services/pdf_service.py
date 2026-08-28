@@ -24,6 +24,25 @@ def _hex_to_color(hex_str: str) -> colors.Color:
     return colors.HexColor(hex_str)
 
 
+def _draw_cover_image(c, img_buf, page_w: float, page_h: float) -> None:
+    """Draw an image covering the page (CSS object-fit: cover)."""
+    img_buf.seek(0)
+    reader = ImageReader(img_buf)
+    iw, ih = reader.getSize()
+    if not iw or not ih:
+        return
+    scale = max(page_w / iw, page_h / ih)
+    dw, dh = iw * scale, ih * scale
+    x = (page_w - dw) / 2
+    y = (page_h - dh) / 2
+    c.saveState()
+    p = c.beginPath()
+    p.rect(0, 0, page_w, page_h)
+    c.clipPath(p, stroke=0, fill=0)
+    c.drawImage(reader, x, y, dw, dh, mask="auto")
+    c.restoreState()
+
+
 def _format_dt(value, tz_hint: str = "America/Guayaquil") -> str:
     """Accepts either an ISO string or a native `datetime` (row_to_dict
     returns raw datetimes straight from the ORM, not serialized strings)."""
@@ -65,6 +84,11 @@ FORMAT_PAGE_SIZES = {
     "a4": (A4[0], A4[1]),  # standard printable page
     "pvc": (85.6 * mm, 54.0 * mm),  # CR80 card (kiosk badge)
 }
+
+
+def _show_buyer_name(event: dict) -> bool:
+    ap = event.get("access_params") or {}
+    return ap.get("show_buyer_name_on_ticket", True)
 
 
 def _resolve_field_text(
@@ -141,8 +165,8 @@ async def render_ticket_pdf_from_design(
     the designer's canvas origin is top-left)."""
     from services.assets import open_event_asset
 
-    fmt = design.get("format") or "digital"
-    page_w, page_h = FORMAT_PAGE_SIZES.get(fmt, FORMAT_PAGE_SIZES["digital"])
+    fmt = design.get("format") or "a4"
+    page_w, page_h = FORMAT_PAGE_SIZES.get(fmt, FORMAT_PAGE_SIZES["a4"])
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
@@ -156,7 +180,7 @@ async def render_ticket_pdf_from_design(
         try:
             img = await open_event_asset(bg_url)
             if img:
-                c.drawImage(ImageReader(img), 0, 0, page_w, page_h, mask="auto")
+                _draw_cover_image(c, img, page_w, page_h)
         except Exception:
             logger.exception("Failed to draw ticket background %s", bg_url)
 
@@ -186,6 +210,8 @@ async def render_ticket_pdf_from_design(
                     logger.exception("Failed to draw ticket logo %s", url)
         elif kind == "text":
             field = el.get("field") or "custom"
+            if field == "holder_name" and not _show_buyer_name(event):
+                continue
             value = (
                 el.get("text") or ""
                 if field == "custom"
@@ -286,15 +312,16 @@ async def render_ticket_pdf(
         c.drawString(info_x, body_top - 68 - i * 14, vl[:40])
 
     holder = ticket.get("holder") or {}
-    c.setFont("Helvetica-Bold", 10)
-    c.setFillColor(colors.HexColor("#8c8ca6"))
-    c.drawString(info_x, body_top - 130, "ASISTENTE")
-    c.setFont("Helvetica-Bold", 13)
-    c.setFillColor(colors.HexColor("#1f1f33"))
-    c.drawString(info_x, body_top - 148, (holder.get("name") or "Sin nombre")[:36])
-    c.setFont("Helvetica", 10)
-    c.setFillColor(colors.HexColor("#6e6e84"))
-    c.drawString(info_x, body_top - 162, (holder.get("email") or "")[:42])
+    if _show_buyer_name(event):
+        c.setFont("Helvetica-Bold", 10)
+        c.setFillColor(colors.HexColor("#8c8ca6"))
+        c.drawString(info_x, body_top - 130, "ASISTENTE")
+        c.setFont("Helvetica-Bold", 13)
+        c.setFillColor(colors.HexColor("#1f1f33"))
+        c.drawString(info_x, body_top - 148, (holder.get("name") or "Sin nombre")[:36])
+        c.setFont("Helvetica", 10)
+        c.setFillColor(colors.HexColor("#6e6e84"))
+        c.drawString(info_x, body_top - 162, (holder.get("email") or "")[:42])
 
     # Phase 7 — numbered tickets show the seat label prominently
     seat_label = ticket.get("seat_label")
