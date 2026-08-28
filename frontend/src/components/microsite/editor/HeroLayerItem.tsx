@@ -21,11 +21,18 @@ type LayerPreview = Pick<HeroLayer, "colStart" | "colSpan" | "row">;
 
 function scrollOrNavigate(href: string | undefined) {
     if (!href || !isSafeHref(href)) return;
-    if (href.startsWith("#")) {
-        document.querySelector(href)?.scrollIntoView({ behavior: "smooth" });
+    const target = href.trim();
+    if (target.startsWith("#")) {
+        const id = target.slice(1);
+        const escaped =
+            typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(id) : id;
+        const el =
+            document.getElementById(id) ||
+            document.querySelector(`[data-ms-anchor="${escaped}"]`);
+        el?.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
     }
-    window.open(href, href.startsWith("http") ? "_blank" : "_self", "noopener,noreferrer");
+    window.open(target, target.startsWith("http") ? "_blank" : "_self", "noopener,noreferrer");
 }
 
 export default function HeroLayerItem({

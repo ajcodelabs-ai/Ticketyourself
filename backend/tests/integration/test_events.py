@@ -239,7 +239,6 @@ class TestEventFase5Fields:
                 "visibility": "public",
                 "access_type": "open",
                 "max_per_purchase": 5,
-                "refund_window_hours": 24,
                 "show_buyer_name_on_ticket": True,
             },
         }
@@ -316,6 +315,22 @@ class TestEventFase5Fields:
                 return
             assert r.status_code == 200
         pytest.fail("Gallery limit of 10 not enforced")
+
+    def test_ticket_design_background_upload(self, demo_token, created_event):
+        """Background kind used to be ticket_main_background (22 chars > VARCHAR(20))."""
+        eid = created_event["id"]
+        upload_s = requests.Session()
+        upload_s.headers.update({"Authorization": f"Bearer {demo_token}"})
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 200
+        files = {"file": ("fondo.png", io.BytesIO(png), "image/png")}
+        r = upload_s.post(
+            f"{API}/events/me/{eid}/ticket-design/asset",
+            params={"slot": "main", "role": "background"},
+            files=files,
+        )
+        assert r.status_code == 200, r.text
+        url = r.json().get("url")
+        assert url and url.startswith("/api/events/assets/")
 
 
 # ── 5. Seed event integrity ───────────────────────────────────────────────────

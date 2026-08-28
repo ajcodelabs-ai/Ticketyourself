@@ -40,7 +40,11 @@ const NAV_ITEMS = [
         icon: LayoutDashboard,
         testid: "nav-dashboard",
     },
-    { to: "/app/venues", label: "Venues", icon: MapPin, testid: "nav-venues" },
+    { 
+        to: "/app/venues",
+        label: "Escenarios", 
+        icon: MapPin, 
+        testid: "nav-venues" },
     {
         to: "/app/eventos",
         label: "Eventos",
@@ -151,7 +155,7 @@ export default function OrganizerLayout({ children }) {
                             className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950"
                         >
                             Tu cuenta está en revisión por TYS. Podés configurar todo, pero no
-                            publicar eventos, venues ni tu página hasta la aprobación.{" "}
+                            publicar eventos, Escenarios ni tu página hasta la aprobación.{" "}
                             <Link
                                 to="/onboarding"
                                 className="font-medium underline underline-offset-2"

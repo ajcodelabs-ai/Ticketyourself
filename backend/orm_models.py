@@ -478,7 +478,8 @@ class Event(Base):
     multi_function_mode = Column(String(20), nullable=False, default="function")
 
     # Phase 8 — eTicket delivery mode
-    # Values: al_momento | horas_antes | fecha_especifica | manual
+    # Values: al_momento | horas_antes | fecha_especifica
+    # Legacy "manual" is coerced to al_momento on write.
     ticket_delivery_mode = Column(String(20), nullable=False, default="al_momento")
     ticket_delivery_hours = Column(Integer, nullable=True)
     ticket_delivery_at = Column(DateTime(timezone=True), nullable=True)
@@ -864,8 +865,8 @@ class EventAsset(Base):
     event_id = Column(String(36), ForeignKey("events.id"), nullable=False, index=True)
     organizer_id = Column(String(36), ForeignKey("organizers.id"), nullable=False)
     kind = Column(
-        String(20), nullable=False
-    )  # poster | banner | small | gallery | appeal
+        String(40), nullable=False
+    )  # poster | banner | small | gallery | appeal | td_m_bg …
     file_path = Column(String(500), nullable=False)
     mime_type = Column(String(100), nullable=True)
     size_bytes = Column(Integer, nullable=True)

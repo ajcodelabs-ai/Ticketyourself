@@ -1,7 +1,7 @@
 """Event functions & ticket types — Phase 8.
 
-Multi-función: each event can have N functions (dates/shows), each with its own
-venue, schedule, and optional price/capacity overrides per ticket type.
+Multi-función: each event can have N functions (dates/shows) that share the
+event venue and capacity. Subeventos may override venue, schedule, and prices.
 
 Ticket types: multiple ticket categories per event (VIP, General, Early Bird…).
 
@@ -347,7 +347,10 @@ class EventFunctionUpdate(BaseModel):
     capacity: Optional[int] = None
     sort_order: Optional[int] = None
     status: Optional[str] = None
-    kind: Optional[Literal["function", "subevent"]] = None
+    kind: Optional[Literal["function", "subevent"]] = Field(
+        default=None,
+        description="Ignored on update — kind is immutable after creation.",
+    )
     ticket_type_overrides: Optional[List[FunctionTicketTypeOverride]] = None
 
 
@@ -357,22 +360,18 @@ class EventFunctionUpdate(BaseModel):
 _DEFAULT_FUNCTION_DURATION = timedelta(hours=1)
 
 
-def _same_venue(a: Optional[str], b: Optional[str]) -> bool:
-    return (a or "").strip().lower() == (b or "").strip().lower()
-
-
 async def _check_schedule_conflict(
     event_id: str,
     starts_at: Optional[datetime],
     ends_at: Optional[datetime],
-    venue_name: Optional[str],
+    _venue_name: Optional[str],
     exclude_function_id: Optional[str],
     session: AsyncSession,
     kind: str = "function",
 ) -> None:
     """Raise 409 if [starts_at, ends_at) overlaps a sibling, non-cancelled
-    función that shares the same venue (same venue_name, including both
-    blank = the event's main venue).
+    función. Multifunción shows all share the event venue, so any time
+    overlap is a conflict (venue_name is ignored).
 
     Subeventos (kind="subevent") are independent add-ons under the umbrella
     event — sala VIP, cena, meet & greet — and are explicitly allowed to run
@@ -392,13 +391,14 @@ async def _check_schedule_conflict(
     for other in result.scalars().all():
         if exclude_function_id and other.id == exclude_function_id:
             continue
-        if not other.starts_at or not _same_venue(venue_name, other.venue_name):
+        if not other.starts_at:
             continue
         other_end = other.ends_at or (other.starts_at + _DEFAULT_FUNCTION_DURATION)
         if starts_at < other_end and other.starts_at < candidate_end:
             raise HTTPException(
                 409,
-                f"El horario se superpone con la función '{other.name}' en el mismo lugar.",
+                f"El horario se superpone con la función '{other.name}'. "
+                "Todas las funciones ocurren en el mismo escenario.",
             )
 
 
@@ -447,6 +447,7 @@ async def create_function(
         kind=body.kind,
     )
 
+    inherit = body.kind == "function"
     func = EventFunction(
         id=str(uuid.uuid4()),
         event_id=event_id,
@@ -456,20 +457,20 @@ async def create_function(
         starts_at=body.starts_at,
         ends_at=body.ends_at,
         timezone=body.timezone,
-        venue_id=body.venue_id,
-        venue_name=body.venue_name,
-        venue_address=body.venue_address,
-        venue_city=body.venue_city,
-        venue_country=body.venue_country,
-        locality_pricing=body.locality_pricing,
-        capacity=body.capacity,
+        venue_id=None if inherit else body.venue_id,
+        venue_name=None if inherit else body.venue_name,
+        venue_address=None if inherit else body.venue_address,
+        venue_city=None if inherit else body.venue_city,
+        venue_country=None if inherit else body.venue_country,
+        locality_pricing=[] if inherit else body.locality_pricing,
+        capacity=None if inherit else body.capacity,
         sort_order=body.sort_order,
         kind=body.kind,
     )
     session.add(func)
     await session.flush()
 
-    if body.ticket_type_overrides:
+    if not inherit and body.ticket_type_overrides:
         await _upsert_overrides(func.id, body.ticket_type_overrides, session)
 
     # Mark event as multi-function / subevent umbrella (PRD §4.2.3).
@@ -539,7 +540,13 @@ async def update_function(
     effective_venue = (
         body.venue_name if body.venue_name is not None else func.venue_name
     )
-    effective_kind = body.kind if body.kind is not None else func.kind
+    # `kind` is immutable via this endpoint: nothing in the product lets an
+    # organizer convert a function into a subevent or vice versa, so trusting
+    # a caller-supplied kind here would let an unrelated edit (e.g. renaming
+    # a function) silently reclassify a subevent and wipe its own venue/
+    # capacity/pricing/overrides via the "function" branch below. `body.kind`
+    # is also excluded from `update_data` further down so it can't leak in
+    # through the generic setattr loop either.
     await _check_schedule_conflict(
         event_id,
         effective_starts,
@@ -547,13 +554,27 @@ async def update_function(
         effective_venue,
         function_id,
         session,
-        kind=effective_kind,
+        kind=func.kind,
     )
 
     overrides = body.ticket_type_overrides
-    update_data = body.model_dump(exclude_none=True, exclude={"ticket_type_overrides"})
+    update_data = body.model_dump(
+        exclude_none=True, exclude={"ticket_type_overrides", "kind"}
+    )
     for field, val in update_data.items():
         setattr(func, field, val)
+    # Multifunción inherits venue/capacity from the event. exclude_none=True
+    # would otherwise leave a previously saved venue_name in place.
+    if func.kind == "function":
+        func.venue_id = None
+        func.venue_name = None
+        func.venue_address = None
+        func.venue_city = None
+        func.venue_country = None
+        func.capacity = None
+        func.locality_pricing = []
+        overrides = []
+        flag_modified(func, "locality_pricing")
     jsonb_cols = {
         c.name for c in EventFunction.__table__.columns if isinstance(c.type, sa.JSON)
     }

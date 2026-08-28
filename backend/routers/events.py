@@ -265,7 +265,6 @@ class EventAccessParams(BaseModel):
     max_per_purchase: int = Field(default=10, ge=1, le=100)
     min_per_purchase: int = Field(default=1, ge=1, le=100)
     max_per_email: Optional[int] = Field(default=None, ge=1)
-    refund_window_hours: int = Field(default=24, ge=0)
     show_buyer_name_on_ticket: bool = True
     # §4.2.2 Acceso — QR validable en puerta vs entrada solo PDF/email.
     ticket_validation: Literal["qr", "none"] = "qr"
@@ -285,6 +284,18 @@ class EventAccessParams(BaseModel):
         if self.access_type == "link_only":
             self.access_type = "open"
         return self
+
+
+# eTicket is always sent. Legacy "manual" (organizer opted out) maps to al_momento.
+TICKET_DELIVERY_MODES = ("al_momento", "horas_antes", "fecha_especifica")
+
+
+def _normalize_ticket_delivery_mode(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    if v in TICKET_DELIVERY_MODES:
+        return v
+    return "al_momento"
 
 
 class AgendaItem(BaseModel):
@@ -355,7 +366,7 @@ class TicketDesignElement(BaseModel):
 
 
 class TicketDesign(BaseModel):
-    format: Literal["digital", "a4", "pvc"] = "digital"
+    format: Literal["digital", "a4", "pvc"] = "a4"
     background_url: Optional[str] = None
     background_color: str = Field(default="#ffffff", max_length=7)
     elements: List[TicketDesignElement] = Field(default_factory=list)
@@ -422,7 +433,7 @@ class EventBase(BaseModel):
     discounts: Optional[EventDiscounts] = None
     access_params: Optional[EventAccessParams] = None
     content: Optional[EventContent] = None
-    # eTicket delivery
+    # eTicket delivery (always sent; "manual" is coerced to al_momento)
     ticket_delivery_mode: Optional[str] = Field(default="al_momento", max_length=20)
     ticket_delivery_hours: Optional[int] = Field(default=None, ge=1)
     ticket_delivery_at: Optional[datetime] = None
@@ -455,6 +466,11 @@ class EventBase(BaseModel):
             return None
         s = v.strip()
         return s or None
+
+    @field_validator("ticket_delivery_mode", mode="before")
+    @classmethod
+    def _coerce_delivery_mode(cls, v):
+        return _normalize_ticket_delivery_mode(v) or "al_momento"
 
 
 class EventCreate(EventBase):
@@ -502,6 +518,11 @@ class EventUpdate(BaseModel):
     ticket_delivery_hours: Optional[int] = Field(default=None, ge=1)
     ticket_delivery_at: Optional[datetime] = None
     multi_function_mode: Optional[Literal["function", "subevent"]] = None
+
+    @field_validator("ticket_delivery_mode", mode="before")
+    @classmethod
+    def _coerce_delivery_mode(cls, v):
+        return _normalize_ticket_delivery_mode(v)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -2161,6 +2182,17 @@ async def upload_small(
 
 
 # ── M4 — diseñador visual de tickets: assets (fondo / logo) ─────────────────
+def _ticket_asset_kind(slot: str, role: str) -> str:
+    """EventAsset.kind must fit VARCHAR(20) until the widen-to-40 migration runs.
+
+    ``ticket_main_background`` is 22 chars and was rejected by Postgres, which
+    surfaced in the UI as the generic "No se pudo subir la imagen".
+    """
+    slot_key = "c" if slot == "courtesy" else "m"
+    role_key = "bg" if role == "background" else "lg"
+    return f"td_{slot_key}_{role_key}"
+
+
 @router.post("/{event_id}/ticket-design/asset")
 async def upload_ticket_design_asset(
     event_id: str,
@@ -2176,7 +2208,9 @@ async def upload_ticket_design_asset(
         )
         if not row:
             raise HTTPException(status_code=404, detail="Event not found")
-    url = await _store_event_image(event_id, org["id"], file, f"ticket_{slot}_{role}")
+    url = await _store_event_image(
+        event_id, org["id"], file, _ticket_asset_kind(slot, role)
+    )
     return {"url": url}
 
 
@@ -2338,7 +2372,7 @@ async def serve_event_asset(asset_id: str):
         media_type=_asset_row.mime_type or "application/octet-stream",
         headers={
             "Cache-Control": "public, max-age=86400",
-            "Content-Disposition": "attachment",
+            "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",
         },
     )

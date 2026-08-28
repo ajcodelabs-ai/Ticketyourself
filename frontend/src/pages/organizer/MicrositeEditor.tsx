@@ -1,8 +1,6 @@
 /**
- * MicrositeEditor v2 — page builder estilo Shopify/WordPress.
- * Panel izquierdo: lista de bloques (drag & drop).
- * Centro: preview en vivo con click-to-select.
- * Panel derecho: propiedades del bloque seleccionado o tema global.
+ * Microsite editor — plantillas listas + ajustes mínimos (modo simple).
+ * Modo avanzado: page builder (secciones, tema, SEO).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -29,6 +27,8 @@ import { SeoPanel, RevisionsPanel } from "@/components/microsite/editor/SeoAndHi
 import MicrositeHead from "@/components/microsite/MicrositeHead";
 import ShareModal from "@/components/microsite/ShareModal";
 import PublishPendingDialog from "@/components/PublishPendingDialog";
+import TemplateGallery from "@/components/microsite/editor/TemplateGallery";
+import QuickSetupPanel from "@/components/microsite/editor/QuickSetupPanel";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
 import { publicMicrositeUrl, PUBLIC_DOMAIN } from "@/lib/config";
@@ -36,10 +36,10 @@ import {
     createBlock,
     resolveBlocks,
     sectionsFromBlocks,
-    blocksForTemplate,
     type BlockType,
     type MicrositeBlock,
 } from "@/lib/micrositeBlocks";
+import { buildTemplateUpdate, getTemplatePreset } from "@/lib/micrositeTemplates";
 import {
     ExternalLink,
     Monitor,
@@ -53,9 +53,15 @@ import {
     Search,
     History,
     Grid3x3,
+    LayoutTemplate,
+    Wrench,
 } from "lucide-react";
 
+const SETUP_DONE_KEY = "tys.microsite_setup_done";
+const EDITOR_MODE_KEY = "tys.microsite_editor_mode";
+
 type SidePanel = "blocks" | "theme" | "seo" | "history" | "publish";
+type WorkspaceMode = "simple" | "advanced";
 
 export default function MicrositeEditor() {
     const { organizer } = useAuth();
@@ -71,11 +77,17 @@ export default function MicrositeEditor() {
     const [fullscreenOpen, setFullscreenOpen] = useState(false);
     const [selectedBlockId, setSelectedBlockId] = useState(null);
     const [selectedLayerId, setSelectedLayerId] = useState(null);
-    const [showGrid, setShowGrid] = useState(true);
+    const [showGrid, setShowGrid] = useState(false);
     const [sidePanel, setSidePanel] = useState("blocks");
+    const [galleryOpen, setGalleryOpen] = useState(false);
+    const [workspace, setWorkspace] = useState<WorkspaceMode>(() => {
+        if (typeof window === "undefined") return "simple";
+        return window.localStorage.getItem(EDITOR_MODE_KEY) === "advanced" ? "advanced" : "simple";
+    });
     const previewRef = useRef(null);
     const saveTimer = useRef(null);
     const pendingPartial = useRef<any>({});
+    const galleryPrompted = useRef(false);
 
     useEffect(() => {
         if (!previewRef.current || typeof ResizeObserver === "undefined") return;
@@ -115,6 +127,15 @@ export default function MicrositeEditor() {
             active = false;
         };
     }, [navigate]);
+
+    useEffect(() => {
+        if (loading || !microsite || galleryPrompted.current) return;
+        if (microsite.published) return;
+        if (typeof window === "undefined") return;
+        if (window.localStorage.getItem(SETUP_DONE_KEY)) return;
+        galleryPrompted.current = true;
+        setGalleryOpen(true);
+    }, [loading, microsite]);
 
     const pushUpdate = (partial) => {
         setMicrosite((prev) => {
@@ -175,10 +196,22 @@ export default function MicrositeEditor() {
     };
 
     const applyTemplate = (code: string) => {
-        const nextBlocks = blocksForTemplate(code, microsite?.sections_enabled || {});
-        pushUpdate({ template: code, blocks: nextBlocks });
+        const companyName = organizer?.company_name || organizer?.slug || "";
+        const payload = buildTemplateUpdate(code, microsite, companyName);
+        pushUpdate(payload);
         setSelectedBlockId(null);
-        toast.success("Plantilla aplicada");
+        if (typeof window !== "undefined") {
+            window.localStorage.setItem(SETUP_DONE_KEY, "1");
+        }
+        toast.success(`Plantilla «${getTemplatePreset(code).name}» aplicada. Logo y título se mantienen.`);
+    };
+
+    const setWorkspaceMode = (mode: WorkspaceMode) => {
+        setWorkspace(mode);
+        if (typeof window !== "undefined") {
+            window.localStorage.setItem(EDITOR_MODE_KEY, mode);
+        }
+        if (mode === "simple") setShowGrid(false);
     };
 
     const uploadAsset = async (file, asset_type) => {
@@ -280,18 +313,20 @@ export default function MicrositeEditor() {
             {/* Header compacto */}
             <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
                 <div>
-                    <h1 className="text-xl sm:text-2xl font-semibold">Diseñador de tu página</h1>
+                    <h1 className="text-xl sm:text-2xl font-semibold">Tu página</h1>
                     <p className="text-sm text-muted-foreground">
-                        {microsite.published ? (
+                        {workspace === "simple"
+                            ? "Elegí una plantilla y ajustá logo, textos y color."
+                            : microsite.published
+                              ? (
                             <>
                                 Publicado en{" "}
                                 <code className="bg-secondary px-1.5 py-0.5 rounded">
                                     {organizer.slug}.{PUBLIC_DOMAIN}
                                 </code>
-                            </>
-                        ) : (
-                            "Borrador — hacé click en una sección del preview para editarla."
-                        )}
+                              </>
+                              )
+                              : "Modo avanzado — secciones, tema y SEO."}
                         {saving && (
                             <span className="ml-2 text-xs text-muted-foreground inline-flex items-center gap-1">
                                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -301,6 +336,23 @@ export default function MicrositeEditor() {
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                    <Button
+                        variant="outline"
+                        onClick={() => setWorkspaceMode(workspace === "simple" ? "advanced" : "simple")}
+                        data-testid="toggle-workspace-mode"
+                    >
+                        {workspace === "simple" ? (
+                            <>
+                                <Wrench className="h-4 w-4 mr-2" />
+                                Personalizar a fondo
+                            </>
+                        ) : (
+                            <>
+                                <LayoutTemplate className="h-4 w-4 mr-2" />
+                                Vista simple
+                            </>
+                        )}
+                    </Button>
                     <Button variant="outline" asChild data-testid="editor-open-public">
                         <a href={publicMicrositeUrl(organizer.slug)} target="_blank" rel="noopener noreferrer">
                             <ExternalLink className="h-4 w-4 mr-2" />
@@ -321,11 +373,29 @@ export default function MicrositeEditor() {
                 </div>
             </div>
 
-            {/* Builder a ancho completo: secciones | preview | propiedades */}
-            <div className="grid flex-1 min-h-0 gap-3 lg:grid-cols-[minmax(220px,260px)_minmax(0,1fr)_minmax(260px,300px)] lg:grid-rows-1">
-                {/* LEFT — block list + nav */}
+            {/* Builder: simple = ajustes | preview ; advanced = 3 columnas */}
+            <div
+                className={`grid flex-1 min-h-0 gap-3 lg:grid-rows-1 ${
+                    workspace === "simple"
+                        ? "lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)]"
+                        : "lg:grid-cols-[minmax(220px,260px)_minmax(0,1fr)_minmax(260px,300px)]"
+                }`}
+            >
+                {/* LEFT */}
                 <Card className="flex flex-col min-h-0 lg:max-h-[calc(100vh-9.5rem)] lg:overflow-hidden">
                     <CardContent className="pt-4 space-y-4 flex-1 overflow-y-auto">
+                        {workspace === "simple" ? (
+                            <QuickSetupPanel
+                                microsite={microsite}
+                                onOpenGallery={() => setGalleryOpen(true)}
+                                onUpdateContent={(patch) => pushUpdate({ content: patch })}
+                                onUpdateBranding={(patch) => pushUpdate({ branding: patch })}
+                                onUpdateSocial={(patch) => pushUpdate({ social_links: patch })}
+                                uploadAsset={uploadAsset}
+                                uploadingAsset={uploadingAsset}
+                            />
+                        ) : (
+                            <>
                         <div className="flex gap-1 border rounded-lg p-1 bg-secondary/40 flex-wrap">
                             {(
                                 [
@@ -369,6 +439,7 @@ export default function MicrositeEditor() {
                                 onUpdateBranding={(patch) => pushUpdate({ branding: patch })}
                                 uploadAsset={uploadAsset}
                                 uploadingAsset={uploadingAsset}
+                                onOpenGallery={() => setGalleryOpen(true)}
                             />
                         )}
                         {sidePanel === "seo" && (
@@ -400,6 +471,8 @@ export default function MicrositeEditor() {
                                 onTogglePublish={togglePublish}
                             />
                         )}
+                            </>
+                        )}
                     </CardContent>
                 </Card>
 
@@ -416,6 +489,7 @@ export default function MicrositeEditor() {
                             </span>
                         </div>
                         <div className="flex items-center gap-2">
+                            {workspace === "advanced" && (
                             <Button
                                 variant={showGrid ? "default" : "outline"}
                                 size="sm"
@@ -426,6 +500,7 @@ export default function MicrositeEditor() {
                                 <Grid3x3 className="h-3.5 w-3.5 mr-1.5" />
                                 Cuadrícula
                             </Button>
+                            )}
                             <div className="flex gap-1 border rounded-full p-1 bg-secondary/40">
                                 <button
                                     onClick={() => setPreviewMode("desktop")}
@@ -458,7 +533,7 @@ export default function MicrositeEditor() {
                         </div>
                     </div>
 
-                    {selectedBlock?.type === "hero" && microsite && (
+                    {workspace === "advanced" && selectedBlock?.type === "hero" && microsite && (
                         <HeroLayerRibbon
                             block={selectedBlock}
                             microsite={microsite}
@@ -489,8 +564,9 @@ export default function MicrositeEditor() {
                         <div className="flex-1 min-h-0 overflow-y-auto lg:max-h-[calc(100vh-13rem)]">
                             <MicrositeRenderer
                                 microsite={microsite}
+                                tenantSlug={organizer?.slug || microsite?.slug}
                                 editorMode
-                                showGrid={showGrid}
+                                showGrid={workspace === "advanced" && showGrid}
                                 selectedBlockId={selectedBlockId}
                                 selectedLayerId={selectedLayerId}
                                 onSelectBlock={handleSelectBlock}
@@ -504,7 +580,7 @@ export default function MicrositeEditor() {
                     </div>
                 </div>
 
-                {/* RIGHT — properties */}
+                {workspace === "advanced" && (
                 <Card className="hidden lg:flex flex-col min-h-0 lg:max-h-[calc(100vh-9.5rem)] lg:overflow-hidden">
                     <CardContent className="pt-4 flex-1 overflow-y-auto">
                         {selectedBlock ? (
@@ -535,10 +611,11 @@ export default function MicrositeEditor() {
                         )}
                     </CardContent>
                 </Card>
+                )}
             </div>
 
             {/* Mobile/tablet: properties below when block selected */}
-            {selectedBlock && (
+            {workspace === "advanced" && selectedBlock && (
                 <Card className="lg:hidden shrink-0">
                     <CardContent className="pt-4">
                         <BlockPropertiesPanel
@@ -574,12 +651,26 @@ export default function MicrositeEditor() {
                             className="mx-auto bg-background rounded-xl border shadow-sm overflow-hidden"
                             style={{ maxWidth: "1200px" }}
                         >
-                            <MicrositeRenderer microsite={microsite} />
+                            <MicrositeRenderer
+                                microsite={microsite}
+                                tenantSlug={organizer?.slug || microsite?.slug}
+                            />
                         </div>
                     </div>
                 </DialogContent>
             </Dialog>
 
+            <TemplateGallery
+                open={galleryOpen}
+                onOpenChange={(open) => {
+                    setGalleryOpen(open);
+                    if (!open && typeof window !== "undefined") {
+                        window.localStorage.setItem(SETUP_DONE_KEY, "1");
+                    }
+                }}
+                activeCode={microsite.template}
+                onApply={applyTemplate}
+            />
             <ShareModal
                 open={shareOpen}
                 onOpenChange={setShareOpen}

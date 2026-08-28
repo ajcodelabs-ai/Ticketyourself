@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -47,6 +47,9 @@ ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
 MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+# Shape-only: EmailStr / email-validator rejects reserved TLDs like .test,
+# which the demo seed (hola@demo-org.test) and local organizers use.
+_CONTACT_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 router = APIRouter(prefix="/api/microsite", tags=["microsite"])
 public_router = APIRouter(prefix="/api/public/microsite", tags=["microsite-public"])
@@ -84,9 +87,21 @@ class ContentIn(BaseModel):
     about_title: Optional[str] = Field(default=None, max_length=80)
     about_body: Optional[str] = Field(default=None, max_length=1000)
     about_body_html: Optional[str] = Field(default=None, max_length=8000)
-    contact_email: Optional[EmailStr] = Field(default=None, max_length=120)
+    contact_email: Optional[str] = Field(default=None, max_length=120)
     contact_phone: Optional[str] = Field(default=None, max_length=40)
     address: Optional[str] = Field(default=None, max_length=200)
+
+    @field_validator("contact_email", mode="before")
+    @classmethod
+    def _normalize_contact_email(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not _CONTACT_EMAIL_RE.match(s):
+            raise ValueError("email inválido")
+        return s
 
 
 class SocialIn(BaseModel):

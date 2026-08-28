@@ -87,7 +87,7 @@ test.describe("Event wizard", () => {
     await expect(page.getByTestId("wiz-pricing-type")).toContainText("Gratuito");
 
     await page.getByTestId("tab-fechas").click();
-    await expect(page.getByTestId("info-cuando-block")).toContainText(
+    await expect(page.getByTestId("sales-window-block")).toContainText(
       "compra (o reserva si es gratuito)",
     );
   });
@@ -127,5 +127,58 @@ test.describe("Event wizard", () => {
     await expect(page.getByTestId("access-visibility-public_blocked")).toHaveCount(0);
     await expect(page.getByTestId("ticket-validation-qr")).toBeVisible();
     await expect(page.getByTestId("ticket-validation-none")).toBeVisible();
+  });
+
+  test("Multifunción modal only asks for name, description and schedule", async ({ page }) => {
+    await page.route("**/api/plans/me/features", async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      await route.fulfill({
+        status: response.status(),
+        json: { ...json, multi_function_events: true },
+      });
+    });
+
+    await page.goto("/app/eventos");
+    await page.getByTestId("event-detail-link-concierto-acustico-demo").click();
+    await page.getByTestId("event-edit-btn").click();
+    await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
+
+    await page.getByTestId("tab-fechas").click();
+    await page.getByTestId("event-structure-multi").click();
+    await expect(page.getByTestId("section-functions")).toBeVisible();
+    await page.getByTestId("add-function").click();
+
+    await expect(page.getByTestId("fn-name")).toBeVisible();
+    await expect(page.getByTestId("fn-starts")).toBeVisible();
+    await expect(page.getByTestId("fn-ends")).toBeVisible();
+    await expect(page.getByRole("dialog")).toContainText("Nueva función");
+    await expect(page.getByRole("dialog")).toContainText("Descripción");
+    await expect(page.getByTestId("fn-capacity")).toHaveCount(0);
+    await expect(page.getByText("Lugar de esta función")).toHaveCount(0);
+    await expect(page.getByText("Aforo de esta función")).toHaveCount(0);
+    await expect(page.getByText("Orden de aparición")).toHaveCount(0);
+    await expect(page.getByText("Precio y aforo por tipo de ticket")).toHaveCount(0);
+    await expect(page.getByTestId("event-structure-subevent")).toHaveCount(0);
+    await expect(page.getByText("Con subeventos")).toHaveCount(0);
+  });
+
+  test("Ticket design templates are A4 for email PDF", async ({ page }) => {
+    await page.goto("/app/eventos");
+    await page.getByTestId("event-detail-link-concierto-acustico-demo").click();
+    await page.getByTestId("event-edit-btn").click();
+    await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
+
+    await page.getByTestId("tab-media").click();
+    await page.getByTestId("media-goto-ticket").click();
+    await expect(page.getByTestId("section-ticket-design")).toBeVisible();
+    await expect(page.getByTestId("ticket-design-panel-main")).toContainText("A4");
+    await expect(page.getByTestId("td-format-main")).toHaveCount(0);
+    await page.getByTestId("td-template-clasico-main").click();
+    const canvas = page.getByTestId("td-canvas-main");
+    await expect(canvas).toBeVisible();
+    const box = await canvas.boundingBox();
+    expect(box).toBeTruthy();
+    expect(box.height).toBeGreaterThan(box.width);
   });
 });

@@ -338,11 +338,22 @@ class TestEvent:
     def test_unique_constraint(self):
         assert _has_unique_constraint(Event, "uq_event_org_slug")
 
-    def foreign_keys(self):
+    def test_foreign_keys(self):
         fks = Event.__table__.foreign_key_constraints
         cols = [set(fk.columns.keys()) for fk in fks]
         assert any("organizer_id" in c for c in cols)
         assert any("venue_id" in c for c in cols)
+
+
+class TestEventAsset:
+    def test_tablename(self):
+        assert EventAsset.__tablename__ == "event_assets"
+
+    def test_kind_fits_ticket_background(self):
+        # ticket_main_background is 22 chars; the old VARCHAR(20) rejected it.
+        kind_col = EventAsset.__table__.columns["kind"]
+        assert kind_col.type.length >= 40
+        assert len("ticket_main_background") <= kind_col.type.length
 
 
 # ── TicketType ────────────────────────────────────────────────────────────────

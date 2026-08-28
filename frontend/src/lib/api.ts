@@ -42,9 +42,13 @@ api.interceptors.request.use((config) => {
         config.headers.Authorization = `Bearer ${token}`;
     }
     if (typeof FormData !== "undefined" && config.data instanceof FormData) {
-        if (config.headers) {
-            delete config.headers["Content-Type"];
-            delete config.headers["content-type"];
+        const headers = config.headers;
+        // AxiosHeaders.delete is required; `delete obj[key]` is a no-op on it.
+        if (headers && typeof headers.delete === "function") {
+            headers.delete("Content-Type");
+        } else if (headers) {
+            delete headers["Content-Type"];
+            delete headers["content-type"];
         }
     }
     return config;
@@ -119,7 +123,7 @@ const FIELD_LABELS: Record<string, string> = {
     org_type: "Tipo de organización",
     phone: "Teléfono",
     country: "País",
-    slug: "URL de tu página",
+    contact_email: "Email de contacto",
     title: "Título",
     starts_at: "Fecha de inicio",
     ends_at: "Fecha de fin",

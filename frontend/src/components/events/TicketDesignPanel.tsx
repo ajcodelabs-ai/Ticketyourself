@@ -15,29 +15,30 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import api from "@/lib/api";
+import api, { formatApiError } from "@/lib/api";
 import {
     TICKET_TEMPLATES,
     applyTicketTemplate,
     detectTemplateId,
     emptyDesign,
+    A4_WH,
     type TicketDesign,
 } from "@/lib/ticketDesignTemplates";
 
-const FORMAT_RATIOS = { digital: 800 / 360, a4: 595.27 / 841.89, pvc: 85.6 / 54 };
-const FORMAT_LABELS = {
-    digital: "Digital (email)",
-    a4: "Imprimible (A4)",
-    pvc: "Gafete / PVC",
-};
-const DISPLAY_W = 520;
+const FORMAT_RATIOS = { digital: 800 / 360, a4: A4_WH, pvc: 85.6 / 54 };
+const A4_PREVIEW_H = 520;
 
 const BG_PALETTE = [
     "#ffffff", "#f8fafc", "#0f172a", "#0f766e",
     "#134e4a", "#1e3a5f", "#fef3c7", "#ecfdf5",
+];
+
+const ALLOWED_TICKET_IMG_MIME = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
 ];
 
 function backendAbsoluteUrl(relativeUrl) {
@@ -53,36 +54,60 @@ function useHtmlImage(url) {
             setImg(null);
             return undefined;
         }
+        let cancelled = false;
         const el = new window.Image();
-        el.crossOrigin = "anonymous";
-        el.onload = () => setImg(el);
+        // Do not set crossOrigin: this canvas is never exported (PDF is
+        // server-side). anonymous CORS fails silently on localhost vs 127.0.0.1.
+        el.onload = () => {
+            if (!cancelled) setImg(el);
+        };
+        el.onerror = () => {
+            if (!cancelled) setImg(null);
+        };
         el.src = url;
-        return () => setImg(null);
+        return () => {
+            cancelled = true;
+        };
     }, [url]);
     return img;
 }
 
-function MiniPreview({ template }) {
+function MiniPreview({ template, photoUrl }) {
     return (
         <div
-            className="h-20 w-full rounded-md border overflow-hidden relative"
-            style={{ backgroundColor: template.previewBg }}
+            className="mx-auto w-full max-w-[120px] rounded-md border overflow-hidden relative"
+            style={{
+                backgroundColor: template.previewBg,
+                backgroundImage: photoUrl ? `url("${photoUrl}")` : undefined,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                aspectRatio: "210 / 297",
+            }}
         >
             <div
-                className="absolute left-2 top-2 h-5 w-5 rounded-sm opacity-80"
+                className="absolute left-[12%] top-[8%] h-[9%] w-[18%] rounded-sm"
                 style={{ backgroundColor: template.previewFg, opacity: 0.25 }}
             />
             <div
-                className="absolute left-9 top-2.5 h-2 w-16 rounded-sm"
-                style={{ backgroundColor: template.previewFg, opacity: 0.55 }}
+                className="absolute left-[34%] top-[9%] h-[4%] w-[52%] rounded-sm"
+                style={{ backgroundColor: template.previewFg, opacity: 0.5 }}
             />
             <div
-                className="absolute left-9 top-6 h-1.5 w-12 rounded-sm"
-                style={{ backgroundColor: template.previewFg, opacity: 0.3 }}
+                className="absolute left-[12%] top-[22%] h-[6%] w-[76%] rounded-sm"
+                style={{ backgroundColor: template.previewFg, opacity: 0.45 }}
             />
             <div
-                className="absolute right-2 bottom-2 h-10 w-10 rounded-sm border border-dashed"
-                style={{ borderColor: template.previewFg, opacity: 0.45 }}
+                className="absolute left-[12%] top-[32%] h-[3%] w-[60%] rounded-sm"
+                style={{ backgroundColor: template.previewFg, opacity: 0.25 }}
+            />
+            <div
+                className="absolute left-[28%] bottom-[10%] rounded-sm border border-dashed"
+                style={{
+                    borderColor: template.previewFg,
+                    opacity: 0.45,
+                    width: "44%",
+                    aspectRatio: "1",
+                }}
             />
         </div>
     );
@@ -95,9 +120,11 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
     const [previewing, setPreviewing] = useState(false);
     const [previewUrl, setPreviewUrl] = useState(null);
 
-    const ratio = FORMAT_RATIOS[safeDesign.format] || FORMAT_RATIOS.digital;
-    const displayH = Math.round(DISPLAY_W / ratio);
-    const bgImg = useHtmlImage(backendAbsoluteUrl(safeDesign.background_url));
+    const ratio = FORMAT_RATIOS[safeDesign.format] || FORMAT_RATIOS.a4;
+    const isPortrait = ratio < 1;
+    const displayH = isPortrait ? A4_PREVIEW_H : Math.round(420 / ratio);
+    const displayW = isPortrait ? Math.round(A4_PREVIEW_H * ratio) : 420;
+    const bgAbsUrl = backendAbsoluteUrl(safeDesign.background_url);
     const hasDesign = (safeDesign.elements || []).length > 0;
 
     useEffect(() => {
@@ -130,10 +157,10 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
             elements.unshift({
                 id: `logo-${Date.now()}`,
                 type: "logo",
-                x: 0.05,
-                y: 0.08,
-                width: 0.18,
-                height: 0.28,
+                x: 0.08,
+                y: 0.05,
+                width: 0.16,
+                height: 0.16 * A4_WH,
                 image_url: url,
             });
         }
@@ -141,6 +168,15 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
     };
 
     const uploadAsset = async (file, role: "background" | "logo") => {
+        if (!file) return;
+        if (file.type && !ALLOWED_TICKET_IMG_MIME.includes(file.type)) {
+            toast.error(`Formato no soportado: ${file.type}. Aceptamos JPG, PNG, WEBP o HEIC.`);
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            toast.error("La imagen supera los 5MB. Reducí su peso e intentá de nuevo.");
+            return;
+        }
         setUploading(true);
         try {
             const form = new FormData();
@@ -148,10 +184,18 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
             const { data } = await api.post(
                 `/events/me/${eventId}/ticket-design/asset?slot=${slot}&role=${role}`,
                 form,
-                { headers: { "Content-Type": "multipart/form-data" } },
             );
             if (role === "background") {
-                updateDesign({ background_url: data.url });
+                if (!hasDesign) {
+                    onChange(
+                        applyTicketTemplate(selectedTemplateId || "clasico", {
+                            ...safeDesign,
+                            background_url: data.url,
+                        }),
+                    );
+                } else {
+                    updateDesign({ background_url: data.url });
+                }
             } else {
                 if (!hasDesign) {
                     const next = applyTicketTemplate("clasico", safeDesign);
@@ -165,7 +209,11 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
             }
             toast.success(role === "logo" ? "Logo actualizado" : "Fondo actualizado");
         } catch (e) {
-            toast.error(e?.response?.data?.detail || "No se pudo subir la imagen");
+            toast.error(
+                formatApiError(e?.response?.data?.detail) ||
+                    e?.message ||
+                    "No se pudo subir la imagen",
+            );
         } finally {
             setUploading(false);
         }
@@ -216,7 +264,7 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                 <p className="text-xs text-muted-foreground mb-3">
                     {hasDesign && !selectedTemplateId
                         ? "Este evento tiene un diseño hecho antes de las plantillas. Elegir una plantilla lo reemplaza por completo."
-                        : "Cada una ya trae logo, datos del evento y QR. Después solo personalizás color y logo."}
+                        : "Hoja A4 vertical: es el PDF que llega por email y se puede imprimir. Después personalizás color, logo y fondo."}
                 </p>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid={`td-templates-${slot}`}>
                     {TICKET_TEMPLATES.map((tpl) => {
@@ -233,7 +281,10 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                                 }`}
                                 data-testid={`td-template-${tpl.id}-${slot}`}
                             >
-                                <MiniPreview template={tpl} />
+                                <MiniPreview
+                                    template={tpl}
+                                    photoUrl={active ? bgAbsUrl : null}
+                                />
                                 <div className="mt-2 flex items-start justify-between gap-1">
                                     <div>
                                         <div className="text-sm font-medium leading-tight">{tpl.name}</div>
@@ -250,23 +301,9 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
             </div>
 
             <div className="flex flex-wrap items-end gap-3 rounded-xl border bg-secondary/20 p-3">
-                <div className="space-y-1.5">
-                    <Label className="text-xs">Formato</Label>
-                    <Select
-                        value={safeDesign.format}
-                        onValueChange={(v) => updateDesign({ format: v as TicketDesign["format"] })}
-                    >
-                        <SelectTrigger className="w-44" data-testid={`td-format-${slot}`}>
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {Object.entries(FORMAT_LABELS).map(([k, label]) => (
-                                <SelectItem key={k} value={k}>{label}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-
+                <p className="text-xs text-muted-foreground w-full sm:w-auto sm:mr-auto pb-0.5">
+                    Formato fijo: <strong className="text-foreground">A4</strong> (una página, envío por email).
+                </p>
                 <div className="space-y-1.5">
                     <Label className="text-xs">Color de fondo</Label>
                     <div className="flex items-center gap-1.5">
@@ -302,14 +339,25 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                                 type="file"
                                 accept="image/*"
                                 className="hidden"
-                                onChange={(e) => e.target.files?.[0] && uploadAsset(e.target.files[0], "logo")}
+                                onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    e.target.value = "";
+                                    if (f) uploadAsset(f, "logo");
+                                }}
                                 data-testid={`td-upload-logo-${slot}`}
                             />
                         </span>
                     </Button>
                 </label>
 
-                <label className="inline-flex">
+                <label className="inline-flex items-center gap-1.5">
+                    {bgAbsUrl && (
+                        <img
+                            src={bgAbsUrl}
+                            alt=""
+                            className="h-7 w-7 rounded border object-cover"
+                        />
+                    )}
                     <Button size="sm" variant="outline" asChild disabled={uploading || !eventId}>
                         <span>
                             <Upload className="h-4 w-4 mr-1.5" /> Fondo
@@ -317,7 +365,11 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                                 type="file"
                                 accept="image/*"
                                 className="hidden"
-                                onChange={(e) => e.target.files?.[0] && uploadAsset(e.target.files[0], "background")}
+                                onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    e.target.value = "";
+                                    if (f) uploadAsset(f, "background");
+                                }}
                                 data-testid={`td-upload-bg-${slot}`}
                             />
                         </span>
@@ -358,34 +410,36 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
 
             <div className="flex flex-wrap gap-4 items-start">
                 <div
-                    className="border rounded-lg overflow-hidden shrink-0 shadow-sm"
-                    style={{ width: DISPLAY_W, height: displayH }}
+                    className="relative border rounded-lg overflow-hidden shrink-0 shadow-sm"
+                    style={{
+                        width: displayW,
+                        height: displayH,
+                        backgroundColor: safeDesign.background_color || "#ffffff",
+                    }}
                     data-testid={`td-canvas-${slot}`}
                 >
+                    {bgAbsUrl && (
+                        <img
+                            src={bgAbsUrl}
+                            alt=""
+                            className="absolute inset-0 h-full w-full object-cover"
+                            data-testid={`td-canvas-bg-${slot}`}
+                        />
+                    )}
                     {hasDesign ? (
-                        <Stage width={DISPLAY_W} height={displayH} listening={false}>
+                        <Stage
+                            width={displayW}
+                            height={displayH}
+                            listening={false}
+                            className="relative"
+                            style={{ background: "transparent" }}
+                        >
                             <Layer listening={false}>
-                                <Rect
-                                    x={0}
-                                    y={0}
-                                    width={DISPLAY_W}
-                                    height={displayH}
-                                    fill={safeDesign.background_color || "#ffffff"}
-                                />
-                                {bgImg && (
-                                    <KonvaImage
-                                        image={bgImg}
-                                        x={0}
-                                        y={0}
-                                        width={DISPLAY_W}
-                                        height={displayH}
-                                    />
-                                )}
                                 {safeDesign.elements.map((el) => (
                                     <DesignElementNode
                                         key={el.id}
                                         el={el}
-                                        displayW={DISPLAY_W}
+                                        displayW={displayW}
                                         displayH={displayH}
                                     />
                                 ))}
@@ -394,10 +448,10 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                     ) : (
                         <div
                             className="h-full w-full flex items-center justify-center text-center p-6 bg-muted/40"
-                            style={{ width: DISPLAY_W, height: displayH }}
+                            style={{ width: displayW, height: displayH }}
                         >
                             <p className="text-sm text-muted-foreground max-w-xs">
-                                Elegí una plantilla arriba. Si no diseñás nada, los compradores
+                                Elegí una plantilla A4 arriba. Si no diseñás nada, los compradores
                                 reciben el ticket estándar de Ticket Yourself.
                             </p>
                         </div>
@@ -406,8 +460,9 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
 
                 <div className="flex-1 min-w-[200px] text-xs text-muted-foreground space-y-2 pt-1">
                     <p>
-                        La vista de la izquierda es un esquema. Usá <strong>Vista previa</strong> para
-                        ver el PDF real con datos de ejemplo (lo mismo que recibe el comprador).
+                        La vista de la izquierda es un esquema de la hoja A4. Usá{" "}
+                        <strong>Vista previa</strong> para ver el PDF real con datos de ejemplo
+                        (lo mismo que llega por email).
                     </p>
                     {safeDesign.background_url && (
                         <Button
@@ -431,7 +486,7 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                         src={previewUrl}
                         title="Vista previa del ticket"
                         className="w-full border rounded-lg"
-                        style={{ height: 520 }}
+                        style={{ height: 640 }}
                         data-testid={`td-preview-frame-${slot}`}
                     />
                 ) : (

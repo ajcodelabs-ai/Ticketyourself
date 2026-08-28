@@ -48,12 +48,14 @@ interface EventFunction {
     venue_name?: string;
     venue_address?: string;
     venue_city?: string;
+    venue_country?: string;
     capacity?: number;
     sort_order: number;
     status: string;
     tickets_sold?: number;
     ticket_type_overrides?: FunctionTicketTypeOverride[];
     locality_pricing?: LocalityPricing[];
+    kind?: "function" | "subevent";
 }
 
 interface TicketType {
@@ -87,7 +89,7 @@ const MODE_LABELS = {
         addButton: "Agregar función",
         panelTitle: "Funciones (multifunción)",
         panelSubtitle:
-            "Agrega las repeticiones del mismo evento en distintas fechas u horarios. Cada una puede tener su propio venue, aforo y precios por tipo de ticket / localidad.",
+            "Agregá las repeticiones del mismo evento en distintas fechas u horarios. Todas ocurren en el escenario que elijas para el evento (lugar y aforo se heredan).",
         emptyTitle: "Aún no hay funciones.",
         emptyHint: "Agregá al menos una función para un evento multifunción.",
         namePlaceholder: "Función 1 — Sábado 14 de junio",
@@ -97,7 +99,7 @@ const MODE_LABELS = {
         capacityHelp:
             "Si lo dejás vacío, esta función comparte el aforo general del evento. Si pones un número, esta función tiene su propio cupo independiente de las demás.",
         overlapHelp:
-            "Si dos funciones en el mismo lugar se superponen en horario, no vas a poder guardar — ajustá el horario o el lugar de alguna de ellas.",
+            "Todas las funciones ocurren en el mismo escenario. Si dos horarios se superponen, no vas a poder guardar.",
         dialogCreate: "Nueva función",
         dialogEdit: "Editar función",
         saveCreate: "Crear función",
@@ -182,10 +184,6 @@ function rangeOf(starts_at?: string | null, ends_at?: string | null) {
     return { start, end: Number.isNaN(end) ? start + DEFAULT_DURATION_MS : end };
 }
 
-function sameVenue(aVenueName: string, bVenueName: string): boolean {
-    return (aVenueName || "").trim().toLowerCase() === (bVenueName || "").trim().toLowerCase();
-}
-
 export default function EventFunctionsPanel({ eventId, localities = [], mode = "function", timezone = "America/Guayaquil" }: Props) {
     const L = MODE_LABELS[mode] || MODE_LABELS.function;
     const [functions, setFunctions] = useState<EventFunction[]>([]);
@@ -198,6 +196,14 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
     const [locOverrides, setLocOverrides] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState<string | null>(null);
+
+    // A row already saved as "subevent" (own venue/capacity/overrides) must
+    // keep behaving like one — in the save payload AND in the dialog itself —
+    // even though the wizard now only exposes the "function" panel mode.
+    // Otherwise editing it here would silently wipe, or permanently hide,
+    // that data. Only a brand-new row follows the panel's mode.
+    const rowKind = editing ? (editing.kind || mode) : mode;
+    const DL = MODE_LABELS[rowKind] || L;
 
     const load = useCallback(async () => {
         if (!eventId) return;
@@ -247,7 +253,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
             venue_name: fn.venue_name || "",
             venue_address: fn.venue_address || "",
             venue_city: fn.venue_city || "",
-            venue_country: "",
+            venue_country: fn.venue_country || "",
             capacity: fn.capacity ?? "",
             sort_order: fn.sort_order,
         });
@@ -277,14 +283,20 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
             [ticketTypeId]: { ...(prev[ticketTypeId] || { price: "", capacity: "", active: true }), ...patch },
         }));
 
-    const findScheduleConflict = (starts_at: string | null, ends_at: string | null) => {
-        if (mode === "subevent") return null; // subevents may legitimately overlap
+    // Mirrors the backend's exemption: a subevent never conflicts, and
+    // nothing conflicts with a subevent (they run alongside the main event).
+    const findScheduleConflict = (
+        starts_at: string | null,
+        ends_at: string | null,
+        kind: "function" | "subevent",
+    ) => {
+        if (kind === "subevent") return null;
         const candidateRange = rangeOf(starts_at, ends_at);
         if (!candidateRange) return null;
         return functions.find((f) => {
             if (editing && f.id === editing.id) return false;
             if (f.status === "cancelled") return false;
-            if (!sameVenue(form.venue_name, f.venue_name || "")) return false;
+            if (f.kind === "subevent") return false;
             const otherRange = rangeOf(f.starts_at, f.ends_at);
             if (!otherRange) return false;
             return candidateRange.start < otherRange.end && otherRange.start < candidateRange.end;
@@ -294,63 +306,88 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
     const handleSave = async () => {
         if (!eventId) return;
         if (!form.name.trim()) {
-            toast.error(L.nameRequired);
+            toast.error(DL.nameRequired);
             return;
         }
+
         const starts_at = form.starts_at ? localInputToIso(form.starts_at as string, timezone) : null;
         const ends_at = form.ends_at ? localInputToIso(form.ends_at as string, timezone) : null;
-        const conflict = findScheduleConflict(starts_at, ends_at);
+        const conflict = findScheduleConflict(starts_at, ends_at, rowKind);
         if (conflict) {
             toast.error(
-                `El horario se superpone con "${conflict.name}" en el mismo lugar. Ajustá el horario o cambiá el lugar.`,
+                rowKind === "function"
+                    ? `El horario se superpone con "${conflict.name}". Todas las funciones ocurren en el mismo escenario — ajustá el horario.`
+                    : `El horario se superpone con "${conflict.name}" en el mismo lugar. Ajustá el horario o cambiá el lugar.`,
             );
             return;
         }
 
-        const ticket_type_overrides = ticketTypes
-            .map((tt) => {
-                const row = ttOverrides[tt.id] || { price: "", capacity: "", active: true };
-                const hasPrice = row.price !== "";
-                const hasCapacity = row.capacity !== "";
-                if (!hasPrice && !hasCapacity && row.active) return null; // fully inherited
-                return {
-                    ticket_type_id: tt.id,
-                    price_cents_override: hasPrice ? Math.round(parseFloat(row.price) * 100) : null,
-                    capacity_override: hasCapacity ? parseInt(row.capacity, 10) : null,
-                    active: row.active,
-                };
-            })
-            .filter(Boolean);
+        const ticket_type_overrides =
+            rowKind === "function"
+                ? []
+                : ticketTypes
+                      .map((tt) => {
+                          const row = ttOverrides[tt.id] || { price: "", capacity: "", active: true };
+                          const hasPrice = row.price !== "";
+                          const hasCapacity = row.capacity !== "";
+                          if (!hasPrice && !hasCapacity && row.active) return null; // fully inherited
+                          return {
+                              ticket_type_id: tt.id,
+                              price_cents_override: hasPrice ? Math.round(parseFloat(row.price) * 100) : null,
+                              capacity_override: hasCapacity ? parseInt(row.capacity, 10) : null,
+                              active: row.active,
+                          };
+                      })
+                      .filter(Boolean);
 
-        const locality_pricing = localities
-            .map((loc) => {
-                const v = locOverrides[loc.id];
-                if (v === "" || v == null) return null; // inherits event price
-                return { locality_id: loc.id, price_cents: Math.round(parseFloat(v) * 100) };
-            })
-            .filter(Boolean);
+        const locality_pricing =
+            rowKind === "function"
+                ? []
+                : localities
+                      .map((loc) => {
+                          const v = locOverrides[loc.id];
+                          if (v === "" || v == null) return null; // inherits event price
+                          return { locality_id: loc.id, price_cents: Math.round(parseFloat(v) * 100) };
+                      })
+                      .filter(Boolean);
 
         setSaving(true);
-        const payload = {
-            ...form,
-            starts_at,
-            ends_at,
-            capacity: form.capacity !== "" ? Number(form.capacity) : null,
-            venue_name: form.venue_name || null,
-            venue_address: form.venue_address || null,
-            venue_city: form.venue_city || null,
-            venue_country: form.venue_country || null,
-            ticket_type_overrides,
-            locality_pricing,
-            kind: mode,
-        };
+        const payload = rowKind === "function"
+            ? {
+                  name: form.name,
+                  description: form.description,
+                  starts_at,
+                  ends_at,
+                  venue_name: null,
+                  venue_address: null,
+                  venue_city: null,
+                  venue_country: null,
+                  capacity: null,
+                  sort_order: editing ? editing.sort_order : functions.length,
+                  ticket_type_overrides: [],
+                  locality_pricing: [],
+                  kind: rowKind,
+              }
+            : {
+                  ...form,
+                  starts_at,
+                  ends_at,
+                  capacity: form.capacity !== "" ? Number(form.capacity) : null,
+                  venue_name: form.venue_name || null,
+                  venue_address: form.venue_address || null,
+                  venue_city: form.venue_city || null,
+                  venue_country: form.venue_country || null,
+                  ticket_type_overrides,
+                  locality_pricing,
+                  kind: rowKind,
+              };
         try {
             if (editing) {
                 await api.put(`/events/me/${eventId}/functions/${editing.id}`, payload);
-                toast.success(L.savedEdit);
+                toast.success(DL.savedEdit);
             } else {
                 await api.post(`/events/me/${eventId}/functions`, payload);
-                toast.success(L.savedCreate);
+                toast.success(DL.savedCreate);
             }
             setOpen(false);
             await load();
@@ -363,15 +400,16 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
 
     const handleDelete = async (fn: EventFunction) => {
         if (!eventId) return;
+        const fl = MODE_LABELS[fn.kind || mode] || L;
         if ((fn.tickets_sold ?? 0) > 0) {
-            toast.error(L.deleteBlocked);
+            toast.error(fl.deleteBlocked);
             return;
         }
-        if (!confirm(L.deleteConfirm(fn.name))) return;
+        if (!confirm(fl.deleteConfirm(fn.name))) return;
         setDeleting(fn.id);
         try {
             await api.delete(`/events/me/${eventId}/functions/${fn.id}`);
-            toast.success(L.deletedOk);
+            toast.success(fl.deletedOk);
             await load();
         } catch (err: any) {
             toast.error(err?.response?.data?.detail || "Error al eliminar");
@@ -418,6 +456,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                         <FunctionRow
                             key={fn.id}
                             fn={fn}
+                            inheritFromEvent={(fn.kind || mode) === "function"}
                             onEdit={() => openEdit(fn)}
                             onDelete={() => handleDelete(fn)}
                             deleting={deleting === fn.id}
@@ -427,10 +466,10 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
             )}
 
             <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className={`${rowKind === "function" ? "max-w-md" : "max-w-xl"} max-h-[90vh] overflow-y-auto`}>
                     <DialogHeader>
                         <DialogTitle>
-                            {editing ? L.dialogEdit : L.dialogCreate}
+                            {editing ? DL.dialogEdit : DL.dialogCreate}
                         </DialogTitle>
                     </DialogHeader>
 
@@ -441,7 +480,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                             <Input
                                 value={form.name}
                                 onChange={(e) => upd("name", e.target.value)}
-                                placeholder={L.namePlaceholder}
+                                placeholder={DL.namePlaceholder}
                                 data-testid="fn-name"
                             />
                         </div>
@@ -453,7 +492,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                                 value={form.description}
                                 onChange={(e) => upd("description", e.target.value)}
                                 rows={2}
-                                placeholder={L.descPlaceholder}
+                                placeholder={DL.descPlaceholder}
                             />
                         </div>
 
@@ -478,11 +517,13 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                                 />
                             </div>
                         </div>
-                        <p className="text-xs text-muted-foreground -mt-2">{L.overlapHelp}</p>
+                        <p className="text-xs text-muted-foreground -mt-2">{DL.overlapHelp}</p>
 
+                        {rowKind === "subevent" && (
+                        <>
                         {/* Venue */}
                         <div className="space-y-3 rounded-lg border p-4">
-                            <p className="text-sm font-medium">{L.venueSectionTitle}</p>
+                            <p className="text-sm font-medium">{DL.venueSectionTitle}</p>
                             <p className="text-xs text-muted-foreground -mt-2">
                                 Opcional. Si es diferente al venue principal del evento.
                             </p>
@@ -516,7 +557,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
 
                         {/* Capacity */}
                         <div className="space-y-1.5">
-                            <Label>{L.capacityLabel}</Label>
+                            <Label>{DL.capacityLabel}</Label>
                             <Input
                                 type="number"
                                 min="1"
@@ -525,7 +566,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                                 placeholder="Usa el aforo del evento"
                                 data-testid="fn-capacity"
                             />
-                            <p className="text-xs text-muted-foreground">{L.capacityHelp}</p>
+                            <p className="text-xs text-muted-foreground">{DL.capacityHelp}</p>
                         </div>
 
                         {/* Ticket type overrides */}
@@ -641,6 +682,8 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                                 }
                             />
                         </div>
+                        </>
+                        )}
                     </div>
 
                     <DialogFooter>
@@ -649,7 +692,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                         </Button>
                         <Button onClick={handleSave} disabled={saving} data-testid="fn-save">
                             {saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-                            {editing ? "Guardar cambios" : L.saveCreate}
+                            {editing ? "Guardar cambios" : DL.saveCreate}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -660,11 +703,13 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
 
 function FunctionRow({
     fn,
+    inheritFromEvent,
     onEdit,
     onDelete,
     deleting,
 }: {
     fn: EventFunction;
+    inheritFromEvent: boolean;
     onEdit: () => void;
     onDelete: () => void;
     deleting: boolean;
@@ -693,7 +738,7 @@ function FunctionRow({
                         {fmtDate(fn.starts_at)}
                         {fn.ends_at ? ` → ${fmtDate(fn.ends_at)}` : ""}
                     </span>
-                    {fn.venue_name && (
+                    {!inheritFromEvent && fn.venue_name && (
                         <span className="text-xs text-muted-foreground flex items-center gap-0.5">
                             <MapPin className="h-3 w-3" />
                             {fn.venue_name}
@@ -701,13 +746,17 @@ function FunctionRow({
                         </span>
                     )}
                     <span className="text-xs text-muted-foreground" data-testid={`fn-sold-${fn.id}`}>
-                        {fn.capacity
-                            ? `${fn.tickets_sold ?? 0}/${fn.capacity} vendidos`
-                            : (fn.tickets_sold ?? 0) > 0
-                              ? `${fn.tickets_sold} vendidos`
-                              : "Aforo del evento"}
+                        {inheritFromEvent
+                            ? (fn.tickets_sold ?? 0) > 0
+                                ? `${fn.tickets_sold} vendidos · aforo del evento`
+                                : "Aforo del evento"
+                            : fn.capacity
+                              ? `${fn.tickets_sold ?? 0}/${fn.capacity} vendidos`
+                              : (fn.tickets_sold ?? 0) > 0
+                                ? `${fn.tickets_sold} vendidos`
+                                : "Aforo del evento"}
                     </span>
-                    {activeOverrides.length > 0 && (
+                    {!inheritFromEvent && activeOverrides.length > 0 && (
                         <Badge variant="outline" className="text-xs">
                             {activeOverrides.length} override{activeOverrides.length > 1 ? "s" : ""} de ticket
                         </Badge>

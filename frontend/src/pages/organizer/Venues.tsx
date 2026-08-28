@@ -202,7 +202,7 @@ export default function Venues() {
         <div className="space-y-6" data-testid="venues-list-page">
             <header className="flex flex-wrap items-end gap-3 justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold">Venues</h1>
+                    <h1 className="text-2xl font-bold">Escenarios</h1>
                     <p className="text-sm text-muted-foreground mt-0.5">
                         Mapas (solo la forma) para tus eventos.
                         {" · "}
@@ -219,13 +219,13 @@ export default function Venues() {
                     title={!canCreate ? `Llegaste al límite de ${maxV} venues de tu plan` : ""}
                 >
                     <Plus className="h-4 w-4 mr-1.5" />
-                    Nuevo venue
+                    Nuevo escenario
                 </Button>
             </header>
 
             {!canCreate && (
                 <PlanGateHint feature="max_venues">
-                    Llegaste al límite de {maxV} venue(s) de tu plan. Archivá uno o mejorá el plan para crear más.
+                    Llegaste al límite de {maxV} escenario(s) de tu plan. Archivá uno o mejorá el plan para crear más.
                 </PlanGateHint>
             )}
 
@@ -308,7 +308,7 @@ export default function Venues() {
 
             <section className="space-y-3">
                 <div>
-                    <h2 className="text-sm font-medium">2. Tus venues</h2>
+                    <h2 className="text-sm font-medium">2. Tus escenarios</h2>
                     <p className="text-xs text-muted-foreground mt-0.5">
                         Abrí el diseñador para editar la forma del mapa.
                     </p>
@@ -356,13 +356,13 @@ export default function Venues() {
                         <MapPin className="mx-auto h-10 w-10 text-muted-foreground/40" />
                         <p className="text-sm text-muted-foreground max-w-sm mx-auto">
                             {items.length === 0
-                                ? "Todavía no tenés venues. Usá una plantilla o creá uno nuevo para vincularlo a un evento."
-                                : "Sin venues que coincidan con los filtros."}
+                                ? "Todavía no tenés escenarios. Usá una plantilla o creá uno nuevo para vincularlo a un evento."
+                                : "Sin escenarios que coincidan con los filtros."}
                         </p>
                         {items.length === 0 && (
                             <Button onClick={() => openCreateDialog("template")} disabled={!canCreate}>
                                 <Plus className="h-4 w-4 mr-1.5" />
-                                Nuevo venue
+                                Nuevo escenario
                             </Button>
                         )}
                     </div>
@@ -458,7 +458,7 @@ export default function Venues() {
             <Dialog open={showNew} onOpenChange={(o) => !o && closeCreateDialog()}>
                 <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>Nuevo venue</DialogTitle>
+                        <DialogTitle>Nuevo escenario</DialogTitle>
                     </DialogHeader>
 
                     {createMode === "template" ? (
@@ -483,11 +483,11 @@ export default function Venues() {
                                 <strong className="text-foreground">
                                     {pendingTemplate?.name}
                                 </strong>
-                                . Elegí un nombre propio para tu venue (la plantilla de la
+                                . Elegí un nombre propio para tu escenario (la plantilla de la
                                 plataforma no se modifica).
                             </p>
                             <div className="space-y-1.5">
-                                <Label>Nombre del venue *</Label>
+                                <Label>Nombre del escenario *</Label>
                                 <Input
                                     value={newName}
                                     onChange={(e) => setNewName(e.target.value)}
@@ -626,9 +626,9 @@ export default function Venues() {
             >
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>¿Eliminar venue?</AlertDialogTitle>
+                        <AlertDialogTitle>¿Eliminar escenario?</AlertDialogTitle>
                         <AlertDialogDescription>
-                            Esta acción no se puede deshacer. Si el venue está vinculado a
+                            Esta acción no se puede deshacer. Si el escenario está vinculado a
                             algún evento, no podrá eliminarse.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
