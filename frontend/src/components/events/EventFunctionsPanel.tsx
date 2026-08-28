@@ -48,12 +48,14 @@ interface EventFunction {
     venue_name?: string;
     venue_address?: string;
     venue_city?: string;
+    venue_country?: string;
     capacity?: number;
     sort_order: number;
     status: string;
     tickets_sold?: number;
     ticket_type_overrides?: FunctionTicketTypeOverride[];
     locality_pricing?: LocalityPricing[];
+    kind?: "function" | "subevent";
 }
 
 interface TicketType {
@@ -195,6 +197,14 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState<string | null>(null);
 
+    // A row already saved as "subevent" (own venue/capacity/overrides) must
+    // keep behaving like one — in the save payload AND in the dialog itself —
+    // even though the wizard now only exposes the "function" panel mode.
+    // Otherwise editing it here would silently wipe, or permanently hide,
+    // that data. Only a brand-new row follows the panel's mode.
+    const rowKind = editing ? (editing.kind || mode) : mode;
+    const DL = MODE_LABELS[rowKind] || L;
+
     const load = useCallback(async () => {
         if (!eventId) return;
         setLoading(true);
@@ -243,7 +253,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
             venue_name: fn.venue_name || "",
             venue_address: fn.venue_address || "",
             venue_city: fn.venue_city || "",
-            venue_country: "",
+            venue_country: fn.venue_country || "",
             capacity: fn.capacity ?? "",
             sort_order: fn.sort_order,
         });
@@ -273,13 +283,20 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
             [ticketTypeId]: { ...(prev[ticketTypeId] || { price: "", capacity: "", active: true }), ...patch },
         }));
 
-    const findScheduleConflict = (starts_at: string | null, ends_at: string | null) => {
-        if (mode === "subevent") return null; // subevents may legitimately overlap
+    // Mirrors the backend's exemption: a subevent never conflicts, and
+    // nothing conflicts with a subevent (they run alongside the main event).
+    const findScheduleConflict = (
+        starts_at: string | null,
+        ends_at: string | null,
+        kind: "function" | "subevent",
+    ) => {
+        if (kind === "subevent") return null;
         const candidateRange = rangeOf(starts_at, ends_at);
         if (!candidateRange) return null;
         return functions.find((f) => {
             if (editing && f.id === editing.id) return false;
             if (f.status === "cancelled") return false;
+            if (f.kind === "subevent") return false;
             const otherRange = rangeOf(f.starts_at, f.ends_at);
             if (!otherRange) return false;
             return candidateRange.start < otherRange.end && otherRange.start < candidateRange.end;
@@ -289,15 +306,16 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
     const handleSave = async () => {
         if (!eventId) return;
         if (!form.name.trim()) {
-            toast.error(L.nameRequired);
+            toast.error(DL.nameRequired);
             return;
         }
+
         const starts_at = form.starts_at ? localInputToIso(form.starts_at as string, timezone) : null;
         const ends_at = form.ends_at ? localInputToIso(form.ends_at as string, timezone) : null;
-        const conflict = findScheduleConflict(starts_at, ends_at);
+        const conflict = findScheduleConflict(starts_at, ends_at, rowKind);
         if (conflict) {
             toast.error(
-                mode === "function"
+                rowKind === "function"
                     ? `El horario se superpone con "${conflict.name}". Todas las funciones ocurren en el mismo escenario — ajustá el horario.`
                     : `El horario se superpone con "${conflict.name}" en el mismo lugar. Ajustá el horario o cambiá el lugar.`,
             );
@@ -305,7 +323,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
         }
 
         const ticket_type_overrides =
-            mode === "function"
+            rowKind === "function"
                 ? []
                 : ticketTypes
                       .map((tt) => {
@@ -323,7 +341,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                       .filter(Boolean);
 
         const locality_pricing =
-            mode === "function"
+            rowKind === "function"
                 ? []
                 : localities
                       .map((loc) => {
@@ -333,9 +351,8 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                       })
                       .filter(Boolean);
 
-        const inheritFromEvent = mode === "function";
         setSaving(true);
-        const payload = inheritFromEvent
+        const payload = rowKind === "function"
             ? {
                   name: form.name,
                   description: form.description,
@@ -349,7 +366,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                   sort_order: editing ? editing.sort_order : functions.length,
                   ticket_type_overrides: [],
                   locality_pricing: [],
-                  kind: mode,
+                  kind: rowKind,
               }
             : {
                   ...form,
@@ -362,15 +379,15 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                   venue_country: form.venue_country || null,
                   ticket_type_overrides,
                   locality_pricing,
-                  kind: mode,
+                  kind: rowKind,
               };
         try {
             if (editing) {
                 await api.put(`/events/me/${eventId}/functions/${editing.id}`, payload);
-                toast.success(L.savedEdit);
+                toast.success(DL.savedEdit);
             } else {
                 await api.post(`/events/me/${eventId}/functions`, payload);
-                toast.success(L.savedCreate);
+                toast.success(DL.savedCreate);
             }
             setOpen(false);
             await load();
@@ -383,15 +400,16 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
 
     const handleDelete = async (fn: EventFunction) => {
         if (!eventId) return;
+        const fl = MODE_LABELS[fn.kind || mode] || L;
         if ((fn.tickets_sold ?? 0) > 0) {
-            toast.error(L.deleteBlocked);
+            toast.error(fl.deleteBlocked);
             return;
         }
-        if (!confirm(L.deleteConfirm(fn.name))) return;
+        if (!confirm(fl.deleteConfirm(fn.name))) return;
         setDeleting(fn.id);
         try {
             await api.delete(`/events/me/${eventId}/functions/${fn.id}`);
-            toast.success(L.deletedOk);
+            toast.success(fl.deletedOk);
             await load();
         } catch (err: any) {
             toast.error(err?.response?.data?.detail || "Error al eliminar");
@@ -438,7 +456,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                         <FunctionRow
                             key={fn.id}
                             fn={fn}
-                            inheritFromEvent={mode === "function"}
+                            inheritFromEvent={(fn.kind || mode) === "function"}
                             onEdit={() => openEdit(fn)}
                             onDelete={() => handleDelete(fn)}
                             deleting={deleting === fn.id}
@@ -448,10 +466,10 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
             )}
 
             <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className={`${mode === "function" ? "max-w-md" : "max-w-xl"} max-h-[90vh] overflow-y-auto`}>
+                <DialogContent className={`${rowKind === "function" ? "max-w-md" : "max-w-xl"} max-h-[90vh] overflow-y-auto`}>
                     <DialogHeader>
                         <DialogTitle>
-                            {editing ? L.dialogEdit : L.dialogCreate}
+                            {editing ? DL.dialogEdit : DL.dialogCreate}
                         </DialogTitle>
                     </DialogHeader>
 
@@ -462,7 +480,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                             <Input
                                 value={form.name}
                                 onChange={(e) => upd("name", e.target.value)}
-                                placeholder={L.namePlaceholder}
+                                placeholder={DL.namePlaceholder}
                                 data-testid="fn-name"
                             />
                         </div>
@@ -474,7 +492,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                                 value={form.description}
                                 onChange={(e) => upd("description", e.target.value)}
                                 rows={2}
-                                placeholder={L.descPlaceholder}
+                                placeholder={DL.descPlaceholder}
                             />
                         </div>
 
@@ -499,13 +517,13 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                                 />
                             </div>
                         </div>
-                        <p className="text-xs text-muted-foreground -mt-2">{L.overlapHelp}</p>
+                        <p className="text-xs text-muted-foreground -mt-2">{DL.overlapHelp}</p>
 
-                        {mode === "subevent" && (
+                        {rowKind === "subevent" && (
                         <>
                         {/* Venue */}
                         <div className="space-y-3 rounded-lg border p-4">
-                            <p className="text-sm font-medium">{L.venueSectionTitle}</p>
+                            <p className="text-sm font-medium">{DL.venueSectionTitle}</p>
                             <p className="text-xs text-muted-foreground -mt-2">
                                 Opcional. Si es diferente al venue principal del evento.
                             </p>
@@ -539,7 +557,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
 
                         {/* Capacity */}
                         <div className="space-y-1.5">
-                            <Label>{L.capacityLabel}</Label>
+                            <Label>{DL.capacityLabel}</Label>
                             <Input
                                 type="number"
                                 min="1"
@@ -548,7 +566,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                                 placeholder="Usa el aforo del evento"
                                 data-testid="fn-capacity"
                             />
-                            <p className="text-xs text-muted-foreground">{L.capacityHelp}</p>
+                            <p className="text-xs text-muted-foreground">{DL.capacityHelp}</p>
                         </div>
 
                         {/* Ticket type overrides */}
@@ -674,7 +692,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                         </Button>
                         <Button onClick={handleSave} disabled={saving} data-testid="fn-save">
                             {saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-                            {editing ? "Guardar cambios" : L.saveCreate}
+                            {editing ? "Guardar cambios" : DL.saveCreate}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

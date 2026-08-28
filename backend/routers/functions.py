@@ -537,7 +537,13 @@ async def update_function(
     effective_venue = (
         body.venue_name if body.venue_name is not None else func.venue_name
     )
-    effective_kind = body.kind if body.kind is not None else func.kind
+    # `kind` is immutable via this endpoint: nothing in the product lets an
+    # organizer convert a function into a subevent or vice versa, so trusting
+    # a caller-supplied kind here would let an unrelated edit (e.g. renaming
+    # a function) silently reclassify a subevent and wipe its own venue/
+    # capacity/pricing/overrides via the "function" branch below. `body.kind`
+    # is also excluded from `update_data` further down so it can't leak in
+    # through the generic setattr loop either.
     await _check_schedule_conflict(
         event_id,
         effective_starts,
@@ -545,16 +551,16 @@ async def update_function(
         effective_venue,
         function_id,
         session,
-        kind=effective_kind,
+        kind=func.kind,
     )
 
     overrides = body.ticket_type_overrides
-    update_data = body.model_dump(exclude_none=True, exclude={"ticket_type_overrides"})
+    update_data = body.model_dump(exclude_none=True, exclude={"ticket_type_overrides", "kind"})
     for field, val in update_data.items():
         setattr(func, field, val)
     # Multifunción inherits venue/capacity from the event. exclude_none=True
     # would otherwise leave a previously saved venue_name in place.
-    if effective_kind == "function":
+    if func.kind == "function":
         func.venue_id = None
         func.venue_name = None
         func.venue_address = None
