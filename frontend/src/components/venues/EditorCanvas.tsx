@@ -12,7 +12,7 @@
  *  - Pan: Space+drag (hand cursor) or middle-mouse drag. Empty drag does not pan
  *    so clicks can select / assign localities.
  */
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Stage, Layer, Rect, Line, Group, Transformer } from "react-konva";
 import type Konva from "konva";
 import { Maximize2 } from "lucide-react";
@@ -135,7 +135,17 @@ export default function EditorCanvas({
     const transformerRef = useRef<Konva.Transformer>(null);
     const elementRefs = useRef<Record<string, Konva.Group>>({});
     const elementsRef = useRef(elements);
-    useEffect(() => { elementsRef.current = elements; }, [elements]);
+    const elementsByIdRef = useRef<Map<string, VenueCanvasElement> | null>(null);
+    // Kept in sync synchronously during render (not a useEffect) so a pointer
+    // event fired right after an elements update can never read a stale map —
+    // an effect-based sync lags one paint behind, which is enough of a gap
+    // for a rapid click/drag to see the wrong element. Rebuilding the Map is
+    // O(n), but only runs when `elements` actually changed identity.
+    if (elementsByIdRef.current === null || elementsRef.current !== elements) {
+        elementsRef.current = elements;
+        elementsByIdRef.current = new Map(elements.map((el) => [el.id, el]));
+    }
+    const getLiveElement = (id: string) => elementsByIdRef.current!.get(id);
     const fittedKeyRef = useRef<string | null>(null);
 
     const [containerSize, setContainerSize] = useState({ width: 0, height });
@@ -157,6 +167,20 @@ export default function EditorCanvas({
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [guides, setGuides] = useState<GuideLine[]>([]);
     const dragSnapshot = useRef<DragSnapshot | null>(null);
+
+    // Per-element event handlers, cached by id so their identity stays
+    // stable across renders (see getElementHandlers below + memo on
+    // ElementShape). Pan/zoom/drag update local state on every pointer-move;
+    // without stable handler refs, React would rebind Konva listeners and
+    // reconcile every element on the canvas each frame.
+    const elementHandlersRef = useRef<Record<string, {
+        nodeRef: (node: Konva.Group | null) => void;
+        onClick: (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void;
+        onContextMenu: (e: Konva.KonvaEventObject<PointerEvent>) => void;
+        onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => void;
+        onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => void;
+        onDragEnd: (x: number, y: number) => void;
+    }>>({});
 
     // Measure available width from the parent (not self) to avoid a
     // Stage↔container ResizeObserver feedback loop that grows forever.
@@ -648,23 +672,27 @@ export default function EditorCanvas({
     };
 
     // ── Grid lines (separate layer, listening=false) ─────────────────────
-    const gridLines = [];
-    if (!readOnly) {
+    // Memoized: only depends on canvas size, but without this it was being
+    // rebuilt (and reconciled) on every pan/zoom/drag frame for no reason.
+    const gridLines = useMemo(() => {
+        if (readOnly) return [];
+        const lines = [];
         for (let i = 0; i <= canvas.width; i += GRID) {
-            gridLines.push(
+            lines.push(
                 <Line key={`v-${i}`} points={[i, 0, i, canvas.height]}
                       stroke="#E5E7EB"
                       strokeWidth={i % (GRID * 5) === 0 ? 0.8 : 0.3} />,
             );
         }
         for (let j = 0; j <= canvas.height; j += GRID) {
-            gridLines.push(
+            lines.push(
                 <Line key={`h-${j}`} points={[0, j, canvas.width, j]}
                       stroke="#E5E7EB"
                       strokeWidth={j % (GRID * 5) === 0 ? 0.8 : 0.3} />,
             );
         }
-    }
+        return lines;
+    }, [readOnly, canvas.width, canvas.height]);
 
     const handleContextMenu = (e: Konva.KonvaEventObject<PointerEvent>, el: VenueCanvasElement) => {
         e.evt.preventDefault();
@@ -683,6 +711,80 @@ export default function EditorCanvas({
             screenY: rect.top + ptr.y,
         });
     };
+
+    // Always points at the current versions of the logic above, so the
+    // stable per-id wrappers below never call a stale closure.
+    const latestHandlersRef = useRef({
+        onSelect, handleContextMenu, handleElementDragStart, handleElementDragMove, handleElementDragEnd,
+    });
+    latestHandlersRef.current = {
+        onSelect, handleContextMenu, handleElementDragStart, handleElementDragMove, handleElementDragEnd,
+    };
+
+    const getElementHandlers = (id: string) => {
+        let h = elementHandlersRef.current[id];
+        if (!h) {
+            h = {
+                nodeRef: (node) => {
+                    if (node) elementRefs.current[id] = node;
+                    else delete elementRefs.current[id];
+                },
+                onClick: (e) => {
+                    if (spaceHeldRef.current || panDragRef.current) return;
+                    e.cancelBubble = true;
+                    const additive = e.evt?.ctrlKey || e.evt?.metaKey || e.evt?.shiftKey;
+                    latestHandlersRef.current.onSelect([id], { additive });
+                },
+                onContextMenu: (e) => {
+                    const el = getLiveElement(id);
+                    if (el) latestHandlersRef.current.handleContextMenu(e, el);
+                },
+                onDragStart: (e) => {
+                    const el = getLiveElement(id);
+                    if (el) {
+                        latestHandlersRef.current.handleElementDragStart(el, e.target);
+                    } else {
+                        // Element was deleted/undone between mousedown and this
+                        // Konva dragstart — bail instead of dragging a ghost.
+                        e.target.stopDrag?.();
+                    }
+                },
+                onDragMove: (e) => {
+                    const el = getLiveElement(id);
+                    if (el) {
+                        latestHandlersRef.current.handleElementDragMove(el, e.target);
+                    } else {
+                        // Same: element vanished mid-drag (e.g. Ctrl+Z while
+                        // still holding the mouse button). Reset drag state so
+                        // it doesn't corrupt the next drag gesture.
+                        e.target.stopDrag?.();
+                        dragSnapshot.current = null;
+                        setGuides([]);
+                    }
+                },
+                onDragEnd: (x, y) => {
+                    const el = getLiveElement(id);
+                    if (el) {
+                        latestHandlersRef.current.handleElementDragEnd(el, x, y);
+                    } else {
+                        dragSnapshot.current = null;
+                        setGuides([]);
+                    }
+                },
+            };
+            elementHandlersRef.current[id] = h;
+        }
+        return h;
+    };
+
+    // Drop cached handlers for elements that no longer exist (deleted/undone)
+    // so the cache doesn't grow unbounded over a long editing session.
+    useEffect(() => {
+        const ids = new Set(elements.map((el) => el.id));
+        for (const id of Object.keys(elementHandlersRef.current)) {
+            if (!ids.has(id)) delete elementHandlersRef.current[id];
+        }
+    }, [elements]);
 
     return (
         <div
@@ -749,30 +851,25 @@ export default function EditorCanvas({
 
                 {/* Elements + Transformer */}
                 <Layer>
-                    {elements.map((el) => (
-                        <ElementShape
-                            key={el.id}
-                            ref={(node) => {
-                                if (node) elementRefs.current[el.id] = node;
-                                else delete elementRefs.current[el.id];
-                            }}
-                            element={el}
-                            locality={el.locality_id ? localitiesById[el.locality_id] : undefined}
-                            selected={selection.includes(el.id)}
-                            draggable={!readOnly && (!tool || tool === "select") && !spaceHeld && !panning}
-                            onClick={(e) => {
-                                if (spaceHeldRef.current || panDragRef.current) return;
-                                e.cancelBubble = true;
-                                const additive = e.evt?.ctrlKey || e.evt?.metaKey || e.evt?.shiftKey;
-                                onSelect([el.id], { additive });
-                            }}
-                            onContextMenu={(e) => handleContextMenu(e, el)}
-                            onDragStart={(e) => handleElementDragStart(el, e.target)}
-                            onDragMove={(e) => handleElementDragMove(el, e.target)}
-                            onDragEnd={(x, y) => handleElementDragEnd(el, x, y)}
-                            zoom={zoom}
-                        />
-                    ))}
+                    {elements.map((el) => {
+                        const h = getElementHandlers(el.id);
+                        return (
+                            <ElementShape
+                                key={el.id}
+                                ref={h.nodeRef}
+                                element={el}
+                                locality={el.locality_id ? localitiesById[el.locality_id] : undefined}
+                                selected={selection.includes(el.id)}
+                                draggable={!readOnly && (!tool || tool === "select") && !spaceHeld && !panning}
+                                onClick={h.onClick}
+                                onContextMenu={h.onContextMenu}
+                                onDragStart={h.onDragStart}
+                                onDragMove={h.onDragMove}
+                                onDragEnd={h.onDragEnd}
+                                zoom={zoom}
+                            />
+                        );
+                    })}
                     {!readOnly && (
                         <Transformer
                             ref={transformerRef}

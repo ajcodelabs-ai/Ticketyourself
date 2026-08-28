@@ -6,7 +6,7 @@
  * Each shape returns a Konva.Group attached to a ref so the Transformer
  * can manipulate it.
  */
-import { forwardRef } from "react";
+import { forwardRef, memo } from "react";
 import { Group, Rect, Text, Circle, Arc } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
@@ -425,4 +425,10 @@ const ElementShape = forwardRef<Konva.Group, ShapeProps>(function ElementShape(p
     return null;
 });
 
-export default ElementShape;
+// Memoized so panning/dragging (which update EditorCanvas-local state on
+// every pointer-move) don't force React to reconcile every element on the
+// canvas each frame — only the ones whose own props actually changed. With
+// hundreds of seats, un-memoized reconciliation was the dominant cost of
+// drag/pan interactions (confirmed via profiling). Zoom still reconciles
+// every element by design: seat-label visibility depends on `zoom`.
+export default memo(ElementShape);
