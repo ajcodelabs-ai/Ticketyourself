@@ -7,7 +7,9 @@ import {
     useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, tokenStore } from "@/lib/api";
+import { queryKeys } from "@/lib/queryKeys";
 
 const AuthContext = createContext(null);
 
@@ -16,6 +18,7 @@ export function AuthProvider({ children }) {
     const [organizer, setOrganizer] = useState(null);
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
+    const queryClient = useQueryClient();
 
     const setSession = useCallback((data) => {
         setUser(data?.user || null);
@@ -32,13 +35,17 @@ export function AuthProvider({ children }) {
         try {
             const { data } = await api.get("/auth/me");
             setSession(data);
+            // Plan may have changed since the last sync (e.g. an admin
+            // updated it, or another tab completed a checkout) — drop the
+            // cached plan-features permissions so gated UI stays correct.
+            queryClient.invalidateQueries({ queryKey: queryKeys.plans.features });
         } catch {
             tokenStore.clear();
             setSession(null);
         } finally {
             setLoading(false);
         }
-    }, [setSession]);
+    }, [setSession, queryClient]);
 
     useEffect(() => {
         checkSession();
@@ -150,6 +157,10 @@ export function AuthProvider({ children }) {
         try {
             const { data } = await api.get("/organizers/me");
             setOrganizer(data);
+            // Plan may have just changed (e.g. billing checkout completed) —
+            // drop the cached plan-features permissions so gated UI (like
+            // numbered seating) reflects the new plan without a full reload.
+            queryClient.invalidateQueries({ queryKey: queryKeys.plans.features });
             return data;
         } catch (err) {
             // Organizer profile is optional (e.g. super-admin user).
@@ -157,7 +168,7 @@ export function AuthProvider({ children }) {
             console.warn("refreshOrganizer failed:", err?.message);
             if (throwOnError) throw err;
         }
-    }, []);
+    }, [queryClient]);
 
     const value = useMemo(
         () => ({
