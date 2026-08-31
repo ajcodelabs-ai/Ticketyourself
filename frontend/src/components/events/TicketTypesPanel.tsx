@@ -524,8 +524,8 @@ export default function TicketTypesPanel({
                                         </TooltipTrigger>
                                         <TooltipContent className="max-w-xs">
                                             Límite de unidades de <strong>este tipo de ticket</strong> por
-                                            comprador. Es independiente del límite general en "Accesos y
-                                            parámetros", que aplica a la compra completa sumando todos los
+                                            comprador. Es independiente del "Máx. por orden" en Fechas y
+                                            ventas, que aplica a la compra completa sumando todos los
                                             tipos.
                                         </TooltipContent>
                                     </Tooltip>

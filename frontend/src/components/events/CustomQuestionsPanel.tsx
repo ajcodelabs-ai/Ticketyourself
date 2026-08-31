@@ -139,11 +139,11 @@ export default function CustomQuestionsPanel({
             : [...questions, question];
         onChange(next);
         close();
-        toast.success(exists ? "Parámetro actualizado." : "Parámetro creado.");
+        toast.success(exists ? "Campo actualizado." : "Campo creado.");
     };
 
     const remove = (id) => {
-        if (!window.confirm("¿Eliminar este parámetro?")) return;
+        if (!window.confirm("¿Eliminar este campo?")) return;
         onChange(questions.filter((q) => q.id !== id));
     };
 
@@ -167,7 +167,7 @@ export default function CustomQuestionsPanel({
                     (nombre, talla, etc.).
                 </p>
                 <Button size="sm" onClick={openNew} data-testid="cq-add" className="shrink-0">
-                    <Plus className="h-4 w-4 mr-1.5" /> Nuevo parámetro
+                    <Plus className="h-4 w-4 mr-1.5" /> Nuevo campo
                 </Button>
             </div>
 
@@ -177,7 +177,7 @@ export default function CustomQuestionsPanel({
                     data-testid="cq-empty"
                 >
                     <MessageSquareText className="h-8 w-8 mx-auto text-muted-foreground/60" />
-                    <p className="text-sm font-medium">No hay parámetros configurados</p>
+                    <p className="text-sm font-medium">No hay campos personalizados configurados</p>
                     <p className="text-xs text-muted-foreground max-w-sm mx-auto">
                         Agregá campos extra que se solicitarán al cliente durante la compra.
                     </p>
@@ -188,7 +188,7 @@ export default function CustomQuestionsPanel({
                         className="mt-1"
                         data-testid="cq-add-empty"
                     >
-                        <Plus className="h-4 w-4 mr-1.5" /> Nuevo parámetro
+                        <Plus className="h-4 w-4 mr-1.5" /> Nuevo campo
                     </Button>
                 </div>
             ) : (
@@ -339,7 +339,7 @@ function InlineParamForm({ draft, setDraft, localities, onCancel, onSave }) {
         >
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold">
-                    {draft._isNew ? "+ Nuevo parámetro" : "Editar parámetro"}
+                    {draft._isNew ? "+ Nuevo campo" : "Editar campo"}
                 </h4>
                 <div className="flex gap-2">
                     <Button
@@ -358,7 +358,7 @@ function InlineParamForm({ draft, setDraft, localities, onCancel, onSave }) {
                         disabled={!canCreate}
                         data-testid="cq-save"
                     >
-                        {draft._isNew ? "Crear parámetro" : "Guardar"}
+                        {draft._isNew ? "Crear campo" : "Guardar"}
                     </Button>
                 </div>
             </div>
@@ -570,7 +570,7 @@ function InlineParamForm({ draft, setDraft, localities, onCancel, onSave }) {
                     disabled={!canCreate}
                     data-testid="cq-save-footer"
                 >
-                    {draft._isNew ? "Crear parámetro" : "Guardar"}
+                    {draft._isNew ? "Crear campo" : "Guardar"}
                 </Button>
             </div>
         </div>
