@@ -20,21 +20,30 @@ import { Label } from "@/components/ui/label";
 import PhoneInput from "@/components/ui/phone-input";
 import api, { formatApiError } from "@/lib/api";
 import { formatCents } from "@/lib/orders";
+import { useAuth } from "@/contexts/AuthContext";
+import BuyerAuthPanel from "@/components/orders/BuyerAuthPanel";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass, event, tenantSlug }) {
     const navigate = useNavigate();
+    const { user, isAuthenticated, isBuyer, isOrganizer, isAdmin } = useAuth();
+    const canPurchase = isAuthenticated && (isBuyer || isOrganizer);
     const [buyer, setBuyer] = useState({ name: "", email: "", phone: "", document_id: "" });
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
 
     useEffect(() => {
         if (open) {
-            setBuyer({ name: "", email: "", phone: "", document_id: "" });
+            setBuyer({
+                name: user?.display_name || "",
+                email: user?.email || "",
+                phone: user?.phone || "",
+                document_id: "",
+            });
             setErrors({});
         }
-    }, [open]);
+    }, [open, user]);
 
     if (!seasonPass) return null;
     const isFree = (seasonPass.price_cents || 0) === 0;
@@ -86,6 +95,14 @@ export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass
                     <DialogDescription className="text-base">{seasonPass.name}</DialogDescription>
                 </DialogHeader>
 
+                {isAdmin ? (
+                    <p className="text-sm text-muted-foreground">
+                        Las cuentas de administración no pueden comprar. Usá una cuenta de comprador.
+                    </p>
+                ) : !canPurchase ? (
+                    <BuyerAuthPanel />
+                ) : (
+                <>
                 <div className="rounded-lg border bg-secondary/40 p-3 space-y-1 text-sm">
                     <div className="flex justify-between">
                         <span className="text-muted-foreground">Créditos incluidos</span>
@@ -124,7 +141,7 @@ export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass
                             id="pass-buyer-email"
                             type="email"
                             value={buyer.email}
-                            onChange={(e) => setBuyer((b) => ({ ...b, email: e.target.value }))}
+                            disabled
                             data-testid="pass-buyer-email"
                             aria-invalid={!!errors.email}
                         />
@@ -162,6 +179,8 @@ export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass
                         )}
                     </Button>
                 </div>
+                </>
+                )}
             </DialogContent>
         </Dialog>
     );

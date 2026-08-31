@@ -9,6 +9,7 @@ import { lazy } from "react";
 export const Landing = lazy(() => import("@/pages/marketing/Landing"));
 export const Login = lazy(() => import("@/pages/marketing/Login"));
 export const Register = lazy(() => import("@/pages/marketing/Register"));
+export const RegisterBuyer = lazy(() => import("@/pages/marketing/RegisterBuyer"));
 
 // ── Público del tenant (microsite, evento, órdenes) ────────────────────────
 export const MicrositePublic = lazy(() => import("@/pages/public/MicrositePublic"));
@@ -19,6 +20,7 @@ export const OrderCancel = lazy(() => import("@/pages/public/orders/OrderCancel"
 export const PaymentInstructions = lazy(() => import("@/pages/public/orders/PaymentInstructions"));
 export const OrderByToken = lazy(() => import("@/pages/public/orders/OrderByToken"));
 export const SeasonPassRedeem = lazy(() => import("@/pages/public/orders/SeasonPassRedeem"));
+export const BuyerAccount = lazy(() => import("@/pages/public/BuyerAccount"));
 export const StaffLogin = lazy(() => import("@/pages/public/StaffLogin"));
 export const StaffScanner = lazy(() => import("@/pages/staff/StaffScanner"));
 

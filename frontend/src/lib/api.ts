@@ -118,7 +118,8 @@ api.interceptors.response.use(
 const FIELD_LABELS: Record<string, string> = {
     email: "Email",
     password: "Contraseña",
-    company_name: "Nombre",
+    name: "Nombre",
+    company_name: "Nombre de la empresa",
     legal_id: "RUC/Cédula",
     org_type: "Tipo de organización",
     phone: "Teléfono",

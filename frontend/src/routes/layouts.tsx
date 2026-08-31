@@ -3,6 +3,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import PublicLayout from "@/components/PublicLayout";
 import OrganizerLayout from "@/components/OrganizerLayout";
 import AdminLayout from "@/components/AdminLayout";
+import BuyerLayout from "@/components/BuyerLayout";
 import { useAuth } from "@/contexts/AuthContext";
 
 export function Public({ children }) {
@@ -58,6 +59,14 @@ export function AdminArea({ children }) {
     return (
         <ProtectedRoute role="super_admin">
             <AdminLayout>{children}</AdminLayout>
+        </ProtectedRoute>
+    );
+}
+
+export function BuyerArea({ children }) {
+    return (
+        <ProtectedRoute role={["buyer", "organizer"]}>
+            <BuyerLayout>{children}</BuyerLayout>
         </ProtectedRoute>
     );
 }

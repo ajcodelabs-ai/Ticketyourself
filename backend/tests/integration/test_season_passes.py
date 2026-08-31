@@ -27,6 +27,7 @@ from conftest import (
     PAID_EVENT_SLUG,
     bearer,
     new_session,
+    register_buyer_client,
     unique_buyer,
 )
 
@@ -173,7 +174,8 @@ class TestPurchaseSeasonPass:
         """Free season pass (price_cents=0) is paid instantly."""
         sp = self._create_sp(demo_client, demo_event_id, price_cents=0)
         buyer = unique_buyer("free-sp")
-        r = new_session().post(
+        s, buyer = register_buyer_client(buyer)
+        r = s.post(
             f"{API}/public/season-passes/{sp['id']}/purchase",
             json={"buyer": buyer, "origin_url": "http://localhost:3000"},
         )
@@ -193,7 +195,8 @@ class TestPurchaseSeasonPass:
         buyer = unique_buyer("paid-sp")
 
         # Purchase — pending
-        r = new_session().post(
+        s, buyer = register_buyer_client(buyer)
+        r = s.post(
             f"{API}/public/season-passes/{sp['id']}/purchase",
             json={"buyer": buyer, "origin_url": "http://localhost:3000"},
         )
@@ -258,7 +261,8 @@ class TestRedeemCredit:
 
         # -- Purchase (free → auto-finalized) --
         buyer = unique_buyer("redeem")
-        r = new_session().post(
+        s, buyer = register_buyer_client(buyer)
+        r = s.post(
             f"{API}/public/season-passes/{sp['id']}/purchase",
             json={"buyer": buyer, "origin_url": "http://localhost:3000"},
         )
@@ -311,7 +315,8 @@ class TestRedeemCredit:
         assert r.status_code == 201, r.text
 
         buyer = unique_buyer("exhaust")
-        r = new_session().post(
+        s, buyer = register_buyer_client(buyer)
+        r = s.post(
             f"{API}/public/season-passes/{r.json()['id']}/purchase",
             json={"buyer": buyer, "origin_url": "http://localhost:3000"},
         )

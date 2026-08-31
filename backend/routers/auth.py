@@ -9,7 +9,8 @@ from typing import List, Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -18,6 +19,7 @@ from database import get_db
 from db_helpers import organizer_row_to_dict, row_to_dict
 from models import (
     AuthMeResponse,
+    BuyerRegisterRequest,
     LoginRequest,
     OrganizerOut,
     RegisterRequest,
@@ -25,7 +27,7 @@ from models import (
     SlugCheckResponse,
     UserOut,
 )
-from orm_models import Organizer, OrganizerAdminComment, Tenant, User
+from orm_models import Organizer, OrganizerAdminComment, Tenant, TicketOrder, User
 from security import (
     clear_auth_cookies,
     create_access_token,
@@ -58,6 +60,30 @@ def _org_row_to_out(row: Optional[Organizer]) -> Optional[OrganizerOut]:
     if not row:
         return None
     return OrganizerOut(**organizer_row_to_dict(row))
+
+
+async def _claim_guest_purchases(
+    session: AsyncSession, user_id: str, email: str
+) -> None:
+    """Attach leftover guest orders/abonos (same email, no user yet) to this account."""
+    from orm_models import SeasonPassPurchase
+
+    await session.execute(
+        sa_update(TicketOrder)
+        .where(
+            func.lower(TicketOrder.buyer_email) == email,
+            TicketOrder.buyer_user_id.is_(None),
+        )
+        .values(buyer_user_id=user_id)
+    )
+    await session.execute(
+        sa_update(SeasonPassPurchase)
+        .where(
+            func.lower(SeasonPassPurchase.buyer_email) == email,
+            SeasonPassPurchase.buyer_user_id.is_(None),
+        )
+        .values(buyer_user_id=user_id)
+    )
 
 
 # ── Registration countries (public) ───────────────────────────────────────────
@@ -266,6 +292,50 @@ async def register(
     )
 
 
+# ── Buyer register (lightweight — no organizer / tenant) ──────────────────────
+
+
+@router.post("/register-buyer", response_model=AuthMeResponse)
+async def register_buyer(
+    payload: BuyerRegisterRequest,
+    response: Response,
+    session: AsyncSession = Depends(get_db),
+):
+    email = payload.email.lower().strip()
+    existing = await session.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409,
+            detail="Este email ya tiene una cuenta. Iniciá sesión para comprar.",
+        )
+
+    now = datetime.now(timezone.utc)
+    user_row = User(
+        id=str(uuid.uuid4()),
+        email=email,
+        password_hash=hash_password(payload.password),
+        role="buyer",
+        display_name=payload.name.strip()[:140],
+        phone=(payload.phone or "").strip()[:40] or None,
+        created_at=now,
+        last_login=now,
+    )
+    session.add(user_row)
+    await session.flush()
+    await _claim_guest_purchases(session, user_row.id, email)
+
+    access = create_access_token(user_row.id, user_row.email, user_row.role)
+    refresh = create_refresh_token(user_row.id, user_row.token_version or 0)
+    set_auth_cookies(response, access, refresh)
+
+    return AuthMeResponse(
+        user=_user_row_to_out(user_row),
+        organizer=None,
+        access_token=access,
+        refresh_token=refresh,
+    )
+
+
 # ── Login ─────────────────────────────────────────────────────────────────────
 
 
@@ -287,6 +357,7 @@ async def login(
     set_auth_cookies(response, access, refresh)
 
     user_row.last_login = datetime.now(timezone.utc)
+    await _claim_guest_purchases(session, user_row.id, email)
 
     org_row = None
     if user_row.organizer_id:

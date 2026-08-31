@@ -166,6 +166,20 @@ def require_role(*roles: UserRole):
     return dep
 
 
+# Organizers can also buy tickets with the same account (email is unique).
+PURCHASE_ROLES = ("buyer", "organizer")
+
+
+async def require_purchase_account(user: dict = Depends(get_current_user)) -> dict:
+    """JWT required to create a public order / season-pass purchase."""
+    if user.get("role") not in PURCHASE_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Iniciá sesión con tu cuenta de comprador para comprar entradas.",
+        )
+    return user
+
+
 async def get_refresh_payload(request: Request) -> dict:
     token = _extract_token(request, REFRESH_COOKIE)
     if not token:

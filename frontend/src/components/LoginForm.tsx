@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import PasswordInput from "@/components/ui/password-input";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatApiError } from "@/lib/api";
+import { defaultPathForRole, pathFromLocationState, safeInternalPath } from "@/lib/authRedirect";
 import { Loader2 } from "lucide-react";
 
 // Shared by the organizer (/login) and super-admin (/admin/login) entry
@@ -21,6 +22,7 @@ export default function LoginForm({
     allowRole,
     rejectMessage,
     defaultRedirect,
+    redirectForRole = undefined,
     icon,
     title,
     description,
@@ -42,8 +44,14 @@ export default function LoginForm({
         try {
             const data = await login(email.trim().toLowerCase(), password, allowRole);
             toast.success("Bienvenido");
-            const from = location.state?.from?.pathname;
-            navigate(from || defaultRedirect, { replace: true });
+            const fromState = pathFromLocationState(location.state?.from);
+            const nextParam = safeInternalPath(
+                new URLSearchParams(location.search).get("next"),
+            );
+            navigate(
+                fromState || nextParam || redirectForRole?.(data.user?.role) || defaultRedirect || defaultPathForRole(data.user?.role),
+                { replace: true },
+            );
         } catch (err) {
             if (err?.roleRejected) {
                 toast.error(rejectMessage);

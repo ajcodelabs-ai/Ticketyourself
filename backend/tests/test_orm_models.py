@@ -162,6 +162,8 @@ class TestUser:
         assert "password_hash" in cols
         assert "role" in cols
         assert "organizer_id" in cols
+        assert "display_name" in cols
+        assert "phone" in cols
 
     def test_email_unique_index(self):
         idx = User.__table__.indexes
@@ -398,6 +400,7 @@ class TestTicketOrder:
             "subtotal_cents",
             "fees_cents",
             "total_cents",
+            "buyer_user_id",
         ):
             assert name in cols
 

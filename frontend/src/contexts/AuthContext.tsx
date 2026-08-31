@@ -147,11 +147,27 @@ export function AuthProvider({ children }) {
         [setSession],
     );
 
+    const registerBuyer = useCallback(
+        async (payload) => {
+            const { data } = await api.post("/auth/register-buyer", payload);
+            if (data.access_token) {
+                tokenStore.set({
+                    access_token: data.access_token,
+                    refresh_token: data.refresh_token,
+                });
+            }
+            setSession(data);
+            return data;
+        },
+        [setSession],
+    );
+
     const logout = useCallback(async () => {
         // Capture before clearing — super_admin has its own login entry
         // point (/admin/login), so logging out from the admin panel must
         // land there, not on the organizer form.
         const wasAdmin = user?.role === "super_admin";
+        const wasBuyer = user?.role === "buyer";
         try {
             await api.post("/auth/logout");
         } catch (err) {
@@ -161,7 +177,7 @@ export function AuthProvider({ children }) {
         }
         tokenStore.clear();
         setSession(null);
-        navigate(wasAdmin ? "/admin/login" : "/login", { replace: true });
+        navigate(wasAdmin ? "/admin/login" : wasBuyer ? "/" : "/login", { replace: true });
     }, [navigate, setSession, user]);
 
     // Swallows errors by default (most callers just want a best-effort UI
@@ -192,14 +208,16 @@ export function AuthProvider({ children }) {
             isAuthenticated: !!user,
             isAdmin: user?.role === "super_admin",
             isOrganizer: user?.role === "organizer",
+            isBuyer: user?.role === "buyer",
             login,
             register,
+            registerBuyer,
             logout,
             refreshOrganizer,
             checkSession,
             formatApiError,
         }),
-        [user, organizer, loading, login, register, logout, refreshOrganizer, checkSession],
+        [user, organizer, loading, login, register, registerBuyer, logout, refreshOrganizer, checkSession],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

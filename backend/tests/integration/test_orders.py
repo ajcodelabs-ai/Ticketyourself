@@ -39,6 +39,8 @@ from conftest import (
     RECHAZADO_PASSWORD,
     bearer,
     new_session,
+    place_order,
+    register_buyer_client,
     unique_buyer,
 )
 
@@ -81,7 +83,7 @@ class TestFreeEventPurchase:
                 "email": f"maria_{int(time.time())}@example.com",
             },
         }
-        r = new_session().post(f"{API}/public/orders", json=payload)
+        r = place_order(payload)
         assert r.status_code == 200, r.text
         data = r.json()
         assert data["status"] == "paid"
@@ -101,7 +103,7 @@ class TestFreeEventPurchase:
                 "email": f"pedro_{int(time.time())}@example.com",
             },
         }
-        cr = new_session().post(f"{API}/public/orders", json=payload)
+        cr = place_order(payload)
         order_number = cr.json()["order_number"]
 
         r = new_session().get(f"{API}/public/orders/{order_number}")
@@ -133,7 +135,7 @@ class TestPaidEventPurchase:
             "payment_method": "stripe",
             "origin_url": BASE_URL,
         }
-        r = new_session().post(f"{API}/public/orders", json=payload)
+        r = place_order(payload)
         assert r.status_code == 200, r.text
         return r.json()
 
@@ -171,9 +173,8 @@ class TestPaidEventPurchase:
 
 class TestTicketPDF:
     def test_pdf_for_paid_order_returns_pdf_bytes(self):
-        cr = new_session().post(
-            f"{API}/public/orders",
-            json={
+        cr = place_order(
+            {
                 "tenant_slug": DEMO_TENANT,
                 "event_slug": FREE_EVENT_SLUG,
                 "quantity": 1,
@@ -194,9 +195,8 @@ class TestTicketPDF:
         assert len(r.content) > 500
 
     def test_pdf_for_pending_order_returns_404(self):
-        cr = new_session().post(
-            f"{API}/public/orders",
-            json={
+        cr = place_order(
+            {
                 "tenant_slug": DEMO_TENANT,
                 "event_slug": PAID_EVENT_SLUG,
                 "quantity": 1,
@@ -217,8 +217,21 @@ class TestTicketPDF:
 
 
 class TestPurchaseValidations:
-    def test_invalid_email_returns_422(self):
+    def test_guest_cannot_create_order(self):
         r = new_session().post(
+            f"{API}/public/orders",
+            json={
+                "tenant_slug": DEMO_TENANT,
+                "event_slug": FREE_EVENT_SLUG,
+                "quantity": 1,
+                "buyer": {"name": "Guest", "email": "guest@example.com"},
+            },
+        )
+        assert r.status_code == 401
+
+    def test_invalid_email_returns_422(self):
+        s, _buyer = register_buyer_client()
+        r = s.post(
             f"{API}/public/orders",
             json={
                 "tenant_slug": DEMO_TENANT,
@@ -230,9 +243,8 @@ class TestPurchaseValidations:
         assert r.status_code == 422
 
     def test_quantity_above_max_returns_422(self):
-        r = new_session().post(
-            f"{API}/public/orders",
-            json={
+        r = place_order(
+            {
                 "tenant_slug": DEMO_TENANT,
                 "event_slug": FREE_EVENT_SLUG,
                 "quantity": 11,
@@ -242,9 +254,8 @@ class TestPurchaseValidations:
         assert r.status_code == 422
 
     def test_event_not_found_returns_404(self):
-        r = new_session().post(
-            f"{API}/public/orders",
-            json={
+        r = place_order(
+            {
                 "tenant_slug": DEMO_TENANT,
                 "event_slug": "no-existe-xyz",
                 "quantity": 1,
@@ -254,9 +265,8 @@ class TestPurchaseValidations:
         assert r.status_code == 404
 
     def test_tenant_not_found_returns_404(self):
-        r = new_session().post(
-            f"{API}/public/orders",
-            json={
+        r = place_order(
+            {
                 "tenant_slug": "no-existe-tenant",
                 "event_slug": FREE_EVENT_SLUG,
                 "quantity": 1,
@@ -318,9 +328,8 @@ class TestRefundAndResend:
     pytestmark = STRIPE_SKIP
 
     def _new_paid_order(self):
-        cr = new_session().post(
-            f"{API}/public/orders",
-            json={
+        cr = place_order(
+            {
                 "tenant_slug": DEMO_TENANT,
                 "event_slug": EVENT_STRIPE_ONLY_SLUG,
                 "quantity": 1,
@@ -383,9 +392,8 @@ class TestRefundAndResend:
 
 class TestTicketValidate:
     def test_validate_marks_used_then_already_used(self, demo_client):
-        cr = new_session().post(
-            f"{API}/public/orders",
-            json={
+        cr = place_order(
+            {
                 "tenant_slug": DEMO_TENANT,
                 "event_slug": FREE_EVENT_SLUG,
                 "quantity": 1,
@@ -472,7 +480,7 @@ def _create_manual_order(method: str) -> dict:
         "payment_method": method,
         "origin_url": BASE_URL,
     }
-    r = new_session().post(f"{API}/public/orders", json=body, timeout=15)
+    r = place_order(body, timeout=15)
     r.raise_for_status()
     return r.json()
 
@@ -530,9 +538,8 @@ def test_create_order_deuna_returns_pending_gateway_stub():
 
 def test_nuvei_rejected_when_not_enabled():
     """Stripe-only seed event must reject nuvei."""
-    r = new_session().post(
-        f"{API}/public/orders",
-        json={
+    r = place_order(
+        {
             "tenant_slug": DEMO_TENANT,
             "event_slug": EVENT_STRIPE_ONLY_SLUG,
             "quantity": 1,
@@ -704,7 +711,7 @@ def test_invalid_payment_method_rejected():
         "payment_method": "bitcoin",
         "origin_url": BASE_URL,
     }
-    r = new_session().post(f"{API}/public/orders", json=body, timeout=10)
+    r = place_order(body, timeout=10)
     assert r.status_code in (400, 422)
 
 
@@ -722,7 +729,7 @@ def _create(method: str, slug: str = PAID_EVENT_SLUG):
         "payment_method": method,
         "origin_url": BASE_URL,
     }
-    return new_session().post(f"{API}/public/orders", json=body, timeout=15)
+    return place_order(body, timeout=15)
 
 
 @pytest.mark.skip(
@@ -763,7 +770,7 @@ def test_free_event_ignores_payment_method():
         "payment_method": "transfer",
         "origin_url": BASE_URL,
     }
-    r2 = new_session().post(f"{API}/public/orders", json=body, timeout=15)
+    r2 = place_order(body, timeout=15)
     assert r2.status_code == 200, r2.text
     data = r2.json()
     assert (

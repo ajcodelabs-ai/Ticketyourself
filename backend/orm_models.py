@@ -65,6 +65,8 @@ class User(Base):
     # FK to organizers added in Phase 2; kept nullable TEXT for now so
     # the column exists and auth can write it without a FK constraint error.
     organizer_id = Column(String(36), nullable=True)
+    display_name = Column(String(140), nullable=True)
+    phone = Column(String(40), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     last_login = Column(DateTime(timezone=True), nullable=True)
     token_version = Column(Integer, nullable=False, default=0)
@@ -554,6 +556,9 @@ class TicketOrder(Base):
     # Buyer — full dict in JSONB; buyer_email indexed for lookup
     buyer = Column(JSONB, nullable=False, default=dict)
     buyer_email = Column(String(254), nullable=False, index=True, default="")
+    buyer_user_id = Column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True
+    )
 
     # Status & payment
     status = Column(String(30), nullable=False, default="pending")
@@ -1111,8 +1116,9 @@ class SeasonPass(Base):
 
 
 class SeasonPassPurchase(Base):
-    """One buyer's purchase of a SeasonPass — guest-accessed later via
-    `purchase_token` to redeem individual credits (no buyer accounts in TYS)."""
+    """One buyer's purchase of a SeasonPass. Redeemed later via
+    `purchase_token`; also listed in the buyer account when `buyer_user_id`
+    is set."""
 
     __tablename__ = "season_pass_purchases"
 
@@ -1131,6 +1137,9 @@ class SeasonPassPurchase(Base):
     order_number = Column(String(20), unique=True, nullable=False)
     buyer = Column(JSONB, nullable=False, default=dict)
     buyer_email = Column(String(254), nullable=False, index=True)
+    buyer_user_id = Column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True
+    )
     credits_total = Column(Integer, nullable=False)
     credits_used = Column(Integer, nullable=False, default=0)
     subtotal_cents = Column(Integer, nullable=False, default=0)

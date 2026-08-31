@@ -443,6 +443,7 @@ async def create_order_skeleton(
     custom_answers: dict[str, str] | None = None,
     law_category: str | None = None,
     law_document_id: str | None = None,
+    buyer_user_id: str | None = None,
 ) -> dict:
     from database import AsyncSessionLocal
     from orm_models import TicketOrder
@@ -522,6 +523,7 @@ async def create_order_skeleton(
         tenant_slug=organizer.get("slug"),
         buyer=buyer,
         buyer_email=buyer["email"],
+        buyer_user_id=buyer_user_id,
         status=initial_status,
         payment_method=payment_method,
         quantity_total=quantity,
