@@ -43,10 +43,18 @@ def _dev_only():
         raise HTTPException(status_code=404, detail="Not found")
 
 
+# Separate, off-by-default gate for the checkout "pago demo" bypass — unlike
+# _dev_enabled() (on by default on any non-production env, incl. staging),
+# this requires an explicit opt-in per environment so it can't silently let
+# anyone mint free tickets just because ENV != "production".
+def _demo_payments_enabled() -> bool:
+    return os.environ.get("DEMO_PAYMENTS_ENABLED", "").lower() in ("1", "true", "yes")
+
+
 # ── Public discovery flag (frontend asks if dev features are on) ────────────
 @router.get("/enabled")
 async def dev_enabled():
-    return {"enabled": _dev_enabled()}
+    return {"enabled": _dev_enabled(), "demo_payments": _demo_payments_enabled()}
 
 
 # ── Email log viewer ────────────────────────────────────────────────────────

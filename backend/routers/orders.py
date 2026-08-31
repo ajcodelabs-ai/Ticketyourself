@@ -523,6 +523,18 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
     )
     effective_method = "stripe" if is_pure_free else payload.payment_method
 
+    # Demo payment bypass — lets QA finish a purchase when a real gateway
+    # (e.g. Nuvei in this environment) can't be reached. Off unless the
+    # environment explicitly opts in (DEMO_PAYMENTS_ENABLED=true) — this is
+    # deliberately NOT the broader _dev_enabled() gate, which defaults to on
+    # for any ENV != "production" (staging included) and would let anyone
+    # mint free tickets on a publicly reachable staging deploy.
+    if effective_method == "demo":
+        from routers.dev import _demo_payments_enabled
+
+        if not _demo_payments_enabled():
+            raise HTTPException(400, "Método de pago inválido: 'demo'")
+
     # Phase 9.5 — apply discount rules (promo + auto/NxM + preventa/ley)
     # BEFORE creating the order so the persisted totals match what the buyer was
     # shown. Resolved against `effective_method` so payment-method-conditioned
@@ -630,8 +642,9 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         law_document_id=payload.law_document_id,
     )
 
-    # FREE event without optional donation — confirm instantly.
-    if is_pure_free:
+    # FREE event without optional donation, or the demo bypass (gated above)
+    # — both confirm instantly, no gateway involved.
+    if is_pure_free or effective_method == "demo":
         finalized, tickets = await order_service.finalize_paid_order(order=order)
         from services.email_service import send_purchase_confirmation
 

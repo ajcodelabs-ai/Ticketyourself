@@ -49,6 +49,11 @@ export const PAYMENT_METHOD_META = {
         icon: "💵",
         description: "Coordinar con organizador",
     },
+    demo: {
+        label: "Pago demo (dev)",
+        icon: "🧪",
+        description: "Confirma la compra sin cobrar — solo entornos de prueba",
+    },
 };
 
 export const PLAN_PAYMENT_METHODS = ["stripe", "nuvei", "deuna"] as const;
