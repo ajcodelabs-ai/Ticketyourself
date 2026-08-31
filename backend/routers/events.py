@@ -403,8 +403,10 @@ class EventBase(BaseModel):
     venue_address: str = Field(default="", max_length=200)
     venue_city: str = Field(default="", max_length=80)
     venue_country: str = Field(default="Ecuador", max_length=80)
-    starts_at: datetime
-    ends_at: datetime
+    # Dates are optional so a draft can be created before the schedule is set;
+    # _publish_validation() enforces them at publish time.
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
     timezone: str = Field(default="America/Guayaquil", max_length=64)
     sales_start: Optional[datetime] = None
     sales_end: Optional[datetime] = None
@@ -445,7 +447,7 @@ class EventBase(BaseModel):
     @classmethod
     def _ends_after_start(cls, v: datetime, info):
         starts = info.data.get("starts_at")
-        if starts and v <= starts:
+        if starts and v and v <= starts:
             raise ValueError("ends_at must be after starts_at")
         return v
 
@@ -1237,7 +1239,8 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
         )
 
         # Duplicate check: same (starts_at, venue_name) in same organizer.
-        if payload.venue_name:
+        # Only runs once the draft has a date (NULL starts_at can't collide).
+        if payload.venue_name and payload.starts_at:
             existing = await session.scalar(
                 select(Event.id).where(
                     Event.organizer_id == org["id"],
