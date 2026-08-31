@@ -462,10 +462,19 @@ export default function EventWizard({ initial = null, mode = "create" }) {
 
     // When building payload, use the latest form state via ref to avoid stale
     // closures in callbacks passed to child components (ensureEventId, etc.).
-    const ensureEventId = async () => {
-        if (eventId) return eventId;
-        const r = await persist(false);
-        return r?.id || null;
+    const ensureEventId = async ({ silent = false } = {}) => {
+        if (eventIdRef.current) return eventIdRef.current;
+        // Single-flight: concurrent callers (e.g. dropping files into two
+        // different image slots before the first draft POST resolves) await
+        // the same in-flight persist() instead of each racing their own.
+        if (!ensureEventIdPromiseRef.current) {
+            ensureEventIdPromiseRef.current = persist(false, { silent })
+                .then((r) => r?.id || null)
+                .finally(() => {
+                    ensureEventIdPromiseRef.current = null;
+                });
+        }
+        return ensureEventIdPromiseRef.current;
     };
 
     // Deep-linking: ?tab=general|fechas|... (legacy aliases remapped).
@@ -483,6 +492,15 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     // Venue chosen in Localidades before the first save (create flow steps 1→2).
     const [pendingVenueId, setPendingVenueId] = useState<string | null>(null);
     const [eventId, setEventId] = useState(initial?.id || null);
+    // Mirrors eventId synchronously so a sequential upload loop (ensureEventId
+    // called multiple times before React re-renders) reuses the just-created
+    // draft instead of racing a fresh POST /events/me per file.
+    const eventIdRef = useRef(initial?.id || null);
+    const ensureEventIdPromiseRef = useRef(null);
+    const setEventIdBoth = (id) => {
+        eventIdRef.current = id;
+        setEventId(id);
+    };
     const [poster, setPoster] = useState(initial?.poster_url || null);
     const [banner, setBanner] = useState(initial?.banner_url || null);
     const [small, setSmall] = useState(initial?.small_url || null);
@@ -499,7 +517,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             setBanner(initial.banner_url || null);
             setSmall(initial.small_url || null);
             setGallery(initial.gallery_urls || []);
-            setEventId(initial.id);
+            setEventIdBoth(initial.id);
         }
     }, [initial]);
 
@@ -559,11 +577,11 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         }
     };
 
-    const showIssues = (issues, modeLabel) => {
+    const showIssues = (issues, modeLabel, { silent = false } = {}) => {
         setIssuesMode(modeLabel);
         setSaveIssues(issues);
         const first = issues[0];
-        if (first?.step) handleTabChange(first.step);
+        if (!silent && first?.step) handleTabChange(first.step);
         const preview = issues
             .slice(0, 3)
             .map((i) => i.message)
@@ -576,7 +594,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         );
     };
 
-    const persist = async (publish = false) => {
+    const persist = async (publish = false, { silent = false } = {}) => {
         const modeKey = publish ? "publish" : "draft";
         const issues = collectEventWizardIssues({
             ...validationCtx,
@@ -584,7 +602,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             mode: modeKey,
         });
         if (issues.length) {
-            showIssues(issues, modeKey);
+            showIssues(issues, modeKey, { silent });
             return null;
         }
         setSaveIssues([]);
@@ -601,6 +619,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     },
                 ],
                 modeKey,
+                { silent },
             );
             return null;
         }
@@ -614,6 +633,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     },
                 ],
                 modeKey,
+                { silent },
             );
             return null;
         }
@@ -627,6 +647,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     },
                 ],
                 modeKey,
+                { silent },
             );
             return null;
         }
@@ -634,13 +655,13 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         let savedEvent = currentEvent;
         try {
             let result;
-            if (eventId) {
-                const { data } = await api.put(`/events/me/${eventId}`, payload);
+            if (eventIdRef.current) {
+                const { data } = await api.put(`/events/me/${eventIdRef.current}`, payload);
                 result = data;
             } else {
                 const { data } = await api.post("/events/me", payload);
                 result = data;
-                setEventId(data.id);
+                setEventIdBoth(data.id);
                 window.history.replaceState(null, "", `/app/eventos/${data.id}/editar`);
             }
             setCurrentEvent(result);
@@ -703,7 +724,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                     mode: "publish",
                     organizerStatus: organizer?.status || null,
                 });
-                if (remaining.length) {
+                if (silent) {
+                    // Caller (e.g. an inline image upload) has its own success toast.
+                } else if (remaining.length) {
                     toast.success(
                         venueToLink
                             ? "Borrador creado y mapa vinculado"
@@ -732,9 +755,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             const status = e?.response?.status;
             const detail = e?.response?.data?.detail;
             if (status === 402 && detail?.error === "pre_event_fee_required") {
-                const id = savedEvent?.id || eventId;
+                const id = savedEvent?.id || eventIdRef.current;
                 if (id) {
-                    setEventId(id);
+                    setEventIdBoth(id);
                     setFeeDialogSeed(detail);
                     setFeeDialogOpen(true);
                     return savedEvent;
@@ -772,7 +795,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             toast.error("La imagen supera los 5MB. Reducí su peso e intentá de nuevo.");
             return;
         }
-        const id = await ensureEventId();
+        const id = await ensureEventId({ silent: true });
         if (!id) return;
         const fd = new FormData();
         fd.append("file", file);
