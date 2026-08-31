@@ -140,11 +140,25 @@ export default function PurchaseModal({
     const isSubevent = event?.multi_function_mode === "subevent";
     const functionNoun = isSubevent ? "subevento" : "función";
 
+    // Demo payment bypass — off unless this environment explicitly opts in
+    // (DEMO_PAYMENTS_ENABLED=true), separate from the broader devEnabled flag
+    // OrderSuccess.tsx uses (that one defaults to on for any non-prod env).
+    const [demoPaymentsEnabled, setDemoPaymentsEnabled] = useState(false);
+    useEffect(() => {
+        api
+            .get("/_dev/enabled")
+            .then((r) => setDemoPaymentsEnabled(!!r.data?.demo_payments))
+            .catch(() => {});
+    }, []);
+
     const activeMethods = useMemo(() => {
         if (pricingType === "free" && !optionalDonation) return [];
         const m = activeMethodsFor(event);
-        return m.length ? m : ["nuvei"];
-    }, [event, pricingType, optionalDonation]);
+        const base = m.length ? m : ["nuvei"];
+        // Not organizer-configurable, so it's appended here rather than
+        // going through activeMethodsFor's catalog.
+        return demoPaymentsEnabled ? [...base, "demo"] : base;
+    }, [event, pricingType, optionalDonation, demoPaymentsEnabled]);
 
     // ── Phase 8: ticket types + functions ────────────────────────────────────
     const [ticketTypes, setTicketTypes] = useState<TicketTypeItem[]>([]);
@@ -1596,7 +1610,9 @@ export default function PurchaseModal({
                                     ? "Te redirigimos a Stripe (procesamiento seguro). Los datos del tarjetahabiente no quedan en TYS."
                                     : paymentMethod === "paypal"
                                       ? "PayPal aún está en integración: tu reserva queda registrada."
-                                      : "Te mostramos las instrucciones de pago. La entrada se confirma cuando el organizador valida el cobro."}
+                                      : paymentMethod === "demo"
+                                        ? "No se realiza ningún cobro real — la entrada se confirma al instante."
+                                        : "Te mostramos las instrucciones de pago. La entrada se confirma cuando el organizador valida el cobro."}
                         </p>
 
                         <div className="flex justify-end gap-2 pt-2">
@@ -1637,6 +1653,11 @@ export default function PurchaseModal({
                                         <TicketIcon className="h-4 w-4 mr-1.5" />
                                         Continuar con{" "}
                                         {PAYMENT_METHOD_META[paymentMethod]?.label || "pago digital"}
+                                    </>
+                                ) : paymentMethod === "demo" ? (
+                                    <>
+                                        <TicketIcon className="h-4 w-4 mr-1.5" />
+                                        Confirmar compra (demo)
                                     </>
                                 ) : (
                                     <>

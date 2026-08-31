@@ -33,6 +33,7 @@ VALID_PAYMENT_METHODS = (
     "transfer",
     "cash",
     "season_pass",
+    "demo",  # dev/staging bypass — gated by routers.dev._dev_enabled(), see routers/orders.py
 )
 
 
@@ -459,9 +460,9 @@ async def create_order_skeleton(
         accepts_payment_method,
     )
 
-    # Free / season_pass paths pass through without catalog checks.
+    # Free / season_pass / demo paths pass through without catalog checks.
     # Free + optional donation > 0 must still validate the chosen gateway.
-    needs_payment_check = payment_method not in ("season_pass",) and (
+    needs_payment_check = payment_method not in ("season_pass", "demo") and (
         event.get("pricing_type") != "free"
         or (
             event.get("optional_donation_enabled")
