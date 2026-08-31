@@ -154,7 +154,7 @@ const STEPS = [
     { id: "payments", label: "Formas de pago" },
     { id: "discounts", label: "Descuentos" },
     { id: "access", label: "Accesos" },
-    { id: "params", label: "Parámetros" },
+    { id: "params", label: "Campos personalizados" },
 ];
 
 const MEDIA_SUBSTEPS = [
@@ -3777,13 +3777,13 @@ function SectionParams({ form, update, venueLocalities = [] }) {
     return (
         <div className="space-y-6" data-testid="section-params">
             <div>
-                <h3 className="font-semibold text-base">Campos Personalizados</h3>
+                <h3 className="font-semibold text-base">Campos personalizados</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
                     Campos extra que se solicitarán al cliente durante la compra (nombre, talla, etc.).
                     {questionsCount > 0 && (
                         <>
                             {" · "}
-                            <strong className="text-foreground">{questionsCount}</strong> parámetro
+                            <strong className="text-foreground">{questionsCount}</strong> campo
                             {questionsCount !== 1 ? "s" : ""}
                         </>
                     )}
