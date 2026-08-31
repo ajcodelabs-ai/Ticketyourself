@@ -50,9 +50,9 @@ export default function MicrositePublic() {
                 data-testid="microsite-public-notfound"
             >
                 <Frown className="h-12 w-12 text-muted-foreground mb-3" />
-                <h1 className="text-2xl font-semibold mb-2">Microsite no disponible</h1>
+                <h1 className="text-2xl font-semibold mb-2">Página no disponible</h1>
                 <p className="text-muted-foreground max-w-md">
-                    Este organizador todavía no publicó su microsite o el link es incorrecto.
+                    Este organizador todavía no publicó su página o el link es incorrecto.
                 </p>
                 <Link to="/" className="mt-6 inline-flex items-center gap-1 underline text-primary">
                     <ArrowLeft className="h-4 w-4" />
