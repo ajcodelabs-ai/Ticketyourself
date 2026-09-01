@@ -612,7 +612,9 @@ export default function EventWizard({ initial = null, mode = "create" }) {
 
         const payload = buildPayload(formRef.current);
         // Safety net if computeEndsAt returned empty despite duration checks.
-        if (!payload.starts_at) {
+        // Only enforced when publishing: a draft may be saved without a schedule
+        // so a brand-new event can get an id and accept image uploads first.
+        if (publish && !payload.starts_at) {
             showIssues(
                 [
                     {
@@ -626,7 +628,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             );
             return null;
         }
-        if (!payload.ends_at) {
+        if (publish && !payload.ends_at) {
             showIssues(
                 [
                     {
@@ -640,7 +642,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             );
             return null;
         }
-        if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
+        if (payload.starts_at && payload.ends_at && new Date(payload.ends_at) <= new Date(payload.starts_at)) {
             showIssues(
                 [
                     {
@@ -799,7 +801,10 @@ export default function EventWizard({ initial = null, mode = "create" }) {
             return;
         }
         const id = await ensureEventId({ silent: true });
-        if (!id) return;
+        if (!id) {
+            toast.error("Completá el título (General) y la fecha (Fechas y ventas) antes de subir imágenes.");
+            return;
+        }
         const fd = new FormData();
         fd.append("file", file);
         setUploadingKind(kind);

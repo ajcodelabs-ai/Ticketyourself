@@ -22,16 +22,25 @@ function baseForm(overrides = {}) {
 }
 
 describe("collectEventWizardIssues", () => {
-    it("blocks draft without title or start date", () => {
+    it("blocks draft without title (dates not required to draft)", () => {
         const issues = collectEventWizardIssues({
             form: baseForm({ title: "", starts_at: "" }),
             poster: null,
             currentEvent: null,
             mode: "draft",
         });
-        expect(issues.map((i) => i.code)).toEqual(
-            expect.arrayContaining(["title", "starts_at"]),
-        );
+        expect(issues.map((i) => i.code)).toContain("title");
+        expect(issues.map((i) => i.code)).not.toContain("starts_at");
+    });
+
+    it("allows draft with title and no schedule yet", () => {
+        const issues = collectEventWizardIssues({
+            form: baseForm({ title: "Concierto", starts_at: "", venue_name: "" }),
+            poster: null,
+            currentEvent: null,
+            mode: "draft",
+        });
+        expect(issues).toHaveLength(0);
     });
 
     it("allows draft with title + schedule only", () => {

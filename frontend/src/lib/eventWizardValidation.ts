@@ -33,6 +33,12 @@ export function collectEventWizardIssues({
         );
     }
 
+    // Draft only needs a title so a new event can be created (and get an id /
+    // accept image uploads) before the schedule is filled in.
+    if (mode === "draft") {
+        return issues;
+    }
+
     if (!form?.starts_at) {
         push(
             "fechas",
@@ -68,11 +74,6 @@ export function collectEventWizardIssues({
             "sales_end_custom",
             "Elegiste fin de venta personalizado: completá esa fecha.",
         );
-    }
-
-    // Draft only needs title + schedule (backend EventBase).
-    if (mode === "draft") {
-        return issues;
     }
 
     // ── Publish-only ──────────────────────────────────────────────────────
