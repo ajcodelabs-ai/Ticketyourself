@@ -29,7 +29,7 @@ class ResolveResponse(BaseModel):
 # ──────────────────────────────────────────────────────────────────────────────
 # Users / Auth
 # ──────────────────────────────────────────────────────────────────────────────
-UserRole = Literal["super_admin", "organizer"]
+UserRole = Literal["super_admin", "organizer", "buyer"]
 OrgStatus = Literal["pending", "approved", "rejected", "suspended"]
 SubStatus = Literal["none", "trialing", "active", "past_due", "canceled"]
 
@@ -39,6 +39,9 @@ class UserOut(TimestampedModel):
     email: EmailStr
     role: UserRole
     organizer_id: Optional[str] = None
+    tenant_slug: Optional[str] = None
+    display_name: Optional[str] = None
+    phone: Optional[str] = None
     created_at: datetime
     last_login: Optional[datetime] = None
 
@@ -64,6 +67,28 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    tenant_slug: Optional[str] = Field(default=None, max_length=60)
+
+
+class BuyerRegisterRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=140)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    phone: Optional[str] = Field(default=None, max_length=40)
+    tenant_slug: str = Field(min_length=2, max_length=60)
+
+
+class SocialLoginRequest(BaseModel):
+    provider: Literal["google", "apple"]
+    id_token: str = Field(min_length=20, max_length=8000)
+    tenant_slug: str = Field(min_length=2, max_length=60)
+    name: Optional[str] = Field(default=None, max_length=140)
+    email: Optional[EmailStr] = None
+
+
+class BuyerProfileUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=140)
+    phone: Optional[str] = Field(default=None, max_length=40)
 
 
 class AuthMeResponse(BaseModel):

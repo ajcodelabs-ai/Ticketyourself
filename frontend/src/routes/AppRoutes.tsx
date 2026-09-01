@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { LazyPage } from "@/routes/LazyPage";
-import { AdminArea, Dashboard, OrgArea, Public } from "@/routes/layouts";
+import { AdminArea, BuyerArea, Dashboard, OrgArea, Public } from "@/routes/layouts";
 import * as Pages from "@/routes/lazyPages";
 import { extractSubdomainFromHostname } from "@/lib/config";
 
@@ -49,6 +49,8 @@ export default function AppRoutes() {
             <Route path="/login" element={<Public><LazyPage page={Pages.Login} /></Public>} />
             <Route path="/admin/login" element={<Public><LazyPage page={Pages.AdminLogin} /></Public>} />
             <Route path="/registro" element={<Public><LazyPage page={Pages.Register} /></Public>} />
+            <Route path="/registro-comprador" element={<Public><LazyPage page={Pages.RegisterBuyer} /></Public>} />
+            <Route path="/cuenta" element={<BuyerArea><LazyPage page={Pages.BuyerAccount} /></BuyerArea>} />
 
             {/* ── Público del tenant (/o/:slug/*) — siempre disponibles ──── */}
             <Route path="/o/:slug" element={<LazyPage page={Pages.MicrositePublic} />} />

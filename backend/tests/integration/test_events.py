@@ -23,6 +23,7 @@ from conftest import (
     PAID_EVENT_SLUG,
     bearer,
     new_session,
+    place_order,
 )
 
 
@@ -374,8 +375,7 @@ class TestPhase4Regression:
             },
             "origin_url": BASE_URL,
         }
-        s = new_session()
-        r = s.post(f"{API}/public/orders", json=body)
+        r = place_order(body)
         assert r.status_code in (200, 201), f"order failed: {r.status_code} {r.text}"
         data = r.json()
         assert "order_number" in data

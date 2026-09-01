@@ -1,23 +1,85 @@
 import axios, { type AxiosRequestHeaders } from "axios";
+import { extractSubdomainFromHostname } from "@/lib/config";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 export const API_BASE = `${BACKEND_URL}/api`;
 
 const ACCESS_KEY = "tys_access_token";
 const REFRESH_KEY = "tys_refresh_token";
+const TENANT_KEY = "tys.tenant_slug";
+
+function buyerAccessKey(slug: string) {
+    return `tys_buyer_access.${slug}`;
+}
+function buyerRefreshKey(slug: string) {
+    return `tys_buyer_refresh.${slug}`;
+}
+
+export function resolveTenantSlug() {
+    if (typeof window === "undefined") return null;
+    const fromPath = (window.location.pathname || "").match(/^\/o\/([^/]+)/);
+    if (fromPath) return fromPath[1];
+    const sub = extractSubdomainFromHostname();
+    if (sub) return sub;
+    return localStorage.getItem(TENANT_KEY);
+}
+
+function isPlatformPath() {
+    if (typeof window === "undefined") return false;
+    const p = window.location.pathname || "";
+    return p.startsWith("/app") || p.startsWith("/admin") || p.startsWith("/onboarding");
+}
+
+function activeBuyerSlug() {
+    if (isPlatformPath()) return null;
+    return resolveTenantSlug();
+}
 
 export const tokenStore = {
     get access() {
+        const slug = activeBuyerSlug();
+        if (slug) {
+            const buyer = localStorage.getItem(buyerAccessKey(slug));
+            if (buyer) return buyer;
+        }
         return localStorage.getItem(ACCESS_KEY);
     },
     get refresh() {
+        const slug = activeBuyerSlug();
+        if (slug) {
+            const buyer = localStorage.getItem(buyerRefreshKey(slug));
+            if (buyer) return buyer;
+        }
         return localStorage.getItem(REFRESH_KEY);
     },
-    set({ access_token, refresh_token }) {
+    set({ access_token, refresh_token }, opts: { kind?: string; tenantSlug?: string } = {}) {
+        const slug = opts.tenantSlug || resolveTenantSlug();
+        if (opts.kind === "buyer" && slug) {
+            if (access_token) localStorage.setItem(buyerAccessKey(slug), access_token);
+            if (refresh_token) localStorage.setItem(buyerRefreshKey(slug), refresh_token);
+            return;
+        }
         if (access_token) localStorage.setItem(ACCESS_KEY, access_token);
         if (refresh_token) localStorage.setItem(REFRESH_KEY, refresh_token);
     },
-    clear() {
+    clear(opts: { kind?: string; tenantSlug?: string } = {}) {
+        const slug = opts.tenantSlug || resolveTenantSlug();
+        if (opts.kind === "buyer") {
+            if (slug) {
+                localStorage.removeItem(buyerAccessKey(slug));
+                localStorage.removeItem(buyerRefreshKey(slug));
+            }
+            return;
+        }
+        if (opts.kind === "platform") {
+            localStorage.removeItem(ACCESS_KEY);
+            localStorage.removeItem(REFRESH_KEY);
+            return;
+        }
+        if (slug) {
+            localStorage.removeItem(buyerAccessKey(slug));
+            localStorage.removeItem(buyerRefreshKey(slug));
+        }
         localStorage.removeItem(ACCESS_KEY);
         localStorage.removeItem(REFRESH_KEY);
     },
@@ -72,10 +134,18 @@ function doRefresh(refreshToken: string): Promise<string> {
             )
             .then(({ data }) => {
                 if (!data.access_token) throw new Error("Refresh response missing access_token");
-                tokenStore.set({
-                    access_token: data.access_token,
-                    refresh_token: data.refresh_token,
-                });
+                const slug = resolveTenantSlug();
+                const kind =
+                    !isPlatformPath() && slug && localStorage.getItem(buyerAccessKey(slug))
+                        ? "buyer"
+                        : "platform";
+                tokenStore.set(
+                    {
+                        access_token: data.access_token,
+                        refresh_token: data.refresh_token,
+                    },
+                    { kind, tenantSlug: slug },
+                );
                 return data.access_token;
             })
             .finally(() => {
@@ -118,7 +188,8 @@ api.interceptors.response.use(
 const FIELD_LABELS: Record<string, string> = {
     email: "Email",
     password: "Contraseña",
-    company_name: "Nombre",
+    name: "Nombre",
+    company_name: "Nombre de la empresa",
     legal_id: "RUC/Cédula",
     org_type: "Tipo de organización",
     phone: "Teléfono",

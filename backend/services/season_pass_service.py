@@ -59,6 +59,7 @@ async def create_purchase_skeleton(
     event: dict,
     organizer: dict,
     buyer: dict,
+    buyer_user_id: str | None = None,
 ) -> dict:
     from orm_models import SeasonPassPurchase
 
@@ -79,6 +80,7 @@ async def create_purchase_skeleton(
         order_number=await _next_pass_order_number(),
         buyer=buyer,
         buyer_email=buyer["email"],
+        buyer_user_id=buyer_user_id,
         credits_total=season_pass["credits_total"],
         credits_used=0,
         subtotal_cents=subtotal,

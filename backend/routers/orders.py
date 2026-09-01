@@ -1,9 +1,8 @@
 """
-Public ticket order endpoints (no auth — buyers don't have TYS accounts).
+Public ticket order endpoints.
 
-Free events: instant paid + ticket issuance.
-Paid + donation events: Stripe Checkout Session, finalize via webhook
-(or via DEV simulator when sk_test_emergent doesn't deliver webhooks).
+Creating an order requires a logged-in buyer (or organizer) account.
+Lookup by order_number / token stays public so confirmation emails keep working.
 """
 
 import logging
@@ -11,7 +10,7 @@ import os
 from typing import Literal, Optional
 
 import stripe
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
@@ -25,6 +24,7 @@ from db_helpers import (
     row_to_dict,
 )
 from orm_models import Organizer
+from security import assert_purchase_on_organizer, require_purchase_account
 from services import discount_service, order_service
 from services.event_venue import resolve_event_venue
 from services.pdf_service import render_ticket_pdf
@@ -272,14 +272,27 @@ async def _load_event_or_404(tenant_slug: str, event_slug: str) -> tuple[dict, d
 
 
 @router.post("")
-async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTasks):
+async def create_order(
+    payload: CreateOrderBody,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(require_purchase_account),
+):
     organizer, event = await _load_event_or_404(payload.tenant_slug, payload.event_slug)
+    assert_purchase_on_organizer(user, organizer["id"])
     if event["status"] != "published":
         raise HTTPException(409, "El evento no está disponible para compra")
 
     fee_ctx = await _sales_fee_ctx(organizer)
 
-    buyer = order_service.validate_buyer(payload.buyer.model_dump())
+    raw_buyer = payload.buyer.model_dump()
+    # Identity comes from the session: the form can still collect name/phone/doc,
+    # but email is always the account's so one person can't checkout as another.
+    raw_buyer["email"] = user["email"]
+    if not (raw_buyer.get("name") or "").strip():
+        raw_buyer["name"] = user.get("display_name") or user["email"]
+    if not (raw_buyer.get("phone") or "").strip() and user.get("phone"):
+        raw_buyer["phone"] = user["phone"]
+    buyer = order_service.validate_buyer(raw_buyer)
 
     # Phase 8 — multi-función: validate function_id belongs to this event and
     # is still active, and fetch its ticket-type overrides for pricing/capacity.
@@ -640,6 +653,7 @@ async def create_order(payload: CreateOrderBody, background_tasks: BackgroundTas
         custom_answers=custom_answers or None,
         law_category=payload.law_category,
         law_document_id=payload.law_document_id,
+        buyer_user_id=user["id"],
     )
 
     # FREE event without optional donation, or the demo bypass (gated above)

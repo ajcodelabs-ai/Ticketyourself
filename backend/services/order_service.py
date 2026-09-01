@@ -192,8 +192,25 @@ async def release_reservation(order_id: str) -> None:
 
 
 # ── Validation ──────────────────────────────────────────────────────────────
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _NAME_BAD = re.compile(r"[<>{}\[\]\\]")
+
+
+def _is_plausible_email(value: str) -> bool:
+    """Linear-time shape check. Avoids nested-quantifier regex on buyer input."""
+    if not value or len(value) > 254:
+        return False
+    at = value.find("@")
+    if at < 1 or at != value.rfind("@"):
+        return False
+    local, domain = value[:at], value[at + 1 :]
+    if not local or not domain or len(local) > 64:
+        return False
+    if " " in value:
+        return False
+    dot = domain.find(".")
+    if dot < 1 or domain.endswith(".") or ".." in domain:
+        return False
+    return True
 
 
 def validate_buyer(buyer: dict) -> dict:
@@ -203,7 +220,7 @@ def validate_buyer(buyer: dict) -> dict:
         raise HTTPException(422, "Nombre del comprador requerido")
     if _NAME_BAD.search(name):
         raise HTTPException(422, "El nombre contiene caracteres inválidos")
-    if not _EMAIL_RE.match(email):
+    if not _is_plausible_email(email):
         raise HTTPException(422, "Email inválido")
     return {
         "name": name[:140],
@@ -443,6 +460,7 @@ async def create_order_skeleton(
     custom_answers: dict[str, str] | None = None,
     law_category: str | None = None,
     law_document_id: str | None = None,
+    buyer_user_id: str | None = None,
 ) -> dict:
     from database import AsyncSessionLocal
     from orm_models import TicketOrder
@@ -522,6 +540,7 @@ async def create_order_skeleton(
         tenant_slug=organizer.get("slug"),
         buyer=buyer,
         buyer_email=buyer["email"],
+        buyer_user_id=buyer_user_id,
         status=initial_status,
         payment_method=payment_method,
         quantity_total=quantity,

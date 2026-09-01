@@ -47,6 +47,7 @@ from orm_models import (  # noqa: E402
     TicketScan,
     TicketType,
     User,
+    UserOAuthIdentity,
     Venue,
     _now,
     _uuid4,
@@ -162,10 +163,29 @@ class TestUser:
         assert "password_hash" in cols
         assert "role" in cols
         assert "organizer_id" in cols
+        assert "display_name" in cols
+        assert "phone" in cols
 
     def test_email_unique_index(self):
-        idx = User.__table__.indexes
-        assert any(i.columns.keys() == ["email"] and i.unique for i in idx)
+        named = {i.name: i for i in User.__table__.indexes}
+        assert "uq_users_platform_email" in named
+        assert named["uq_users_platform_email"].unique
+        assert "uq_users_buyer_org_email" in named
+        assert named["uq_users_buyer_org_email"].unique
+        # Plain email lookup index is not globally unique (buyers are per-org).
+        if "ix_users_email" in named:
+            assert named["ix_users_email"].unique is False
+
+    def test_password_hash_nullable(self):
+        assert User.__table__.columns["password_hash"].nullable is True
+
+
+class TestUserOAuthIdentity:
+    def test_tablename(self):
+        assert UserOAuthIdentity.__tablename__ == "user_oauth_identities"
+
+    def test_unique_constraint(self):
+        assert _has_unique_constraint(UserOAuthIdentity, "uq_oauth_org_provider_sub")
 
     def test_default_role(self):
         assert _col_default(User, "role") == "organizer"
@@ -398,6 +418,7 @@ class TestTicketOrder:
             "subtotal_cents",
             "fees_cents",
             "total_cents",
+            "buyer_user_id",
         ):
             assert name in cols
 

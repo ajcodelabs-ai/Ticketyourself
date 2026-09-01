@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
-from conftest import API, DEMO_TENANT, bearer, new_session, unique_buyer
+from conftest import API, DEMO_TENANT, bearer, new_session, place_order, unique_buyer
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -391,7 +391,6 @@ class TestMaxUses:
 
     def test_purchase_consumes_code(self, event_max_uses):
         """Actually purchase with the code → the code gets consumed."""
-        s = new_session()
         body = {
             "tenant_slug": DEMO_TENANT,
             "event_slug": event_max_uses["slug"],
@@ -400,12 +399,12 @@ class TestMaxUses:
             "promo_code": self.CODE,
             "origin_url": "http://localhost:3000",
         }
-        r = s.post(f"{API}/public/orders", json=body)
+        r = place_order(body)
         assert r.status_code == 200, r.text
         order = r.json()
         assert order["status"] == "pending"
 
-        sim = s.post(
+        sim = new_session().post(
             f"{API}/_dev/simulate-purchase-paid",
             json={"order_number": order["order_number"]},
         )
@@ -419,7 +418,6 @@ class TestMaxUses:
 
     def test_purchase_after_consumption_fails_422(self, event_max_uses):
         """Creating a new order with the exhausted code returns 422."""
-        s = new_session()
         body = {
             "tenant_slug": DEMO_TENANT,
             "event_slug": event_max_uses["slug"],
@@ -428,7 +426,7 @@ class TestMaxUses:
             "promo_code": self.CODE,
             "origin_url": "http://localhost:3000",
         }
-        r = s.post(f"{API}/public/orders", json=body)
+        r = place_order(body)
         assert r.status_code == 422, r.text
 
 

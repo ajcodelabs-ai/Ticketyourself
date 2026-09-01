@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 export default function ProtectedRoute({ children, role }) {
     const { loading, isAuthenticated, user } = useAuth();
     const location = useLocation();
+    const roles = role == null ? null : Array.isArray(role) ? role : [role];
 
     if (loading) {
         return (
@@ -16,14 +17,18 @@ export default function ProtectedRoute({ children, role }) {
         );
     }
     if (!isAuthenticated) {
-        const loginPath = role === "super_admin" ? "/admin/login" : "/login";
+        const loginPath =
+            roles?.length === 1 && roles[0] === "super_admin" ? "/admin/login" : "/login";
         return <Navigate to={loginPath} state={{ from: location }} replace />;
     }
-    if (role && user?.role !== role) {
-        if (role === "super_admin" && user?.role === "organizer") {
+    if (roles && !roles.includes(user?.role)) {
+        if (user?.role === "buyer") {
+            return <Navigate to="/cuenta" replace />;
+        }
+        if (roles.includes("super_admin") && user?.role === "organizer") {
             return <Navigate to="/app/dashboard" replace />;
         }
-        if (role === "organizer" && user?.role === "super_admin") {
+        if (roles.includes("organizer") && user?.role === "super_admin") {
             return <Navigate to="/admin" replace />;
         }
         return (

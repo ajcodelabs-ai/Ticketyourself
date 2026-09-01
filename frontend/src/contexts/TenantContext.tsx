@@ -18,6 +18,7 @@ const TenantContext = createContext({
     tenant: null,
     loading: true,
     setTenantSlug: (_slug: string) => {},
+    applySlug: (_slug: string) => {},
     refresh: () => {},
 });
 
@@ -44,6 +45,16 @@ export function TenantProvider({ children }) {
             localStorage.setItem(STORAGE_KEY, slug);
         }
     }, []);
+
+    const applySlug = useCallback(
+        (slug) => {
+            const clean = (slug || "").trim().toLowerCase();
+            if (!clean || clean === tenantSlug) return;
+            setTenantSlugState(clean);
+            persistSlug(clean);
+        },
+        [persistSlug, tenantSlug],
+    );
 
     const fetchTenant = useCallback(async (slug) => {
         if (!slug) {
@@ -102,8 +113,8 @@ export function TenantProvider({ children }) {
     );
 
     const value = useMemo(
-        () => ({ tenantSlug, tenant, loading, setTenantSlug, refresh }),
-        [tenantSlug, tenant, loading, setTenantSlug, refresh],
+        () => ({ tenantSlug, tenant, loading, setTenantSlug, applySlug, refresh }),
+        [tenantSlug, tenant, loading, setTenantSlug, applySlug, refresh],
     );
 
     return (
@@ -126,7 +137,7 @@ export function useSlug() {
 }
 
 export function useTenantSlug() {
-    const { tenantSlug: paramSlug } = useParams();
+    const { slug, tenantSlug: paramSlug } = useParams();
     const { tenantSlug } = useTenant();
-    return paramSlug || tenantSlug || undefined;
+    return slug || paramSlug || tenantSlug || undefined;
 }

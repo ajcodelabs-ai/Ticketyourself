@@ -103,6 +103,42 @@ class TestUserOut:
         )
         assert u.organizer_id == "org-123"
 
+    def test_buyer_role(self):
+        u = UserOut(
+            id="x",
+            email="b@b.com",
+            role="buyer",
+            display_name="Ana",
+            created_at=_dt(),
+        )
+        assert u.role == "buyer"
+        assert u.display_name == "Ana"
+
+
+class TestBuyerRegisterRequest:
+    def test_valid(self):
+        from models import BuyerRegisterRequest
+
+        r = BuyerRegisterRequest(
+            name="Ana Pérez",
+            email="ana@example.com",
+            password="12345678",
+            tenant_slug="demo-org",
+        )
+        assert r.name == "Ana Pérez"
+        assert r.tenant_slug == "demo-org"
+
+    def test_short_password(self):
+        from models import BuyerRegisterRequest
+
+        with pytest.raises(ValidationError):
+            BuyerRegisterRequest(
+                name="Ana",
+                email="ana@example.com",
+                password="short",
+                tenant_slug="demo-org",
+            )
+
 
 class TestRegisterRequest:
     def test_valid(self):

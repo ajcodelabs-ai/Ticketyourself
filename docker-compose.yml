@@ -93,6 +93,8 @@ services:
       DEUNA_ENV: ${DEUNA_ENV:-sandbox}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-noreply@ticketyourself.com}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ticketyourself.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin123!}
     volumes:

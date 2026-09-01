@@ -62,6 +62,9 @@ DEFAULT_DOCUMENT_TYPES = {
 
 logger = logging.getLogger("tys.seed")
 
+DEMO_BUYER_EMAIL = "comprador@ticketyourself.com"
+DEMO_BUYER_PASSWORD = "Buyer123!"
+
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSY = {"0", "false", "no", "off"}
 _DEMO_SEED_ENVS = {"preview", "test"}
@@ -375,6 +378,106 @@ async def _seed_admin(*, overwrite_password: bool | None = None) -> None:
             logger.info("Updated super_admin password for %s", admin_email)
 
 
+async def _seed_demo_buyer() -> None:
+    """Lightweight attendee account so /cuenta has a login in local/demo."""
+    organizer = await get_organizer_by_slug("demo-org")
+    org_id = organizer["id"] if organizer else None
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(
+            select(User).where(
+                User.email == DEMO_BUYER_EMAIL,
+                User.role == "buyer",
+                User.organizer_id == org_id if org_id else User.organizer_id.is_(None),
+            )
+        )
+        now = datetime.now(timezone.utc)
+        if existing is None:
+            session.add(
+                User(
+                    id=str(uuid.uuid4()),
+                    email=DEMO_BUYER_EMAIL,
+                    password_hash=hash_password(DEMO_BUYER_PASSWORD),
+                    role="buyer",
+                    organizer_id=org_id,
+                    display_name="Comprador Demo",
+                    phone="+593999000111",
+                    created_at=now,
+                    last_login=None,
+                )
+            )
+            await session.commit()
+            logger.info("Seeded demo buyer %s on demo-org", DEMO_BUYER_EMAIL)
+            return
+        existing.role = "buyer"
+        if org_id and not existing.organizer_id:
+            existing.organizer_id = org_id
+        if not existing.display_name:
+            existing.display_name = "Comprador Demo"
+        if demo_seed_enabled() and (
+            not existing.password_hash
+            or not verify_password(DEMO_BUYER_PASSWORD, existing.password_hash)
+        ):
+            existing.password_hash = hash_password(DEMO_BUYER_PASSWORD)
+        await session.commit()
+
+
+async def _seed_demo_buyer_tickets() -> None:
+    """Paid tickets on the free demo event so the buyer dashboard isn't empty."""
+    async with AsyncSessionLocal() as session:
+        buyer = await session.scalar(
+            select(User).where(
+                User.email == DEMO_BUYER_EMAIL,
+                User.role == "buyer",
+            )
+        )
+        if not buyer:
+            return
+        buyer_id = buyer.id
+        buyer_name = buyer.display_name or "Comprador Demo"
+        buyer_phone = buyer.phone or ""
+        already = await session.scalar(
+            select(TicketOrder.id).where(TicketOrder.buyer_user_id == buyer_id).limit(1)
+        )
+        if already:
+            return
+
+    organizer = await get_organizer_by_slug("demo-org")
+    if not organizer:
+        return
+    async with AsyncSessionLocal() as session:
+        event_row = await session.scalar(
+            select(Event).where(
+                Event.organizer_id == organizer["id"],
+                Event.slug == "charla-liderazgo-femenino",
+            )
+        )
+    if not event_row:
+        return
+    event = row_to_dict(event_row)
+    from services import order_service
+
+    totals = order_service.compute_totals(
+        event=event, quantity=2, donation_amount_cents=0
+    )
+    order = await order_service.create_order_skeleton(
+        event=event,
+        organizer=organizer,
+        quantity=2,
+        buyer={
+            "name": buyer_name,
+            "email": DEMO_BUYER_EMAIL,
+            "phone": buyer_phone,
+            "document_id": "",
+            "document_type": "",
+        },
+        totals=totals,
+        payment_method="stripe",
+        buyer_user_id=buyer_id,
+    )
+    await order_service.finalize_paid_order(order=order)
+    logger.info("Seeded demo buyer tickets for %s", DEMO_BUYER_EMAIL)
+
+
 async def _seed_plans() -> None:
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as session:
@@ -522,7 +625,10 @@ async def _seed_demo_organizers() -> None:
 
         for od in DEMO_ORGANIZERS:
             user_check = await session.execute(
-                select(User).where(User.email == od["user_email"].lower())
+                select(User).where(
+                    User.email == od["user_email"].lower(),
+                    User.role.in_(("organizer", "super_admin")),
+                )
             )
             if user_check.scalar_one_or_none():
                 continue
@@ -658,7 +764,10 @@ async def _reset_demo_organizers() -> None:
 
         for od in DEMO_ORGANIZERS:
             user_result = await session.execute(
-                select(User).where(User.email == od["user_email"].lower())
+                select(User).where(
+                    User.email == od["user_email"].lower(),
+                    User.role.in_(("organizer", "super_admin")),
+                )
             )
             user_row = user_result.scalar_one_or_none()
             if not user_row or not user_row.organizer_id:
@@ -2383,9 +2492,11 @@ async def run_seeds() -> None:
     await _cleanup_ephemeral_orders()
     await _seed_demo_organizers()
     await _reset_demo_organizers()
+    await _seed_demo_buyer()
     await _seed_demo_microsites()
     await _seed_demo_events()
     await _seed_demo_manual_orders()
+    await _seed_demo_buyer_tickets()
     await _seed_demo_venues()
     await _seed_venue_templates()
     await _seed_demo_numbered_event()

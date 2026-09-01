@@ -281,10 +281,17 @@ export default function OrderSuccess() {
 
                 {/* Footer */}
                 {isPaid && (
-                    <div className="rounded-2xl border bg-card p-5 text-sm text-muted-foreground">
-                        Te enviamos los tickets a <strong>{order.buyer.email}</strong>. Si
-                        no llegan en unos minutos, revisá tu carpeta de spam o solicitá un
-                        reenvío al organizador {organizer?.company_name || ""}.
+                    <div className="rounded-2xl border bg-card p-5 text-sm text-muted-foreground space-y-3">
+                        <p>
+                            Te enviamos los tickets a <strong>{order.buyer.email}</strong>. Si
+                            no llegan en unos minutos, revisá tu carpeta de spam o solicitá un
+                            reenvío al organizador {organizer?.company_name || ""}.
+                        </p>
+                        <Button asChild variant="outline" size="sm">
+                            <Link to="/cuenta" data-testid="order-success-cuenta">
+                                Ver todas mis entradas
+                            </Link>
+                        </Button>
                     </div>
                 )}
             </div>

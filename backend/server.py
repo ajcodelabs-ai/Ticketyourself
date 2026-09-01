@@ -82,6 +82,7 @@ from routers import admin_dashboard as admin_dashboard_router  # noqa: E402
 from routers import admin_exports as admin_exports_router  # noqa: E402
 from routers import admin_payments as admin_payments_router  # noqa: E402
 from routers import admin_venue_templates as admin_venue_templates_router  # noqa: E402
+from routers import buyer as buyer_router  # noqa: E402
 from routers import dashboard as dashboard_router  # noqa: E402
 from routers import events as events_router  # noqa: E402
 from routers import functions as functions_router  # noqa: E402
@@ -104,6 +105,7 @@ app.include_router(events_router.public_router)
 app.include_router(events_router.admin_router)
 app.include_router(events_router.asset_router)
 app.include_router(orders_router.router)
+app.include_router(buyer_router.router)
 app.include_router(tickets_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(admin_dashboard_router.router)

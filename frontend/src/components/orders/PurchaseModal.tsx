@@ -43,6 +43,8 @@ import api, { formatApiError } from "@/lib/api";
 import { formatPriceLabel } from "@/lib/events";
 import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders";
 import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
+import { useAuth } from "@/contexts/AuthContext";
+import BuyerAuthPanel from "@/components/orders/BuyerAuthPanel";
 import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
 import type { NuveiCheckoutConfig } from "@/lib/nuvei";
 import DeunaCheckoutPanel from "@/components/orders/DeunaCheckoutPanel";
@@ -130,6 +132,10 @@ export default function PurchaseModal({
     preSelectedFunctionId = null, preSelectedFunctionName = "",
 }) {
     const navigate = useNavigate();
+    const { user, isBuyer, isOrganizer, isAdmin, organizer } = useAuth();
+    const canPurchase =
+        (isBuyer && user?.tenant_slug === tenantSlug) ||
+        (isOrganizer && organizer?.slug === tenantSlug);
     const pricingType = event?.pricing_type || "free";
     const optionalDonation = pricingType === "free" && !!event?.optional_donation_enabled;
     const isSeatNumbered = !!seatHoldsInfo;
@@ -365,7 +371,12 @@ export default function PurchaseModal({
         if (open) {
             setQuantity(1);
             setDonation("");
-            setBuyer({ name: "", email: "", phone: "", document_id: "" });
+            setBuyer({
+                name: user?.display_name || "",
+                email: user?.email || "",
+                phone: user?.phone || "",
+                document_id: "",
+            });
             setErrors({});
             setPaymentMethod(activeMethods[0] || "nuvei");
             setPromoCodeInput("");
@@ -379,6 +390,16 @@ export default function PurchaseModal({
             setTycAccepted(false);
         }
     }, [open]);
+
+    useEffect(() => {
+        if (!open || !user) return;
+        setBuyer((b) => ({
+            ...b,
+            name: b.name || user.display_name || "",
+            email: user.email || b.email,
+            phone: b.phone || user.phone || "",
+        }));
+    }, [open, user]);
 
     // True while a multi-función event is waiting for the buyer to pick a
     // función — ticket types load scoped to that función, so nothing else
@@ -849,7 +870,14 @@ export default function PurchaseModal({
                     <DialogDescription className="text-base">{event.title}</DialogDescription>
                 </DialogHeader>
 
-                {needsAccessGate && !accessVerified ? (
+                {isAdmin ? (
+                    <p className="text-sm text-muted-foreground py-4" data-testid="purchase-admin-blocked">
+                        Las cuentas de administración no pueden comprar entradas. Cerrá sesión y
+                        usá una cuenta de comprador.
+                    </p>
+                ) : !canPurchase ? (
+                    <BuyerAuthPanel />
+                ) : needsAccessGate && !accessVerified ? (
                     <div className="space-y-4 py-2" data-testid="access-gate">
                         {accessType === "access_code" ? (
                             <>
@@ -1269,6 +1297,7 @@ export default function PurchaseModal({
                                 onChange={(v) => setBuyer((b) => ({ ...b, email: v }))}
                                 error={errors.email}
                                 testId="buyer-email"
+                                disabled
                             />
                             <div className="space-y-1.5">
                                 <Label htmlFor="buyer-phone">Teléfono</Label>
@@ -1676,9 +1705,9 @@ export default function PurchaseModal({
     );
 }
 
-function Field({ label, id, value, onChange, error, type = "text", testId }: {
+function Field({ label, id, value, onChange, error, type = "text", testId, disabled }: {
     label: string; id: string; value: string; onChange: (v: string) => void;
-    error?: string; type?: string; testId?: string;
+    error?: string; type?: string; testId?: string; disabled?: boolean;
 }) {
     return (
         <div className="space-y-1.5">
@@ -1690,6 +1719,7 @@ function Field({ label, id, value, onChange, error, type = "text", testId }: {
                 onChange={(e) => onChange(e.target.value)}
                 data-testid={testId}
                 aria-invalid={!!error}
+                disabled={disabled}
             />
             {error && <p className="text-xs text-red-600">{error}</p>}
         </div>

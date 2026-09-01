@@ -37,7 +37,12 @@ from orm_models import (
     SeasonPassPurchase,
     TicketType,
 )
-from security import get_current_user, require_role
+from security import (
+    assert_purchase_on_organizer,
+    get_current_user,
+    require_purchase_account,
+    require_role,
+)
 from services import order_service, season_pass_service
 
 logger = logging.getLogger("tys.season_passes")
@@ -276,15 +281,24 @@ async def purchase_season_pass(
     season_pass_id: str,
     payload: PurchasePassBody,
     background_tasks: BackgroundTasks,
+    user: dict = Depends(require_purchase_account),
 ):
     season_pass, event, organizer = await _load_pass_or_404(season_pass_id)
-    buyer = order_service.validate_buyer(payload.buyer.model_dump())
+    assert_purchase_on_organizer(user, organizer["id"])
+    raw_buyer = payload.buyer.model_dump()
+    raw_buyer["email"] = user["email"]
+    if not (raw_buyer.get("name") or "").strip():
+        raw_buyer["name"] = user.get("display_name") or user["email"]
+    if not (raw_buyer.get("phone") or "").strip() and user.get("phone"):
+        raw_buyer["phone"] = user["phone"]
+    buyer = order_service.validate_buyer(raw_buyer)
 
     purchase = await season_pass_service.create_purchase_skeleton(
         season_pass=season_pass,
         event=event,
         organizer=organizer,
         buyer=buyer,
+        buyer_user_id=user["id"],
     )
 
     # Free pass (price_cents == 0) — confirm instantly, mirrors free ticket events.

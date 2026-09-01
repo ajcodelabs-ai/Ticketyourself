@@ -11,8 +11,24 @@ import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, tokenStore } from "@/lib/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { useTenant } from "@/contexts/TenantContext";
 
 const AuthContext = createContext(null);
+
+function persistTokens(data) {
+    if (!data?.access_token) return;
+    if (data.user?.role === "buyer") {
+        tokenStore.set(
+            { access_token: data.access_token, refresh_token: data.refresh_token },
+            { kind: "buyer", tenantSlug: data.user.tenant_slug },
+        );
+    } else {
+        tokenStore.set(
+            { access_token: data.access_token, refresh_token: data.refresh_token },
+            { kind: "platform" },
+        );
+    }
+}
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
@@ -20,12 +36,8 @@ export function AuthProvider({ children }) {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
     const queryClient = useQueryClient();
+    const { tenantSlug } = useTenant();
 
-    // Tracks the plan_code we last saw so a resync only drops the cached
-    // plan-features permissions when the plan actually changed (an admin
-    // edit, a completed checkout, or switching to a different organizer
-    // account) — not on every focus/storage resync, which would defeat the
-    // point of usePlanFeatures' staleTime.
     const planCodeRef = useRef(null);
     const syncPlanFeaturesCache = useCallback(
         (planCode) => {
@@ -47,7 +59,6 @@ export function AuthProvider({ children }) {
     );
 
     const checkSession = useCallback(async () => {
-        // Skip /me when there is no token; saves a 401 round-trip on cold load.
         if (!tokenStore.access) {
             setSession(null);
             setLoading(false);
@@ -66,12 +77,14 @@ export function AuthProvider({ children }) {
 
     useEffect(() => {
         checkSession();
-    }, [checkSession]);
+    }, [checkSession, tenantSlug]);
 
-    // Re-sync when another tab changes tokens (login/logout there).
     useEffect(() => {
         const onStorage = (e) => {
-            if (e.key === "tys_access_token") {
+            if (
+                e.key === "tys_access_token" ||
+                (e.key && e.key.startsWith("tys_buyer_access."))
+            ) {
                 checkSession();
             }
         };
@@ -79,7 +92,6 @@ export function AuthProvider({ children }) {
         return () => window.removeEventListener("storage", onStorage);
     }, [checkSession]);
 
-    // Re-sync when returning to a tab that may show stale role state.
     useEffect(() => {
         const onFocus = () => {
             if (tokenStore.access) checkSession();
@@ -105,14 +117,14 @@ export function AuthProvider({ children }) {
         return () => window.removeEventListener("tys:unauthorized", handler);
     }, [setSession]);
 
-    // `allowRole`, when given, is checked BEFORE any token/session is
-    // persisted — a wrong-role login (e.g. an organizer on /admin/login)
-    // never touches localStorage or React state, so there's no window where
-    // a rejected session is briefly live (readable by this tab's own UI, or
-    // broadcast to other open tabs via the storage event).
     const login = useCallback(
-        async (email, password, allowRole) => {
-            const { data } = await api.post("/auth/login", { email, password });
+        async (email, password, allowRole, options: { tenantSlug?: string } = {}) => {
+            const body: { email: string; password: string; tenant_slug?: string } = {
+                email,
+                password,
+            };
+            if (options.tenantSlug) body.tenant_slug = options.tenantSlug;
+            const { data } = await api.post("/auth/login", body);
             if (allowRole && !allowRole(data.user?.role)) {
                 const err: Error & { roleRejected?: boolean } = new Error(
                     "Role not allowed for this login form",
@@ -120,12 +132,7 @@ export function AuthProvider({ children }) {
                 err.roleRejected = true;
                 throw err;
             }
-            if (data.access_token) {
-                tokenStore.set({
-                    access_token: data.access_token,
-                    refresh_token: data.refresh_token,
-                });
-            }
+            persistTokens(data);
             setSession(data);
             return data;
         },
@@ -135,12 +142,27 @@ export function AuthProvider({ children }) {
     const register = useCallback(
         async (payload) => {
             const { data } = await api.post("/auth/register", payload);
-            if (data.access_token) {
-                tokenStore.set({
-                    access_token: data.access_token,
-                    refresh_token: data.refresh_token,
-                });
-            }
+            persistTokens(data);
+            setSession(data);
+            return data;
+        },
+        [setSession],
+    );
+
+    const registerBuyer = useCallback(
+        async (payload) => {
+            const { data } = await api.post("/auth/register-buyer", payload);
+            persistTokens(data);
+            setSession(data);
+            return data;
+        },
+        [setSession],
+    );
+
+    const loginSocial = useCallback(
+        async (payload) => {
+            const { data } = await api.post("/auth/social", payload);
+            persistTokens(data);
             setSession(data);
             return data;
         },
@@ -148,28 +170,22 @@ export function AuthProvider({ children }) {
     );
 
     const logout = useCallback(async () => {
-        // Capture before clearing — super_admin has its own login entry
-        // point (/admin/login), so logging out from the admin panel must
-        // land there, not on the organizer form.
         const wasAdmin = user?.role === "super_admin";
+        const wasBuyer = user?.role === "buyer";
         try {
             await api.post("/auth/logout");
         } catch (err) {
-            // Server-side logout is best-effort; we always clear the local
-            // session below so the user ends up logged out either way.
             console.warn("Logout API call failed (clearing local session anyway):", err?.message);
         }
-        tokenStore.clear();
+        if (wasBuyer) {
+            tokenStore.clear({ kind: "buyer", tenantSlug: user?.tenant_slug || tenantSlug });
+        } else {
+            tokenStore.clear({ kind: "platform" });
+        }
         setSession(null);
-        navigate(wasAdmin ? "/admin/login" : "/login", { replace: true });
-    }, [navigate, setSession, user]);
+        navigate(wasAdmin ? "/admin/login" : wasBuyer ? "/" : "/login", { replace: true });
+    }, [navigate, setSession, user, tenantSlug]);
 
-    // Swallows errors by default (most callers just want a best-effort UI
-    // sync after an action that already succeeded on its own). Callers that
-    // need to know the refresh actually landed before proceeding — e.g. any
-    // flow that navigates somewhere gated on the fresh organizer state —
-    // should pass `{ throwOnError: true }` instead of treating a resolved
-    // promise as success.
     const refreshOrganizer = useCallback(async ({ throwOnError = false } = {}) => {
         try {
             const { data } = await api.get("/organizers/me");
@@ -177,12 +193,17 @@ export function AuthProvider({ children }) {
             syncPlanFeaturesCache(data?.plan_code);
             return data;
         } catch (err) {
-            // Organizer profile is optional (e.g. super-admin user).
-            // Surface to dev console without spamming the user.
             console.warn("refreshOrganizer failed:", err?.message);
             if (throwOnError) throw err;
         }
     }, [syncPlanFeaturesCache]);
+
+    const belongsToCurrentTenant = useMemo(() => {
+        if (!user || !tenantSlug) return false;
+        if (user.role === "buyer") return user.tenant_slug === tenantSlug;
+        if (user.role === "organizer") return organizer?.slug === tenantSlug;
+        return false;
+    }, [user, organizer, tenantSlug]);
 
     const value = useMemo(
         () => ({
@@ -192,14 +213,30 @@ export function AuthProvider({ children }) {
             isAuthenticated: !!user,
             isAdmin: user?.role === "super_admin",
             isOrganizer: user?.role === "organizer",
+            isBuyer: user?.role === "buyer",
+            belongsToCurrentTenant,
             login,
             register,
+            registerBuyer,
+            loginSocial,
             logout,
             refreshOrganizer,
             checkSession,
             formatApiError,
         }),
-        [user, organizer, loading, login, register, logout, refreshOrganizer, checkSession],
+        [
+            user,
+            organizer,
+            loading,
+            belongsToCurrentTenant,
+            login,
+            register,
+            registerBuyer,
+            loginSocial,
+            logout,
+            refreshOrganizer,
+            checkSession,
+        ],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

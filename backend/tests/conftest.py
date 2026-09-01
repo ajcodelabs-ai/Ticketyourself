@@ -27,9 +27,17 @@ EVENT_MANUAL_SLUG = "funcion-especial-demo-numerado"
 EVENT_STRIPE_ONLY_SLUG = "conferencia-marketing-digital"
 
 
-def login(session: requests.Session, email: str, password: str) -> str:
+def login(
+    session: requests.Session,
+    email: str,
+    password: str,
+    tenant_slug: str | None = None,
+) -> str:
     """Authenticate session and return access_token."""
-    r = session.post(f"{API}/auth/login", json={"email": email, "password": password})
+    body: dict = {"email": email, "password": password}
+    if tenant_slug:
+        body["tenant_slug"] = tenant_slug
+    r = session.post(f"{API}/auth/login", json=body)
     r.raise_for_status()
     token = r.json()["access_token"]
     session.cookies.clear()
@@ -54,6 +62,44 @@ def unique_buyer(label: str = "buyer") -> dict:
         "document_id": "9999999999",
         "document_type": "cédula",
     }
+
+
+BUYER_PASSWORD = "Buyer123!"
+
+
+def register_buyer_client(
+    buyer: dict | None = None,
+    password: str = BUYER_PASSWORD,
+    tenant_slug: str = DEMO_TENANT,
+):
+    """Register a buyer (or log in if the email already exists) and return (session, buyer)."""
+    buyer = buyer or unique_buyer()
+    s = new_session()
+    r = s.post(
+        f"{API}/auth/register-buyer",
+        json={
+            "name": buyer["name"],
+            "email": buyer["email"],
+            "password": password,
+            "phone": buyer.get("phone"),
+            "tenant_slug": tenant_slug,
+        },
+    )
+    if r.status_code == 409:
+        login(s, buyer["email"], password, tenant_slug=tenant_slug)
+        return s, buyer
+    r.raise_for_status()
+    token = r.json()["access_token"]
+    s.headers.update(
+        {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    )
+    return s, buyer
+
+
+def place_order(body: dict, **kwargs):
+    """POST /public/orders as a freshly registered buyer matching body['buyer']."""
+    s, _ = register_buyer_client(body.get("buyer"))
+    return s.post(f"{API}/public/orders", json=body, **kwargs)
 
 
 def register_organizer_payload(**overrides) -> dict:

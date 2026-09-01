@@ -5,7 +5,16 @@ import { useAuth } from "@/contexts/AuthContext";
 
 export default function PublicLayout({ children }) {
     const { isAuthenticated, isAdmin, isOrganizer } = useAuth();
-    const dashboardHref = isAdmin ? "/admin/organizadores" : "/app/dashboard";
+    const dashboardHref = isAdmin
+        ? "/admin/organizadores"
+        : isOrganizer
+          ? "/app/dashboard"
+          : "/cuenta";
+    const dashboardLabel = isAdmin
+        ? "panel admin"
+        : isOrganizer
+          ? "dashboard"
+          : "tus entradas";
 
     return (
         <div className="min-h-screen flex flex-col bg-background">
@@ -33,7 +42,7 @@ export default function PublicLayout({ children }) {
                                 data-testid="nav-go-dashboard"
                             >
                                 <Link to={dashboardHref}>
-                                    Ir al {isAdmin ? "panel admin" : "dashboard"}
+                                    Ir al {dashboardLabel}
                                 </Link>
                             </Button>
                         ) : (
@@ -43,7 +52,7 @@ export default function PublicLayout({ children }) {
                                     variant="ghost"
                                     size="sm"
                                     data-testid="nav-login"
-                                    title="Organizadores y administradores con cuenta existente"
+                                    title="Compradores, organizadores y administradores"
                                 >
                                     <Link to="/login">Ya tengo cuenta</Link>
                                 </Button>

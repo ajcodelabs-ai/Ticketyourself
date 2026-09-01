@@ -8,8 +8,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import PasswordInput from "@/components/ui/password-input";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTenant } from "@/contexts/TenantContext";
 import { formatApiError } from "@/lib/api";
+import { defaultPathForRole, pathFromLocationState, safeInternalPath } from "@/lib/authRedirect";
 import { Loader2 } from "lucide-react";
+import SocialAuthButtons from "@/components/auth/SocialAuthButtons";
 
 // Shared by the organizer (/login) and super-admin (/admin/login) entry
 // points — same form shape, different role guard/branding/destination.
@@ -21,6 +24,7 @@ export default function LoginForm({
     allowRole,
     rejectMessage,
     defaultRedirect,
+    redirectForRole = undefined,
     icon,
     title,
     description,
@@ -28,8 +32,11 @@ export default function LoginForm({
     submitLabel,
     submitClassName,
     footer,
+    skipTenant = false,
+    showSocial = false,
 }) {
     const { login } = useAuth();
+    const { tenantSlug } = useTenant();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [submitting, setSubmitting] = useState(false);
@@ -40,10 +47,21 @@ export default function LoginForm({
         e.preventDefault();
         setSubmitting(true);
         try {
-            const data = await login(email.trim().toLowerCase(), password, allowRole);
+            const data = await login(
+                email.trim().toLowerCase(),
+                password,
+                allowRole,
+                skipTenant ? {} : { tenantSlug },
+            );
             toast.success("Bienvenido");
-            const from = location.state?.from?.pathname;
-            navigate(from || defaultRedirect, { replace: true });
+            const fromState = pathFromLocationState(location.state?.from);
+            const nextParam = safeInternalPath(
+                new URLSearchParams(location.search).get("next"),
+            );
+            navigate(
+                fromState || nextParam || redirectForRole?.(data.user?.role) || defaultRedirect || defaultPathForRole(data.user?.role),
+                { replace: true },
+            );
         } catch (err) {
             if (err?.roleRejected) {
                 toast.error(rejectMessage);
@@ -64,6 +82,11 @@ export default function LoginForm({
                     <CardDescription>{description}</CardDescription>
                 </CardHeader>
                 <CardContent>
+                    {showSocial ? (
+                        <div className="mb-4">
+                            <SocialAuthButtons />
+                        </div>
+                    ) : null}
                     <form onSubmit={submit} className="space-y-4">
                         <div className="space-y-2">
                             <Label htmlFor={`${testIdPrefix}-email-input`}>Email</Label>
