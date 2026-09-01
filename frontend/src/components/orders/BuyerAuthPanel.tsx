@@ -9,10 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import PasswordInput from "@/components/ui/password-input";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTenantSlug } from "@/contexts/TenantContext";
 import { formatApiError } from "@/lib/api";
+import SocialAuthButtons from "@/components/auth/SocialAuthButtons";
 
 export default function BuyerAuthPanel({ onAuthenticated = undefined }) {
     const { login, registerBuyer } = useAuth();
+    const tenantSlug = useTenantSlug();
     const [mode, setMode] = useState("login");
     const [submitting, setSubmitting] = useState(false);
     const [form, setForm] = useState({
@@ -26,6 +29,10 @@ export default function BuyerAuthPanel({ onAuthenticated = undefined }) {
         e.preventDefault();
         setSubmitting(true);
         try {
+            if (!tenantSlug) {
+                toast.error("Abrí la página del organizador para crear tu cuenta.");
+                return;
+            }
             if (mode === "register") {
                 if (form.name.trim().length < 2) {
                     toast.error("Ingresá tu nombre.");
@@ -43,10 +50,13 @@ export default function BuyerAuthPanel({ onAuthenticated = undefined }) {
                     name: form.name.trim(),
                     email: form.email.trim().toLowerCase(),
                     password: form.password,
+                    tenant_slug: tenantSlug,
                 });
                 toast.success("Cuenta creada");
             } else {
-                await login(form.email.trim().toLowerCase(), form.password, (role) => role !== "super_admin");
+                await login(form.email.trim().toLowerCase(), form.password, (role) => role !== "super_admin", {
+                    tenantSlug,
+                });
                 toast.success("Bienvenido");
             }
             onAuthenticated?.();
@@ -64,8 +74,8 @@ export default function BuyerAuthPanel({ onAuthenticated = undefined }) {
     return (
         <div className="space-y-4" data-testid="buyer-auth-panel">
             <div className="rounded-xl border bg-secondary/40 p-3 text-sm">
-                Para comprar entradas necesitás una cuenta. Es gratis y te permite ver tus
-                tickets cuando quieras.
+                Para comprar entradas en esta página necesitás una cuenta. Es gratis
+                y te permite ver tus tickets acá — en otra productora te registrás aparte.
             </div>
             <div className="flex rounded-lg border p-0.5 bg-muted/40">
                 <button
@@ -85,6 +95,7 @@ export default function BuyerAuthPanel({ onAuthenticated = undefined }) {
                     Crear cuenta
                 </button>
             </div>
+            <SocialAuthButtons onAuthenticated={onAuthenticated} />
             <form onSubmit={submit} className="space-y-3">
                 {mode === "register" && (
                     <div className="space-y-1.5">

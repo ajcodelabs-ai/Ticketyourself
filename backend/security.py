@@ -166,7 +166,7 @@ def require_role(*roles: UserRole):
     return dep
 
 
-# Organizers can also buy tickets with the same account (email is unique).
+# Organizers can buy on their own page; buyers only on the org they registered with.
 PURCHASE_ROLES = ("buyer", "organizer")
 
 
@@ -178,6 +178,15 @@ async def require_purchase_account(user: dict = Depends(get_current_user)) -> di
             detail="Iniciá sesión con tu cuenta de comprador para comprar entradas.",
         )
     return user
+
+
+def assert_purchase_on_organizer(user: dict, organizer_id: str) -> None:
+    """A buyer/organizer JWT is only valid on the organizer page it belongs to."""
+    if user.get("organizer_id") != organizer_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Esta cuenta no pertenece a esta página. Registrate o iniciá sesión acá.",
+        )
 
 
 async def get_refresh_payload(request: Request) -> dict:

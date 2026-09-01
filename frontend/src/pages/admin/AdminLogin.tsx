@@ -18,6 +18,7 @@ export default function AdminLogin() {
             submitIcon={<ShieldCheck className="h-4 w-4 mr-2" />}
             submitLabel="Entrar al panel"
             submitClassName="w-full bg-zinc-900 hover:bg-zinc-800 text-white"
+            skipTenant
             footer={
                 <p className="text-sm text-muted-foreground text-center">
                     ¿Eres organizador?{" "}

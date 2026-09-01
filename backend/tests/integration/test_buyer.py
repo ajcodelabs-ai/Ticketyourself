@@ -22,6 +22,8 @@ class TestBuyerAuth:
         assert body["user"]["email"] == buyer["email"]
         assert body["user"]["display_name"] == buyer["name"]
         assert body["organizer"] is None
+        assert body["user"]["tenant_slug"] == DEMO_TENANT
+        assert body["user"]["organizer_id"]
 
     def test_duplicate_email_409(self):
         buyer = unique_buyer("dup")
@@ -33,9 +35,53 @@ class TestBuyerAuth:
                 "name": buyer["name"],
                 "email": buyer["email"],
                 "password": "Buyer123!",
+                "tenant_slug": DEMO_TENANT,
             },
         )
         assert r.status_code == 409
+
+    def test_same_email_other_org_ok(self):
+        buyer = unique_buyer("cross")
+        register_buyer_client(buyer, tenant_slug=DEMO_TENANT)
+        s = new_session()
+        r = s.post(
+            f"{API}/auth/register-buyer",
+            json={
+                "name": buyer["name"],
+                "email": buyer["email"],
+                "password": "Buyer123!",
+                "tenant_slug": "prueba-eventos",
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["user"]["tenant_slug"] == "prueba-eventos"
+        assert r.json()["user"]["email"] == buyer["email"]
+
+    def test_login_requires_tenant_for_buyer(self):
+        buyer = unique_buyer("needten")
+        register_buyer_client(buyer)
+        s = new_session()
+        r = s.post(
+            f"{API}/auth/login",
+            json={"email": buyer["email"], "password": "Buyer123!"},
+        )
+        assert r.status_code == 401
+
+    def test_login_with_tenant(self):
+        buyer = unique_buyer("withten")
+        register_buyer_client(buyer)
+        s = new_session()
+        r = s.post(
+            f"{API}/auth/login",
+            json={
+                "email": buyer["email"],
+                "password": "Buyer123!",
+                "tenant_slug": DEMO_TENANT,
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["user"]["role"] == "buyer"
+        assert r.json()["user"]["tenant_slug"] == DEMO_TENANT
 
     def test_buyer_cannot_access_organizer_dashboard(self):
         s, _ = register_buyer_client()

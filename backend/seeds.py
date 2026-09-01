@@ -380,11 +380,16 @@ async def _seed_admin(*, overwrite_password: bool | None = None) -> None:
 
 async def _seed_demo_buyer() -> None:
     """Lightweight attendee account so /cuenta has a login in local/demo."""
+    organizer = await get_organizer_by_slug("demo-org")
+    org_id = organizer["id"] if organizer else None
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(User).where(User.email == DEMO_BUYER_EMAIL)
+        existing = await session.scalar(
+            select(User).where(
+                User.email == DEMO_BUYER_EMAIL,
+                User.role == "buyer",
+                User.organizer_id == org_id if org_id else User.organizer_id.is_(None),
+            )
         )
-        existing = result.scalar_one_or_none()
         now = datetime.now(timezone.utc)
         if existing is None:
             session.add(
@@ -393,6 +398,7 @@ async def _seed_demo_buyer() -> None:
                     email=DEMO_BUYER_EMAIL,
                     password_hash=hash_password(DEMO_BUYER_PASSWORD),
                     role="buyer",
+                    organizer_id=org_id,
                     display_name="Comprador Demo",
                     phone="+593999000111",
                     created_at=now,
@@ -400,13 +406,16 @@ async def _seed_demo_buyer() -> None:
                 )
             )
             await session.commit()
-            logger.info("Seeded demo buyer %s", DEMO_BUYER_EMAIL)
+            logger.info("Seeded demo buyer %s on demo-org", DEMO_BUYER_EMAIL)
             return
         existing.role = "buyer"
+        if org_id and not existing.organizer_id:
+            existing.organizer_id = org_id
         if not existing.display_name:
             existing.display_name = "Comprador Demo"
-        if demo_seed_enabled() and not verify_password(
-            DEMO_BUYER_PASSWORD, existing.password_hash
+        if demo_seed_enabled() and (
+            not existing.password_hash
+            or not verify_password(DEMO_BUYER_PASSWORD, existing.password_hash)
         ):
             existing.password_hash = hash_password(DEMO_BUYER_PASSWORD)
         await session.commit()
@@ -415,7 +424,12 @@ async def _seed_demo_buyer() -> None:
 async def _seed_demo_buyer_tickets() -> None:
     """Paid tickets on the free demo event so the buyer dashboard isn't empty."""
     async with AsyncSessionLocal() as session:
-        buyer = await session.scalar(select(User).where(User.email == DEMO_BUYER_EMAIL))
+        buyer = await session.scalar(
+            select(User).where(
+                User.email == DEMO_BUYER_EMAIL,
+                User.role == "buyer",
+            )
+        )
         if not buyer:
             return
         buyer_id = buyer.id
@@ -611,7 +625,10 @@ async def _seed_demo_organizers() -> None:
 
         for od in DEMO_ORGANIZERS:
             user_check = await session.execute(
-                select(User).where(User.email == od["user_email"].lower())
+                select(User).where(
+                    User.email == od["user_email"].lower(),
+                    User.role.in_(("organizer", "super_admin")),
+                )
             )
             if user_check.scalar_one_or_none():
                 continue
@@ -747,7 +764,10 @@ async def _reset_demo_organizers() -> None:
 
         for od in DEMO_ORGANIZERS:
             user_result = await session.execute(
-                select(User).where(User.email == od["user_email"].lower())
+                select(User).where(
+                    User.email == od["user_email"].lower(),
+                    User.role.in_(("organizer", "super_admin")),
+                )
             )
             user_row = user_result.scalar_one_or_none()
             if not user_row or not user_row.organizer_id:

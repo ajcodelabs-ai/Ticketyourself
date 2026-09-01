@@ -24,7 +24,7 @@ from db_helpers import (
     row_to_dict,
 )
 from orm_models import Organizer
-from security import require_purchase_account
+from security import assert_purchase_on_organizer, require_purchase_account
 from services import discount_service, order_service
 from services.event_venue import resolve_event_venue
 from services.pdf_service import render_ticket_pdf
@@ -278,6 +278,7 @@ async def create_order(
     user: dict = Depends(require_purchase_account),
 ):
     organizer, event = await _load_event_or_404(payload.tenant_slug, payload.event_slug)
+    assert_purchase_on_organizer(user, organizer["id"])
     if event["status"] != "published":
         raise HTTPException(409, "El evento no está disponible para compra")
 

@@ -10,11 +10,14 @@ import { Label } from "@/components/ui/label";
 import PasswordInput from "@/components/ui/password-input";
 import PhoneInput from "@/components/ui/phone-input";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTenantSlug } from "@/contexts/TenantContext";
 import { formatApiError } from "@/lib/api";
 import { defaultPathForRole, pathFromLocationState, safeInternalPath } from "@/lib/authRedirect";
+import SocialAuthButtons from "@/components/auth/SocialAuthButtons";
 
 export default function RegisterBuyer() {
     const { registerBuyer } = useAuth();
+    const tenantSlug = useTenantSlug();
     const navigate = useNavigate();
     const location = useLocation();
     const [form, setForm] = useState({
@@ -42,11 +45,16 @@ export default function RegisterBuyer() {
         }
         setSubmitting(true);
         try {
+            if (!tenantSlug) {
+                toast.error("Abrí la página del organizador para crear tu cuenta.");
+                return;
+            }
             const data = await registerBuyer({
                 name: form.name.trim(),
                 email: form.email.trim().toLowerCase(),
                 password: form.password,
                 phone: form.phone || undefined,
+                tenant_slug: tenantSlug,
             });
             toast.success("Cuenta creada. Ya podés comprar entradas.");
             const fromState = pathFromLocationState(location.state?.from);
@@ -75,11 +83,14 @@ export default function RegisterBuyer() {
                     </div>
                     <CardTitle className="text-2xl">Creá tu cuenta</CardTitle>
                     <CardDescription>
-                        Registrarte es gratis. Vas a poder comprar entradas y verlas siempre
-                        que quieras.
+                        Esta cuenta vale solo para esta página. En otra productora
+                        te registrás aparte — es gratis.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
+                    <div className="mb-4">
+                        <SocialAuthButtons />
+                    </div>
                     <form onSubmit={submit} className="space-y-4">
                         <div className="space-y-2">
                             <Label htmlFor="buyer-reg-name">Nombre completo</Label>

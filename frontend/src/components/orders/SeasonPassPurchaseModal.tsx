@@ -27,8 +27,10 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass, event, tenantSlug }) {
     const navigate = useNavigate();
-    const { user, isAuthenticated, isBuyer, isOrganizer, isAdmin } = useAuth();
-    const canPurchase = isAuthenticated && (isBuyer || isOrganizer);
+    const { user, isBuyer, isOrganizer, isAdmin, organizer } = useAuth();
+    const canPurchase =
+        (isBuyer && user?.tenant_slug === tenantSlug) ||
+        (isOrganizer && organizer?.slug === tenantSlug);
     const [buyer, setBuyer] = useState({ name: "", email: "", phone: "", document_id: "" });
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);

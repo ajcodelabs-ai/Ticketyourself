@@ -15,12 +15,14 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Sequence,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -59,17 +61,58 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(String(36), primary_key=True, default=_uuid4)
-    email = Column(String(254), unique=True, nullable=False, index=True)
-    password_hash = Column(Text, nullable=False)
+    # Not globally unique: buyers are per-organizer (same email on org A and org B).
+    # Partial unique indexes: platform emails; (organizer_id, email) for buyers.
+    email = Column(String(254), nullable=False, index=True)
+    # Nullable so a buyer who only signed in with Google/Apple has no password.
+    password_hash = Column(Text, nullable=True)
     role = Column(String(20), nullable=False, default="organizer")
-    # FK to organizers added in Phase 2; kept nullable TEXT for now so
-    # the column exists and auth can write it without a FK constraint error.
+    # Organizer/super_admin: the org they run. Buyer: the org they registered on.
     organizer_id = Column(String(36), nullable=True)
     display_name = Column(String(140), nullable=True)
     phone = Column(String(40), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     last_login = Column(DateTime(timezone=True), nullable=True)
     token_version = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        Index(
+            "uq_users_platform_email",
+            func.lower(email),
+            unique=True,
+            postgresql_where=text("role IN ('organizer', 'super_admin')"),
+        ),
+        Index(
+            "uq_users_buyer_org_email",
+            "organizer_id",
+            func.lower(email),
+            unique=True,
+            postgresql_where=text("role = 'buyer'"),
+        ),
+    )
+
+
+class UserOAuthIdentity(Base):
+    """Social login (Google, Apple, …) scoped to an organizer page for buyers."""
+
+    __tablename__ = "user_oauth_identities"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    organizer_id = Column(String(36), nullable=False, index=True)
+    provider = Column(String(20), nullable=False)
+    provider_subject = Column(String(255), nullable=False)
+    email = Column(String(254), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "organizer_id",
+            "provider",
+            "provider_subject",
+            name="uq_oauth_org_provider_sub",
+        ),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

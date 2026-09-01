@@ -25,9 +25,16 @@ from models import (
     RegisterRequest,
     RegistrationCountryOut,
     SlugCheckResponse,
+    SocialLoginRequest,
     UserOut,
 )
-from orm_models import Organizer, OrganizerAdminComment, Tenant, TicketOrder, User
+from orm_models import (
+    Organizer,
+    Tenant,
+    TicketOrder,
+    User,
+    UserOAuthIdentity,
+)
 from security import (
     clear_auth_cookies,
     create_access_token,
@@ -40,6 +47,11 @@ from security import (
 )
 from services.activation import create_activation_token, ensure_activation_record
 from services.email_service import send_welcome_email
+from services.oauth import (
+    display_name_from_social,
+    enabled_social_providers,
+    verify_social_token,
+)
 from services.registration_countries import (
     get_country,
     list_countries,
@@ -52,8 +64,12 @@ logger = logging.getLogger("tys.auth")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _user_row_to_out(row: User) -> UserOut:
-    return UserOut(**row_to_dict(row))
+def _user_row_to_out(row: User, tenant_slug: Optional[str] = None) -> UserOut:
+    data = row_to_dict(row)
+    data.pop("password_hash", None)
+    if tenant_slug:
+        data["tenant_slug"] = tenant_slug
+    return UserOut(**data)
 
 
 def _org_row_to_out(row: Optional[Organizer]) -> Optional[OrganizerOut]:
@@ -62,27 +78,89 @@ def _org_row_to_out(row: Optional[Organizer]) -> Optional[OrganizerOut]:
     return OrganizerOut(**organizer_row_to_dict(row))
 
 
+async def _organizer_by_slug(session: AsyncSession, slug: str) -> Organizer:
+    clean = (slug or "").strip().lower()
+    if not clean:
+        raise HTTPException(
+            status_code=400, detail="Falta la página del organizador (tenant_slug)."
+        )
+    row = await session.scalar(select(Organizer).where(Organizer.slug == clean))
+    if not row:
+        raise HTTPException(
+            status_code=404, detail="Página de organizador no encontrada."
+        )
+    return row
+
+
+async def _find_buyer(
+    session: AsyncSession, email: str, organizer_id: str
+) -> Optional[User]:
+    return await session.scalar(
+        select(User).where(
+            func.lower(User.email) == email,
+            User.role == "buyer",
+            User.organizer_id == organizer_id,
+        )
+    )
+
+
+async def _find_platform_user(session: AsyncSession, email: str) -> Optional[User]:
+    return await session.scalar(
+        select(User).where(
+            func.lower(User.email) == email,
+            User.role.in_(("organizer", "super_admin")),
+        )
+    )
+
+
+async def _slug_for_user(session: AsyncSession, row: User) -> Optional[str]:
+    if not row.organizer_id:
+        return None
+    return await session.scalar(
+        select(Organizer.slug).where(Organizer.id == row.organizer_id)
+    )
+
+
+def _issue_auth(
+    response: Response,
+    user_row: User,
+    org_row: Optional[Organizer],
+    tenant_slug: Optional[str],
+) -> AuthMeResponse:
+    access = create_access_token(user_row.id, user_row.email, user_row.role)
+    refresh = create_refresh_token(user_row.id, user_row.token_version or 0)
+    set_auth_cookies(response, access, refresh)
+    return AuthMeResponse(
+        user=_user_row_to_out(user_row, tenant_slug),
+        organizer=_org_row_to_out(org_row) if user_row.role != "buyer" else None,
+        access_token=access,
+        refresh_token=refresh,
+    )
+
+
 async def _claim_guest_purchases(
-    session: AsyncSession, user_id: str, email: str
+    session: AsyncSession, user_id: str, email: str, organizer_id: Optional[str] = None
 ) -> None:
     """Attach leftover guest orders/abonos (same email, no user yet) to this account."""
     from orm_models import SeasonPassPurchase
 
+    order_filters = [
+        func.lower(TicketOrder.buyer_email) == email,
+        TicketOrder.buyer_user_id.is_(None),
+    ]
+    pass_filters = [
+        func.lower(SeasonPassPurchase.buyer_email) == email,
+        SeasonPassPurchase.buyer_user_id.is_(None),
+    ]
+    if organizer_id:
+        order_filters.append(TicketOrder.organizer_id == organizer_id)
+        pass_filters.append(SeasonPassPurchase.organizer_id == organizer_id)
+
     await session.execute(
-        sa_update(TicketOrder)
-        .where(
-            func.lower(TicketOrder.buyer_email) == email,
-            TicketOrder.buyer_user_id.is_(None),
-        )
-        .values(buyer_user_id=user_id)
+        sa_update(TicketOrder).where(*order_filters).values(buyer_user_id=user_id)
     )
     await session.execute(
-        sa_update(SeasonPassPurchase)
-        .where(
-            func.lower(SeasonPassPurchase.buyer_email) == email,
-            SeasonPassPurchase.buyer_user_id.is_(None),
-        )
-        .values(buyer_user_id=user_id)
+        sa_update(SeasonPassPurchase).where(*pass_filters).values(buyer_user_id=user_id)
     )
 
 
@@ -134,8 +212,8 @@ async def register(
 ):
     email = payload.email.lower().strip()
 
-    existing = await session.execute(select(User).where(User.email == email))
-    if existing.scalar_one_or_none():
+    existing = await _find_platform_user(session, email)
+    if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
 
     # Resolve country (ISO-2 preferred; fall back to display name → EC)
@@ -280,19 +358,10 @@ async def register(
     # Reload with relationships for response
     await session.refresh(org_row, ["admin_comments"])
 
-    access = create_access_token(user_row.id, user_row.email, user_row.role)
-    refresh = create_refresh_token(user_row.id, user_row.token_version or 0)
-    set_auth_cookies(response, access, refresh)
-
-    return AuthMeResponse(
-        user=_user_row_to_out(user_row),
-        organizer=_org_row_to_out(org_row),
-        access_token=access,
-        refresh_token=refresh,
-    )
+    return _issue_auth(response, user_row, org_row, slug)
 
 
-# ── Buyer register (lightweight — no organizer / tenant) ──────────────────────
+# ── Buyer register (per organizer page) ───────────────────────────────────────
 
 
 @router.post("/register-buyer", response_model=AuthMeResponse)
@@ -302,11 +371,12 @@ async def register_buyer(
     session: AsyncSession = Depends(get_db),
 ):
     email = payload.email.lower().strip()
-    existing = await session.execute(select(User).where(User.email == email))
-    if existing.scalar_one_or_none():
+    org_row = await _organizer_by_slug(session, payload.tenant_slug)
+    existing = await _find_buyer(session, email, org_row.id)
+    if existing:
         raise HTTPException(
             status_code=409,
-            detail="Este email ya tiene una cuenta. Iniciá sesión para comprar.",
+            detail="Este email ya tiene una cuenta en esta página. Iniciá sesión para comprar.",
         )
 
     now = datetime.now(timezone.utc)
@@ -315,25 +385,24 @@ async def register_buyer(
         email=email,
         password_hash=hash_password(payload.password),
         role="buyer",
+        organizer_id=org_row.id,
         display_name=payload.name.strip()[:140],
         phone=(payload.phone or "").strip()[:40] or None,
         created_at=now,
         last_login=now,
     )
     session.add(user_row)
-    await session.flush()
-    await _claim_guest_purchases(session, user_row.id, email)
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Este email ya tiene una cuenta en esta página. Iniciá sesión para comprar.",
+        )
+    await _claim_guest_purchases(session, user_row.id, email, org_row.id)
 
-    access = create_access_token(user_row.id, user_row.email, user_row.role)
-    refresh = create_refresh_token(user_row.id, user_row.token_version or 0)
-    set_auth_cookies(response, access, refresh)
-
-    return AuthMeResponse(
-        user=_user_row_to_out(user_row),
-        organizer=None,
-        access_token=access,
-        refresh_token=refresh,
-    )
+    return _issue_auth(response, user_row, None, org_row.slug)
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -346,36 +415,55 @@ async def login(
     session: AsyncSession = Depends(get_db),
 ):
     email = payload.email.lower().strip()
+    tenant_slug = (payload.tenant_slug or "").strip().lower() or None
 
-    result = await session.execute(select(User).where(User.email == email))
-    user_row = result.scalar_one_or_none()
-    if not user_row or not verify_password(payload.password, user_row.password_hash):
+    user_row: Optional[User] = None
+    org_for_page: Optional[Organizer] = None
+    if tenant_slug:
+        org_for_page = await _organizer_by_slug(session, tenant_slug)
+        candidate = await _find_platform_user(session, email)
+        if candidate and candidate.organizer_id == org_for_page.id:
+            user_row = candidate
+        else:
+            user_row = await _find_buyer(session, email, org_for_page.id)
+
+    if user_row is None:
+        user_row = await _find_platform_user(session, email)
+
+    if (
+        not user_row
+        or not user_row.password_hash
+        or not verify_password(payload.password, user_row.password_hash)
+    ):
         raise HTTPException(status_code=401, detail="Email o contraseña incorrectos")
 
-    access = create_access_token(user_row.id, user_row.email, user_row.role)
-    refresh = create_refresh_token(user_row.id, user_row.token_version or 0)
-    set_auth_cookies(response, access, refresh)
-
     user_row.last_login = datetime.now(timezone.utc)
-    await _claim_guest_purchases(session, user_row.id, email)
+    await _claim_guest_purchases(
+        session,
+        user_row.id,
+        email,
+        user_row.organizer_id if user_row.role == "buyer" else None,
+    )
 
     org_row = None
-    if user_row.organizer_id:
+    tenant_out = None
+    if user_row.role != "buyer" and user_row.organizer_id:
         org_result = await session.execute(
             select(Organizer)
             .where(Organizer.id == user_row.organizer_id)
             .options(selectinload(Organizer.admin_comments))
         )
         org_row = org_result.scalar_one_or_none()
+        tenant_out = org_row.slug if org_row else None
+    elif user_row.role == "buyer":
+        tenant_out = (
+            org_for_page.slug
+            if org_for_page
+            else await _slug_for_user(session, user_row)
+        )
 
     await session.flush()
-
-    return AuthMeResponse(
-        user=_user_row_to_out(user_row),
-        organizer=_org_row_to_out(org_row),
-        access_token=access,
-        refresh_token=refresh,
-    )
+    return _issue_auth(response, user_row, org_row, tenant_out)
 
 
 # ── Logout ────────────────────────────────────────────────────────────────────
@@ -426,6 +514,7 @@ async def me(
         raise HTTPException(status_code=401, detail="User not found")
 
     org_row = None
+    tenant_slug = None
     if user_row.organizer_id:
         org_result = await session.execute(
             select(Organizer)
@@ -433,8 +522,108 @@ async def me(
             .options(selectinload(Organizer.admin_comments))
         )
         org_row = org_result.scalar_one_or_none()
+        tenant_slug = org_row.slug if org_row else None
 
     return AuthMeResponse(
-        user=_user_row_to_out(user_row),
-        organizer=_org_row_to_out(org_row),
+        user=_user_row_to_out(user_row, tenant_slug),
+        organizer=_org_row_to_out(org_row) if user_row.role != "buyer" else None,
     )
+
+
+# ── Social login (Google / Apple) ─────────────────────────────────────────────
+
+
+@router.get("/social-providers")
+async def social_providers():
+    return {"providers": enabled_social_providers()}
+
+
+@router.post("/social", response_model=AuthMeResponse)
+async def social_login(
+    payload: SocialLoginRequest,
+    response: Response,
+    session: AsyncSession = Depends(get_db),
+):
+    org_row = await _organizer_by_slug(session, payload.tenant_slug)
+    identity = verify_social_token(payload.provider, payload.id_token)
+    subject = identity["subject"]
+    email = (identity.get("email") or (payload.email or "")).strip().lower()
+    name = display_name_from_social(identity.get("name") or "", email, payload.name)
+
+    linked = await session.scalar(
+        select(UserOAuthIdentity).where(
+            UserOAuthIdentity.organizer_id == org_row.id,
+            UserOAuthIdentity.provider == payload.provider,
+            UserOAuthIdentity.provider_subject == subject,
+        )
+    )
+    user_row: Optional[User] = None
+    if linked:
+        user_row = await session.scalar(select(User).where(User.id == linked.user_id))
+
+    if user_row is None and email:
+        user_row = await _find_buyer(session, email, org_row.id)
+        if user_row is None:
+            candidate = await _find_platform_user(session, email)
+            if candidate and candidate.organizer_id == org_row.id:
+                user_row = candidate
+
+    if user_row is None:
+        if not email:
+            raise HTTPException(
+                status_code=400,
+                detail="No pudimos obtener tu email. Autorizá el email en Google/Apple o registrate con contraseña.",
+            )
+        now = datetime.now(timezone.utc)
+        user_row = User(
+            id=str(uuid.uuid4()),
+            email=email,
+            password_hash=None,
+            role="buyer",
+            organizer_id=org_row.id,
+            display_name=name,
+            created_at=now,
+            last_login=now,
+        )
+        session.add(user_row)
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Este email ya tiene una cuenta en esta página. Iniciá sesión para comprar.",
+            )
+        await _claim_guest_purchases(session, user_row.id, email, org_row.id)
+
+    if linked is None:
+        session.add(
+            UserOAuthIdentity(
+                id=str(uuid.uuid4()),
+                user_id=user_row.id,
+                organizer_id=org_row.id,
+                provider=payload.provider,
+                provider_subject=subject,
+                email=email or user_row.email,
+            )
+        )
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Esta cuenta social ya está vinculada en esta página.",
+            )
+
+    user_row.last_login = datetime.now(timezone.utc)
+    org_out = None
+    if user_row.role != "buyer" and user_row.organizer_id:
+        org_result = await session.execute(
+            select(Organizer)
+            .where(Organizer.id == user_row.organizer_id)
+            .options(selectinload(Organizer.admin_comments))
+        )
+        org_out = org_result.scalar_one_or_none()
+    await session.flush()
+    return _issue_auth(response, user_row, org_out, org_row.slug)

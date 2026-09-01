@@ -132,8 +132,10 @@ export default function PurchaseModal({
     preSelectedFunctionId = null, preSelectedFunctionName = "",
 }) {
     const navigate = useNavigate();
-    const { user, isAuthenticated, isBuyer, isOrganizer, isAdmin } = useAuth();
-    const canPurchase = isAuthenticated && (isBuyer || isOrganizer);
+    const { user, isBuyer, isOrganizer, isAdmin, organizer } = useAuth();
+    const canPurchase =
+        (isBuyer && user?.tenant_slug === tenantSlug) ||
+        (isOrganizer && organizer?.slug === tenantSlug);
     const pricingType = event?.pricing_type || "free";
     const optionalDonation = pricingType === "free" && !!event?.optional_donation_enabled;
     const isSeatNumbered = !!seatHoldsInfo;

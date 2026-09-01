@@ -37,7 +37,12 @@ from orm_models import (
     SeasonPassPurchase,
     TicketType,
 )
-from security import get_current_user, require_purchase_account, require_role
+from security import (
+    assert_purchase_on_organizer,
+    get_current_user,
+    require_purchase_account,
+    require_role,
+)
 from services import order_service, season_pass_service
 
 logger = logging.getLogger("tys.season_passes")
@@ -279,6 +284,7 @@ async def purchase_season_pass(
     user: dict = Depends(require_purchase_account),
 ):
     season_pass, event, organizer = await _load_pass_or_404(season_pass_id)
+    assert_purchase_on_organizer(user, organizer["id"])
     raw_buyer = payload.buyer.model_dump()
     raw_buyer["email"] = user["email"]
     if not (raw_buyer.get("name") or "").strip():

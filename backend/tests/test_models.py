@@ -123,8 +123,10 @@ class TestBuyerRegisterRequest:
             name="Ana Pérez",
             email="ana@example.com",
             password="12345678",
+            tenant_slug="demo-org",
         )
         assert r.name == "Ana Pérez"
+        assert r.tenant_slug == "demo-org"
 
     def test_short_password(self):
         from models import BuyerRegisterRequest
@@ -134,6 +136,7 @@ class TestBuyerRegisterRequest:
                 name="Ana",
                 email="ana@example.com",
                 password="short",
+                tenant_slug="demo-org",
             )
 
 
