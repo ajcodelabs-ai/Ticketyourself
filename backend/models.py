@@ -62,6 +62,11 @@ class RegisterRequest(BaseModel):
     uafe_declaration: Optional[Dict[str, Any]] = None
     org_references: Optional[List[Dict[str, Any]]] = None
     signup_plan_code: Optional[str] = Field(default=None, max_length=40)
+    # Ecuador SRI issuer — persisted into organizer.einvoice_config
+    legal_name: Optional[str] = Field(default=None, max_length=300)
+    legal_address: Optional[str] = Field(default=None, max_length=300)
+    establecimiento: Optional[str] = Field(default=None, max_length=3)
+    punto_emision: Optional[str] = Field(default=None, max_length=3)
 
 
 class LoginRequest(BaseModel):

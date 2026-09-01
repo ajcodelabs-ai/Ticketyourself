@@ -45,6 +45,7 @@ from security import (
     set_auth_cookies,
     verify_password,
 )
+from services import datil_service
 from services.activation import create_activation_token, ensure_activation_record
 from services.email_service import send_welcome_email
 from services.oauth import (
@@ -237,6 +238,25 @@ async def register(
         org_references=payload.org_references,
     )
 
+    einvoice_config = None
+    if country_code == "EC":
+        addr = (payload.legal_address or "").strip()
+        if len(addr) < 8:
+            raise HTTPException(
+                status_code=422,
+                detail="Dirección fiscal del establecimiento requerida para Ecuador",
+            )
+        einvoice_config = datil_service.einvoice_config_from_registration(
+            company_name=payload.company_name.strip(),
+            legal_id=payload.legal_id.strip(),
+            org_type=payload.org_type,
+            country_code=country_code,
+            legal_name=payload.legal_name,
+            legal_address=addr,
+            establecimiento=payload.establecimiento,
+            punto_emision=payload.punto_emision,
+        )
+
     if country_row.legal_id_pattern:
         if not re.match(country_row.legal_id_pattern, payload.legal_id.strip()):
             label = country_row.legal_id_label or "legal_id"
@@ -314,6 +334,7 @@ async def register(
             uafe_declaration=payload.uafe_declaration,
             org_references=payload.org_references,
             signup_plan_code=payload.signup_plan_code,
+            einvoice_config=einvoice_config,
             plan_id=None,
             plan_code=None,
             subscription_status="none",

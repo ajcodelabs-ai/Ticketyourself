@@ -19,7 +19,7 @@ function App() {
                             <AppRoutes />
                         </AuthProvider>
                     </TenantProvider>
-                    <Toaster richColors position="top-right" />
+                    <Toaster richColors position="bottom-right" />
                 </BrowserRouter>
             </QueryClientProvider>
         </div>

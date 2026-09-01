@@ -62,6 +62,7 @@ class BuyerIn(BaseModel):
     phone: Optional[str] = Field(default=None, max_length=40)
     document_id: Optional[str] = Field(default=None, max_length=40)
     document_type: Optional[str] = Field(default=None, max_length=20)
+    address: Optional[str] = Field(default=None, max_length=300)
 
 
 class TicketTypeSelection(BaseModel):
@@ -1028,6 +1029,12 @@ async def get_order(
     event = await get_event_by_id(order["event_id"])
     organizer = await get_organizer_by_id(order["organizer_id"])
     microsite = await get_microsite_by_organizer(order["organizer_id"])
+    from services.datil_service import public_invoice_view
+    from services.einvoice_service import get_invoice_for_order
+
+    invoice = None
+    async with AsyncSessionLocal() as _inv:
+        invoice = public_invoice_view(await get_invoice_for_order(_inv, order["id"]))
     return {
         "order": {
             k: v
@@ -1047,6 +1054,7 @@ async def get_order(
             "company_name": organizer.get("company_name") if organizer else None,
         },
         "branding": (microsite or {}).get("branding") or {},
+        "invoice": invoice,
     }
 
 
@@ -1125,6 +1133,13 @@ async def get_order_by_token(order_token: str):
         )
     tickets = [row_to_dict(t) for t in _t_rows.all()]
 
+    from services.datil_service import public_invoice_view
+    from services.einvoice_service import get_invoice_for_order
+
+    invoice = None
+    async with AsyncSessionLocal() as _inv:
+        invoice = public_invoice_view(await get_invoice_for_order(_inv, order["id"]))
+
     return {
         "order": {
             k: v
@@ -1144,6 +1159,7 @@ async def get_order_by_token(order_token: str):
             "company_name": organizer.get("company_name") if organizer else None,
         },
         "branding": (microsite or {}).get("branding") or {},
+        "invoice": invoice,
     }
 
 

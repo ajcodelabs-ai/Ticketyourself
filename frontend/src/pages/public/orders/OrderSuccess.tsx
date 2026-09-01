@@ -21,15 +21,18 @@ import {
     Ticket as TicketIcon,
     AlertTriangle,
     Sparkles,
+    FileText,
+    ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import api, { formatApiError } from "@/lib/api";
 import { formatEventDate } from "@/lib/events";
 import { previewMicrositePath } from "@/lib/config";
 import { formatCents, ticketPdfUrl, ORDER_STATUS_META } from "@/lib/orders";
+import { invoiceStatusMeta } from "@/lib/einvoice";
 
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLLS = 30; // ~60s total
@@ -68,6 +71,13 @@ export default function OrderSuccess() {
                 document.title = `Orden ${d.order.order_number} · TYS`;
 
                 if (d.order.status === "pending" && polls < MAX_POLLS) {
+                    timer = setTimeout(() => setPolls((p) => p + 1), POLL_INTERVAL_MS);
+                } else if (
+                    d.order.status === "paid" &&
+                    d.invoice &&
+                    !["AUTORIZADO", "NO AUTORIZADO", "DEVUELTO", "ERROR"].includes(d.invoice.estado) &&
+                    polls < MAX_POLLS
+                ) {
                     timer = setTimeout(() => setPolls((p) => p + 1), POLL_INTERVAL_MS);
                 }
             } catch (e) {
@@ -125,7 +135,7 @@ export default function OrderSuccess() {
         );
     }
 
-    const { order, tickets = [], event, organizer, branding = {} } = data;
+    const { order, tickets = [], event, organizer, branding = {}, invoice } = data;
     const status = ORDER_STATUS_META[order.status] || ORDER_STATUS_META.pending;
     const primary = branding?.primary_color || "#4f46e5";
     const isPending = order.status === "pending";
@@ -228,6 +238,58 @@ export default function OrderSuccess() {
                         />
                     </CardContent>
                 </Card>
+
+                {isPaid && invoice && (
+                    <Card data-testid="einvoice-card">
+                        <CardHeader className="pb-3">
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <div className="text-sm text-muted-foreground inline-flex items-center gap-1.5">
+                                        <FileText className="h-3.5 w-3.5" />
+                                        Factura electrónica
+                                    </div>
+                                    <CardTitle className="text-lg mt-1">
+                                        {invoice.numero || "Comprobante SRI"}
+                                    </CardTitle>
+                                </div>
+                                <Badge className={invoiceStatusMeta(invoice.estado).className}>
+                                    {invoiceStatusMeta(invoice.estado).label}
+                                </Badge>
+                            </div>
+                        </CardHeader>
+                        <CardContent className="space-y-2 text-sm">
+                            {invoice.clave_acceso && (
+                                <Row label="Clave de acceso" value={invoice.clave_acceso} />
+                            )}
+                            {invoice.error_message && (
+                                <p className="text-red-600 text-xs">{invoice.error_message}</p>
+                            )}
+                            <div className="flex flex-wrap gap-2 pt-1">
+                                {invoice.ride_url && (
+                                    <Button asChild variant="outline" size="sm">
+                                        <a href={invoice.ride_url} target="_blank" rel="noreferrer">
+                                            <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                                            RIDE (PDF)
+                                        </a>
+                                    </Button>
+                                )}
+                                {invoice.xml_url && (
+                                    <Button asChild variant="outline" size="sm">
+                                        <a href={invoice.xml_url} target="_blank" rel="noreferrer">
+                                            XML
+                                        </a>
+                                    </Button>
+                                )}
+                            </div>
+                            {!invoice.ride_url && invoice.estado !== "ERROR" && (
+                                <p className="text-xs text-muted-foreground">
+                                    Dátil tarda unos segundos en autorizar el comprobante con el SRI.
+                                    Si no ves el PDF, recargá en un momento.
+                                </p>
+                            )}
+                        </CardContent>
+                    </Card>
+                )}
 
                 {/* DEV simulator */}
                 {isPending && devEnabled && (

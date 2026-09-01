@@ -61,7 +61,7 @@ export default function VenuePreview() {
     return (
         <div className="min-h-screen bg-slate-50" data-testid="venue-preview-page">
             <header className="bg-white border-b">
-                <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between flex-wrap gap-2">
+                <div className="max-w-6xl mx-auto px-4 py-4 pr-48 flex items-center justify-between flex-wrap gap-2">
                     <div>
                         <h1 className="text-xl font-bold">{venue.name}</h1>
                         <p className="text-xs text-muted-foreground">

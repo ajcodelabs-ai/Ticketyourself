@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { LazyPage } from "@/routes/LazyPage";
-import { AdminArea, BuyerArea, Dashboard, OrgArea, Public } from "@/routes/layouts";
+import { AdminArea, BuyerArea, Dashboard, OrgArea, OrganizerPublicLayout, Public } from "@/routes/layouts";
 import * as Pages from "@/routes/lazyPages";
 import { extractSubdomainFromHostname } from "@/lib/config";
 
@@ -21,7 +21,7 @@ export default function AppRoutes() {
     return (
         <Routes>
             {isSubdomain ? (
-                <>
+                <Route element={<OrganizerPublicLayout />}>
                     {/* ── Subdominio: rutas espejo (slug.domain.com/*) ─────── */}
                     <Route path="/" element={<LazyPage page={Pages.MicrositePublic} />} />
                     <Route path="/e/:event_slug" element={<LazyPage page={Pages.EventPublic} />} />
@@ -38,7 +38,7 @@ export default function AppRoutes() {
                         path="/orden/:order_number/instrucciones"
                         element={<LazyPage page={Pages.PaymentInstructions} />}
                     />
-                </>
+                </Route>
             ) : (
                 <>
                     {/* ── Marketing (dominio base) ──────────────────────────── */}
@@ -53,25 +53,27 @@ export default function AppRoutes() {
             <Route path="/cuenta" element={<BuyerArea><LazyPage page={Pages.BuyerAccount} /></BuyerArea>} />
 
             {/* ── Público del tenant (/o/:slug/*) — siempre disponibles ──── */}
-            <Route path="/o/:slug" element={<LazyPage page={Pages.MicrositePublic} />} />
-            <Route path="/o/:slug/e/:event_slug" element={<LazyPage page={Pages.EventPublic} />} />
-            <Route
-                path="/o/:tenantSlug/venues/:venueSlug/preview"
-                element={<LazyPage page={Pages.VenuePreview} />}
-            />
-            <Route path="/o/:slug/orden/:order_number" element={<LazyPage page={Pages.OrderSuccess} />} />
-            <Route path="/o/:slug/abono/:token" element={<LazyPage page={Pages.SeasonPassRedeem} />} />
+            <Route element={<OrganizerPublicLayout />}>
+                <Route path="/o/:slug" element={<LazyPage page={Pages.MicrositePublic} />} />
+                <Route path="/o/:slug/e/:event_slug" element={<LazyPage page={Pages.EventPublic} />} />
+                <Route
+                    path="/o/:tenantSlug/venues/:venueSlug/preview"
+                    element={<LazyPage page={Pages.VenuePreview} />}
+                />
+                <Route path="/o/:slug/orden/:order_number" element={<LazyPage page={Pages.OrderSuccess} />} />
+                <Route path="/o/:slug/abono/:token" element={<LazyPage page={Pages.SeasonPassRedeem} />} />
+                <Route
+                    path="/o/:slug/orden/:order_number/cancelado"
+                    element={<LazyPage page={Pages.OrderCancel} />}
+                />
+                <Route
+                    path="/o/:slug/orden/:order_number/instrucciones"
+                    element={<LazyPage page={Pages.PaymentInstructions} />}
+                />
+            </Route>
             <Route path="/orden/:token" element={<LazyPage page={Pages.OrderByToken} />} />
             <Route path="/staff/login" element={<Public><LazyPage page={Pages.StaffLogin} /></Public>} />
             <Route path="/staff/scanner" element={<LazyPage page={Pages.StaffScanner} />} />
-            <Route
-                path="/o/:slug/orden/:order_number/cancelado"
-                element={<LazyPage page={Pages.OrderCancel} />}
-            />
-            <Route
-                path="/o/:slug/orden/:order_number/instrucciones"
-                element={<LazyPage page={Pages.PaymentInstructions} />}
-            />
 
             {/* ── Panel organizador (/app/*) ────────────────────────────── */}
             <Route path="/app" element={<Navigate to="/app/dashboard" replace />} />

@@ -163,6 +163,10 @@ api.interceptors.response.use(
         const status = error?.response?.status;
 
         if (status === 401 && !originalRequest._retry) {
+            const reqUrl = String(originalRequest?.url || "");
+            if (reqUrl.includes("/auth/logout")) {
+                return Promise.reject(error);
+            }
             originalRequest._retry = true;
             const refreshToken = tokenStore.refresh;
             if (refreshToken) {

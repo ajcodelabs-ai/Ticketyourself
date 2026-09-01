@@ -116,6 +116,10 @@ def register_organizer_payload(**overrides) -> dict:
         "phone": "+593999999999",
         "country": "Ecuador",
         "country_code": "EC",
+        "legal_address": "Av. Amazonas N34-123, Quito",
+        "legal_name": None,
+        "establecimiento": "001",
+        "punto_emision": "001",
         "is_pep": False,
         "uafe_declaration": {
             "funds_origin_declared": True,

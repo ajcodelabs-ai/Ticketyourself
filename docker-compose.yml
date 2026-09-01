@@ -95,6 +95,10 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-noreply@ticketyourself.com}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
+      DATIL_API_KEY: ${DATIL_API_KEY:-}
+      DATIL_CERT_PASSWORD: ${DATIL_CERT_PASSWORD:-}
+      DATIL_API_BASE: ${DATIL_API_BASE:-https://link.datil.co}
+      DATIL_AMBIENTE: ${DATIL_AMBIENTE:-1}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ticketyourself.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin123!}
     volumes:

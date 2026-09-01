@@ -77,6 +77,10 @@ export default function Register() {
         phone: "",
         country_code: "EC",
         slug: "",
+        legal_name: "",
+        legal_address: "",
+        establecimiento: "001",
+        punto_emision: "001",
         social_links: { ...EMPTY_SOCIAL },
         is_pep: false,
         pep_details: "",
@@ -256,6 +260,12 @@ export default function Register() {
             toast.error(`Ingresa tu ${legalLabel}`);
             return;
         }
+        if (form.country_code === "EC") {
+            if (!form.legal_address.trim() || form.legal_address.trim().length < 8) {
+                toast.error("Ingresa la dirección fiscal del establecimiento (SRI)");
+                return;
+            }
+        }
         if (selectedCountry?.legal_id_pattern) {
             try {
                 const re = new RegExp(selectedCountry.legal_id_pattern);
@@ -311,6 +321,10 @@ export default function Register() {
                 country: selectedCountry?.name || form.country_code,
                 country_code: form.country_code,
                 slug: form.slug,
+                legal_name: form.legal_name.trim() || null,
+                legal_address: form.country_code === "EC" ? form.legal_address.trim() : null,
+                establecimiento: form.country_code === "EC" ? form.establecimiento.trim() || "001" : null,
+                punto_emision: form.country_code === "EC" ? form.punto_emision.trim() || "001" : null,
                 social_links: Object.keys(social_links).length ? social_links : null,
                 is_pep: requiresCompliance ? form.is_pep : false,
                 pep_details: requiresCompliance && form.is_pep ? form.pep_details.trim() : null,
@@ -512,6 +526,79 @@ export default function Register() {
                                 />
                             </div>
                         </div>
+
+                        {form.country_code === "EC" && (
+                            <div
+                                className="rounded-xl border p-4 space-y-4"
+                                data-testid="register-einvoice-block"
+                            >
+                                <div>
+                                    <p className="text-sm font-medium">Datos fiscales (SRI)</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        Se usan para emitir facturas electrónicas al cobrar
+                                        entradas. Deben coincidir con tu cuenta Dátil.
+                                    </p>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="legal-name-input">
+                                        Razón social
+                                        {form.org_type === "company" ? "" : " (opcional)"}
+                                    </Label>
+                                    <Input
+                                        id="legal-name-input"
+                                        data-testid="register-legal-name-input"
+                                        value={form.legal_name}
+                                        onChange={update("legal_name")}
+                                        placeholder={
+                                            form.company_name.trim()
+                                                ? form.company_name
+                                                : "Igual al nombre comercial si no aplica"
+                                        }
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="legal-address-input">
+                                        Dirección del establecimiento *
+                                    </Label>
+                                    <Input
+                                        id="legal-address-input"
+                                        data-testid="register-legal-address-input"
+                                        value={form.legal_address}
+                                        onChange={update("legal_address")}
+                                        placeholder="Calle, número, ciudad"
+                                        required
+                                    />
+                                </div>
+                                <div className="grid sm:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="establecimiento-input">
+                                            Establecimiento
+                                        </Label>
+                                        <Input
+                                            id="establecimiento-input"
+                                            data-testid="register-establecimiento-input"
+                                            value={form.establecimiento}
+                                            onChange={update("establecimiento")}
+                                            maxLength={3}
+                                            placeholder="001"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="punto-emision-input">
+                                            Punto de emisión
+                                        </Label>
+                                        <Input
+                                            id="punto-emision-input"
+                                            data-testid="register-punto-emision-input"
+                                            value={form.punto_emision}
+                                            onChange={update("punto_emision")}
+                                            maxLength={3}
+                                            placeholder="001"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="space-y-2">
                             <Label htmlFor="slug-input">URL de tu página</Label>

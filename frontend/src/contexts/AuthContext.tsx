@@ -12,6 +12,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, tokenStore } from "@/lib/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { useTenant } from "@/contexts/TenantContext";
+import { logoutPathForSession } from "@/lib/authRedirect";
 
 const AuthContext = createContext(null);
 
@@ -170,20 +171,26 @@ export function AuthProvider({ children }) {
     );
 
     const logout = useCallback(async () => {
-        const wasAdmin = user?.role === "super_admin";
         const wasBuyer = user?.role === "buyer";
+        const slug = user?.tenant_slug || tenantSlug;
+        const dest = logoutPathForSession({
+            role: user?.role,
+            tenantSlug: slug,
+        });
         try {
             await api.post("/auth/logout");
         } catch (err) {
             console.warn("Logout API call failed (clearing local session anyway):", err?.message);
         }
         if (wasBuyer) {
-            tokenStore.clear({ kind: "buyer", tenantSlug: user?.tenant_slug || tenantSlug });
-        } else {
-            tokenStore.clear({ kind: "platform" });
+            tokenStore.clear({ kind: "buyer", tenantSlug: slug });
+            // Full navigation so ProtectedRoute on /cuenta cannot bounce to /login.
+            window.location.replace(dest);
+            return;
         }
+        tokenStore.clear({ kind: "platform" });
         setSession(null);
-        navigate(wasAdmin ? "/admin/login" : wasBuyer ? "/" : "/login", { replace: true });
+        navigate(dest, { replace: true });
     }, [navigate, setSession, user, tenantSlug]);
 
     const refreshOrganizer = useCallback(async ({ throwOnError = false } = {}) => {

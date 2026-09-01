@@ -1,13 +1,23 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, Outlet } from "react-router-dom";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import PublicLayout from "@/components/PublicLayout";
 import OrganizerLayout from "@/components/OrganizerLayout";
 import AdminLayout from "@/components/AdminLayout";
 import BuyerLayout from "@/components/BuyerLayout";
+import OrganizerPublicAuthBar from "@/components/OrganizerPublicAuthBar";
 import { useAuth } from "@/contexts/AuthContext";
 
 export function Public({ children }) {
     return <PublicLayout>{children}</PublicLayout>;
+}
+
+export function OrganizerPublicLayout() {
+    return (
+        <>
+            <OrganizerPublicAuthBar />
+            <Outlet />
+        </>
+    );
 }
 
 export function OrgArea({ children }) {

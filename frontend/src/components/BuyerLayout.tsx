@@ -2,10 +2,12 @@ import { Link } from "react-router-dom";
 import { LogOut, Ticket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
+import { previewMicrositePath } from "@/lib/config";
 
 export default function BuyerLayout({ children }) {
-    const { user, logout, isOrganizer } = useAuth();
+    const { user, logout, isOrganizer, organizer } = useAuth();
     const name = user?.display_name || user?.email || "Cuenta";
+    const eventsHome = previewMicrositePath(user?.tenant_slug || organizer?.slug);
 
     return (
         <div className="min-h-screen flex flex-col bg-background">
@@ -23,6 +25,11 @@ export default function BuyerLayout({ children }) {
                         </div>
                     </Link>
                     <nav className="flex items-center gap-2">
+                        <Button asChild variant="outline" size="sm">
+                            <Link to={eventsHome} data-testid="buyer-events-home">
+                                Eventos
+                            </Link>
+                        </Button>
                         {isOrganizer && (
                             <Button asChild variant="outline" size="sm">
                                 <Link to="/app/dashboard">Panel organizador</Link>

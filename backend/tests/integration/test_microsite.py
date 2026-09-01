@@ -543,6 +543,7 @@ class TestActivationFunnel:
                 {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
             ],
             "country_code": "EC",
+            "legal_address": "Av. Amazonas N34-123, Quito",
         }
         r = requests.post(f"{API}/auth/register", json=payload)
         assert r.status_code in (200, 201), r.text
@@ -589,6 +590,7 @@ class TestActivationFunnel:
                     {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
                 ],
                 "country_code": "EC",
+            "legal_address": "Av. Amazonas N34-123, Quito",
             }
             r = requests.post(f"{API}/auth/register", json=payload)
             assert r.status_code in (200, 201), r.text

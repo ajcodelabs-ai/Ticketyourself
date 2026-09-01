@@ -27,6 +27,8 @@ from orm_models import (  # noqa: E402
     EventFunction,
     EventGuestListEntry,
     EventSeatAssignment,
+    ElectronicInvoice,
+    EinvoiceSequence,
     FunctionTicketType,
     Microsite,
     MicrositeAsset,
@@ -341,6 +343,7 @@ class TestEvent:
             "visibility",
             "base_price_cents",
             "currency",
+            "iva_percent",
         ):
             assert name in cols, f"missing column: {name}"
 
@@ -852,3 +855,21 @@ class TestInstantiation:
             localities=[],
         )
         assert v.name == "V"
+
+
+class TestElectronicInvoice:
+    def test_tablename(self):
+        assert ElectronicInvoice.__tablename__ == "electronic_invoices"
+        assert EinvoiceSequence.__tablename__ == "einvoice_sequences"
+
+    def test_defaults(self):
+        assert _col_default(ElectronicInvoice, "estado") == "PENDING"
+        assert _col_default(ElectronicInvoice, "ambiente") == 1
+        assert _col_default(EinvoiceSequence, "next_value") == 1
+
+    def test_order_id_unique(self):
+        assert ElectronicInvoice.__table__.columns["order_id"].unique is True
+
+    def test_organizer_has_einvoice_config(self):
+        assert "einvoice_config" in Organizer.__table__.columns
+        assert Organizer.__table__.columns["einvoice_config"].nullable is True

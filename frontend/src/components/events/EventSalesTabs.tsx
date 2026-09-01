@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/dialog";
 import api, { formatApiError } from "@/lib/api";
 import { formatCents, ORDER_STATUS_META } from "@/lib/orders";
+import { invoiceStatusMeta } from "@/lib/einvoice";
 
 const TICKET_STATUS_META = {
     issued: { label: "Emitido", className: "bg-emerald-100 text-emerald-800" },
@@ -510,6 +511,7 @@ function OrdersTab({ event }) {
                             <TableHead className="text-right">Cant.</TableHead>
                             <TableHead className="text-right">Total</TableHead>
                             <TableHead>Estado</TableHead>
+                            <TableHead>Factura SRI</TableHead>
                             <TableHead>Fecha</TableHead>
                             <TableHead className="text-right">Acciones</TableHead>
                         </TableRow>
@@ -550,6 +552,39 @@ function OrdersTab({ event }) {
                                     </TableCell>
                                     <TableCell>
                                         <Badge className={meta.className}>{meta.label}</Badge>
+                                    </TableCell>
+                                    <TableCell className="text-xs">
+                                        {o.invoice ? (
+                                            <div className="space-y-1">
+                                                <Badge className={invoiceStatusMeta(o.invoice.estado).className}>
+                                                    {invoiceStatusMeta(o.invoice.estado).label}
+                                                </Badge>
+                                                {o.invoice.estado === "ERROR" && o.status === "paid" && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="h-6 px-1"
+                                                        onClick={async () => {
+                                                            try {
+                                                                await api.post(`/einvoice/orders/${o.id}/retry`);
+                                                                toast.success("Reintento enviado a Dátil");
+                                                                await load();
+                                                            } catch (e) {
+                                                                toast.error(
+                                                                    formatApiError(e?.response?.data?.detail) ||
+                                                                        e.message,
+                                                                );
+                                                            }
+                                                        }}
+                                                        data-testid={`einvoice-retry-${o.order_number}`}
+                                                    >
+                                                        Reintentar
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="text-muted-foreground">—</span>
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-xs text-muted-foreground">
                                         {new Date(o.created_at).toLocaleDateString("es-EC")}

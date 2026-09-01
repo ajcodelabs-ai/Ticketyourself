@@ -40,6 +40,7 @@ export default function AdminConfiguracion() {
     const [newCountry, setNewCountry] = useState({ code: "", name: "" });
     const [preEventFeeRequired, setPreEventFeeRequired] = useState(false);
     const [savingPlatform, setSavingPlatform] = useState(false);
+    const [datilStatus, setDatilStatus] = useState(null);
 
     const countryOptions = useMemo(() => {
         return [
@@ -67,13 +68,15 @@ export default function AdminConfiguracion() {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [typesResp, list, platformResp] = await Promise.all([
+            const [typesResp, list, platformResp, datilResp] = await Promise.all([
                 api.get("/admin/settings/document-types"),
                 loadCountries(),
                 api.get("/admin/settings/platform").catch(() => ({ data: {} })),
+                api.get("/admin/einvoice/status").catch(() => ({ data: null })),
             ]);
             setDocTypes(typesResp.data || []);
             setPreEventFeeRequired(Boolean(platformResp.data?.pre_event_fee_required));
+            setDatilStatus(datilResp.data);
             await loadRequired(selectedCountry);
             if (selectedCountry !== GLOBAL) {
                 const row = list.find((c) => c.code === selectedCountry);
@@ -313,6 +316,28 @@ export default function AdminConfiguracion() {
                         onCheckedChange={savePlatformFee}
                         data-testid="platform-pre-event-fee-switch"
                     />
+                </CardContent>
+            </Card>
+
+            <Card className="border-border/70" data-testid="datil-status-card">
+                <CardHeader>
+                    <CardTitle className="text-lg">Facturación electrónica (Dátil / SRI)</CardTitle>
+                    <CardDescription>
+                        Claves Dátil de plataforma (API Key + certificado). El RUC,
+                        dirección y establecimiento salen del registro del organizador;
+                        el IVA se elige al crear cada evento.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-2 text-sm">
+                    <Badge variant={datilStatus?.configured ? "default" : "secondary"}>
+                        {datilStatus?.configured ? "API Key configurada" : "Sin DATIL_API_KEY"}
+                    </Badge>
+                    <Badge variant="outline">
+                        Ambiente {datilStatus?.ambiente === 2 ? "producción (2)" : "pruebas (1)"}
+                    </Badge>
+                    <Badge variant="outline">
+                        IVA por defecto {datilStatus?.iva_percent ?? 15}%
+                    </Badge>
                 </CardContent>
             </Card>
 

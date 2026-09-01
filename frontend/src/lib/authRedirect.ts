@@ -1,3 +1,5 @@
+import { previewMicrositePath } from "@/lib/config";
+
 /** Only same-origin relative paths — blocks open redirects via `next` / state.from. */
 export function safeInternalPath(value) {
     if (typeof value !== "string") return null;
@@ -19,4 +21,13 @@ export function defaultPathForRole(role) {
     if (role === "super_admin") return "/admin";
     if (role === "organizer") return "/app/dashboard";
     return "/cuenta";
+}
+
+/** After logout: buyers go back to that organizer's public landing, not TYS marketing. */
+export function logoutPathForSession(session?: { role?: string; tenantSlug?: string }) {
+    const role = session?.role;
+    const tenantSlug = session?.tenantSlug;
+    if (role === "super_admin") return "/admin/login";
+    if (role === "buyer") return previewMicrositePath(tenantSlug);
+    return "/login";
 }

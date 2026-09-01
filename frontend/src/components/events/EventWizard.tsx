@@ -115,6 +115,7 @@ import {
 import { venuesApi } from "@/lib/venues";
 import { assetUrl } from "@/lib/microsite";
 import { useAuth } from "@/contexts/AuthContext";
+import { IVA_PERCENT_OPTIONS } from "@/lib/einvoice";
 import { MediaSlotMock } from "@/components/events/EventMediaPreview";
 import {
     EVENT_CATEGORIES,
@@ -254,6 +255,7 @@ function makeInitial(d) {
                 tax_dollars: "",
                 wallet_dollars: "",
             },
+            iva_percent: 15,
             custom_questions: [],
             ticket_design: null,
             courtesy_ticket_design: null,
@@ -332,6 +334,7 @@ function makeInitial(d) {
                     ? (d.ticket_fees.wallet_fee_cents / 100).toFixed(2)
                     : "",
         },
+        iva_percent: d.iva_percent == null ? 15 : Number(d.iva_percent),
         custom_questions: d.custom_questions || [],
         ticket_design: d.ticket_design || null,
         courtesy_ticket_design: d.courtesy_ticket_design || null,
@@ -965,6 +968,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                 form={form}
                                 update={update}
                                 disabled={lockCritical}
+                                countryCode={organizer?.country_code}
                             />
                         </TabsContent>
                         <TabsContent value="fechas">
@@ -1613,6 +1617,12 @@ function buildPayload(form) {
                       ) || 0,
                   }
                 : {},
+        iva_percent:
+            form.pricing_type === "free" && !form.optional_donation_enabled
+                ? 0
+                : Number.isFinite(Number(form.iva_percent))
+                  ? Number(form.iva_percent)
+                  : 15,
         custom_questions: (form.custom_questions || []).filter((q) => q.label?.trim()),
         ticket_design: form.ticket_design,
         courtesy_ticket_design: form.courtesy_ticket_design,
@@ -1691,7 +1701,7 @@ const PRICING_TYPE_OPTIONS = [
 ];
 
 // ── Section: General (info principal + descripción) ─────────────────────────
-function SectionGeneral({ form, update, disabled }) {
+function SectionGeneral({ form, update, disabled, countryCode }) {
     const [keywordDraft, setKeywordDraft] = useState("");
     const { data: planFeatures } = usePlanFeatures();
     const keywords = Array.isArray(form.keywords) ? form.keywords : [];
@@ -1856,6 +1866,15 @@ function SectionGeneral({ form, update, disabled }) {
                                                 if (opt.value === "donation") {
                                                     update("unlimited_capacity", true);
                                                 }
+                                                if (
+                                                    (opt.value === "paid" || opt.value === "donation") &&
+                                                    (form.iva_percent === 0 || form.iva_percent == null)
+                                                ) {
+                                                    update("iva_percent", 15);
+                                                }
+                                                if (opt.value === "free") {
+                                                    update("iva_percent", 0);
+                                                }
                                             }}
                                             data-testid={`wiz-pricing-${opt.value}`}
                                             aria-disabled={locked || undefined}
@@ -1919,7 +1938,12 @@ function SectionGeneral({ form, update, disabled }) {
                                 </div>
                                 <Switch
                                     checked={!!form.optional_donation_enabled}
-                                    onCheckedChange={(v) => update("optional_donation_enabled", v)}
+                                    onCheckedChange={(v) => {
+                                        update("optional_donation_enabled", v);
+                                        if (v && !form.iva_percent) {
+                                            update("iva_percent", 15);
+                                        }
+                                    }}
                                     disabled={disabled}
                                     data-testid="wiz-optional-donation"
                                 />
@@ -1942,6 +1966,38 @@ function SectionGeneral({ form, update, disabled }) {
                                 />
                             </div>
                         )}
+
+                        {(countryCode || "EC").toUpperCase() === "EC" &&
+                            (form.pricing_type === "paid" ||
+                                form.pricing_type === "donation" ||
+                                (form.pricing_type === "free" &&
+                                    form.optional_donation_enabled)) && (
+                                <Field
+                                    label={
+                                        <LabelWithTip
+                                            text="IVA en factura electrónica"
+                                            tip="El precio de la entrada ya incluye este IVA. No es un cargo extra aparte. Ecuador vigente: 15%."
+                                        />
+                                    }
+                                >
+                                    <Select
+                                        value={String(form.iva_percent ?? 15)}
+                                        onValueChange={(v) => update("iva_percent", Number(v))}
+                                        disabled={disabled}
+                                    >
+                                        <SelectTrigger data-testid="wiz-iva-percent">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {IVA_PERCENT_OPTIONS.map((opt) => (
+                                                <SelectItem key={opt.value} value={String(opt.value)}>
+                                                    {opt.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </Field>
+                            )}
                     </div>
                 </section>
 

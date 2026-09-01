@@ -150,6 +150,7 @@ class TestRegister:
                 {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
             ],
             "country_code": "EC",
+            "legal_address": "Av. Amazonas N34-123, Quito",
         }
         r = requests.post(f"{API}/auth/register", json=payload)
         assert r.status_code == 200, r.text
@@ -179,6 +180,7 @@ class TestRegister:
                 {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
             ],
             "country_code": "EC",
+            "legal_address": "Av. Amazonas N34-123, Quito",
         }
         r = requests.post(f"{API}/auth/register", json=payload)
         assert r.status_code == 409
@@ -203,6 +205,7 @@ class TestRegister:
                 {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
             ],
             "country_code": "EC",
+            "legal_address": "Av. Amazonas N34-123, Quito",
             "slug": "demo-org",
         }
         r = requests.post(f"{API}/auth/register", json=payload)

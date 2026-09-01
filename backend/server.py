@@ -24,6 +24,7 @@ from routers import auth as auth_router  # noqa: E402
 from routers import billing as billing_router  # noqa: E402
 from routers import deuna_webhook as deuna_webhook_router  # noqa: E402
 from routers import dev as dev_router  # noqa: E402
+from routers import einvoice as einvoice_router  # noqa: E402
 from routers import microsite as microsite_router  # noqa: E402
 from routers import nuvei_webhook as nuvei_webhook_router  # noqa: E402
 from routers import oneshot_webhook as oneshot_webhook_router  # noqa: E402
@@ -71,6 +72,9 @@ app.include_router(stripe_webhook_router.router)
 app.include_router(nuvei_webhook_router.router)
 app.include_router(deuna_webhook_router.router)
 app.include_router(oneshot_webhook_router.router)
+app.include_router(einvoice_router.router)
+app.include_router(einvoice_router.organizer_router)
+app.include_router(einvoice_router.admin_router)
 app.include_router(admin_router.router)
 app.include_router(microsite_router.router)
 app.include_router(microsite_router.public_router)

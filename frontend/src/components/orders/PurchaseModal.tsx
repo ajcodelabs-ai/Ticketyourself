@@ -38,11 +38,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import PhoneInput from "@/components/ui/phone-input";
 import api, { formatApiError } from "@/lib/api";
 import { formatPriceLabel } from "@/lib/events";
 import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders";
 import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
+import { DOCUMENT_TYPES } from "@/lib/einvoice";
 import { useAuth } from "@/contexts/AuthContext";
 import BuyerAuthPanel from "@/components/orders/BuyerAuthPanel";
 import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
@@ -183,6 +191,8 @@ export default function PurchaseModal({
         email: "",
         phone: "",
         document_id: "",
+        document_type: "cedula",
+        address: "",
     });
     const [submitting, setSubmitting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -376,6 +386,8 @@ export default function PurchaseModal({
                 email: user?.email || "",
                 phone: user?.phone || "",
                 document_id: "",
+                document_type: "cedula",
+                address: "",
             });
             setErrors({});
             setPaymentMethod(activeMethods[0] || "nuvei");
@@ -665,7 +677,11 @@ export default function PurchaseModal({
                     name: buyer.name.trim(),
                     email: buyer.email.trim().toLowerCase(),
                     phone: buyer.phone || undefined,
-                    document_id: buyer.document_id || undefined,
+                    document_id: buyer.document_type === "consumidor_final"
+                        ? undefined
+                        : buyer.document_id || undefined,
+                    document_type: buyer.document_type || undefined,
+                    address: buyer.address.trim() || undefined,
                 },
                 origin_url: window.location.origin,
                 payment_method:
@@ -1310,12 +1326,47 @@ export default function PurchaseModal({
                                     data-testid="buyer-phone"
                                 />
                             </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="buyer-doc-type">Tipo de identificación</Label>
+                                <Select
+                                    value={buyer.document_type}
+                                    onValueChange={(v) =>
+                                        setBuyer((b) => ({ ...b, document_type: v }))
+                                    }
+                                >
+                                    <SelectTrigger id="buyer-doc-type" data-testid="buyer-doc-type">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {DOCUMENT_TYPES.map((t) => (
+                                            <SelectItem key={t.value} value={t.value}>
+                                                {t.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            {buyer.document_type !== "consumidor_final" && (
+                                <Field
+                                    label={
+                                        buyer.document_type === "ruc"
+                                            ? "RUC"
+                                            : buyer.document_type === "pasaporte"
+                                              ? "Pasaporte"
+                                              : "Cédula"
+                                    }
+                                    id="buyer-doc"
+                                    value={buyer.document_id}
+                                    onChange={(v) => setBuyer((b) => ({ ...b, document_id: v }))}
+                                    testId="buyer-doc"
+                                />
+                            )}
                             <Field
-                                label="Documento / cédula"
-                                id="buyer-doc"
-                                value={buyer.document_id}
-                                onChange={(v) => setBuyer((b) => ({ ...b, document_id: v }))}
-                                testId="buyer-doc"
+                                label="Dirección (facturación)"
+                                id="buyer-address"
+                                value={buyer.address}
+                                onChange={(v) => setBuyer((b) => ({ ...b, address: v }))}
+                                testId="buyer-address"
                             />
                         </div>
 

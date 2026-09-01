@@ -38,6 +38,7 @@ from orm_models import (
     TicketType,
 )
 from security import get_current_user, require_role
+from services import datil_service
 from services.event_venue import (
     locality_structural_diff,
     normalize_layout_localities,
@@ -422,6 +423,8 @@ class EventBase(BaseModel):
     optional_donation_enabled: bool = False
     # §4.2.1 Pagado — per-ticket fees (general / non-seated events)
     ticket_fees: Optional[dict] = None
+    # SRI IVA % (included in ticket price). None = default from org / Ecuador 15.
+    iva_percent: Optional[int] = Field(default=None, ge=0, le=30)
     # Comisión TYS: buyer la paga en checkout; organizer la absorbe.
     platform_fee_bearer: Literal["buyer", "organizer"] = "buyer"
     # §4.2.8 — preguntas adicionales al comprador
@@ -505,6 +508,7 @@ class EventUpdate(BaseModel):
     raffle_enabled: Optional[bool] = None
     optional_donation_enabled: Optional[bool] = None
     ticket_fees: Optional[dict] = None
+    iva_percent: Optional[int] = Field(default=None, ge=0, le=30)
     platform_fee_bearer: Optional[Literal["buyer", "organizer"]] = None
     custom_questions: Optional[List[CustomQuestion]] = None
     ticket_design: Optional[TicketDesign] = None
@@ -528,6 +532,23 @@ class EventUpdate(BaseModel):
 # ── Helpers ──────────────────────────────────────────────────────────────────
 PANEL_ALLOWED_STATUSES = {"pending", "approved"}
 PUBLISH_ALLOWED_STATUSES = {"approved"}
+
+
+def _event_iva_percent(payload, org: Optional[dict] = None) -> int:
+    """IVA of the product. Free events with no money collected are 0%."""
+    pricing = getattr(payload, "pricing_type", None)
+    optional = bool(getattr(payload, "optional_donation_enabled", False))
+    if pricing == "free" and not optional:
+        return 0
+    default = datil_service.default_event_iva_percent(
+        pricing_type=pricing,
+        optional_donation_enabled=optional,
+        country_code=(org or {}).get("country_code"),
+    )
+    raw = getattr(payload, "iva_percent", None)
+    if raw is None:
+        return default
+    return datil_service.normalize_iva_percent(raw, default=default)
 
 
 async def _require_active_organizer(user) -> dict:
@@ -1294,6 +1315,7 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
                 if payload.pricing_type == "paid" and payload.ticket_fees
                 else {}
             ),
+            iva_percent=_event_iva_percent(payload, org),
             platform_fee_bearer=payload.platform_fee_bearer or "buyer",
             custom_questions=[q.model_dump() for q in payload.custom_questions],
             multi_function_mode=payload.multi_function_mode,
@@ -1360,6 +1382,16 @@ async def update_my_event(
             for k, v in payload.model_dump(exclude_unset=True).items()
             if v is not None
         }
+        if "iva_percent" in diff:
+            diff["iva_percent"] = datil_service.normalize_iva_percent(
+                diff["iva_percent"]
+            )
+        pricing = diff.get("pricing_type", row.pricing_type)
+        optional = diff.get(
+            "optional_donation_enabled", row.optional_donation_enabled
+        )
+        if pricing == "free" and not optional:
+            diff["iva_percent"] = 0
 
         # Re-dump nested JSONB fields to preserve all values (e.g. None inside rules).
         if "discounts" in diff and payload.discounts is not None:

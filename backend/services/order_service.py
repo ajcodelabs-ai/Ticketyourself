@@ -885,6 +885,15 @@ async def finalize_paid_order(
         refreshed["quantity_total"],
         refreshed["total_cents"],
     )
+    try:
+        from services.einvoice_service import issue_for_order
+
+        await issue_for_order(refreshed)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "Electronic invoice failed for %s (order remains paid)",
+            refreshed.get("order_number"),
+        )
     return refreshed, tickets
 
 
