@@ -267,6 +267,11 @@ export default function OrderSuccess() {
                                     sirve para ver el flujo en TYS sin el panel de Dátil.
                                 </p>
                             )}
+                            {invoice.estado === "ERROR" && invoice.error_message && (
+                                <p className="text-red-800 text-xs bg-red-50 border border-red-200 rounded-md p-2">
+                                    {formatEinvoiceError(invoice.error_message)}
+                                </p>
+                            )}
                             <div className="flex flex-wrap gap-2 pt-1">
                                 {invoice.ride_url && (
                                     <Button asChild variant="outline" size="sm">

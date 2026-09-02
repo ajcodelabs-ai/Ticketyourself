@@ -112,6 +112,8 @@ class TestBuyerOrders:
         assert match["event"]["slug"] == FREE_EVENT_SLUG
         assert len(match["tickets"]) == 2
         assert match["tickets"][0]["qr_token"]
+        # Always present (null when Dátil skipped, e.g. $0 / not configured).
+        assert "invoice" in match
 
     def test_other_buyer_does_not_see_orders(self):
         payload = {
