@@ -50,7 +50,8 @@ import api, { formatApiError } from "@/lib/api";
 import { formatPriceLabel } from "@/lib/events";
 import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders";
 import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
-import { DOCUMENT_TYPES } from "@/lib/einvoice";
+import { DOCUMENT_TYPES, documentTypeFieldLabel } from "@/lib/einvoice";
+import { buyerDocumentError } from "@/lib/ecId";
 import { useAuth } from "@/contexts/AuthContext";
 import BuyerAuthPanel from "@/components/orders/BuyerAuthPanel";
 import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
@@ -647,6 +648,8 @@ export default function PurchaseModal({
         if (lawCategory && !(lawDocumentId.trim() || buyer.document_id.trim())) {
             e.law_document = "Indicá el documento de verificación (cédula / carné).";
         }
+        const docErr = buyerDocumentError(buyer.document_type, buyer.document_id);
+        if (docErr) e.document_id = docErr;
         for (const q of customQuestions) {
             if (q.required && !(customAnswers[q.id] || "").trim()) {
                 e[`cq_${q.id}`] = "Requerido";
@@ -1331,7 +1334,7 @@ export default function PurchaseModal({
                                 <Select
                                     value={buyer.document_type}
                                     onValueChange={(v) =>
-                                        setBuyer((b) => ({ ...b, document_type: v }))
+                                        setBuyer((b) => ({ ...b, document_type: v, document_id: "" }))
                                     }
                                 >
                                     <SelectTrigger id="buyer-doc-type" data-testid="buyer-doc-type">
@@ -1348,16 +1351,11 @@ export default function PurchaseModal({
                             </div>
                             {buyer.document_type !== "consumidor_final" && (
                                 <Field
-                                    label={
-                                        buyer.document_type === "ruc"
-                                            ? "RUC"
-                                            : buyer.document_type === "pasaporte"
-                                              ? "Pasaporte"
-                                              : "Cédula"
-                                    }
+                                    label={documentTypeFieldLabel(buyer.document_type)}
                                     id="buyer-doc"
                                     value={buyer.document_id}
                                     onChange={(v) => setBuyer((b) => ({ ...b, document_id: v }))}
+                                    error={errors.document_id}
                                     testId="buyer-doc"
                                 />
                             )}

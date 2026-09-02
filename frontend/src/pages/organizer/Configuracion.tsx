@@ -467,10 +467,18 @@ function EinvoiceTab() {
             <CardHeader>
                 <CardTitle className="text-lg">Facturación electrónica (SRI / Dátil)</CardTitle>
                 <CardDescription>
-                    RUC, razón social, dirección y establecimiento se piden al registrarte
-                    (Ecuador). El IVA de cada evento se elige al crearlo; acá queda el
-                    valor por defecto. Las claves Dátil de la plataforma se usan si no
-                    cargás las tuyas.
+                    El RUC solo no alcanza: Dátil exige un establecimiento y un
+                    punto de emisión ya creados en tu cuenta. Copialos de{" "}
+                    <a
+                        href="https://app.datil.co"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                    >
+                        app.datil.co
+                    </a>{" "}
+                    → Mi negocio → Establecimientos. El IVA de cada evento se
+                    elige al crearlo; acá queda el valor por defecto.
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -478,6 +486,11 @@ function EinvoiceTab() {
                     <Badge variant={cfg?.ready ? "default" : "secondary"}>
                         {cfg?.ready ? "Listo para emitir" : "Faltan credenciales Dátil"}
                     </Badge>
+                    {cfg?.mock && (
+                        <Badge variant="outline" className="border-amber-400 text-amber-800">
+                            Mock local (sin Dátil)
+                        </Badge>
+                    )}
                     <Badge variant="outline">Ambiente {cfg?.ambiente === 2 ? "producción (2)" : "pruebas (1)"}</Badge>
                     <Badge variant="outline">IVA {cfg?.iva_percent}%</Badge>
                 </div>
@@ -521,20 +534,28 @@ function EinvoiceTab() {
                             onChange={(e) => setForm((f) => ({ ...f, direccion: e.target.value }))}
                         />
                     </Field>
-                    <Field label="Establecimiento (001)">
+                    <Field label="Establecimiento (3 dígitos)">
                         <Input
                             value={form.establecimiento}
                             maxLength={3}
                             onChange={(e) => setForm((f) => ({ ...f, establecimiento: e.target.value }))}
+                            data-testid="einvoice-establecimiento"
                         />
                     </Field>
-                    <Field label="Punto de emisión (001)">
+                    <Field label="Punto de emisión (3 dígitos)">
                         <Input
                             value={form.punto_emision}
                             maxLength={3}
                             onChange={(e) => setForm((f) => ({ ...f, punto_emision: e.target.value }))}
+                            data-testid="einvoice-punto-emision"
                         />
                     </Field>
+                    <p className="sm:col-span-2 text-xs text-muted-foreground -mt-1">
+                        En pruebas Dátil pide 001 / 001. Esos códigos no salen solos:
+                        hay que crearlos en app.datil.co con Datos de prueba
+                        activo (Mi negocio → Establecimientos). Si los creaste en
+                        producción, el ambiente 1 de la API no los ve.
+                    </p>
                     <Field label="IVA por defecto (eventos)">
                         <Select
                             value={String(form.iva_percent ?? 15)}

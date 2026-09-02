@@ -52,6 +52,7 @@ def _public_config(raw: dict | None, organizer: dict | None = None) -> dict[str,
         "ambiente": datil_service.ambiente(),
         "iva_percent": datil_service.iva_percent(organizer_config=raw or {}),
         "ready": einvoice_service.invoicing_ready(organizer),
+        "mock": datil_service.mock_enabled(),
         "emisor": emisor,
     }
 
@@ -85,6 +86,10 @@ async def update_einvoice_config(
         updates["iva_percent"] = datil_service.normalize_iva_percent(
             updates["iva_percent"]
         )
+    if "establecimiento" in updates and updates["establecimiento"] is not None:
+        updates["establecimiento"] = datil_service._pad3(updates["establecimiento"])
+    if "punto_emision" in updates and updates["punto_emision"] is not None:
+        updates["punto_emision"] = datil_service._pad3(updates["punto_emision"])
     for key, val in updates.items():
         if key in SECRET_KEYS and (val is None or str(val).strip() == ""):
             continue

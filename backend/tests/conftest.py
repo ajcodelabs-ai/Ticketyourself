@@ -59,8 +59,8 @@ def unique_buyer(label: str = "buyer") -> dict:
         "name": f"Test {label}",
         "email": f"{label}_{uid}@example.com",
         "phone": "+593999999999",
-        "document_id": "9999999999",
-        "document_type": "cédula",
+        "document_id": "1710034065",
+        "document_type": "cedula",
     }
 
 

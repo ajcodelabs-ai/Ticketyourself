@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
 from db_helpers import row_to_dict
+from services.ec_id import buyer_document_error
 from services.ticket_jwt import issue_ticket_token
 
 logger = logging.getLogger("tys.orders")
@@ -222,12 +223,17 @@ def validate_buyer(buyer: dict) -> dict:
         raise HTTPException(422, "El nombre contiene caracteres inválidos")
     if not _is_plausible_email(email):
         raise HTTPException(422, "Email inválido")
+    document_id = (buyer.get("document_id") or "")[:40]
+    document_type = (buyer.get("document_type") or "")[:20]
+    doc_error = buyer_document_error(document_type, document_id)
+    if doc_error:
+        raise HTTPException(422, doc_error)
     return {
         "name": name[:140],
         "email": email,
         "phone": (buyer.get("phone") or "")[:40],
-        "document_id": (buyer.get("document_id") or "")[:40],
-        "document_type": (buyer.get("document_type") or "")[:20],
+        "document_id": document_id,
+        "document_type": document_type,
     }
 
 

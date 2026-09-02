@@ -12,10 +12,14 @@ from services.datil_service import (  # noqa: E402
     cents_to_amount,
     default_event_iva_percent,
     einvoice_config_from_registration,
+    friendly_datil_error,
     infer_id_type,
     is_configured,
     iva_percent,
+    mock_enabled,
+    mock_issue_response,
     payment_medio,
+    record_datil_exchange,
     split_iva_inclusive,
 )
 
@@ -54,6 +58,12 @@ def test_infer_id_type_cedula_ruc_final():
     assert infer_id_type("", "consumidor_final") == ("07", "9999999999999")
     assert infer_id_type("AB123456", "pasaporte") == ("06", "AB123456")
     assert infer_id_type("1710034065", "cedula") == ("05", "1710034065")
+    assert infer_id_type("A12-34567", "exterior") == ("08", "A12-34567")
+    assert infer_id_type("A12-34567", "08") == ("08", "A12-34567")
+    assert infer_id_type("A12-34567", "identificacion del exterior") == (
+        "08",
+        "A12-34567",
+    )
 
 
 def test_payment_medio():
@@ -163,6 +173,7 @@ def test_build_emisor_from_organizer(monkeypatch):
 def test_invoicing_ready_uses_organizer_ruc(monkeypatch):
     from services.einvoice_service import invoicing_ready
 
+    monkeypatch.delenv("DATIL_MOCK", raising=False)
     monkeypatch.setenv("DATIL_API_KEY", "key")
     monkeypatch.setenv("DATIL_CERT_PASSWORD", "secret")
     monkeypatch.delenv("DATIL_EMISOR_RUC", raising=False)
@@ -174,12 +185,46 @@ def test_invoicing_ready_uses_organizer_ruc(monkeypatch):
 
 
 def test_is_configured_does_not_need_env_ruc(monkeypatch):
+    monkeypatch.delenv("DATIL_MOCK", raising=False)
     monkeypatch.setenv("DATIL_API_KEY", "key")
     monkeypatch.setenv("DATIL_CERT_PASSWORD", "secret")
     monkeypatch.delenv("DATIL_EMISOR_RUC", raising=False)
     assert is_configured() is True
     monkeypatch.delenv("DATIL_API_KEY", raising=False)
     assert is_configured() is False
+
+
+def test_mock_disabled_in_production(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("DATIL_MOCK", "true")
+    assert mock_enabled() is False
+
+
+def test_mock_issue_response_autorizado():
+    data = mock_issue_response(
+        {
+            "secuencial": 2,
+            "emisor": {
+                "establecimiento": {"codigo": "001", "punto_emision": "001"}
+            },
+        },
+        idempotency_key="order-abc",
+    )
+    assert data["estado"] == "AUTORIZADO"
+    assert data["secuencial"] == 2
+    assert data["mock"] is True
+    assert data["id"].startswith("mock_")
+
+
+def test_invoicing_ready_mock_without_keys(monkeypatch):
+    from services.einvoice_service import invoicing_ready
+
+    monkeypatch.setenv("ENV", "development_local")
+    monkeypatch.setenv("DATIL_MOCK", "true")
+    monkeypatch.delenv("DATIL_API_KEY", raising=False)
+    monkeypatch.delenv("DATIL_CERT_PASSWORD", raising=False)
+    monkeypatch.delenv("DATIL_EMISOR_RUC", raising=False)
+    assert invoicing_ready({"legal_id": "0992547545001", "company_name": "Org"})
 
 
 def test_einvoice_config_from_registration():
@@ -239,3 +284,43 @@ def test_build_invoice_payload_uses_event_iva(monkeypatch):
     )
     assert payload["totales"]["impuestos"][0]["codigo_porcentaje"] == "0"
     assert payload["emisor"]["ruc"] == "1790012345001"
+
+
+def test_friendly_datil_error_punto_emision():
+    body = (
+        '{"errors":[{"details":"Punto de emision no existe",'
+        '"message":"Punto de emision no existe","code":"INVALID_RECEIPT"}]}'
+    )
+    msg = friendly_datil_error(body)
+    assert "punto de emisión" in msg.lower()
+    assert "app.datil.co" in msg
+    assert "errors" not in msg
+
+
+def test_friendly_datil_error_plain_text():
+    assert "clave" in friendly_datil_error("Clave de certificado inválida").lower()
+
+
+def test_record_datil_exchange_redacts_secrets(tmp_path):
+    payload = {
+        "emisor": {"ruc": "0992547545001", "establecimiento": {"codigo": "001"}},
+        "info_adicional": [{"nombre": "Orden", "valor": "TYS-000499"}],
+        "secuencial": 1,
+    }
+    path = record_datil_exchange(
+        method="POST",
+        url="https://link.datil.co/invoices/issue",
+        payload=payload,
+        status_code=400,
+        response_text='{"errors":[{"code":"INVALID_RECEIPT"}]}',
+        idempotency_key="abc-secret-key",
+        log_dir=tmp_path,
+    )
+    dumped = path.read_text(encoding="utf-8")
+    assert "TYS-000499" in dumped
+    assert "0992547545001" in dumped
+    assert '"status_code": 400' in dumped
+    assert "[redacted, sent]" in dumped
+    assert "X-Password" in dumped
+    assert dumped.count("abc-secret-key") == 1  # idempotency only, not as header secret
+    assert path.name.endswith("_TYS-000499_400.json")

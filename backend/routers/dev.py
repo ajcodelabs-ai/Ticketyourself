@@ -25,6 +25,7 @@ from orm_models import (
 )
 from security import get_current_user
 from services.activation import log_funnel_event
+from services.datil_service import DATIL_LOG_DIR
 
 logger = logging.getLogger("tys.dev")
 router = APIRouter(prefix="/api/_dev", tags=["dev"])
@@ -82,6 +83,33 @@ async def get_email_log(name: str):
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Not found")
     return FileResponse(path, media_type="text/html")
+
+
+# ── Dátil request/response dump (for their support team) ────────────────────
+@router.get("/datil-log")
+async def list_datil_log():
+    _dev_only()
+    DATIL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    files = sorted(DATIL_LOG_DIR.glob("*.json"), reverse=True)
+    return [
+        {
+            "name": f.name,
+            "size_bytes": f.stat().st_size,
+            "viewer_url": f"/api/_dev/datil-log/{f.name}",
+        }
+        for f in files
+    ]
+
+
+@router.get("/datil-log/{name}")
+async def get_datil_log(name: str):
+    _dev_only()
+    if "/" in name or ".." in name or not name.endswith(".json"):
+        raise HTTPException(status_code=400, detail="Invalid name")
+    path = DATIL_LOG_DIR / name
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(path, media_type="application/json")
 
 
 # ── Demo shortcut — bypass payment + admin approval ─────────────────────────

@@ -8,10 +8,12 @@ Docs: https://datil.dev/#introduccion
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -20,6 +22,7 @@ logger = logging.getLogger("tys.datil")
 
 DEFAULT_API_BASE = "https://link.datil.co"
 CONSUMIDOR_FINAL_ID = "9999999999999"
+DATIL_LOG_DIR = Path(__file__).resolve().parent.parent / "datil_log"
 
 # SRI IVA percentage → (codigo_porcentaje, tarifa)
 IVA_PERCENT_CODES: dict[int, tuple[str, float]] = {
@@ -57,7 +60,11 @@ ID_TYPE_ALIASES: dict[str, str] = {
     "final": "07",
     "08": "08",
     "exterior": "08",
+    "id_exterior": "08",
     "identificacion_exterior": "08",
+    "identificacion del exterior": "08",
+    "identificación del exterior": "08",
+    "identificacion_del_exterior": "08",
 }
 
 
@@ -66,6 +73,36 @@ class DatilError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
+
+
+def friendly_datil_error(body: str | None, fallback: str = "") -> str:
+    """Turn Dátil's JSON error payload into a short Spanish message for the UI."""
+    raw = (body or fallback or "").strip()
+    if not raw:
+        return "Dátil rechazó el comprobante."
+    details = ""
+    try:
+        parsed = json.loads(raw)
+        first = (parsed.get("errors") or [None])[0] or {}
+        if isinstance(first, dict):
+            details = str(first.get("details") or first.get("message") or "").strip()
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        details = raw
+    text = details or raw
+    if re.search(r"punto de emisi[oó]n no existe", text, re.I):
+        return (
+            "Dátil no tiene creado ese punto de emisión en la sesión de pruebas. "
+            "En app.datil.co activá Datos de prueba, andá a Mi negocio → "
+            "Establecimientos y creá el establecimiento 001 con punto de emisión 001 "
+            "(aunque Dátil te pida usar 001, hay que darlo de alta en el panel)."
+        )
+    if re.search(r"establecimiento no existe", text, re.I):
+        return (
+            "Dátil no tiene creado ese establecimiento en la sesión de pruebas. "
+            "En app.datil.co → Datos de prueba → Mi negocio → Establecimientos, "
+            "creá el código 001."
+        )
+    return text[:400]
 
 
 def _cfg() -> dict[str, str]:
@@ -95,14 +132,98 @@ def _cfg() -> dict[str, str]:
     }
 
 
+def mock_enabled() -> bool:
+    """Local stub: never hits Dátil. Ignored when ENV=production."""
+    if os.environ.get("ENV", "").strip().lower() == "production":
+        return False
+    return os.environ.get("DATIL_MOCK", "").strip().lower() in ("1", "true", "yes")
+
+
 def is_configured() -> bool:
     """Platform Dátil credentials (API key + certificate password).
 
     Emisor RUC / razón social / dirección live on the organizer (registro),
     not in env. ``DATIL_EMISOR_*`` remains a last-resort fallback for tests.
     """
+    if mock_enabled():
+        return True
     c = _cfg()
     return bool(c["api_key"] and c["cert_password"])
+
+
+def mock_issue_response(
+    payload: dict[str, Any], *, idempotency_key: str
+) -> dict[str, Any]:
+    """Fake AUTORIZADO payload so TYS can be tested without the Dátil panel."""
+    emisor = payload.get("emisor") or {}
+    est = emisor.get("establecimiento") if isinstance(emisor, dict) else {}
+    if not isinstance(est, dict):
+        est = {}
+    seq = int(payload.get("secuencial") or 1)
+    mock_id = f"mock_{(idempotency_key or 'local')[:12]}"
+    return {
+        "id": mock_id,
+        "estado": "AUTORIZADO",
+        "secuencial": seq,
+        "clave_acceso": "1" * 49,
+        "emisor": emisor,
+        "url_formato_impresion": None,
+        "url_documento_electronico": None,
+        "mock": True,
+    }
+
+
+def _datil_order_label(payload: dict[str, Any] | None) -> str:
+    extra = (payload or {}).get("info_adicional") or []
+    for item in extra:
+        if isinstance(item, dict) and item.get("nombre") == "Orden":
+            raw = str(item.get("valor") or "sin-orden")
+            return re.sub(r"[^A-Za-z0-9._-]", "_", raw)[:40] or "sin-orden"
+    return "sin-orden"
+
+
+def record_datil_exchange(
+    *,
+    method: str,
+    url: str,
+    payload: dict[str, Any] | None,
+    status_code: int | None,
+    response_text: str,
+    idempotency_key: str = "",
+    log_dir: Path | None = None,
+) -> Path:
+    """Write the request/response JSON (no API secrets) for Dátil support."""
+    dest = log_dir or DATIL_LOG_DIR
+    dest.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    label = _datil_order_label(payload)
+    path = dest / f"{ts}_{label}_{status_code or 'na'}.json"
+    try:
+        response_body: Any = json.loads(response_text) if response_text else None
+    except json.JSONDecodeError:
+        response_body = response_text
+    dump = {
+        "captured_at": ts,
+        "note": (
+            "Intercambio TYS → Dátil. X-Key y X-Password no se guardan. "
+            "Adjuntá este archivo al equipo de Dátil."
+        ),
+        "request": {
+            "method": method,
+            "url": url,
+            "headers": {
+                "Content-Type": "application/json",
+                "X-Key": "[redacted, sent]",
+                "X-Password": "[redacted, sent]",
+                "Idempotency-key": (idempotency_key or "")[:48],
+            },
+            "body": payload,
+        },
+        "response": {"status_code": status_code, "body": response_body},
+    }
+    path.write_text(json.dumps(dump, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("Datil exchange saved → %s status=%s", path.name, status_code)
+    return path
 
 
 def ambiente() -> int:
@@ -543,6 +664,13 @@ async def issue_invoice(
     idempotency_key: str,
     organizer_config: dict | None = None,
 ) -> dict[str, Any]:
+    if mock_enabled():
+        logger.info(
+            "Datil MOCK issue sequential=%s key=%s",
+            payload.get("secuencial"),
+            idempotency_key[:12],
+        )
+        return mock_issue_response(payload, idempotency_key=idempotency_key)
     creds = resolve_credentials(organizer_config)
     if not creds["api_key"] or not creds["cert_password"]:
         raise DatilError(
@@ -557,6 +685,17 @@ async def issue_invoice(
     url = f"{creds['api_base']}/invoices/issue"
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(url, json=payload, headers=headers)
+    try:
+        record_datil_exchange(
+            method="POST",
+            url=url,
+            payload=payload,
+            status_code=resp.status_code,
+            response_text=resp.text,
+            idempotency_key=idempotency_key,
+        )
+    except OSError:
+        logger.exception("Could not write datil_log")
     if resp.status_code >= 400:
         logger.error("Datil issue failed: %s %s", resp.status_code, resp.text[:400])
         raise DatilError(
@@ -570,6 +709,13 @@ async def issue_invoice(
 async def get_invoice(
     datil_id: str, *, organizer_config: dict | None = None
 ) -> dict[str, Any]:
+    if mock_enabled() or str(datil_id or "").startswith("mock_"):
+        return {
+            "id": datil_id,
+            "estado": "AUTORIZADO",
+            "clave_acceso": "1" * 49,
+            "mock": True,
+        }
     creds = resolve_credentials(organizer_config)
     if not creds["api_key"]:
         raise DatilError("Dátil no está configurado")
@@ -600,7 +746,9 @@ def public_invoice_view(row: dict[str, Any] | None) -> Optional[dict[str, Any]]:
         "clave_acceso": row.get("clave_acceso"),
         "ride_url": row.get("ride_url"),
         "xml_url": row.get("xml_url"),
-        "error_message": row.get("error_message"),
+        "error_message": friendly_datil_error(row.get("error_message")),
         "issued_at": row.get("issued_at"),
         "authorized_at": row.get("authorized_at"),
+        "mock": bool((row.get("datil_response") or {}).get("mock"))
+        or str(row.get("datil_id") or "").startswith("mock_"),
     }

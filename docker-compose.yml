@@ -99,6 +99,8 @@ services:
       DATIL_CERT_PASSWORD: ${DATIL_CERT_PASSWORD:-}
       DATIL_API_BASE: ${DATIL_API_BASE:-https://link.datil.co}
       DATIL_AMBIENTE: ${DATIL_AMBIENTE:-1}
+      # true: fake AUTORIZADO without calling Dátil (local only; ignored in production)
+      DATIL_MOCK: ${DATIL_MOCK:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ticketyourself.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin123!}
     volumes:

@@ -12,6 +12,7 @@ Override with SEED_DEMO_DATA=true|false.
 
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -77,6 +78,15 @@ def _demo_einvoice_config(od: dict) -> dict | None:
         establecimiento="001",
         punto_emision="001",
     )
+
+
+def _preserve_custom_einvoice_config(existing: dict | None, demo_legal_id: str) -> bool:
+    """Keep Configuración overrides when the org is no longer on the seed RUC."""
+    if not isinstance(existing, dict):
+        return False
+    ruc = re.sub(r"\D", "", str(existing.get("ruc") or ""))
+    demo = re.sub(r"\D", "", str(demo_legal_id or ""))
+    return bool(ruc) and ruc != demo
 
 
 DEMO_BUYER_EMAIL = "comprador@ticketyourself.com"
@@ -811,7 +821,10 @@ async def _reset_demo_organizers() -> None:
             org_row.phone = od["phone"]
             org_row.country = od["country"]
             org_row.country_code = od.get("country_code") or "EC"
-            org_row.einvoice_config = _demo_einvoice_config(od)
+            if not _preserve_custom_einvoice_config(
+                org_row.einvoice_config, od["legal_id"]
+            ):
+                org_row.einvoice_config = _demo_einvoice_config(od)
             org_row.status = od["status"]
             org_row.rejection_reason = od.get("rejection_reason")
             org_row.plan_id = plan_id

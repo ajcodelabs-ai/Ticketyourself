@@ -32,7 +32,7 @@ import api, { formatApiError } from "@/lib/api";
 import { formatEventDate } from "@/lib/events";
 import { previewMicrositePath } from "@/lib/config";
 import { formatCents, ticketPdfUrl, ORDER_STATUS_META } from "@/lib/orders";
-import { invoiceStatusMeta } from "@/lib/einvoice";
+import { invoiceStatusMeta, formatEinvoiceError } from "@/lib/einvoice";
 
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLLS = 30; // ~60s total
@@ -261,8 +261,11 @@ export default function OrderSuccess() {
                             {invoice.clave_acceso && (
                                 <Row label="Clave de acceso" value={invoice.clave_acceso} />
                             )}
-                            {invoice.error_message && (
-                                <p className="text-red-600 text-xs">{invoice.error_message}</p>
+                            {invoice.mock && (
+                                <p className="text-amber-800 text-xs bg-amber-50 border border-amber-200 rounded-md p-2">
+                                    Comprobante de prueba (DATIL_MOCK). No es un RIDE real del SRI:
+                                    sirve para ver el flujo en TYS sin el panel de Dátil.
+                                </p>
                             )}
                             <div className="flex flex-wrap gap-2 pt-1">
                                 {invoice.ride_url && (

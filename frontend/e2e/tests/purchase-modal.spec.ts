@@ -58,7 +58,7 @@ test.describe("Purchase flow", () => {
     await page.getByTestId("auth-panel-submit").click();
 
     await expect(page.getByTestId("purchase-submit")).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId("buyer-doc").fill("1234567890");
+    await page.getByTestId("buyer-doc").fill("1710034065");
     await page.getByTestId("payment-method-cash").click();
     await page.waitForTimeout(300);
     await page.getByTestId("purchase-submit").click();

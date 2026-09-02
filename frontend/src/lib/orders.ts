@@ -50,9 +50,9 @@ export const PAYMENT_METHOD_META = {
         description: "Coordinar con organizador",
     },
     demo: {
-        label: "Pago demo (dev)",
+        label: "Simular pago",
         icon: "🧪",
-        description: "Confirma la compra sin cobrar — solo entornos de prueba",
+        description: "Confirma la compra al instante, sin cobro real (solo pruebas)",
     },
 };
 

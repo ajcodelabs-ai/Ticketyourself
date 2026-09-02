@@ -34,9 +34,13 @@ def invoicing_ready(organizer: dict | None = None) -> bool:
     cfg = _org_config(organizer)
     if cfg.get("enabled") is False:
         return False
-    creds = datil_service.resolve_credentials(cfg)
     emisor = datil_service.build_emisor(organizer=organizer, organizer_config=cfg)
-    return bool(creds["api_key"] and creds["cert_password"] and emisor.get("ruc"))
+    if not emisor.get("ruc"):
+        return False
+    if datil_service.mock_enabled():
+        return True
+    creds = datil_service.resolve_credentials(cfg)
+    return bool(creds["api_key"] and creds["cert_password"])
 
 
 async def _allocate_sequential(session: AsyncSession, issuer_key: str) -> int:
@@ -227,7 +231,9 @@ async def issue_for_order(order: dict) -> Optional[dict[str, Any]]:
             _apply_datil_response(existing, data)
         except datil_service.DatilError as exc:
             existing.estado = "ERROR"
-            existing.error_message = (exc.body or str(exc))[:800]
+            existing.error_message = datil_service.friendly_datil_error(
+                exc.body, fallback=str(exc)
+            )[:800]
             logger.error(
                 "Datil issue failed for %s: %s",
                 order.get("order_number"),
