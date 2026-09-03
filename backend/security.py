@@ -166,6 +166,25 @@ def require_role(*roles: UserRole):
     return dep
 
 
+def is_active_organizer(user: dict) -> bool:
+    """True if this user dict is the organizer running an org (not a buyer/staff
+    who merely carries `organizer_id` for the org they registered/scan on)."""
+    return user.get("role") == "organizer" and bool(user.get("organizer_id"))
+
+
+def is_organizer_owner(
+    user: dict,
+    organizer_id: Optional[str],
+    roles: tuple = ("organizer",),
+) -> bool:
+    """True if this user has one of `roles` and owns the given organizer_id."""
+    return (
+        user.get("role") in roles
+        and bool(user.get("organizer_id"))
+        and user.get("organizer_id") == organizer_id
+    )
+
+
 # Organizers can buy on their own page; buyers only on the org they registered with.
 PURCHASE_ROLES = ("buyer", "organizer")
 

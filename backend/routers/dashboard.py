@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 from database import AsyncSessionLocal
 from db_helpers import get_microsite_by_organizer, get_organizer_by_id, row_to_dict
 from orm_models import Event, SubscriptionPlan, TicketOrder
-from security import get_current_user
+from security import get_current_user, is_active_organizer
 from services.plan_features import features_from_plan_row, get_plan_features
 
 logger = logging.getLogger("tys.dashboard")
@@ -39,9 +39,9 @@ def _month_start() -> datetime:
 
 @router.get("/me")
 async def my_dashboard(user=Depends(get_current_user)) -> Dict[str, Any]:
-    org_id = user.get("organizer_id")
-    if not org_id:
+    if not is_active_organizer(user):
         return {"organizer": None}
+    org_id = user.get("organizer_id")
 
     organizer = await get_organizer_by_id(org_id)
     if not organizer:

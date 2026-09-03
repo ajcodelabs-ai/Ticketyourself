@@ -13,7 +13,7 @@ from database import get_db
 from db_helpers import row_to_dict
 from models import PlanCreate, PlanOut, PlanUpdate
 from orm_models import Organizer, SubscriptionPlan
-from security import get_current_user, require_role
+from security import get_current_user, is_active_organizer, require_role
 
 router = APIRouter(prefix="/api/plans", tags=["plans"])
 admin_router = APIRouter(
@@ -35,7 +35,7 @@ async def my_plan_features(
     from services.plan_features import get_plan_features_async
 
     plan_code = None
-    if user.get("organizer_id"):
+    if is_active_organizer(user):
         result = await session.execute(
             select(Organizer.plan_code, Organizer.signup_plan_code).where(
                 Organizer.id == user["organizer_id"]
