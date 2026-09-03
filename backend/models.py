@@ -259,6 +259,7 @@ class OrganizerOut(TimestampedModel):
     created_at: datetime
     approved_at: Optional[datetime] = None
     approved_by: Optional[str] = None
+    verificante: Optional[Dict[str, Any]] = None
 
 
 class OrganizerProfileUpdate(BaseModel):

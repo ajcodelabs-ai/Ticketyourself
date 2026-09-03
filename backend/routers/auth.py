@@ -46,6 +46,7 @@ from security import (
     verify_password,
 )
 from services import datil_service
+from services import verificante_service as verificante
 from services.activation import create_activation_token, ensure_activation_record
 from services.email_service import send_welcome_email
 from services.oauth import (
@@ -347,6 +348,25 @@ async def register(
         )
         session.add(org_row)
         await session.flush()
+
+        if verificante.applies_to(country_code, payload.org_type):
+            try:
+                org_row.verificante = await verificante.start_check(
+                    organizer_id=organizer_id,
+                    legal_id=payload.legal_id.strip(),
+                    names=payload.company_name.strip(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Verificante check failed for %s: %s", email, type(exc).__name__
+                )
+                org_row.verificante = verificante.failed_record(
+                    identification=verificante.extract_cedula(payload.legal_id),
+                    names=payload.company_name.strip(),
+                    organizer_id=organizer_id,
+                    error=type(exc).__name__,
+                )
+            await session.flush()
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail="Slug already taken, try another")

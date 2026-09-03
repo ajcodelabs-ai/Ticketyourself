@@ -23,6 +23,12 @@ import {
 } from "@/components/ui/dialog";
 import api, { formatApiError } from "@/lib/api";
 import {
+    approveConfirmMessage,
+    needsApproveConfirm,
+    verificanteRiskMeta,
+    VERIFICANTE_STATUS,
+} from "@/lib/verificante";
+import {
     ArrowLeft,
     CheckCircle2,
     XCircle,
@@ -32,7 +38,9 @@ import {
     Eye,
     FileText,
     Loader2,
+    RefreshCw,
     Save,
+    ShieldCheck,
 } from "lucide-react";
 
 const STATUS_STYLE = {
@@ -61,6 +69,7 @@ export default function AdminOrganizerDetail() {
     const [preview, setPreview] = useState(null);
     const [billingIntents, setBillingIntents] = useState([]);
     const [confirmingPay, setConfirmingPay] = useState(false);
+    const [refreshingVf, setRefreshingVf] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -110,6 +119,10 @@ export default function AdminOrganizerDetail() {
         if (requireComment && comment.trim().length < 2) {
             toast.error("El comentario es obligatorio para esta acción");
             return;
+        }
+        if (action === "approve" && needsApproveConfirm(org?.verificante)) {
+            const ok = window.confirm(approveConfirmMessage(org.verificante));
+            if (!ok) return;
         }
         setActing(true);
         try {
@@ -252,6 +265,147 @@ export default function AdminOrganizerDetail() {
                     {org.signup_plan_code ? ` · intención: ${org.signup_plan_code}` : ""}
                 </p>
             </header>
+
+            {(org.verificante ||
+                (org.org_type === "individual" && org.country_code === "EC")) && (
+                <Card className="border-border/70" data-testid="admin-verificante-card">
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+                        <CardTitle className="text-lg inline-flex items-center gap-2">
+                            <ShieldCheck className="h-4 w-4" />
+                            Verificación de identidad (Verificante)
+                        </CardTitle>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={refreshingVf}
+                            onClick={async () => {
+                                setRefreshingVf(true);
+                                try {
+                                    await api.post(
+                                        `/admin/organizers/${id}/refresh-verificante`,
+                                    );
+                                    toast.success("Verificante actualizado");
+                                    await load();
+                                } catch (err) {
+                                    toast.error(
+                                        formatApiError(err?.response?.data?.detail) ||
+                                            err.message,
+                                    );
+                                } finally {
+                                    setRefreshingVf(false);
+                                }
+                            }}
+                            data-testid="admin-verificante-refresh"
+                        >
+                            {refreshingVf ? (
+                                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                            ) : (
+                                <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                            )}
+                            Actualizar Verificante
+                        </Button>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                        {!org.verificante ? (
+                            <p className="text-muted-foreground">
+                                Aún no hay consulta. Podés dispararla con «Actualizar
+                                Verificante».
+                            </p>
+                        ) : org.verificante.status === "skipped" ? (
+                            <p className="text-muted-foreground">
+                                No se consultó Verificante
+                                {org.verificante.error
+                                    ? ` (${org.verificante.error})`
+                                    : ""}
+                                . La aprobación sigue siendo tuya.
+                            </p>
+                        ) : (
+                            <>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Badge
+                                        className={
+                                            verificanteRiskMeta(org.verificante.risk_level)
+                                                .className
+                                        }
+                                        data-testid="admin-verificante-risk"
+                                    >
+                                        {
+                                            verificanteRiskMeta(org.verificante.risk_level)
+                                                .label
+                                        }
+                                    </Badge>
+                                    {org.verificante.status && (
+                                        <Badge
+                                            className={
+                                                (
+                                                    VERIFICANTE_STATUS[
+                                                        org.verificante.status
+                                                    ] || VERIFICANTE_STATUS.pending
+                                                ).className
+                                            }
+                                        >
+                                            {
+                                                (
+                                                    VERIFICANTE_STATUS[
+                                                        org.verificante.status
+                                                    ] || VERIFICANTE_STATUS.pending
+                                                ).label
+                                            }
+                                        </Badge>
+                                    )}
+                                    {org.verificante.mock && (
+                                        <Badge className="bg-amber-100 text-amber-800">
+                                            Prueba
+                                        </Badge>
+                                    )}
+                                </div>
+                                {org.verificante.person_names && (
+                                    <p>
+                                        Nombre:{" "}
+                                        <span className="font-medium">
+                                            {org.verificante.person_names}
+                                        </span>
+                                    </p>
+                                )}
+                                {org.verificante.identification && (
+                                    <p className="font-mono text-xs">
+                                        Cédula {org.verificante.identification}
+                                    </p>
+                                )}
+                                {org.verificante.summary && (
+                                    <p className="text-muted-foreground">
+                                        {typeof org.verificante.summary === "string"
+                                            ? org.verificante.summary
+                                            : JSON.stringify(org.verificante.summary)}
+                                    </p>
+                                )}
+                                {org.verificante.error &&
+                                    org.verificante.status === "failed" && (
+                                        <p className="text-red-700">
+                                            {org.verificante.error}
+                                        </p>
+                                    )}
+                                {org.verificante.pdf_url && (
+                                    <Button asChild variant="outline" size="sm">
+                                        <a
+                                            href={org.verificante.pdf_url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                        >
+                                            <FileText className="h-3.5 w-3.5 mr-1" />
+                                            Informe PDF
+                                        </a>
+                                    </Button>
+                                )}
+                                <p className="text-xs text-muted-foreground">
+                                    Riesgo bajo es una señal favorable. Aprobar o rechazar
+                                    la cuenta sigue siendo decisión del super admin.
+                                </p>
+                            </>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
 
             <Card className="border-border/70">
                 <CardHeader className="flex flex-row items-center justify-between">

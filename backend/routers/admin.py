@@ -387,6 +387,49 @@ async def resend_contract(
     return _org_to_out(row)
 
 
+@router.post(
+    "/organizers/{organizer_id}/refresh-verificante",
+    response_model=OrganizerOut,
+)
+async def refresh_verificante(
+    organizer_id: str,
+    admin=Depends(require_role("super_admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    from services import verificante_service as verificante
+
+    row = await _load_organizer(organizer_id, session)
+    if not verificante.applies_to(row.country_code, row.org_type):
+        raise HTTPException(
+            400, "Verificante solo aplica a organizadores de Ecuador persona natural"
+        )
+    current = row.verificante or {}
+    vid = current.get("verification_id")
+    try:
+        if vid and not str(vid).startswith("mock_"):
+            row.verificante = await verificante.fetch_status(current)
+        else:
+            row.verificante = await verificante.start_check(
+                organizer_id=row.id,
+                legal_id=row.legal_id or "",
+                names=row.company_name or row.slug,
+            )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            502, f"No se pudo actualizar Verificante: {type(exc).__name__}"
+        ) from exc
+    await session.flush()
+    await log_audit(
+        admin["id"],
+        "organizer.verificante_refreshed",
+        "organizer",
+        organizer_id,
+        {"status": (row.verificante or {}).get("status")},
+    )
+    await session.refresh(row, ["admin_comments"])
+    return _org_to_out(row)
+
+
 async def _add_comment(
     organizer_id: str, admin: dict, comment: str, session: AsyncSession
 ) -> OrganizerAdminComment:

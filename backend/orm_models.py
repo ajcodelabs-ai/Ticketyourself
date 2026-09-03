@@ -260,6 +260,8 @@ class Organizer(Base):
     approved_by = Column(String(36), nullable=True)  # user id or "system"
     # Dátil / SRI e-invoicing: establecimiento, punto de emisión, optional per-org keys.
     einvoice_config = Column(JSONB, nullable=True)
+    # Verificante TH check (Ecuador persona natural). Never auto-approves the org.
+    verificante = Column(JSONB, nullable=True)
 
     admin_comments = relationship(
         "OrganizerAdminComment",

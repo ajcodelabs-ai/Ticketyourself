@@ -23,6 +23,7 @@ import PlansShowcase, { PlanCard } from "@/components/PlansShowcase";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
 import { PUBLIC_DOMAIN } from "@/lib/config";
+import { isValidEcCedula } from "@/lib/ecId";
 import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
 
 const SIGNUP_PLAN_KEY = "tys_signup_plan";
@@ -259,6 +260,12 @@ export default function Register() {
         if (!form.legal_id.trim()) {
             toast.error(`Ingresa tu ${legalLabel}`);
             return;
+        }
+        if (form.country_code === "EC" && form.org_type === "individual") {
+            if (!isValidEcCedula(form.legal_id)) {
+                toast.error("La cédula ecuatoriana no es válida");
+                return;
+            }
         }
         if (form.country_code === "EC") {
             if (!form.legal_address.trim() || form.legal_address.trim().length < 8) {
@@ -526,6 +533,16 @@ export default function Register() {
                                 />
                             </div>
                         </div>
+
+                        {form.country_code === "EC" && form.org_type === "individual" && (
+                            <p
+                                className="text-xs text-muted-foreground rounded-lg border bg-muted/40 px-3 py-2"
+                                data-testid="register-verificante-note"
+                            >
+                                Vamos a consultar tu cédula en Verificante. Un
+                                administrador revisará tu cuenta antes de activarla.
+                            </p>
+                        )}
 
                         {form.country_code === "EC" && (
                             <div

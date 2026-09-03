@@ -55,6 +55,11 @@ import {
 import api, { formatApiError } from "@/lib/api";
 import { formatCents } from "@/lib/orders";
 import { useAdminOrganizers } from "@/hooks/queries/useAdminOrganizers";
+import {
+    approveConfirmMessage,
+    needsApproveConfirm,
+    verificanteRiskMeta,
+} from "@/lib/verificante";
 
 const STATUSES = [
     { value: "__all", label: "Todos los estados" },
@@ -179,6 +184,29 @@ export default function AdminOrganizers() {
 
     const approveIds = async (ids) => {
         if (!ids.length) return;
+        const risky = ids
+            .map((id) => items.find((o) => o.id === id))
+            .filter(
+                (o) =>
+                    o &&
+                    needsApproveConfirm({
+                        status: o.verificante_status,
+                        risk_level: o.verificante_risk_level,
+                        admitted: o.verificante_admitted,
+                    }),
+            );
+        if (risky.length) {
+            const first = risky[0];
+            const ok = window.confirm(
+                risky.length === 1
+                    ? approveConfirmMessage({
+                          status: first.verificante_status,
+                          risk_level: first.verificante_risk_level,
+                      })
+                    : `${risky.length} organizadores no tienen riesgo bajo en Verificante. ¿Aprobar igual?`,
+            );
+            if (!ok) return;
+        }
         setActing(true);
         let ok = 0;
         try {
@@ -345,9 +373,27 @@ export default function AdminOrganizers() {
                 id: "status",
                 header: "Estado",
                 cell: ({ row }) => (
-                    <Badge className={STATUS_STYLE[row.original.status] || ""}>
-                        {row.original.status}
-                    </Badge>
+                    <div className="flex flex-wrap items-center gap-1">
+                        <Badge className={STATUS_STYLE[row.original.status] || ""}>
+                            {row.original.status}
+                        </Badge>
+                        {row.original.verificante_status &&
+                            row.original.verificante_status !== "skipped" && (
+                                <Badge
+                                    className={`text-[10px] ${
+                                        verificanteRiskMeta(
+                                            row.original.verificante_risk_level,
+                                        ).className
+                                    }`}
+                                    data-testid={`org-verificante-${row.original.slug}`}
+                                    title="Verificante"
+                                >
+                                    {verificanteRiskMeta(
+                                        row.original.verificante_risk_level,
+                                    ).label}
+                                </Badge>
+                            )}
+                    </div>
                 ),
             },
             {
@@ -438,7 +484,7 @@ export default function AdminOrganizers() {
             },
         ],
         // eslint-disable-next-line react-hooks/exhaustive-deps -- table cells close over latest handlers
-        [selected, acting, allSelected, someSelected],
+        [selected, acting, allSelected, someSelected, items],
     );
 
     const table = useReactTable({

@@ -244,6 +244,7 @@ class TestOrganizer:
         assert "id" in cols
         assert "company_name" in cols
         assert "status" in cols
+        assert "verificante" in cols
         assert "subscription_status" in cols
 
     def test_default_status(self):

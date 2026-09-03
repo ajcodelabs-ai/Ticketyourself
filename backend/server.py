@@ -33,6 +33,7 @@ from routers import payment_methods as payment_methods_router  # noqa: E402
 from routers import plans as plans_router  # noqa: E402
 from routers import sales_fees as sales_fees_router  # noqa: E402
 from routers import stripe_webhook as stripe_webhook_router  # noqa: E402
+from routers import verificante_webhook as verificante_webhook_router  # noqa: E402
 from routers import tenants as tenants_router  # noqa: E402
 from seeds import run_seeds  # noqa: E402
 
@@ -72,6 +73,7 @@ app.include_router(stripe_webhook_router.router)
 app.include_router(nuvei_webhook_router.router)
 app.include_router(deuna_webhook_router.router)
 app.include_router(oneshot_webhook_router.router)
+app.include_router(verificante_webhook_router.router)
 app.include_router(einvoice_router.router)
 app.include_router(einvoice_router.organizer_router)
 app.include_router(einvoice_router.admin_router)
