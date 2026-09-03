@@ -37,7 +37,7 @@ from orm_models import (
     TicketScan,
     TicketType,
 )
-from security import get_current_user, require_role
+from security import get_current_user, is_active_organizer, require_role
 from services.event_venue import (
     locality_structural_diff,
     normalize_layout_localities,
@@ -533,7 +533,7 @@ PUBLISH_ALLOWED_STATUSES = {"approved"}
 
 
 async def _require_active_organizer(user) -> dict:
-    if not user.get("organizer_id"):
+    if not is_active_organizer(user):
         raise HTTPException(status_code=403, detail="No organizer profile")
     async with AsyncSessionLocal() as session:
         result = await session.execute(

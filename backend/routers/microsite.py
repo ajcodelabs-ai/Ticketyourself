@@ -18,7 +18,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from database import AsyncSessionLocal
 from db_helpers import get_organizer_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import Microsite, MicrositeAsset, MicrositeRevision, Organizer, Tenant
-from security import get_current_user
+from security import get_current_user, is_active_organizer
 from services.microsite_blocks import (
     blocks_for_template,
     resolve_blocks,
@@ -144,7 +144,7 @@ class RevisionCreateIn(BaseModel):
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 async def _require_active_organizer(user) -> dict:
-    if not user.get("organizer_id"):
+    if not is_active_organizer(user):
         raise HTTPException(status_code=403, detail="No organizer profile")
     organizer = await get_organizer_by_id(user["organizer_id"])
     if not organizer:

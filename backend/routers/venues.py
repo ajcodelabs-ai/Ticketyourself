@@ -25,7 +25,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from database import get_db
 from db_helpers import get_organizer_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import Event, Organizer, SubscriptionPlan, Venue
-from security import get_current_user
+from security import get_current_user, is_active_organizer
 from services.plan_features import get_plan_features_async
 from slugs import normalize_slug
 
@@ -41,7 +41,7 @@ def _now() -> datetime:
 async def _require_active_organizer(user) -> Dict[str, Any]:
     """Panel-level access. Allows `pending` (so the org can build drafts while
     awaiting admin approval). Rejects `rejected` / `suspended` / unknown."""
-    if not user.get("organizer_id"):
+    if not is_active_organizer(user):
         raise HTTPException(status_code=403, detail="No organizer profile")
     org = await get_organizer_by_id(user["organizer_id"])
     if not org:
