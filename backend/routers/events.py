@@ -1302,9 +1302,9 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
             multi_function_mode=payload.multi_function_mode,
             payment_methods=payment_methods,
             discounts=(
-                payload.discounts.model_dump(exclude_none=False)
+                payload.discounts.model_dump(mode="json", exclude_none=False)
                 if payload.discounts
-                else EventDiscounts().model_dump()
+                else EventDiscounts().model_dump(mode="json")
             ),
             access_params=(
                 payload.access_params.model_dump()
@@ -1366,7 +1366,9 @@ async def update_my_event(
 
         # Re-dump nested JSONB fields to preserve all values (e.g. None inside rules).
         if "discounts" in diff and payload.discounts is not None:
-            diff["discounts"] = payload.discounts.model_dump(exclude_none=False)
+            diff["discounts"] = payload.discounts.model_dump(
+                mode="json", exclude_none=False
+            )
             await _assert_discounts_allowed(
                 session,
                 org.get("plan_code"),
