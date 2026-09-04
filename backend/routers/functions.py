@@ -35,6 +35,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -643,8 +644,18 @@ async def delete_function(
             status_code=409,
             detail="Cannot delete a function that already has ticket sales.",
         )
-    await session.delete(row)
-    await session.flush()
+    try:
+        await session.delete(row)
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No se puede eliminar: hay pedidos asociados a esta función "
+                "(incluso pendientes o no confirmados)."
+            ),
+        )
     remaining = await session.scalar(
         select(sa.func.count())
         .select_from(EventFunction)
