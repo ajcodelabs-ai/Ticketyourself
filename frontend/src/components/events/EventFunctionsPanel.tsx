@@ -76,6 +76,7 @@ interface Props {
     localities?: Locality[];
     mode?: "function" | "subevent";
     timezone?: string;
+    onFunctionsExistChange?: (hasFunctions: boolean) => void;
 }
 
 type OverrideRow = { price: string; capacity: string; active: boolean };
@@ -184,7 +185,7 @@ function rangeOf(starts_at?: string | null, ends_at?: string | null) {
     return { start, end: Number.isNaN(end) ? start + DEFAULT_DURATION_MS : end };
 }
 
-export default function EventFunctionsPanel({ eventId, localities = [], mode = "function", timezone = "America/Guayaquil" }: Props) {
+export default function EventFunctionsPanel({ eventId, localities = [], mode = "function", timezone = "America/Guayaquil", onFunctionsExistChange }: Props) {
     const L = MODE_LABELS[mode] || MODE_LABELS.function;
     const [functions, setFunctions] = useState<EventFunction[]>([]);
     const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
@@ -210,13 +211,17 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
         setLoading(true);
         try {
             const r = await api.get(`/events/me/${eventId}/functions`);
-            setFunctions(r.data || []);
+            const rows = r.data || [];
+            setFunctions(rows);
+            // Mirror the backend's own "does this event still have functions"
+            // rule (routers/functions.py delete_function): cancelled rows don't count.
+            onFunctionsExistChange?.(rows.some((f) => f.status !== "cancelled"));
         } catch {
             toast.error("No se pudieron cargar las funciones");
         } finally {
             setLoading(false);
         }
-    }, [eventId]);
+    }, [eventId, onFunctionsExistChange]);
 
     useEffect(() => {
         load();
