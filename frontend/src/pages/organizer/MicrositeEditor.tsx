@@ -87,6 +87,7 @@ export default function MicrositeEditor() {
     const previewRef = useRef(null);
     const saveTimer = useRef(null);
     const pendingPartial = useRef<any>({});
+    const saveSeq = useRef(0);
     const galleryPrompted = useRef(false);
 
     useEffect(() => {
@@ -150,6 +151,7 @@ export default function MicrositeEditor() {
         saveTimer.current = setTimeout(async () => {
             const payload = pendingPartial.current;
             pendingPartial.current = {};
+            const seq = ++saveSeq.current;
             try {
                 setSaving(true);
                 if (payload.blocks) {
@@ -157,7 +159,13 @@ export default function MicrositeEditor() {
                 }
                 const { data } = await api.put("/microsite/me", payload);
                 if (!data.blocks?.length) data.blocks = resolveBlocks(data);
-                setMicrosite(data);
+                // Typing during the round-trip queues newer edits in
+                // pendingPartial (or a newer save may have already started) —
+                // applying this response now would clobber them with this
+                // request's older snapshot. The next save settles state fully.
+                if (seq === saveSeq.current && Object.keys(pendingPartial.current).length === 0) {
+                    setMicrosite(data);
+                }
             } catch (e) {
                 toast.error(formatApiError(e?.response?.data?.detail) || e.message);
             } finally {

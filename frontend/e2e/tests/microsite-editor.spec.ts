@@ -68,6 +68,55 @@ test.describe("Microsite editor", () => {
     }
   });
 
+  // Regression coverage: pushUpdate's debounced save unconditionally did
+  // setMicrosite(data) with the PUT response. Typing continuously means a
+  // save can still be in flight when newer keystrokes have already queued
+  // in pendingPartial — applying that older response clobbered the newer
+  // local text, dropping words. Fixed by only applying a save response when
+  // no newer save/edit has superseded it (MicrositeEditor.tsx pushUpdate).
+  test("Typing continuously through an autosave round-trip doesn't drop words", async ({ page }) => {
+    const original = await getMicrosite(page);
+    const originalSubtitle = original.content?.hero_subtitle ?? "";
+    const sentence = "Esta es una oracion larga escrita sin pausas para probar el autoguardado";
+
+    // Widen the race window: real network latency is usually shorter than a
+    // human's inter-word typing gap, so without this the bug is flaky to hit.
+    await page.route(`${BACKEND_URL}/api/microsite/me`, async (route) => {
+      if (route.request().method() === "PUT") {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      await route.continue();
+    });
+
+    try {
+      await page.goto("/app/microsite");
+      await expect(page.getByTestId("microsite-editor")).toBeVisible({ timeout: 15_000 });
+      await page.getByTestId("setup-section-copy").getByRole("button").click();
+
+      const field = page.getByTestId("quick-hero-subtitle");
+      await field.click();
+      await field.fill("");
+      for (const word of sentence.split(" ")) {
+        await field.pressSequentially(`${word} `, { delay: 30 });
+        await page.waitForTimeout(500); // natural inter-word gap, safely > the 300ms debounce
+      }
+
+      await expect(field).toHaveValue(`${sentence} `);
+
+      // Let the final debounced save (300ms) + its artificially delayed
+      // PUT (600ms above) actually land before reloading, with margin for
+      // a loaded CI runner.
+      await page.waitForTimeout(2500);
+
+      await page.reload();
+      await expect(page.getByTestId("microsite-editor")).toBeVisible({ timeout: 15_000 });
+      await page.getByTestId("setup-section-copy").getByRole("button").click();
+      await expect(page.getByTestId("quick-hero-subtitle")).toHaveValue(`${sentence} `);
+    } finally {
+      await patchMicrositeContent(page, { hero_subtitle: originalSubtitle });
+    }
+  });
+
   test("Picking a template from the gallery applies colors and keeps the title", async ({ page }) => {
     const original = await getMicrosite(page);
     try {
