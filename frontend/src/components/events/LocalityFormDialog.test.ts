@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { localityBuyerBreakdown, servicesWithAmount } from "./LocalityFormDialog";
+import { localityBuyerBreakdown, moneyPayload, servicesWithAmount } from "./LocalityFormDialog";
 
 describe("servicesWithAmount", () => {
     it("starts empty for a new locality", () => {
@@ -17,6 +17,30 @@ describe("servicesWithAmount", () => {
                 wallet_fee_cents: 0,
             }),
         ).toEqual(["service", "vxs"]);
+    });
+});
+
+describe("moneyPayload", () => {
+    const money = { price: "25", service: "1.50", admin: "0.50", vxs: "0.80", wallet: "0.25" };
+
+    it("converts every field to cents for a paid event", () => {
+        expect(moneyPayload("paid", money)).toEqual({
+            price_cents: 2500,
+            service_fee_cents: 150,
+            admin_fee_cents: 50,
+            vxs_cents: 80,
+            wallet_fee_cents: 25,
+        });
+    });
+
+    it("zeroes every field for a free event, even with typed amounts (TI-121)", () => {
+        expect(moneyPayload("free", money)).toEqual({
+            price_cents: 0,
+            service_fee_cents: 0,
+            admin_fee_cents: 0,
+            vxs_cents: 0,
+            wallet_fee_cents: 0,
+        });
     });
 });
 

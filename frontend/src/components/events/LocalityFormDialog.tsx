@@ -89,6 +89,19 @@ export function servicesWithAmount(initial) {
     return OPTIONAL_SERVICES.filter((s) => (Number(initial[s.centsKey]) || 0) > 0).map((s) => s.key);
 }
 
+/** A Gratuito event can't charge anything (TI-121) — zero every money field
+ * regardless of what's in the form, not just disable the inputs. */
+export function moneyPayload(pricingType, money) {
+    const isFree = pricingType === "free";
+    return {
+        price_cents: isFree ? 0 : (dollarsToCents(money.price) ?? 0),
+        vxs_cents: isFree ? 0 : (dollarsToCents(money.vxs) ?? 0),
+        service_fee_cents: isFree ? 0 : (dollarsToCents(money.service) ?? 0),
+        admin_fee_cents: isFree ? 0 : (dollarsToCents(money.admin) ?? 0),
+        wallet_fee_cents: isFree ? 0 : (dollarsToCents(money.wallet) ?? 0),
+    };
+}
+
 export function localityBuyerBreakdown({
     money,
     addedServices = [],
@@ -131,6 +144,7 @@ function MoneyField({
     onChange,
     testid,
     required,
+    disabled,
     onRemove,
 }: {
     label: string;
@@ -139,6 +153,7 @@ function MoneyField({
     onChange: (v: string) => void;
     testid: string;
     required?: boolean;
+    disabled?: boolean;
     onRemove?: () => void;
 }) {
     return (
@@ -170,6 +185,7 @@ function MoneyField({
                     className="pl-6 h-9"
                     value={value}
                     onChange={(e) => onChange(e.target.value)}
+                    disabled={disabled}
                     data-testid={testid}
                 />
             </div>
@@ -354,11 +370,7 @@ export default function LocalityFormDialog({
             description: description.trim() || null,
             seating_type: seatingType,
             assigned_element_ids: assignedIds,
-            price_cents: dollarsToCents(money.price) ?? 0,
-            vxs_cents: dollarsToCents(money.vxs) ?? 0,
-            service_fee_cents: dollarsToCents(money.service) ?? 0,
-            admin_fee_cents: dollarsToCents(money.admin) ?? 0,
-            wallet_fee_cents: dollarsToCents(money.wallet) ?? 0,
+            ...moneyPayload(pricingType, money),
         });
     };
 
@@ -487,19 +499,21 @@ export default function LocalityFormDialog({
                             <MoneyField
                                 label="Precio Entrada"
                                 tip={FIELD_TIPS.price}
-                                value={money.price}
+                                value={pricingType === "free" ? "0" : money.price}
                                 onChange={(v) => setMoney((m) => ({ ...m, price: v }))}
                                 testid="locality-form-price"
                                 required={pricingType !== "free"}
+                                disabled={pricingType === "free"}
                             />
                             {OPTIONAL_SERVICES.filter((s) => addedServices.includes(s.key)).map((s) => (
                                 <MoneyField
                                     key={s.key}
                                     label={s.label}
                                     tip={FIELD_TIPS[s.tipKey]}
-                                    value={money[s.key]}
+                                    value={pricingType === "free" ? "0" : money[s.key]}
                                     onChange={(v) => setMoney((m) => ({ ...m, [s.key]: v }))}
                                     testid={s.testid}
+                                    disabled={pricingType === "free"}
                                     onRemove={() => {
                                         setAddedServices((prev) => prev.filter((k) => k !== s.key));
                                         setMoney((m) => ({ ...m, [s.key]: "" }));

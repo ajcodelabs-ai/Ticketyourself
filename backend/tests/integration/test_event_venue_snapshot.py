@@ -195,9 +195,7 @@ class TestFreeEventLocalityPricing:
             f"{API}/events/me/{ev['id']}/venue",
             json={
                 "venue_id": venue["id"],
-                "locality_pricing": [
-                    {"locality_id": "any-locality", "price_cents": 0}
-                ],
+                "locality_pricing": [{"locality_id": "any-locality", "price_cents": 0}],
             },
         )
         assert r.status_code == 200, r.text
@@ -246,7 +244,9 @@ class TestFreeEventLocalityPricing:
         buyer at checkout (compute_totals_with_seats has no free-event gate),
         so it must be rejected too, not just a positive price_cents."""
         venue = _first_published_venue(demo_client)
-        ev = _create_draft_event(demo_client, "TI121 free fee-only", pricing_type="free")
+        ev = _create_draft_event(
+            demo_client, "TI121 free fee-only", pricing_type="free"
+        )
         r = demo_client.put(
             f"{API}/events/me/{ev['id']}/venue",
             json={
@@ -261,4 +261,3 @@ class TestFreeEventLocalityPricing:
             },
         )
         assert r.status_code == 422, r.text
-

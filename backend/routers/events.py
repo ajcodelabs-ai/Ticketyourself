@@ -739,7 +739,10 @@ def _publish_validation(doc: dict, *, allow_numbered: bool = True) -> None:
             ]
             if missing_loc:
                 missing.append("precio válido en cada localidad")
-            if locality_pricing_has_charge(pricing) and doc.get("pricing_type") == "free":
+            if (
+                locality_pricing_has_charge(pricing)
+                and doc.get("pricing_type") == "free"
+            ):
                 missing.append(
                     "marcar el evento como 'Pagado' en Tipo de recaudación "
                     "(tenés localidades con costo pero el evento está como Gratuito)"

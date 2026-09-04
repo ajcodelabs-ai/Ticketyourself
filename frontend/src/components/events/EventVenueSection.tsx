@@ -532,13 +532,17 @@ export default function EventVenueSection({
                     max_per_purchase: pricing[locId]?.max_per_purchase ?? null,
                 },
             };
-            setPricing(nextPricing);
 
+            // Only reflect the new price in the UI once the backend actually
+            // accepts it (e.g. a Gratuito event rejects nonzero pricing) —
+            // updating state before persistLink resolves would show a price
+            // as "saved" that the server just rejected.
             await persistLink({
                 venue_id: linkedVenue.id,
                 locality_pricing: pricingPayload(nextPricing, nextLocalities),
                 seat_holds_window_minutes: event?.seat_holds_window_minutes || 10,
             });
+            setPricing(nextPricing);
             await syncGaTicketTypes(event.id, nextLocalities, nextPricing, nextElements);
             onFormatChange?.(inferAttendanceFormatFromLocalities(nextLocalities));
 
@@ -565,12 +569,12 @@ export default function EventVenueSection({
             await persistLocalities(nextLocalities);
             const nextPricing = { ...pricing };
             delete nextPricing[locId];
-            setPricing(nextPricing);
             await persistLink({
                 venue_id: linkedVenue.id,
                 locality_pricing: pricingPayload(nextPricing, nextLocalities),
                 seat_holds_window_minutes: event?.seat_holds_window_minutes || 10,
             });
+            setPricing(nextPricing);
             onFormatChange?.(inferAttendanceFormatFromLocalities(nextLocalities));
             toast.success("Localidad borrada");
         } catch (e) {
