@@ -280,8 +280,15 @@ async def update_my_microsite(payload: MicrositeUpdate, user=Depends(get_current
     _validate_partial(payload)
 
     async with AsyncSessionLocal() as session:
+        # Row lock: this is a read-modify-write over JSON columns (content,
+        # branding, ...). Without it, two overlapping saves (e.g. autosave
+        # firing again before the previous PUT commits) can both read the
+        # same pre-update snapshot and the one that commits last silently
+        # reverts the other's change.
         row = await session.scalar(
-            select(Microsite).where(Microsite.organizer_id == organizer["id"])
+            select(Microsite)
+            .where(Microsite.organizer_id == organizer["id"])
+            .with_for_update()
         )
         if not row:
             # Auto-create then reload in same session
