@@ -163,6 +163,76 @@ test.describe("Event wizard", () => {
     await expect(page.getByText("Con subeventos")).toHaveCount(0);
   });
 
+  test("Evento único stays blocked while functions exist, and persists once they're gone (TI-115)", async ({ page }) => {
+    // Demo org's seeded plan doesn't include multi_function_events — mock both
+    // the frontend gate and the backend's own plan-gated /functions endpoints
+    // (same trick the "Multifunción modal" test above uses for the UI gate;
+    // here we also need real POST/DELETE round-trips, which the real backend
+    // would 403 on this plan, so a tiny in-memory fake stands in for it).
+    await page.route("**/api/plans/me/features", async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      await route.fulfill({
+        status: response.status(),
+        json: { ...json, multi_function_events: true },
+      });
+    });
+
+    let fakeFunctions: any[] = [];
+    await page.route(/\/api\/events\/me\/[^/]+\/functions(\/.*)?$/, async (route) => {
+      const req = route.request();
+      const method = req.method();
+      if (method === "GET") {
+        await route.fulfill({ status: 200, json: fakeFunctions });
+      } else if (method === "POST") {
+        const body = req.postDataJSON();
+        const fn = { id: `fake-${fakeFunctions.length + 1}`, tickets_sold: 0, status: "active", ...body };
+        fakeFunctions.push(fn);
+        await route.fulfill({ status: 201, json: fn });
+      } else if (method === "DELETE") {
+        const id = req.url().split("/functions/")[1];
+        fakeFunctions = fakeFunctions.filter((f) => f.id !== id);
+        await route.fulfill({ status: 204, body: "" });
+      } else {
+        await route.continue();
+      }
+    });
+
+    await page.goto("/app/eventos/nuevo");
+    await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("event-title-input").fill(`TI-115 E2E ${Date.now()}`);
+
+    await page.getByTestId("tab-fechas").click();
+    await page.getByTestId("event-structure-multi").click();
+    await page.getByTestId("wizard-save-draft").click();
+    await page.waitForURL(/\/app\/eventos\/.+\/editar/, { timeout: 15_000 });
+
+    await page.getByTestId("add-function").click();
+    await page.getByTestId("fn-name").fill("Función E2E");
+    await page.getByTestId("fn-starts").fill("2027-01-10T20:00");
+    await page.getByTestId("fn-ends").fill("2027-01-10T23:00");
+    await page.getByTestId("fn-save").click();
+    await expect(page.getByTestId("fn-save")).toHaveCount(0);
+
+    await expect(page.getByTestId("event-structure-single")).toBeDisabled();
+    await expect(page.getByText("Eliminá las funciones existentes primero")).toBeVisible();
+
+    const deleteFnBtn = page.locator('[data-testid^="fn-delete-"]');
+    page.once("dialog", (dialog) => dialog.accept());
+    await deleteFnBtn.click();
+
+    await expect(page.getByTestId("event-structure-single")).toBeEnabled();
+    await page.getByTestId("event-structure-single").click();
+    await page.getByTestId("wizard-save-draft").click();
+
+    await page.reload();
+    await page.getByTestId("tab-fechas").click();
+    await expect(page.getByTestId("event-structure-single")).toBeEnabled();
+    await expect(
+      page.getByTestId("event-structure-single").getByText("Activo"),
+    ).toBeVisible();
+  });
+
   test("Ticket design templates are A4 for email PDF", async ({ page }) => {
     await page.goto("/app/eventos");
     await page.getByTestId("event-detail-link-concierto-acustico-demo").click();

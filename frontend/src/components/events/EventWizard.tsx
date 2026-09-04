@@ -401,6 +401,11 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     // `currentEvent` is the live event document mirrored from the backend after
     // each save / venue link. It feeds the venue picker + the pricing panel.
     const [currentEvent, setCurrentEvent] = useState(initial || null);
+    // Live count of persisted EventFunction rows, reported by EventFunctionsPanel.
+    // `currentEvent.is_multi_function` only refreshes on save/reload, so it goes
+    // stale the moment functions are created/deleted inside the same wizard
+    // session — this tracks the real server state instead.
+    const [hasFunctions, setHasFunctions] = useState(!!initial?.is_multi_function);
     const [venuesList, setVenuesList] = useState([]);
     const [venueLocalities, setVenueLocalities] = useState([]);
     const [saveIssues, setSaveIssues] = useState([]);
@@ -983,6 +988,8 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                 disabled={lockCritical}
                                 eventId={eventId}
                                 localities={venueLocalities}
+                                hasPersistedFunctions={hasFunctions}
+                                onFunctionsExistChange={setHasFunctions}
                             />
                         </TabsContent>
                         <TabsContent value="media">
@@ -2139,7 +2146,7 @@ function SectionGeneral({ form, update, disabled, countryCode }) {
 /** Subeventos (VIP, cena) stay implemented but off the wizard until a later phase. */
 const SHOW_SUBEVENT_STRUCTURE = false;
 
-function SectionFechas({ form, update, disabled, eventId, localities }) {
+function SectionFechas({ form, update, disabled, eventId, localities, hasPersistedFunctions, onFunctionsExistChange }) {
     const { data: planFeatures } = usePlanFeatures();
     const allowsMulti = planFeatures ? Boolean(planFeatures.multi_function_events) : false;
     const durationLabel =
@@ -2155,10 +2162,15 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
 
     // Fail closed: if plan doesn't allow multifunción, force single.
     // Subeventos are hidden for now — leftover drafts map onto multifunción.
+    // Skip the force-reset while functions are still persisted server-side
+    // (e.g. plan downgraded after the event already had them): forcing
+    // "single" here would hide EventFunctionsPanel (only rendered when
+    // structure !== "single"), leaving no way to delete the functions that
+    // are blocking the switch in the first place.
     useEffect(() => {
         if (!planFeatures) return;
         if (!planFeatures.multi_function_events) {
-            if (structure === "single") return;
+            if (structure === "single" || hasPersistedFunctions) return;
             update("event_structure", "single");
             toast.message("Tipo de evento ajustado a tu plan", {
                 description: `Multifunción: ${planLockLabel(planFeatures, "multi_function_events")}. Se dejó Evento único.`,
@@ -2170,11 +2182,13 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
             update("multi_function_mode", "function");
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [planFeatures, structure]);
+    }, [planFeatures, structure, hasPersistedFunctions]);
 
     const setStructure = (value) => {
         if (value !== "single" && !allowsMulti) return;
         if (value === "subevent" && !SHOW_SUBEVENT_STRUCTURE) return;
+        // "Evento único" is disabled (see ChoiceCard below) while functions
+        // still exist, so this can't fire for that case — no need to guard it here too.
         update("event_structure", value);
         if (value === "multi") update("multi_function_mode", "function");
         if (value === "subevent") update("multi_function_mode", "subevent");
@@ -2220,7 +2234,12 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
                         selected={structure === "single"}
                         onSelect={() => setStructure("single")}
                         testid="event-structure-single"
-                        disabled={disabled}
+                        disabled={disabled || hasPersistedFunctions}
+                        badge={
+                            !disabled && hasPersistedFunctions
+                                ? "Eliminá las funciones existentes primero"
+                                : undefined
+                        }
                     />
                     <ChoiceCard
                         icon={CalendarClock}
@@ -2283,6 +2302,7 @@ function SectionFechas({ form, update, disabled, eventId, localities }) {
                             localities={localities}
                             mode={structure === "subevent" ? "subevent" : "function"}
                             timezone={form.timezone}
+                            onFunctionsExistChange={onFunctionsExistChange}
                         />
                     </div>
                 )}
