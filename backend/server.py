@@ -33,8 +33,8 @@ from routers import payment_methods as payment_methods_router  # noqa: E402
 from routers import plans as plans_router  # noqa: E402
 from routers import sales_fees as sales_fees_router  # noqa: E402
 from routers import stripe_webhook as stripe_webhook_router  # noqa: E402
-from routers import verificante_webhook as verificante_webhook_router  # noqa: E402
 from routers import tenants as tenants_router  # noqa: E402
+from routers import verificante_webhook as verificante_webhook_router  # noqa: E402
 from seeds import run_seeds  # noqa: E402
 
 logging.basicConfig(

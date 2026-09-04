@@ -6,8 +6,9 @@ import uuid
 
 import requests
 
-from tests.conftest import API, new_session, register_organizer_payload
+from tests.conftest import API
 from tests.conftest import login as login_user
+from tests.conftest import new_session, register_organizer_payload
 
 
 class TestRegistrationCountriesPublic:
