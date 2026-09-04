@@ -23,7 +23,7 @@ from orm_models import (
     Ticket,
     TicketOrder,
 )
-from security import get_current_user
+from security import get_current_user, is_organizer_owner
 from services.activation import log_funnel_event
 from services.datil_service import DATIL_LOG_DIR
 
@@ -142,9 +142,8 @@ async def demo_activate(payload: DemoActivateBody, user=Depends(get_current_user
             raise HTTPException(status_code=404, detail="Organizer not found")
 
         # Authorization: a regular user can only activate their own organizer.
-        if (
-            user.get("role") != "super_admin"
-            and user.get("organizer_id") != organizer_id
+        if user.get("role") != "super_admin" and not is_organizer_owner(
+            user, organizer_id
         ):
             raise HTTPException(status_code=403, detail="Forbidden")
 

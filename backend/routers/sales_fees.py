@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from audit import log_audit
 from database import get_db
 from orm_models import Organizer, SalesFeeRule, SubscriptionPlan
-from security import get_current_user, require_role
+from security import get_current_user, is_active_organizer, require_role
 from services.sales_fees import (
     PRICING_TYPES,
     find_overlapping_rule,
@@ -107,9 +107,9 @@ async def _assert_no_overlap(
 
 
 async def _organizer_plan_code(session: AsyncSession, user: dict) -> Optional[str]:
-    org_id = user.get("organizer_id")
-    if not org_id:
+    if not is_active_organizer(user):
         return None
+    org_id = user.get("organizer_id")
     row = (
         await session.execute(
             select(Organizer.plan_code, Organizer.signup_plan_code).where(

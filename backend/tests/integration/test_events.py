@@ -260,6 +260,45 @@ class TestEventFase5Fields:
         assert gd["discounts"]["presale"]["percent"] == 20
         assert gd["access_params"]["max_per_purchase"] == 5
 
+    def test_discount_rule_with_dates_persists_across_reload(
+        self, demo_token, created_event
+    ):
+        """TI-119 regression: a discount rule with valid_from/valid_until must
+        survive a save + reload, not just the immediate PUT response. TI-119
+        and TI-120 shared one root cause (datetime-serialization bug in the
+        discounts JSONB write, fixed for TI-120 in PR #39): the PUT 500'd, so
+        the rule was never actually committed to the row."""
+        s = new_session()
+        s.headers.update(bearer(demo_token))
+        eid = created_event["id"]
+        now = datetime.now(timezone.utc)
+        body = {
+            "discounts": {
+                "rules": [
+                    {
+                        "name": "TI-119 regression rule",
+                        "type": "auto",
+                        "conditions": {
+                            "valid_from": now.isoformat(),
+                            "valid_until": (now + timedelta(days=10)).isoformat(),
+                        },
+                        "discount": {"type": "percent", "value": 15},
+                    }
+                ],
+            },
+        }
+        r = s.put(f"{API}/events/me/{eid}", json=body)
+        assert r.status_code == 200, f"save failed: {r.text}"
+
+        # Simulate "salir y reingresar": re-fetch instead of trusting the PUT echo.
+        reloaded = s.get(f"{API}/events/me/{eid}")
+        assert reloaded.status_code == 200
+        rules = reloaded.json()["discounts"]["rules"]
+        assert len(rules) == 1, "descuento no persistió tras guardar/recargar"
+        assert rules[0]["name"] == "TI-119 regression rule"
+        assert rules[0]["conditions"]["valid_from"] is not None
+        assert rules[0]["conditions"]["valid_until"] is not None
+
     def test_gallery_upload_delete_reorder(
         self, demo_client, demo_token, created_event
     ):

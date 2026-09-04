@@ -368,6 +368,27 @@ def locality_extra_fees(pricing_map: dict, locality_id: str | None) -> dict:
     }
 
 
+LOCALITY_CHARGE_FIELDS = (
+    "price_cents",
+    "service_fee_cents",
+    "admin_fee_cents",
+    "vxs_cents",
+    "wallet_fee_cents",
+)
+
+
+def locality_pricing_has_charge(locality_pricing) -> bool:
+    """True if any locality in this list would charge the buyer anything —
+    entrada or any fee. Used to keep a Gratuito event actually free (TI-121):
+    a locality with `price_cents=0` but a nonzero fee field would otherwise
+    still bill the buyer at checkout (`compute_totals_with_seats`)."""
+    for lp in locality_pricing or []:
+        data = lp.model_dump() if hasattr(lp, "model_dump") else lp
+        if any(int(data.get(f) or 0) > 0 for f in LOCALITY_CHARGE_FIELDS):
+            return True
+    return False
+
+
 def compute_totals_with_seats(
     *,
     event: dict,
@@ -440,6 +461,25 @@ def compute_totals_with_seats(
         "total_cents": subtotal,
         "donation_amount_cents": 0,
     }
+    # Defense in depth (TI-121): a Gratuito event must never bill the buyer,
+    # regardless of which write path let a charge into locality_pricing (a
+    # subevent override, a future endpoint, a bulk edit, legacy data). Seat
+    # existence/locality validation above still runs — only the money is
+    # zeroed, and no platform fee applies to a $0 sale.
+    if event.get("pricing_type") == "free":
+        return {
+            **totals,
+            "unit_price_cents": 0,
+            "subtotal_cents": 0,
+            "entrada_cents": 0,
+            "service_fee_cents": 0,
+            "admin_fee_cents": 0,
+            "ticketseguro_cents": 0,
+            "vxs_cents": 0,
+            "tax_cents": 0,
+            "wallet_fee_cents": 0,
+            "total_cents": 0,
+        }
     return apply_platform_fee(
         totals,
         event=event,
