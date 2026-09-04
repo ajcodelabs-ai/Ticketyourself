@@ -51,7 +51,7 @@ import { formatPriceLabel } from "@/lib/events";
 import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders";
 import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
 import { DOCUMENT_TYPES, documentTypeFieldLabel } from "@/lib/einvoice";
-import { buyerDocumentError } from "@/lib/ecId";
+import { buyerDocumentError, isCedulaDocumentType, lawDocumentError, resolveLawDocumentId } from "@/lib/ecId";
 import { useAuth } from "@/contexts/AuthContext";
 import BuyerAuthPanel from "@/components/orders/BuyerAuthPanel";
 import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
@@ -645,8 +645,14 @@ export default function PurchaseModal({
         }
         if (event?.is_multi_function && functions.length > 0 && !selectedFunctionId)
             e.function = `Seleccioná un${isSubevent ? "" : "a"} ${functionNoun}`;
-        if (lawCategory && !(lawDocumentId.trim() || buyer.document_id.trim())) {
-            e.law_document = "Indicá el documento de verificación (cédula / carné).";
+        if (lawCategory) {
+            const lawErr = lawDocumentError(
+                lawCategory,
+                lawDocumentId,
+                buyer.document_type,
+                buyer.document_id,
+            );
+            if (lawErr) e.law_document = lawErr;
         }
         const docErr = buyerDocumentError(buyer.document_type, buyer.document_id);
         if (docErr) e.document_id = docErr;
@@ -711,7 +717,12 @@ export default function PurchaseModal({
             }
             if (lawCategory) {
                 payload.law_category = lawCategory;
-                payload.law_document_id = (lawDocumentId || buyer.document_id || "").trim() || null;
+                payload.law_document_id =
+                    resolveLawDocumentId(
+                        lawDocumentId,
+                        buyer.document_type,
+                        buyer.document_id,
+                    ) || null;
             }
             if (accessType === "access_code" && accessCode.trim()) {
                 payload.access_code = accessCode.trim();
@@ -1350,14 +1361,41 @@ export default function PurchaseModal({
                                 </Select>
                             </div>
                             {buyer.document_type !== "consumidor_final" && (
-                                <Field
-                                    label={documentTypeFieldLabel(buyer.document_type)}
-                                    id="buyer-doc"
-                                    value={buyer.document_id}
-                                    onChange={(v) => setBuyer((b) => ({ ...b, document_id: v }))}
-                                    error={errors.document_id}
-                                    testId="buyer-doc"
-                                />
+                                <div className="space-y-1">
+                                    <Field
+                                        label={documentTypeFieldLabel(buyer.document_type)}
+                                        id="buyer-doc"
+                                        value={buyer.document_id}
+                                        onChange={(v) => {
+                                            setBuyer((b) => ({ ...b, document_id: v }));
+                                            const docErr = buyerDocumentError(buyer.document_type, v);
+                                            setErrors((prev) => {
+                                                const next = { ...prev };
+                                                if (docErr) next.document_id = docErr;
+                                                else delete next.document_id;
+                                                return next;
+                                            });
+                                        }}
+                                        error={errors.document_id}
+                                        testId="buyer-doc"
+                                    />
+                                    {buyer.document_type === "cedula" && (
+                                        <p className="text-[11px] text-muted-foreground">
+                                            10 dígitos. El último es el verificador del Registro Civil
+                                            (no vale una cédula de otro país ni un número inventado).
+                                        </p>
+                                    )}
+                                    {buyer.document_type === "ruc" && (
+                                        <p className="text-[11px] text-muted-foreground">
+                                            13 dígitos. Persona natural: tu cédula + 001.
+                                        </p>
+                                    )}
+                                    {buyer.document_type === "exterior" && (
+                                        <p className="text-[11px] text-muted-foreground">
+                                            Pasaporte u otro ID. No se valida como cédula ecuatoriana.
+                                        </p>
+                                    )}
+                                </div>
                             )}
                             <Field
                                 label="Dirección (facturación)"
@@ -1478,8 +1516,12 @@ export default function PurchaseModal({
                                         </Label>
                                         <Input
                                             id="law-document"
-                                            placeholder="Cédula o carné CONADIS"
-                                            value={lawDocumentId || buyer.document_id}
+                                            placeholder={
+                                                lawCategory === "senior"
+                                                    ? "Cédula ecuatoriana (10 dígitos)"
+                                                    : "Cédula o carné CONADIS"
+                                            }
+                                            value={lawDocumentId}
                                             onChange={(e) => setLawDocumentId(e.target.value)}
                                             data-testid="law-document"
                                         />
@@ -1487,8 +1529,11 @@ export default function PurchaseModal({
                                             <p className="text-xs text-destructive">{errors.law_document}</p>
                                         )}
                                         <p className="text-[11px] text-muted-foreground">
-                                            Declarás que la información es correcta; el organizador puede
-                                            verificarla en puerta.
+                                            {lawCategory === "senior"
+                                                ? isCedulaDocumentType(buyer.document_type)
+                                                    ? "Si lo dejás vacío usamos la cédula de facturación. El descuento de tercera edad es para cédula ecuatoriana."
+                                                    : "Este descuento pide cédula ecuatoriana, no el ID del exterior ni pasaporte."
+                                                : "Declarás que la información es correcta; el organizador puede verificarla en puerta."}
                                         </p>
                                     </div>
                                 )}

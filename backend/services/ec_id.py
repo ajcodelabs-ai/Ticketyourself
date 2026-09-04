@@ -35,6 +35,28 @@ def looks_like_ec_cedula(value: str | None) -> bool:
     return bool(value and re.fullmatch(r"\d{10}", digits_only(value)))
 
 
+def is_cedula_document_type(document_type: str | None) -> bool:
+    return _norm_type(document_type) in {"cedula", "05"}
+
+
+def resolve_law_document_id(
+    law_document_id: str | None,
+    buyer_document_type: str | None,
+    buyer_document_id: str | None,
+) -> str:
+    """Verification ID for ley discounts.
+
+    A 10-digit foreign ID (Colombia, etc.) must not be reused as an Ecuador
+    cédula just because it happens to be 10 digits.
+    """
+    explicit = (law_document_id or "").strip()
+    if explicit:
+        return explicit
+    if is_cedula_document_type(buyer_document_type):
+        return (buyer_document_id or "").strip()
+    return ""
+
+
 def _valid_province(code: int) -> bool:
     return 1 <= code <= 24 or code == FOREIGN_RESIDENT_PROVINCE
 
@@ -127,17 +149,61 @@ def buyer_document_error(
 ) -> str | None:
     """Spanish message if cédula/RUC is invalid; None if the type is skipped."""
     kind = _norm_type(document_type)
+    number = digits_only(document_id)
     if kind in {"cedula", "05"}:
+        if len(number) != 10:
+            return "Cédula inválida. Debe tener exactamente 10 dígitos."
         if not is_valid_ec_cedula(document_id):
             return (
-                "Cédula inválida. Debe tener 10 dígitos y ser una cédula "
-                "ecuatoriana válida."
+                "Cédula inválida. Los 10 dígitos no pasan el dígito verificador "
+                "del Registro Civil (no es una cédula ecuatoriana válida)."
             )
         return None
     if kind in {"ruc", "04"}:
+        if len(number) != 13:
+            return "RUC inválido. Debe tener exactamente 13 dígitos."
         if not is_valid_ec_ruc(document_id):
             return (
-                "RUC inválido. Debe tener 13 dígitos y ser un RUC ecuatoriano válido."
+                "RUC inválido. Revisá el dígito verificador y el establecimiento. "
+                "Persona natural: cédula ecuatoriana válida + 001."
             )
         return None
+    return None
+
+
+def law_document_error(
+    category: str | None,
+    law_document_id: str | None,
+    buyer_document_type: str | None = None,
+    buyer_document_id: str | None = None,
+    *,
+    require_document: bool = True,
+) -> str | None:
+    """Senior discount needs a real Ecuador cédula; foreign 10-digit IDs do not qualify."""
+    cat = (category or "").strip().lower()
+    if cat not in {"senior", "disability"}:
+        return None
+    doc = resolve_law_document_id(
+        law_document_id, buyer_document_type, buyer_document_id
+    )
+    if cat == "senior":
+        if require_document and not doc:
+            return (
+                "Para el descuento de tercera edad indicá una cédula ecuatoriana "
+                "en el documento de verificación."
+            )
+        if doc and not is_valid_ec_cedula(doc):
+            return (
+                "Para tercera edad el documento de verificación debe ser una "
+                "cédula ecuatoriana válida. Un pasaporte o ID del exterior no aplica."
+            )
+        return None
+    if not doc:
+        return (
+            "Para el descuento por discapacidad indicá el número de carné "
+            "CONADIS o cédula."
+        )
+    if is_cedula_document_type(buyer_document_type) and looks_like_ec_cedula(doc):
+        if not is_valid_ec_cedula(doc):
+            return "El documento de verificación no es una cédula ecuatoriana válida."
     return None

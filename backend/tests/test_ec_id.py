@@ -9,6 +9,8 @@ from services.ec_id import (  # noqa: E402
     buyer_document_error,
     is_valid_ec_cedula,
     is_valid_ec_ruc,
+    law_document_error,
+    resolve_law_document_id,
 )
 
 
@@ -49,9 +51,20 @@ def test_public_ruc():
 def test_buyer_document_error():
     assert buyer_document_error("cedula", "1710034065") is None
     assert buyer_document_error("cédula", "1710034065") is None
-    assert buyer_document_error("cedula", "1234567890")
+    assert "verificador" in (buyer_document_error("cedula", "1234567890") or "")
+    assert "10 dígitos" in (buyer_document_error("cedula", "123") or "")
     assert buyer_document_error("ruc", "1710034065001") is None
     assert buyer_document_error("ruc", "1710034065")
     assert buyer_document_error("pasaporte", "AB123") is None
-    assert buyer_document_error("exterior", "A-99") is None
+    assert buyer_document_error("exterior", "1020304050") is None
     assert buyer_document_error("consumidor_final", "") is None
+    # QA numbers that look like Pichincha cédulas but fail the check digit
+    assert is_valid_ec_cedula("1719205510") is False
+    assert is_valid_ec_cedula("1719429053") is False
+
+
+def test_law_document_does_not_reuse_foreign_id():
+    assert resolve_law_document_id("", "exterior", "1020304050") == ""
+    err = law_document_error("senior", "", "exterior", "1020304050")
+    assert err and "cédula ecuatoriana" in err.lower()
+    assert law_document_error("senior", "1710034065", "exterior", "1020304050") is None
