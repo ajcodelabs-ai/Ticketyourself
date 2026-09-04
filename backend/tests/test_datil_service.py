@@ -204,9 +204,7 @@ def test_mock_issue_response_autorizado():
     data = mock_issue_response(
         {
             "secuencial": 2,
-            "emisor": {
-                "establecimiento": {"codigo": "001", "punto_emision": "001"}
-            },
+            "emisor": {"establecimiento": {"codigo": "001", "punto_emision": "001"}},
         },
         idempotency_key="order-abc",
     )

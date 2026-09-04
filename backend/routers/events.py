@@ -1409,9 +1409,7 @@ async def update_my_event(
                 diff["iva_percent"]
             )
         pricing = diff.get("pricing_type", row.pricing_type)
-        optional = diff.get(
-            "optional_donation_enabled", row.optional_donation_enabled
-        )
+        optional = diff.get("optional_donation_enabled", row.optional_donation_enabled)
         if pricing == "free" and not optional:
             diff["iva_percent"] = 0
 

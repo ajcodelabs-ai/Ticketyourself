@@ -122,7 +122,9 @@ def is_valid_ec_ruc(value: str | None) -> bool:
     return False
 
 
-def buyer_document_error(document_type: str | None, document_id: str | None) -> str | None:
+def buyer_document_error(
+    document_type: str | None, document_id: str | None
+) -> str | None:
     """Spanish message if cédula/RUC is invalid; None if the type is skipped."""
     kind = _norm_type(document_type)
     if kind in {"cedula", "05"}:
