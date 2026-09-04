@@ -335,7 +335,6 @@ async def start_check(
     try:
         created = await _create_request(
             identification=identification,
-            candidate_id=organizer_id,
             client=client,
         )
     except VerificanteError as exc:
@@ -397,14 +396,13 @@ async def fetch_status(
 async def _create_request(
     *,
     identification: str,
-    candidate_id: str | None,
     client: httpx.AsyncClient | None,
 ) -> dict[str, Any]:
-    subject: dict[str, Any] = {"identification": identification}
-    if candidate_id:
-        subject["metadata"] = {"candidateIdentifierExt": candidate_id}
+    # Do not send identifications[].metadata: Verificante only accepts keys
+    # pre-registered for the company ("Metadata key is not configured").
+    # We correlate webhooks via verification_id + cédula instead.
     body = {
-        "identifications": [subject],
+        "identifications": [{"identification": identification}],
         "showTakeScreenshot": False,
         "userInfo": operator_user_info(),
         "allowPartialReports": True,

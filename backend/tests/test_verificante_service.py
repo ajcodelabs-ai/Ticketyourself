@@ -1,5 +1,6 @@
 """Unit tests for Verificante KYC helpers."""
 
+import json
 import os
 from unittest.mock import AsyncMock, patch
 
@@ -209,3 +210,29 @@ def test_start_check_http_error_does_not_raise(monkeypatch):
     rec = asyncio.run(_run())
     assert rec["status"] == "failed"
     assert rec["admitted"] is False
+
+
+def test_create_request_omits_metadata(monkeypatch):
+    monkeypatch.setenv("ENV", "development_local")
+    monkeypatch.setenv("VERIFICANTE_MOCK", "false")
+    monkeypatch.setenv("VERIFICANTE_API_KEY", "test-key")
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"id": "vf-1", "state": "pending"}]})
+
+    async def _run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await start_check(
+                organizer_id="org-1",
+                legal_id=CEDULA,
+                names="Ana Pérez",
+                client=client,
+            )
+
+    rec = asyncio.run(_run())
+    subject = captured["body"]["identifications"][0]
+    assert "metadata" not in subject
+    assert rec["candidate_id"] == "org-1"
+    assert rec["verification_id"] == "vf-1"
