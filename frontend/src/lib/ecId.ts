@@ -90,24 +90,87 @@ export function isValidEcRuc(value: string): boolean {
     return false;
 }
 
-export function buyerDocumentError(documentType: string, documentId: string): string | null {
-    const kind = String(documentType || "")
+function normDocumentType(documentType: string): string {
+    return String(documentType || "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .trim()
         .toLowerCase()
         .replace(/\s+/g, "_");
+}
+
+export function isCedulaDocumentType(documentType: string): boolean {
+    const kind = normDocumentType(documentType);
+    return kind === "cedula" || kind === "05";
+}
+
+export function resolveLawDocumentId(
+    lawDocumentId: string,
+    documentType: string,
+    documentId: string,
+): string {
+    const explicit = String(lawDocumentId || "").trim();
+    if (explicit) return explicit;
+    if (isCedulaDocumentType(documentType)) return String(documentId || "").trim();
+    return "";
+}
+
+export function buyerDocumentError(documentType: string, documentId: string): string | null {
+    const kind = normDocumentType(documentType);
+    const number = digitsOnly(documentId);
     if (kind === "cedula" || kind === "05") {
+        if (number.length !== 10) {
+            return "Cédula inválida. Debe tener exactamente 10 dígitos.";
+        }
         if (!isValidEcCedula(documentId)) {
-            return "Cédula inválida. Debe tener 10 dígitos y ser una cédula ecuatoriana válida.";
+            return (
+                "Cédula inválida. Los 10 dígitos no pasan el dígito verificador " +
+                "del Registro Civil (no es una cédula ecuatoriana válida)."
+            );
         }
         return null;
     }
     if (kind === "ruc" || kind === "04") {
+        if (number.length !== 13) {
+            return "RUC inválido. Debe tener exactamente 13 dígitos.";
+        }
         if (!isValidEcRuc(documentId)) {
-            return "RUC inválido. Debe tener 13 dígitos y ser un RUC ecuatoriano válido.";
+            return (
+                "RUC inválido. Revisá el dígito verificador y el establecimiento. " +
+                "Persona natural: cédula ecuatoriana válida + 001."
+            );
         }
         return null;
+    }
+    return null;
+}
+
+export function lawDocumentError(
+    category: string,
+    lawDocumentId: string,
+    documentType: string,
+    documentId: string,
+): string | null {
+    const cat = String(category || "").trim().toLowerCase();
+    if (cat !== "senior" && cat !== "disability") return null;
+    const doc = resolveLawDocumentId(lawDocumentId, documentType, documentId);
+    if (cat === "senior") {
+        if (!doc) {
+            return "Para el descuento de tercera edad indicá una cédula ecuatoriana en el documento de verificación.";
+        }
+        if (!isValidEcCedula(doc)) {
+            return (
+                "Para tercera edad el documento de verificación debe ser una cédula ecuatoriana válida. " +
+                "Un pasaporte o ID del exterior no aplica."
+            );
+        }
+        return null;
+    }
+    if (!doc) {
+        return "Para el descuento por discapacidad indicá el número de carné CONADIS o cédula.";
+    }
+    if (isCedulaDocumentType(documentType) && digitsOnly(doc).length === 10 && !isValidEcCedula(doc)) {
+        return "El documento de verificación no es una cédula ecuatoriana válida.";
     }
     return null;
 }

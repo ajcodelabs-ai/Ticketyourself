@@ -26,6 +26,7 @@ from db_helpers import (
 from orm_models import Organizer
 from security import assert_purchase_on_organizer, require_purchase_account
 from services import discount_service, order_service
+from services.ec_id import law_document_error
 from services.event_venue import resolve_event_venue
 from services.pdf_service import render_ticket_pdf
 from services.sales_fees import apply_platform_fee, list_sales_fee_rules
@@ -575,6 +576,7 @@ async def create_order(
     # §4.2.7 — verificación mínima de descuentos por ley
     if payload.law_category:
         discounts_cfg = event.get("discounts") or {}
+        require_document = True
         if payload.law_category == "disability":
             law = discounts_cfg.get("disability_law") or {}
             if not law.get("enabled"):
@@ -587,26 +589,16 @@ async def create_order(
                 raise HTTPException(
                     422, "Este evento no tiene descuento por tercera edad."
                 )
-            if law.get("require_document", True) and not (
-                payload.law_document_id or buyer.get("document_id")
-            ):
-                raise HTTPException(
-                    422,
-                    "Para el descuento de tercera edad indicá el número de cédula o carné.",
-                )
-        if payload.law_category == "disability" and not (
-            payload.law_document_id or buyer.get("document_id")
-        ):
-            raise HTTPException(
-                422,
-                "Para el descuento por discapacidad indicá el número de carné CONADIS o cédula.",
-            )
-
-        law_doc = payload.law_document_id or buyer.get("document_id")
-        if discount_service.looks_like_ec_cedula(
-            law_doc
-        ) and not discount_service.is_valid_ec_cedula(law_doc):
-            raise HTTPException(422, "Número de cédula inválido.")
+            require_document = bool(law.get("require_document", True))
+        law_err = law_document_error(
+            payload.law_category,
+            payload.law_document_id,
+            buyer.get("document_type"),
+            buyer.get("document_id"),
+            require_document=require_document,
+        )
+        if law_err:
+            raise HTTPException(422, law_err)
 
     await discount_service.enforce_promo_max_per_buyer(
         event=event,
