@@ -42,6 +42,7 @@ from database import get_db
 from db_helpers import row_to_dict
 from orm_models import Event, EventFunction, FunctionTicketType, Organizer, TicketType
 from security import get_current_user, require_role
+from services.order_service import locality_pricing_has_charge
 
 router = APIRouter(tags=["functions"])
 public_router = APIRouter(tags=["functions-public"])
@@ -437,6 +438,18 @@ async def create_function(
 
     await assert_feature_async(session, org.plan_code, "multi_function_events")
     event = await _get_event_for_org(event_id, org.id, session)
+    # kind="function" always persists locality_pricing=[] below (inherits from
+    # the event) — only validate it for kind="subevent", where it's kept.
+    if (
+        body.kind == "subevent"
+        and event.pricing_type == "free"
+        and locality_pricing_has_charge(body.locality_pricing)
+    ):
+        raise HTTPException(
+            422,
+            "El evento es Gratuito: las localidades de la función no pueden "
+            "tener costo (precio o fees).",
+        )
     await _check_schedule_conflict(
         event_id,
         body.starts_at,
@@ -523,7 +536,7 @@ async def update_function(
     session: AsyncSession = Depends(get_db),
 ):
     org = await _get_org(user, session)
-    await _get_event_for_org(event_id, org.id, session)
+    event = await _get_event_for_org(event_id, org.id, session)
 
     result = await session.execute(
         select(EventFunction).where(
@@ -534,6 +547,20 @@ async def update_function(
     func = result.scalar_one_or_none()
     if not func:
         raise HTTPException(status_code=404, detail="Function not found")
+
+    # kind="function" always persists locality_pricing=[] below (inherits from
+    # the event) — only validate it for kind="subevent", where it's kept.
+    if (
+        func.kind == "subevent"
+        and event.pricing_type == "free"
+        and body.locality_pricing is not None
+        and locality_pricing_has_charge(body.locality_pricing)
+    ):
+        raise HTTPException(
+            422,
+            "El evento es Gratuito: las localidades de la función no pueden "
+            "tener costo (precio o fees).",
+        )
 
     effective_starts = body.starts_at if body.starts_at is not None else func.starts_at
     effective_ends = body.ends_at if body.ends_at is not None else func.ends_at

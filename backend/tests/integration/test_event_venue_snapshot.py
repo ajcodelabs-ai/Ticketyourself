@@ -15,7 +15,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _create_draft_event(client: requests.Session, title: str) -> dict:
+def _create_draft_event(
+    client: requests.Session, title: str, pricing_type: str = "paid"
+) -> dict:
     slug = f"snap-{uuid.uuid4().hex[:8]}"
     from datetime import datetime, timedelta, timezone
 
@@ -26,8 +28,8 @@ def _create_draft_event(client: requests.Session, title: str) -> dict:
         json={
             "title": title,
             "slug": slug,
-            "pricing_type": "paid",
-            "base_price_cents": 1000,
+            "pricing_type": pricing_type,
+            "base_price_cents": 1000 if pricing_type == "paid" else 0,
             "venue_name": "Temp",
             "venue_city": "Quito",
             "venue_country": "Ecuador",
@@ -166,3 +168,97 @@ class TestEventVenueSnapshot:
             },
         )
         assert r.status_code == 409, r.text
+
+
+class TestFreeEventLocalityPricing:
+    """TI-121: a Gratuito event must never end up with a priced locality —
+    across every save path that can set locality_pricing, not just publish."""
+
+    def test_link_venue_rejects_priced_locality_on_free_event(self, demo_client):
+        venue = _first_published_venue(demo_client)
+        ev = _create_draft_event(demo_client, "TI121 free link", pricing_type="free")
+        r = demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue",
+            json={
+                "venue_id": venue["id"],
+                "locality_pricing": [
+                    {"locality_id": "any-locality", "price_cents": 2500}
+                ],
+            },
+        )
+        assert r.status_code == 422, r.text
+
+    def test_link_venue_allows_zero_priced_locality_on_free_event(self, demo_client):
+        venue = _first_published_venue(demo_client)
+        ev = _create_draft_event(demo_client, "TI121 free zero", pricing_type="free")
+        r = demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue",
+            json={
+                "venue_id": venue["id"],
+                "locality_pricing": [
+                    {"locality_id": "any-locality", "price_cents": 0}
+                ],
+            },
+        )
+        assert r.status_code == 200, r.text
+
+    def test_venue_layout_clamps_new_locality_price_on_free_event(self, demo_client):
+        venue = _first_published_venue(demo_client)
+        ev = _create_draft_event(demo_client, "TI121 free layout", pricing_type="free")
+        demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue",
+            json={"venue_id": venue["id"], "locality_pricing": []},
+        )
+        r = demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue-layout",
+            json={
+                "canvas": {"width": 1200, "height": 800},
+                "elements": [],
+                "localities": [
+                    {"id": "new-vip", "name": "VIP", "default_price_cents": 5000}
+                ],
+            },
+        )
+        assert r.status_code == 200, r.text
+        pricing = {lp["locality_id"]: lp for lp in r.json()["locality_pricing"]}
+        assert pricing["new-vip"]["price_cents"] == 0
+
+    def test_cannot_switch_to_free_with_existing_priced_locality(self, demo_client):
+        venue = _first_published_venue(demo_client)
+        ev = _create_draft_event(demo_client, "TI121 flip to free", pricing_type="paid")
+        demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue",
+            json={
+                "venue_id": venue["id"],
+                "locality_pricing": [
+                    {"locality_id": "any-locality", "price_cents": 2500}
+                ],
+            },
+        )
+        r = demo_client.put(
+            f"{API}/events/me/{ev['id']}",
+            json={"pricing_type": "free"},
+        )
+        assert r.status_code == 422, r.text
+
+    def test_link_venue_rejects_fee_only_locality_on_free_event(self, demo_client):
+        """price_cents=0 alone isn't enough — a nonzero fee still bills the
+        buyer at checkout (compute_totals_with_seats has no free-event gate),
+        so it must be rejected too, not just a positive price_cents."""
+        venue = _first_published_venue(demo_client)
+        ev = _create_draft_event(demo_client, "TI121 free fee-only", pricing_type="free")
+        r = demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue",
+            json={
+                "venue_id": venue["id"],
+                "locality_pricing": [
+                    {
+                        "locality_id": "any-locality",
+                        "price_cents": 0,
+                        "admin_fee_cents": 500,
+                    }
+                ],
+            },
+        )
+        assert r.status_code == 422, r.text
+

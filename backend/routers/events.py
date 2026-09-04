@@ -47,6 +47,7 @@ from services.event_venue import (
     snapshot_from_venue,
     structural_diff,
 )
+from services.order_service import LOCALITY_CHARGE_FIELDS, locality_pricing_has_charge
 from services.path_safety import resolve_path_under
 from services.plan_features import assert_feature_async, get_plan_features_async
 from slugs import normalize_slug
@@ -738,13 +739,10 @@ def _publish_validation(doc: dict, *, allow_numbered: bool = True) -> None:
             ]
             if missing_loc:
                 missing.append("precio válido en cada localidad")
-            has_paid_locality = any(
-                int(lp.get("price_cents") or 0) > 0 for lp in pricing
-            )
-            if has_paid_locality and doc.get("pricing_type") == "free":
+            if locality_pricing_has_charge(pricing) and doc.get("pricing_type") == "free":
                 missing.append(
                     "marcar el evento como 'Pagado' en Tipo de recaudación "
-                    "(tenés localidades con precio pero el evento está como Gratuito)"
+                    "(tenés localidades con costo pero el evento está como Gratuito)"
                 )
     if missing:
         raise HTTPException(
@@ -833,6 +831,15 @@ async def link_venue_to_event(
             raise HTTPException(
                 422,
                 f"Faltan precios para las localidades: {', '.join(sorted(missing))}",
+            )
+        if row.pricing_type == "free" and locality_pricing_has_charge(
+            body.locality_pricing
+        ):
+            raise HTTPException(
+                422,
+                "El evento es Gratuito: las localidades no pueden tener costo "
+                "(precio, cargo servicio, TicketSeguro, impuestos ni billetera). "
+                "Marcá el evento como 'Pagado' o dejá todos los montos en $0.",
             )
 
         row.venue_id = body.venue_id
@@ -989,21 +996,28 @@ async def put_event_venue_layout(
             if not lid:
                 continue
             prev = existing_pricing.get(lid) or {}
-            new_pricing.append(
-                {
-                    "locality_id": lid,
-                    "price_cents": int(
-                        prev.get("price_cents")
-                        if prev.get("price_cents") is not None
-                        else loc.get("default_price_cents") or 0
-                    ),
-                    "service_fee_cents": int(prev.get("service_fee_cents") or 0),
-                    "admin_fee_cents": int(prev.get("admin_fee_cents") or 0),
-                    "vxs_cents": int(prev.get("vxs_cents") or 0),
-                    "wallet_fee_cents": int(prev.get("wallet_fee_cents") or 0),
-                    "max_tickets_per_purchase": prev.get("max_tickets_per_purchase"),
-                }
+            seed_price = int(
+                prev.get("price_cents")
+                if prev.get("price_cents") is not None
+                else loc.get("default_price_cents") or 0
             )
+            entry = {
+                "locality_id": lid,
+                "price_cents": seed_price,
+                "service_fee_cents": int(prev.get("service_fee_cents") or 0),
+                "admin_fee_cents": int(prev.get("admin_fee_cents") or 0),
+                "vxs_cents": int(prev.get("vxs_cents") or 0),
+                "wallet_fee_cents": int(prev.get("wallet_fee_cents") or 0),
+                "max_tickets_per_purchase": prev.get("max_tickets_per_purchase"),
+            }
+            if row.pricing_type == "free":
+                # Free events can't have localities that charge the buyer
+                # (TI-121): a new locality's default_price_cents is a
+                # template value, and a carried-over fee could predate this
+                # fix — clamp instead of rejecting so unrelated map edits
+                # aren't blocked.
+                entry.update({f: 0 for f in LOCALITY_CHARGE_FIELDS})
+            new_pricing.append(entry)
         row.locality_pricing = new_pricing
         flag_modified(row, "locality_pricing")
         await session.commit()
@@ -1353,7 +1367,9 @@ async def update_my_event(
     org = await _require_approved_organizer(user)
     async with AsyncSessionLocal() as session:
         row = await session.scalar(
-            select(Event).where(Event.id == event_id, Event.organizer_id == org["id"])
+            select(Event)
+            .where(Event.id == event_id, Event.organizer_id == org["id"])
+            .with_for_update()
         )
         if not row:
             raise HTTPException(status_code=404, detail="Event not found")
@@ -1391,6 +1407,17 @@ async def update_my_event(
                 org.get("plan_code"),
                 diff["pricing_type"],
             )
+            if diff["pricing_type"] == "free" and locality_pricing_has_charge(
+                row.locality_pricing or []
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "No se puede marcar el evento como Gratuito: ya tenés "
+                        "localidades con costo (precio o fees). Poné todos los "
+                        "montos en $0 primero."
+                    ),
+                )
         if diff.get("visibility") == "public_blocked":
             diff["visibility"] = "public"
         if "content" in diff and payload.content is not None:
