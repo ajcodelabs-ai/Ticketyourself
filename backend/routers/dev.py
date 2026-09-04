@@ -25,6 +25,8 @@ from orm_models import (
 )
 from security import get_current_user, is_organizer_owner
 from services.activation import log_funnel_event
+from services.datil_service import DATIL_LOG_DIR
+from services.path_safety import resolve_path_under
 
 logger = logging.getLogger("tys.dev")
 router = APIRouter(prefix="/api/_dev", tags=["dev"])
@@ -49,6 +51,16 @@ def _dev_only():
 # anyone mint free tickets just because ENV != "production".
 def _demo_payments_enabled() -> bool:
     return os.environ.get("DEMO_PAYMENTS_ENABLED", "").lower() in ("1", "true", "yes")
+
+
+def _safe_dev_log_file(base_dir: Path, name: str, suffix: Optional[str] = None) -> Path:
+    """Resolve *name* under *base_dir*, or 400 if it escapes / has the wrong suffix."""
+    path = resolve_path_under(base_dir, name)
+    if path is None or (suffix and path.suffix != suffix):
+        raise HTTPException(status_code=400, detail="Invalid name")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return path
 
 
 # ── Public discovery flag (frontend asks if dev features are on) ────────────
@@ -76,12 +88,31 @@ async def list_email_log():
 @router.get("/email-log/{name}", response_class=HTMLResponse)
 async def get_email_log(name: str):
     _dev_only()
-    if "/" in name or ".." in name:
-        raise HTTPException(status_code=400, detail="Invalid name")
-    path = EMAIL_LOG_DIR / name
-    if not path.exists() or not path.is_file():
-        raise HTTPException(status_code=404, detail="Not found")
+    path = _safe_dev_log_file(EMAIL_LOG_DIR, name, suffix=".html")
     return FileResponse(path, media_type="text/html")
+
+
+# ── Dátil request/response dump (for their support team) ────────────────────
+@router.get("/datil-log")
+async def list_datil_log():
+    _dev_only()
+    DATIL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    files = sorted(DATIL_LOG_DIR.glob("*.json"), reverse=True)
+    return [
+        {
+            "name": f.name,
+            "size_bytes": f.stat().st_size,
+            "viewer_url": f"/api/_dev/datil-log/{f.name}",
+        }
+        for f in files
+    ]
+
+
+@router.get("/datil-log/{name}")
+async def get_datil_log(name: str):
+    _dev_only()
+    path = _safe_dev_log_file(DATIL_LOG_DIR, name, suffix=".json")
+    return FileResponse(path, media_type="application/json")
 
 
 # ── Demo shortcut — bypass payment + admin approval ─────────────────────────

@@ -7,6 +7,8 @@ import { QRCodeSVG } from "qrcode.react";
 import {
     Calendar,
     Download,
+    ExternalLink,
+    FileText,
     Loader2,
     MapPin,
     Ticket as TicketIcon,
@@ -17,8 +19,14 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import api from "@/lib/api";
 import { formatEventDate } from "@/lib/events";
-import { formatCents, ticketPdfUrl, ORDER_STATUS_META } from "@/lib/orders";
+import {
+    formatCents,
+    orderSuccessPath,
+    ticketPdfUrl,
+    ORDER_STATUS_META,
+} from "@/lib/orders";
 import { previewMicrositeSubpath } from "@/lib/config";
+import { formatEinvoiceError, invoiceStatusMeta } from "@/lib/einvoice";
 import { assetUrl } from "@/lib/microsite";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -133,7 +141,7 @@ function OrderList({ items, empty }) {
 }
 
 function OrderCard({ item }) {
-    const { order, event, organizer, function: fn, tickets } = item;
+    const { order, event, organizer, function: fn, tickets, invoice } = item;
     const statusMeta = ORDER_STATUS_META[order.status] || ORDER_STATUS_META.pending;
     const eventPath = organizer?.slug && event?.slug
         ? previewMicrositeSubpath(organizer.slug, `/e/${event.slug}`)
@@ -203,6 +211,16 @@ function OrderCard({ item }) {
                             ))}
                         </div>
                     )}
+                    {invoice && (
+                        <InvoiceBlock invoice={invoice} order={order} organizer={organizer} />
+                    )}
+                    {order.status === "paid" && !invoice && organizer?.slug && (
+                        <Button asChild variant="outline" size="sm">
+                            <Link to={orderSuccessPath(organizer.slug, order.order_number)}>
+                                Ver detalle de la compra
+                            </Link>
+                        </Button>
+                    )}
                     {(order.status === "pending_manual_payment" || order.status === "pending") && organizer?.slug && (
                         <Button asChild variant="outline" size="sm">
                             <Link
@@ -245,8 +263,69 @@ function TicketMini({ ticket, order, idx }) {
                     <Button asChild variant="ghost" size="sm" className="h-7 px-2 mt-1">
                         <a href={ticketPdfUrl(order.order_number, ticket.id)} target="_blank" rel="noreferrer">
                             <Download className="h-3.5 w-3.5 mr-1" />
-                            PDF
+                            Entrada PDF
                         </a>
+                    </Button>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function InvoiceBlock({ invoice, order, organizer }) {
+    const meta = invoiceStatusMeta(invoice.estado);
+    const orderPath = organizer?.slug
+        ? orderSuccessPath(organizer.slug, order.order_number)
+        : null;
+    const errorText =
+        invoice.estado === "ERROR" ? formatEinvoiceError(invoice.error_message) : "";
+
+    return (
+        <div
+            className="rounded-xl border bg-background p-3 space-y-2"
+            data-testid={`cuenta-invoice-${order.order_number}`}
+        >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium inline-flex items-center gap-1.5">
+                    <FileText className="h-3.5 w-3.5" />
+                    Factura electrónica
+                    {invoice.numero ? ` · ${invoice.numero}` : ""}
+                </p>
+                <Badge className={meta.className}>{meta.label}</Badge>
+            </div>
+            {errorText ? (
+                <p className="text-xs text-red-700">{errorText}</p>
+            ) : null}
+            {invoice.mock && (
+                <p className="text-xs text-amber-800">
+                    Comprobante de prueba: no es un RIDE autorizado por el SRI.
+                </p>
+            )}
+            {!invoice.ride_url && invoice.estado !== "ERROR" && (
+                <p className="text-xs text-muted-foreground">
+                    El PDF de la factura aparece cuando el SRI autoriza el comprobante.
+                    Si no está, abrí el detalle y recargá en un momento.
+                </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+                {invoice.ride_url && (
+                    <Button asChild variant="outline" size="sm" className="h-8">
+                        <a href={invoice.ride_url} target="_blank" rel="noreferrer">
+                            <ExternalLink className="h-3.5 w-3.5 mr-1" />
+                            Factura PDF
+                        </a>
+                    </Button>
+                )}
+                {invoice.xml_url && (
+                    <Button asChild variant="outline" size="sm" className="h-8">
+                        <a href={invoice.xml_url} target="_blank" rel="noreferrer">
+                            XML
+                        </a>
+                    </Button>
+                )}
+                {orderPath && (
+                    <Button asChild variant="ghost" size="sm" className="h-8">
+                        <Link to={orderPath}>Ver detalle</Link>
                     </Button>
                 )}
             </div>

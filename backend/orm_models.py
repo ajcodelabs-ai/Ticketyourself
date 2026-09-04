@@ -258,6 +258,10 @@ class Organizer(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     approved_at = Column(DateTime(timezone=True), nullable=True)
     approved_by = Column(String(36), nullable=True)  # user id or "system"
+    # Dátil / SRI e-invoicing: establecimiento, punto de emisión, optional per-org keys.
+    einvoice_config = Column(JSONB, nullable=True)
+    # Verificante TH check (Ecuador persona natural). Never auto-approves the org.
+    verificante = Column(JSONB, nullable=True)
 
     admin_comments = relationship(
         "OrganizerAdminComment",
@@ -466,6 +470,8 @@ class Event(Base):
     # §4.2.1 Pagado — per-ticket fees for general (non-seated) events:
     # service_fee_cents, ticketseguro_cents, tax_cents, wallet_fee_cents
     ticket_fees = Column(JSONB, nullable=False, default=dict)
+    # SRI IVA % for electronic invoices (event-level; 15 = Ecuador vigente).
+    iva_percent = Column(Integer, nullable=True)
     # Who covers the TYS sales commission from sales_fee_rules:
     # buyer = added at checkout; organizer = deducted, buyer does not see it.
     platform_fee_bearer = Column(String(20), nullable=False, default="buyer")
@@ -1220,3 +1226,56 @@ class SeasonPassRedemption(Base):
     )
     order_id = Column(String(36), ForeignKey("ticket_orders.id"), nullable=False)
     redeemed_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Electronic invoices (Dátil / SRI Ecuador)
+# ─────────────────────────────────────────────────────────────────────────────
+class EinvoiceSequence(Base):
+    """Per-issuer sequential number (RUC + establecimiento + punto de emisión)."""
+
+    __tablename__ = "einvoice_sequences"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    issuer_key = Column(String(80), unique=True, nullable=False, index=True)
+    next_value = Column(Integer, nullable=False, default=1)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
+class ElectronicInvoice(Base):
+    __tablename__ = "electronic_invoices"
+
+    id = Column(String(36), primary_key=True, default=_uuid4)
+    order_id = Column(
+        String(36),
+        ForeignKey("ticket_orders.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    organizer_id = Column(
+        String(36), ForeignKey("organizers.id"), nullable=False, index=True
+    )
+    event_id = Column(String(36), ForeignKey("events.id"), nullable=True, index=True)
+
+    datil_id = Column(String(80), nullable=True, index=True)
+    clave_acceso = Column(String(49), nullable=True)
+    secuencial = Column(Integer, nullable=False)
+    numero = Column(String(20), nullable=True)
+    ambiente = Column(Integer, nullable=False, default=1)
+    estado = Column(String(30), nullable=False, default="PENDING")
+
+    payload = Column(JSONB, nullable=True)
+    datil_response = Column(JSONB, nullable=True)
+    ride_url = Column(Text, nullable=True)
+    xml_url = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    issued_at = Column(DateTime(timezone=True), nullable=True)
+    authorized_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )

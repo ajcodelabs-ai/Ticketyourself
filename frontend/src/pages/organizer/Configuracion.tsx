@@ -1,5 +1,5 @@
 /**
- * /app/configuracion — 3 tabs. Default: Plan y facturación.
+ * /app/configuracion — tabs: plan, factura electrónica, perfil, seguridad.
  */
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -15,6 +15,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import PasswordInput from "@/components/ui/password-input";
 import PhoneInput from "@/components/ui/phone-input";
 import {
@@ -24,10 +32,12 @@ import {
     Lock,
     ExternalLink,
     Sparkles,
+    FileText,
 } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatCents } from "@/lib/orders";
+import { IVA_PERCENT_OPTIONS } from "@/lib/einvoice";
 
 export default function Configuracion() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -47,10 +57,14 @@ export default function Configuracion() {
                 </h1>
             </header>
             <Tabs value={tab} onValueChange={setTab}>
-                <TabsList>
+                <TabsList className="flex flex-wrap h-auto gap-1">
                     <TabsTrigger value="plan" data-testid="cfg-tab-plan">
                         <CreditCard className="h-3.5 w-3.5 mr-1.5" />
                         Plan y facturación
+                    </TabsTrigger>
+                    <TabsTrigger value="einvoice" data-testid="cfg-tab-einvoice">
+                        <FileText className="h-3.5 w-3.5 mr-1.5" />
+                        Factura electrónica
                     </TabsTrigger>
                     
                     <TabsTrigger value="profile" data-testid="cfg-tab-profile">
@@ -68,6 +82,9 @@ export default function Configuracion() {
                 </TabsContent>
                 <TabsContent value="plan" className="mt-4">
                     <PlanTab />
+                </TabsContent>
+                <TabsContent value="einvoice" className="mt-4">
+                    <EinvoiceTab />
                 </TabsContent>
                 <TabsContent value="security" className="mt-4">
                     <SecurityTab />
@@ -367,6 +384,218 @@ function SecurityTab() {
                 <Button disabled data-testid="cfg-pwd-save">
                     Próximamente
                 </Button>
+            </CardContent>
+        </Card>
+    );
+}
+
+function EinvoiceTab() {
+    const [cfg, setCfg] = useState(null);
+    const [form, setForm] = useState({
+        enabled: true,
+        ruc: "",
+        razon_social: "",
+        nombre_comercial: "",
+        direccion: "",
+        establecimiento: "001",
+        punto_emision: "001",
+        obligado_contabilidad: true,
+        contribuyente_especial: "",
+        iva_percent: 15,
+        api_key: "",
+        cert_password: "",
+    });
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+
+    const load = async () => {
+        setLoading(true);
+        try {
+            const { data } = await api.get("/organizers/me/einvoice-config");
+            setCfg(data);
+            setForm((f) => ({
+                ...f,
+                enabled: data.enabled !== false,
+                ruc: data.ruc || data.emisor?.ruc || "",
+                razon_social: data.razon_social || data.emisor?.razon_social || "",
+                nombre_comercial: data.nombre_comercial || data.emisor?.nombre_comercial || "",
+                direccion: data.direccion || data.emisor?.direccion || "",
+                establecimiento: data.establecimiento || data.emisor?.establecimiento?.codigo || "001",
+                punto_emision: data.punto_emision || data.emisor?.establecimiento?.punto_emision || "001",
+                obligado_contabilidad: data.obligado_contabilidad ?? data.emisor?.obligado_contabilidad ?? true,
+                contribuyente_especial: data.contribuyente_especial || "",
+                iva_percent: data.iva_percent ?? 15,
+            }));
+        } catch (e) {
+            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        load();
+    }, []);
+
+    const save = async () => {
+        setSaving(true);
+        try {
+            const body = { ...form };
+            if (!body.api_key) delete body.api_key;
+            if (!body.cert_password) delete body.cert_password;
+            const { data } = await api.put("/organizers/me/einvoice-config", body);
+            setCfg(data);
+            setForm((f) => ({ ...f, api_key: "", cert_password: "" }));
+            toast.success("Datos de facturación electrónica guardados");
+        } catch (e) {
+            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="flex justify-center py-10">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+        );
+    }
+
+    return (
+        <Card data-testid="einvoice-config-card">
+            <CardHeader>
+                <CardTitle className="text-lg">Facturación electrónica (SRI / Dátil)</CardTitle>
+                <CardDescription>
+                    El RUC solo no alcanza: Dátil exige un establecimiento y un
+                    punto de emisión ya creados en tu cuenta. Copialos de{" "}
+                    <a
+                        href="https://app.datil.co"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                    >
+                        app.datil.co
+                    </a>{" "}
+                    → Mi negocio → Establecimientos. El IVA de cada evento se
+                    elige al crearlo; acá queda el valor por defecto.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2 text-xs">
+                    <Badge variant={cfg?.ready ? "default" : "secondary"}>
+                        {cfg?.ready ? "Listo para emitir" : "Faltan credenciales Dátil"}
+                    </Badge>
+                    {cfg?.mock && (
+                        <Badge variant="outline" className="border-amber-400 text-amber-800">
+                            Mock local (sin Dátil)
+                        </Badge>
+                    )}
+                    <Badge variant="outline">Ambiente {cfg?.ambiente === 2 ? "producción (2)" : "pruebas (1)"}</Badge>
+                    <Badge variant="outline">IVA {cfg?.iva_percent}%</Badge>
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+                    <div>
+                        <Label htmlFor="einvoice-enabled">Emitir factura al cobrar</Label>
+                        <p className="text-xs text-muted-foreground">
+                            Desactivá si este organizador no debe facturar todavía.
+                        </p>
+                    </div>
+                    <Switch
+                        id="einvoice-enabled"
+                        checked={form.enabled}
+                        onCheckedChange={(v) => setForm((f) => ({ ...f, enabled: v }))}
+                        data-testid="einvoice-enabled"
+                    />
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                    <Field label="RUC emisor">
+                        <Input
+                            value={form.ruc}
+                            onChange={(e) => setForm((f) => ({ ...f, ruc: e.target.value }))}
+                            data-testid="einvoice-ruc"
+                        />
+                    </Field>
+                    <Field label="Razón social">
+                        <Input
+                            value={form.razon_social}
+                            onChange={(e) => setForm((f) => ({ ...f, razon_social: e.target.value }))}
+                        />
+                    </Field>
+                    <Field label="Nombre comercial">
+                        <Input
+                            value={form.nombre_comercial}
+                            onChange={(e) => setForm((f) => ({ ...f, nombre_comercial: e.target.value }))}
+                        />
+                    </Field>
+                    <Field label="Dirección del establecimiento">
+                        <Input
+                            value={form.direccion}
+                            onChange={(e) => setForm((f) => ({ ...f, direccion: e.target.value }))}
+                        />
+                    </Field>
+                    <Field label="Establecimiento (3 dígitos)">
+                        <Input
+                            value={form.establecimiento}
+                            maxLength={3}
+                            onChange={(e) => setForm((f) => ({ ...f, establecimiento: e.target.value }))}
+                            data-testid="einvoice-establecimiento"
+                        />
+                    </Field>
+                    <Field label="Punto de emisión (3 dígitos)">
+                        <Input
+                            value={form.punto_emision}
+                            maxLength={3}
+                            onChange={(e) => setForm((f) => ({ ...f, punto_emision: e.target.value }))}
+                            data-testid="einvoice-punto-emision"
+                        />
+                    </Field>
+                    <p className="sm:col-span-2 text-xs text-muted-foreground -mt-1">
+                        En pruebas Dátil pide 001 / 001. Esos códigos no salen solos:
+                        hay que crearlos en app.datil.co con Datos de prueba
+                        activo (Mi negocio → Establecimientos). Si los creaste en
+                        producción, el ambiente 1 de la API no los ve.
+                    </p>
+                    <Field label="IVA por defecto (eventos)">
+                        <Select
+                            value={String(form.iva_percent ?? 15)}
+                            onValueChange={(v) => setForm((f) => ({ ...f, iva_percent: Number(v) }))}
+                        >
+                            <SelectTrigger data-testid="einvoice-iva-percent">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {IVA_PERCENT_OPTIONS.map((opt) => (
+                                    <SelectItem key={opt.value} value={String(opt.value)}>
+                                        {opt.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </Field>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                    <Field label="API Key Dátil (opcional)">
+                        <PasswordInput
+                            value={form.api_key}
+                            onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
+                            placeholder={cfg?.has_api_key ? "•••• configurada" : "Usar clave de plataforma"}
+                        />
+                    </Field>
+                    <Field label="Clave del certificado (X-Password)">
+                        <PasswordInput
+                            value={form.cert_password}
+                            onChange={(e) => setForm((f) => ({ ...f, cert_password: e.target.value }))}
+                            placeholder={cfg?.has_cert_password ? "•••• configurada" : ""}
+                        />
+                    </Field>
+                </div>
+                <div className="flex justify-end">
+                    <Button onClick={save} disabled={saving} data-testid="einvoice-save">
+                        {saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+                        Guardar
+                    </Button>
+                </div>
             </CardContent>
         </Card>
     );

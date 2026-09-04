@@ -543,6 +543,7 @@ class TestActivationFunnel:
                 {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
             ],
             "country_code": "EC",
+            "legal_address": "Av. Amazonas N34-123, Quito",
         }
         r = requests.post(f"{API}/auth/register", json=payload)
         assert r.status_code in (200, 201), r.text
@@ -589,6 +590,7 @@ class TestActivationFunnel:
                     {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
                 ],
                 "country_code": "EC",
+                "legal_address": "Av. Amazonas N34-123, Quito",
             }
             r = requests.post(f"{API}/auth/register", json=payload)
             assert r.status_code in (200, 201), r.text
@@ -640,4 +642,14 @@ class TestDevEmailLog:
 
     def test_path_traversal_rejected(self):
         r = requests.get(f"{API}/_dev/email-log/..%2Fetc%2Fpasswd")
+        assert r.status_code in (400, 404)
+
+
+class TestDevDatilLog:
+    def test_path_traversal_rejected(self):
+        r = requests.get(f"{API}/_dev/datil-log/..%2Fetc%2Fpasswd")
+        assert r.status_code in (400, 404)
+
+    def test_non_json_rejected(self):
+        r = requests.get(f"{API}/_dev/datil-log/foo.html")
         assert r.status_code in (400, 404)

@@ -12,6 +12,7 @@ Override with SEED_DEMO_DATA=true|false.
 
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -45,6 +46,7 @@ from orm_models import (
     User,
 )
 from security import hash_password, verify_password
+from services import datil_service
 from services.registration_countries import DEFAULT_COUNTRIES
 from services.required_documents import DEFAULTS as REQUIRED_DOC_DEFAULTS
 from services.required_documents import GLOBAL_COUNTRY
@@ -61,6 +63,31 @@ DEFAULT_DOCUMENT_TYPES = {
 }
 
 logger = logging.getLogger("tys.seed")
+
+DEMO_FISCAL_ADDRESS = "Av. Amazonas N34-123 y Naciones Unidas, Quito"
+
+
+def _demo_einvoice_config(od: dict) -> dict | None:
+    return datil_service.einvoice_config_from_registration(
+        company_name=od["company_name"],
+        legal_id=od["legal_id"],
+        org_type=od["org_type"],
+        country_code=od.get("country_code") or "EC",
+        legal_name=od["company_name"],
+        legal_address=DEMO_FISCAL_ADDRESS,
+        establecimiento="001",
+        punto_emision="001",
+    )
+
+
+def _preserve_custom_einvoice_config(existing: dict | None, demo_legal_id: str) -> bool:
+    """Keep Configuración overrides when the org is no longer on the seed RUC."""
+    if not isinstance(existing, dict):
+        return False
+    ruc = re.sub(r"\D", "", str(existing.get("ruc") or ""))
+    demo = re.sub(r"\D", "", str(demo_legal_id or ""))
+    return bool(ruc) and ruc != demo
+
 
 DEMO_BUYER_EMAIL = "comprador@ticketyourself.com"
 DEMO_BUYER_PASSWORD = "Buyer123!"
@@ -686,6 +713,7 @@ async def _seed_demo_organizers() -> None:
                 slug=slug,
                 status=od["status"],
                 rejection_reason=od.get("rejection_reason"),
+                einvoice_config=_demo_einvoice_config(od),
                 plan_id=plan_id,
                 plan_code=od["plan_code"],
                 subscription_status=od["subscription_status"],
@@ -793,6 +821,10 @@ async def _reset_demo_organizers() -> None:
             org_row.phone = od["phone"]
             org_row.country = od["country"]
             org_row.country_code = od.get("country_code") or "EC"
+            if not _preserve_custom_einvoice_config(
+                org_row.einvoice_config, od["legal_id"]
+            ):
+                org_row.einvoice_config = _demo_einvoice_config(od)
             org_row.status = od["status"]
             org_row.rejection_reason = od.get("rejection_reason")
             org_row.plan_id = plan_id
@@ -1328,6 +1360,7 @@ async def _seed_demo_events() -> None:
                 row.visibility = "public"
                 row.status = "published"
                 row.poster_url = s["poster_url"]
+                row.iva_percent = 15 if s["pricing_type"] == "paid" else 0
                 row.payment_methods = _pm
                 row.discounts = _demo_discounts
                 row.access_params = _demo_access_params
@@ -1360,6 +1393,7 @@ async def _seed_demo_events() -> None:
                         base_price_cents=s["base_price_cents"],
                         currency="USD",
                         capacity=s["capacity"],
+                        iva_percent=15 if s["pricing_type"] == "paid" else 0,
                         visibility="public",
                         status="published",
                         tickets_sold=0,
@@ -2277,6 +2311,7 @@ async def _seed_demo_numbered_event() -> None:
             row.pricing_type = "paid"
             row.base_price_cents = 1000
             row.currency = "USD"
+            row.iva_percent = 15
             row.capacity = venue.get("capacity_calculated") or 0
             row.visibility = "public"
             row.status = "published"
@@ -2328,6 +2363,7 @@ async def _seed_demo_numbered_event() -> None:
                     pricing_type="paid",
                     base_price_cents=1000,
                     currency="USD",
+                    iva_percent=15,
                     capacity=venue.get("capacity_calculated") or 0,
                     visibility="public",
                     status="published",

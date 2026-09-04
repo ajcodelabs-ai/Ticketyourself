@@ -78,6 +78,12 @@ async def list_event_orders(
             .limit(limit)
         )
         items = [row_to_dict(r) for r in result.scalars().all()]
+    from services.einvoice_service import list_invoices_for_orders
+
+    async with AsyncSessionLocal() as session:
+        invoices = await list_invoices_for_orders(session, [i["id"] for i in items])
+    for item in items:
+        item["invoice"] = invoices.get(item["id"])
     return {"items": items, "total": total}
 
 

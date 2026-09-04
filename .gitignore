@@ -59,6 +59,7 @@ venv/
 
 # Backend dev artifacts (runtime-created upload/asset directories)
 backend/email_log/
+backend/datil_log/
 backend/uploads/
 backend/event_assets/
 backend/microsite_assets/

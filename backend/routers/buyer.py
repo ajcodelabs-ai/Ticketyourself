@@ -17,6 +17,7 @@ from orm_models import (
     User,
 )
 from security import require_purchase_account
+from services.einvoice_service import list_invoices_for_orders
 
 router = APIRouter(prefix="/api/buyer", tags=["buyer"])
 
@@ -146,6 +147,8 @@ async def list_my_orders(
         )
         functions = {f.id: row_to_dict(f) for f in fn_result.scalars().all()}
 
+    invoices = await list_invoices_for_orders(session, order_ids)
+
     items = []
     for o in orders:
         od = row_to_dict(o)
@@ -170,6 +173,7 @@ async def list_my_orders(
                     else None
                 ),
                 "tickets": tickets_by_order.get(o.id, []),
+                "invoice": invoices.get(o.id),
             }
         )
     return {"items": items}

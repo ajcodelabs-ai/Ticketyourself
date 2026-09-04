@@ -19,7 +19,6 @@ import {
     X,
     CalendarRange,
 } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -49,7 +48,6 @@ const FALLBACK_IMG = "https://images.unsplash.com/photo-1492684223066-81342ee5ff
 export default function EventPublic() {
     const { event_slug } = useParams();
     const slug = useSlug();
-    const { isAdmin, belongsToCurrentTenant } = useAuth();
     const [event, setEvent] = useState(null);
     const [state, setState] = useState("loading");
     const [shareOpen, setShareOpen] = useState(false);
@@ -206,19 +204,6 @@ export default function EventPublic() {
 
     return (
         <div data-testid="event-public-page" className="relative">
-            <div className="absolute top-3 right-3 z-30 flex items-center gap-2">
-                {belongsToCurrentTenant && !isAdmin ? (
-                    <Button asChild size="sm" variant="secondary" className="shadow-md" data-testid="event-public-mis-entradas">
-                        <Link to="/cuenta">Mis entradas</Link>
-                    </Button>
-                ) : !belongsToCurrentTenant && !isAdmin ? (
-                    <Button asChild size="sm" variant="secondary" className="shadow-md" data-testid="event-public-login">
-                        <Link to={`/login?next=${encodeURIComponent(window.location.pathname)}`}>
-                            Iniciar sesión
-                        </Link>
-                    </Button>
-                ) : null}
-            </div>
             <section
                 className="relative py-20 md:py-32 px-6 text-white"
                 style={{

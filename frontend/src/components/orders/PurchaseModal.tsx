@@ -38,11 +38,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import PhoneInput from "@/components/ui/phone-input";
 import api, { formatApiError } from "@/lib/api";
 import { formatPriceLabel } from "@/lib/events";
 import { formatCents, orderSuccessPath, PAYMENT_METHOD_META } from "@/lib/orders";
 import { resolveEnabledPaymentCodes } from "@/lib/paymentMethods";
+import { DOCUMENT_TYPES, documentTypeFieldLabel } from "@/lib/einvoice";
+import { buyerDocumentError } from "@/lib/ecId";
 import { useAuth } from "@/contexts/AuthContext";
 import BuyerAuthPanel from "@/components/orders/BuyerAuthPanel";
 import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
@@ -183,6 +192,8 @@ export default function PurchaseModal({
         email: "",
         phone: "",
         document_id: "",
+        document_type: "cedula",
+        address: "",
     });
     const [submitting, setSubmitting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -376,6 +387,8 @@ export default function PurchaseModal({
                 email: user?.email || "",
                 phone: user?.phone || "",
                 document_id: "",
+                document_type: "cedula",
+                address: "",
             });
             setErrors({});
             setPaymentMethod(activeMethods[0] || "nuvei");
@@ -635,6 +648,8 @@ export default function PurchaseModal({
         if (lawCategory && !(lawDocumentId.trim() || buyer.document_id.trim())) {
             e.law_document = "Indicá el documento de verificación (cédula / carné).";
         }
+        const docErr = buyerDocumentError(buyer.document_type, buyer.document_id);
+        if (docErr) e.document_id = docErr;
         for (const q of customQuestions) {
             if (q.required && !(customAnswers[q.id] || "").trim()) {
                 e[`cq_${q.id}`] = "Requerido";
@@ -665,7 +680,11 @@ export default function PurchaseModal({
                     name: buyer.name.trim(),
                     email: buyer.email.trim().toLowerCase(),
                     phone: buyer.phone || undefined,
-                    document_id: buyer.document_id || undefined,
+                    document_id: buyer.document_type === "consumidor_final"
+                        ? undefined
+                        : buyer.document_id || undefined,
+                    document_type: buyer.document_type || undefined,
+                    address: buyer.address.trim() || undefined,
                 },
                 origin_url: window.location.origin,
                 payment_method:
@@ -1310,12 +1329,42 @@ export default function PurchaseModal({
                                     data-testid="buyer-phone"
                                 />
                             </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="buyer-doc-type">Tipo de identificación</Label>
+                                <Select
+                                    value={buyer.document_type}
+                                    onValueChange={(v) =>
+                                        setBuyer((b) => ({ ...b, document_type: v, document_id: "" }))
+                                    }
+                                >
+                                    <SelectTrigger id="buyer-doc-type" data-testid="buyer-doc-type">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {DOCUMENT_TYPES.map((t) => (
+                                            <SelectItem key={t.value} value={t.value}>
+                                                {t.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            {buyer.document_type !== "consumidor_final" && (
+                                <Field
+                                    label={documentTypeFieldLabel(buyer.document_type)}
+                                    id="buyer-doc"
+                                    value={buyer.document_id}
+                                    onChange={(v) => setBuyer((b) => ({ ...b, document_id: v }))}
+                                    error={errors.document_id}
+                                    testId="buyer-doc"
+                                />
+                            )}
                             <Field
-                                label="Documento / cédula"
-                                id="buyer-doc"
-                                value={buyer.document_id}
-                                onChange={(v) => setBuyer((b) => ({ ...b, document_id: v }))}
-                                testId="buyer-doc"
+                                label="Dirección (facturación)"
+                                id="buyer-address"
+                                value={buyer.address}
+                                onChange={(v) => setBuyer((b) => ({ ...b, address: v }))}
+                                testId="buyer-address"
                             />
                         </div>
 

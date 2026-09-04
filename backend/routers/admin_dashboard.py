@@ -437,6 +437,11 @@ async def organizers_rich(
                 "tickets_emitted": rev.get("tickets", 0),
                 "events_published": n_events,
                 "last_login": login_map.get(o["id"]),
+                "verificante_status": (o.get("verificante") or {}).get("status"),
+                "verificante_risk_level": (o.get("verificante") or {}).get(
+                    "risk_level"
+                ),
+                "verificante_admitted": (o.get("verificante") or {}).get("admitted"),
             }
         )
 

@@ -6,7 +6,9 @@ import uuid
 
 import requests
 
-from tests.conftest import API, register_organizer_payload
+from tests.conftest import API
+from tests.conftest import login as login_user
+from tests.conftest import new_session, register_organizer_payload
 
 
 class TestRegistrationCountriesPublic:
@@ -57,6 +59,35 @@ class TestRegisterKYC:
         r = requests.post(f"{API}/auth/register", json=payload)
         assert r.status_code == 200, r.text
         assert r.json()["organizer"]["country_code"] == "CO"
+
+    def test_register_ecuador_requires_legal_address(self):
+        payload = register_organizer_payload(
+            email=f"noaddr_{uuid.uuid4().hex[:8]}@example.com",
+            legal_address="",
+        )
+        r = requests.post(f"{API}/auth/register", json=payload)
+        assert r.status_code == 422, r.text
+
+    def test_register_ecuador_stores_einvoice_config(self):
+        payload = register_organizer_payload(
+            email=f"einv_{uuid.uuid4().hex[:8]}@example.com",
+            legal_name="Shows Ecuador S.A.",
+            legal_address="Av. 10 de Agosto 123, Quito",
+            establecimiento="002",
+            punto_emision="003",
+        )
+        r = requests.post(f"{API}/auth/register", json=payload)
+        assert r.status_code == 200, r.text
+        s = new_session()
+        login_user(s, payload["email"], payload["password"])
+        cfg = s.get(f"{API}/organizers/me/einvoice-config")
+        assert cfg.status_code == 200, cfg.text
+        body = cfg.json()
+        assert body["ruc"] == "1790000000001"
+        assert body["razon_social"] == "Shows Ecuador S.A."
+        assert body["direccion"] == "Av. 10 de Agosto 123, Quito"
+        assert body["establecimiento"] == "002"
+        assert body["punto_emision"] == "003"
 
 
 class TestRequiredDocumentsByCountry:
