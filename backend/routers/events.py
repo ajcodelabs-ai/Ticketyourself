@@ -49,6 +49,7 @@ from services.event_venue import (
     structural_diff,
 )
 from services.order_service import LOCALITY_CHARGE_FIELDS, locality_pricing_has_charge
+from services.organizer_gates import require_publish_gates
 from services.path_safety import resolve_path_under
 from services.plan_features import assert_feature_async, get_plan_features_async
 from slugs import normalize_slug
@@ -586,36 +587,7 @@ async def _require_organizer_can_publish(user) -> dict:
                 ),
             },
         )
-    if org.get("subscription_status") in (None, "none"):
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "plan_not_paid",
-                "message": "Debés pagar tu plan antes de publicar eventos.",
-            },
-        )
-    v_status = org.get("verification_fee_status") or "none"
-    if v_status not in ("paid", "waived"):
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "verification_fee_pending",
-                "message": (
-                    "Debés completar el pago de verificación de cuenta "
-                    "antes de publicar."
-                ),
-            },
-        )
-    if (org.get("contract_status") or "none") != "signed":
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "contract_not_signed",
-                "message": (
-                    "Debés firmar el contrato (OneShot) antes de publicar eventos."
-                ),
-            },
-        )
+    require_publish_gates(org, subject="eventos")
     return org
 
 

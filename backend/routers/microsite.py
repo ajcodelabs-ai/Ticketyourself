@@ -37,6 +37,7 @@ from services.microsite_factory import (
 )
 from services.microsite_revisions import apply_snapshot, build_snapshot, create_revision
 from services.microsite_seo import validate_custom_css, validate_seo
+from services.organizer_gates import require_publish_gates
 from services.path_safety import resolve_path_under
 
 logger = logging.getLogger("tys.microsite")
@@ -171,6 +172,7 @@ async def _require_can_publish_microsite(user) -> dict:
                 ),
             },
         )
+    require_publish_gates(organizer, subject="tu microsite")
     return organizer
 
 

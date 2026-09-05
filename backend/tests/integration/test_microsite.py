@@ -10,7 +10,7 @@ import uuid
 
 import jwt
 import requests
-from conftest import API, ORG_PASSWORD, bearer
+from conftest import API, ORG_PASSWORD, bearer, register_organizer_payload
 from PIL import Image
 
 
@@ -43,6 +43,32 @@ def _read_secret_from_env():
     except Exception:
         pass
     return os.environ.get("JWT_SECRET", "dev-secret")
+
+
+def _ensure_database_url_env():
+    """`database.py` reads DATABASE_URL at import time. Under `make
+    test-backend` docker-compose sets it; under the plain `pytest tests/ -v`
+    workflow (CLAUDE.md) nothing in this process does — only `uvicorn`
+    (via server.py's load_dotenv()) does, in a separate terminal. Fall back
+    to backend/.env, same as `_read_secret_from_env` does for JWT_SECRET."""
+    if os.environ.get("DATABASE_URL"):
+        return
+    import pathlib
+
+    env_path = pathlib.Path(__file__).resolve().parent.parent.parent / ".env"
+    try:
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                if line.startswith("DATABASE_URL="):
+                    os.environ["DATABASE_URL"] = (
+                        line.split("=", 1)[1].strip().strip('"')
+                    )
+                    return
+    except Exception:
+        pass
+    os.environ["DATABASE_URL"] = (
+        "postgresql+asyncpg://tys:tys_dev@localhost:5432/tys_dev"
+    )
 
 
 # ── 1. Public microsite ─────────────────────────────────────────────────────
@@ -102,6 +128,69 @@ class TestMicrositeMe:
     def test_get_me_no_auth_401(self):
         r = requests.get(f"{API}/microsite/me")
         assert r.status_code == 401
+
+    def test_publish_blocked_pending_verification_and_contract(self, admin_client):
+        """An approved organizer whose verification fee is still pending and
+        whose contract is still unsigned must not be able to publish — even
+        though `status` itself is already "approved".
+        Uses a freshly registered organizer so the shared demo-org fixture
+        data is never touched. Walks through each gate individually so a
+        deleted/inverted check in any of the three would fail this test."""
+        payload = register_organizer_payload()
+        r = requests.post(f"{API}/auth/register", json=payload)
+        assert r.status_code == 200, r.text
+        org_id = r.json()["organizer"]["id"]
+
+        r = admin_client.post(f"{API}/admin/organizers/{org_id}/approve", json={})
+        assert r.status_code == 200, r.text
+
+        import asyncio
+
+        _ensure_database_url_env()
+        from database import AsyncSessionLocal
+        from orm_models import Organizer
+
+        async def _set_gates(**fields):
+            from database import engine
+
+            async with AsyncSessionLocal() as session:
+                row = await session.get(Organizer, org_id)
+                for k, v in fields.items():
+                    setattr(row, k, v)
+                await session.commit()
+            # Each call gets its own asyncio.run() loop below; dispose the
+            # pool so the next call doesn't reuse a connection bound to a
+            # now-closed loop.
+            await engine.dispose()
+
+        # None of the seeded plans charge a verification fee locally, so the
+        # approve flow above always waives it — set the exact repro state
+        # (pending fee, unsigned contract) directly for this one fresh row.
+        asyncio.run(
+            _set_gates(
+                subscription_status="active",
+                verification_fee_status="pending",
+                contract_status="sent",
+            )
+        )
+
+        token = requests.post(
+            f"{API}/auth/login",
+            json={"email": payload["email"], "password": payload["password"]},
+        ).json()["access_token"]
+
+        r = requests.post(f"{API}/microsite/me/publish", headers=bearer(token))
+        assert r.status_code == 403, r.text
+        assert r.json()["detail"]["error"] == "verification_fee_pending"
+
+        asyncio.run(_set_gates(verification_fee_status="paid"))
+        r = requests.post(f"{API}/microsite/me/publish", headers=bearer(token))
+        assert r.status_code == 403, r.text
+        assert r.json()["detail"]["error"] == "contract_not_signed"
+
+        asyncio.run(_set_gates(contract_status="signed"))
+        r = requests.post(f"{API}/microsite/me/publish", headers=bearer(token))
+        assert r.status_code == 200, r.text
 
     def test_put_content_accepts_reserved_tld_email(self, demo_token):
         r = requests.put(
