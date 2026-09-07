@@ -37,7 +37,9 @@ async def _can_access_scan_data(
     events they were actually assigned to."""
     if user.get("role") == "super_admin":
         return True
-    if not is_organizer_owner(user, resource_organizer_id, roles=("organizer", "org_staff")):
+    if not is_organizer_owner(
+        user, resource_organizer_id, roles=("organizer", "org_staff")
+    ):
         return False
     if user.get("role") != "org_staff":
         return True
@@ -532,9 +534,11 @@ async def validate_ticket(payload: ValidateBody, user=Depends(get_current_user))
         )
         raise HTTPException(
             403,
-            "No estás asignado a este evento"
-            if not_assigned
-            else "Ticket belongs to another organizer",
+            (
+                "No estás asignado a este evento"
+                if not_assigned
+                else "Ticket belongs to another organizer"
+            ),
         )
 
     holder = ticket.get("holder") or {}
@@ -621,7 +625,9 @@ async def get_scan_log(
     user=Depends(get_current_user),
 ):
     ev = await get_event_by_id(event_id)
-    if not ev or not await _can_access_scan_data(user, ev.get("organizer_id"), event_id):
+    if not ev or not await _can_access_scan_data(
+        user, ev.get("organizer_id"), event_id
+    ):
         raise HTTPException(404, "Evento no encontrado")
     skip = (max(1, page) - 1) * max(1, min(200, limit))
     async with AsyncSessionLocal() as session:
@@ -647,7 +653,9 @@ async def get_scan_log_csv(event_id: str, user=Depends(get_current_user)):
     from io import StringIO
 
     ev = await get_event_by_id(event_id)
-    if not ev or not await _can_access_scan_data(user, ev.get("organizer_id"), event_id):
+    if not ev or not await _can_access_scan_data(
+        user, ev.get("organizer_id"), event_id
+    ):
         raise HTTPException(404, "Evento no encontrado")
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -687,7 +695,9 @@ async def get_scan_log_csv(event_id: str, user=Depends(get_current_user)):
 @router.get("/events/me/{event_id}/scan-stats")
 async def get_scan_stats(event_id: str, user=Depends(get_current_user)):
     ev = await get_event_by_id(event_id)
-    if not ev or not await _can_access_scan_data(user, ev.get("organizer_id"), event_id):
+    if not ev or not await _can_access_scan_data(
+        user, ev.get("organizer_id"), event_id
+    ):
         raise HTTPException(404, "Evento no encontrado")
 
     now = datetime.now(timezone.utc)
