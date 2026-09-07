@@ -14,7 +14,7 @@ from database import get_db
 from db_helpers import row_to_dict
 from models import CheckoutRequest, CheckoutResponse, PortalResponse
 from orm_models import BillingIntent, Organizer, SubscriptionPlan
-from security import require_role
+from security import is_active_organizer, require_role
 
 logger = logging.getLogger("tys.billing")
 
@@ -25,10 +25,11 @@ GATEWAY_LABELS = {"nuvei": "Nuvei", "deuna": "DeUna"}
 
 
 async def _get_organizer_or_403(user: dict, session: AsyncSession) -> Organizer:
-    org_id = user.get("organizer_id")
-    if not org_id:
+    if not is_active_organizer(user):
         raise HTTPException(404, "Organizer profile not found")
-    result = await session.execute(select(Organizer).where(Organizer.id == org_id))
+    result = await session.execute(
+        select(Organizer).where(Organizer.id == user["organizer_id"])
+    )
     row = result.scalar_one_or_none()
     if not row:
         raise HTTPException(404, "Organizer not found")
