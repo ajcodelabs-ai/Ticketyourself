@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal, get_db
 from db_helpers import get_event_by_id, get_organizer_by_id, row_to_dict
-from orm_models import Organizer, Ticket, TicketOrder, TicketScan
+from orm_models import Organizer, StaffEventAssignment, Ticket, TicketOrder, TicketScan
 from security import get_current_user, is_active_organizer, is_organizer_owner
 from services import order_service
 from services.event_venue import resolve_event_venue
@@ -28,11 +28,31 @@ logger = logging.getLogger("tys.tickets")
 router = APIRouter(prefix="/api", tags=["tickets"])
 
 
-def _can_access_scan_data(user, resource_organizer_id: Optional[str]) -> bool:
-    """Scanning gate: super_admin, or organizer/org_staff owning the resource's org."""
-    return user.get("role") == "super_admin" or is_organizer_owner(
+async def _can_access_scan_data(
+    user, resource_organizer_id: Optional[str], event_id: Optional[str] = None
+) -> bool:
+    """Scanning gate: super_admin, organizer owning the resource's org, or
+    org_staff owning the resource's org AND assigned to this specific event
+    (StaffEventAssignment) — a staff JWT only carries organizer_id, not the
+    events they were actually assigned to."""
+    if user.get("role") == "super_admin":
+        return True
+    if not is_organizer_owner(
         user, resource_organizer_id, roles=("organizer", "org_staff")
-    )
+    ):
+        return False
+    if user.get("role") != "org_staff":
+        return True
+    if not event_id:
+        return False
+    async with AsyncSessionLocal() as session:
+        assignment = await session.scalar(
+            select(StaffEventAssignment).where(
+                StaffEventAssignment.staff_id == user["id"],
+                StaffEventAssignment.event_id == event_id,
+            )
+        )
+    return assignment is not None
 
 
 async def _require_event_for_user(event_id: str, user) -> tuple[dict, dict]:
@@ -497,17 +517,29 @@ async def validate_ticket(payload: ValidateBody, user=Depends(get_current_user))
 
     ticket = row_to_dict(ticket_row)
 
-    if not _can_access_scan_data(user, ticket.get("organizer_id")):
+    if not await _can_access_scan_data(
+        user, ticket.get("organizer_id"), ticket.get("event_id")
+    ):
+        not_assigned = user.get("role") == "org_staff" and is_organizer_owner(
+            user, ticket.get("organizer_id"), roles=("org_staff",)
+        )
         await _log_scan(
             event_id=ticket.get("event_id"),
             ticket_id=ticket_id,
             scanned_by=user["id"],
             result="invalid",
-            reason="wrong_organizer",
+            reason="not_assigned_to_event" if not_assigned else "wrong_organizer",
             holder_name=(ticket.get("holder") or {}).get("name"),
             seat_label=ticket.get("seat_label"),
         )
-        raise HTTPException(403, "Ticket belongs to another organizer")
+        raise HTTPException(
+            403,
+            (
+                "No estás asignado a este evento"
+                if not_assigned
+                else "Ticket belongs to another organizer"
+            ),
+        )
 
     holder = ticket.get("holder") or {}
     seat_label = ticket.get("seat_label")
@@ -593,7 +625,9 @@ async def get_scan_log(
     user=Depends(get_current_user),
 ):
     ev = await get_event_by_id(event_id)
-    if not ev or not _can_access_scan_data(user, ev.get("organizer_id")):
+    if not ev or not await _can_access_scan_data(
+        user, ev.get("organizer_id"), event_id
+    ):
         raise HTTPException(404, "Evento no encontrado")
     skip = (max(1, page) - 1) * max(1, min(200, limit))
     async with AsyncSessionLocal() as session:
@@ -619,7 +653,9 @@ async def get_scan_log_csv(event_id: str, user=Depends(get_current_user)):
     from io import StringIO
 
     ev = await get_event_by_id(event_id)
-    if not ev or not _can_access_scan_data(user, ev.get("organizer_id")):
+    if not ev or not await _can_access_scan_data(
+        user, ev.get("organizer_id"), event_id
+    ):
         raise HTTPException(404, "Evento no encontrado")
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -659,7 +695,9 @@ async def get_scan_log_csv(event_id: str, user=Depends(get_current_user)):
 @router.get("/events/me/{event_id}/scan-stats")
 async def get_scan_stats(event_id: str, user=Depends(get_current_user)):
     ev = await get_event_by_id(event_id)
-    if not ev or not _can_access_scan_data(user, ev.get("organizer_id")):
+    if not ev or not await _can_access_scan_data(
+        user, ev.get("organizer_id"), event_id
+    ):
         raise HTTPException(404, "Evento no encontrado")
 
     now = datetime.now(timezone.utc)
