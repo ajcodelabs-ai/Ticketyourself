@@ -196,3 +196,60 @@ class TestDeleteEventFunction:
         r = org_client.delete(f"{API}/events/me/{event['id']}/functions/{function_id}")
         assert r.status_code == 409, r.text
         assert "pedidos" in r.json()["detail"]
+
+
+class TestFunctionDateRangeValidation:
+    """TI-123: ends_at must be strictly after starts_at, both on create and
+    on update (the two moments a function's schedule is set)."""
+
+    def test_create_rejects_end_before_start(self, admin_client):
+        _, _, org_client = _register_enterprise_organizer(admin_client)
+        event = _create_publishable_event(org_client)
+        r = org_client.post(
+            f"{API}/events/me/{event['id']}/functions",
+            json={
+                "name": "Función con fechas invertidas",
+                "kind": "function",
+                "starts_at": "2026-09-27T21:58:00Z",
+                "ends_at": "2026-08-28T21:58:00Z",
+            },
+        )
+        assert r.status_code == 422, r.text
+
+    def test_update_rejects_end_before_start(self, admin_client):
+        _, _, org_client = _register_enterprise_organizer(admin_client)
+        event = _create_publishable_event(org_client)
+        r = org_client.post(
+            f"{API}/events/me/{event['id']}/functions",
+            json={
+                "name": "Función válida",
+                "kind": "function",
+                "starts_at": event["starts_at"],
+                "ends_at": event["ends_at"],
+            },
+        )
+        assert r.status_code == 201, r.text
+        function_id = r.json()["id"]
+
+        r = org_client.put(
+            f"{API}/events/me/{event['id']}/functions/{function_id}",
+            json={"ends_at": "2020-01-01T00:00:00Z"},
+        )
+        assert r.status_code == 422, r.text
+
+    def test_create_rejects_end_before_start_with_naive_datetime(self, admin_client):
+        """A starts_at without a UTC offset parses to a naive datetime, which
+        can't be compared directly against the aware ends_at — must still
+        surface as a clean 422, not an unhandled 500."""
+        _, _, org_client = _register_enterprise_organizer(admin_client)
+        event = _create_publishable_event(org_client)
+        r = org_client.post(
+            f"{API}/events/me/{event['id']}/functions",
+            json={
+                "name": "Función con fecha naive",
+                "kind": "function",
+                "starts_at": "2026-09-27T21:58:00",
+                "ends_at": "2026-08-28T21:58:00Z",
+            },
+        )
+        assert r.status_code == 422, r.text

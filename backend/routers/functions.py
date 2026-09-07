@@ -356,6 +356,25 @@ class EventFunctionUpdate(BaseModel):
     ticket_type_overrides: Optional[List[FunctionTicketTypeOverride]] = None
 
 
+def _assert_valid_date_range(
+    starts_at: Optional[datetime], ends_at: Optional[datetime]
+) -> None:
+    if not starts_at or not ends_at:
+        return
+    # A caller-supplied ISO string without an offset parses to a naive
+    # datetime, which can't be compared against the aware ones the DB always
+    # stores (DateTime(timezone=True)) — assume UTC, same as elsewhere in
+    # this codebase (discount_service.py, ticket_jwt.py).
+    if starts_at.tzinfo is None:
+        starts_at = starts_at.replace(tzinfo=timezone.utc)
+    if ends_at.tzinfo is None:
+        ends_at = ends_at.replace(tzinfo=timezone.utc)
+    if ends_at <= starts_at:
+        raise HTTPException(
+            422, "La fecha fin debe ser posterior a la fecha de inicio."
+        )
+
+
 # Duration default for overlap detection when ends_at is missing (~1h).
 # Not "franjas de ingreso" (Phase 2 capacity slots) — those are out of scope.
 # for the purpose of detecting schedule overlaps against sibling funciones.
@@ -451,6 +470,7 @@ async def create_function(
             "El evento es Gratuito: las localidades de la función no pueden "
             "tener costo (precio o fees).",
         )
+    _assert_valid_date_range(body.starts_at, body.ends_at)
     await _check_schedule_conflict(
         event_id,
         body.starts_at,
@@ -565,6 +585,7 @@ async def update_function(
 
     effective_starts = body.starts_at if body.starts_at is not None else func.starts_at
     effective_ends = body.ends_at if body.ends_at is not None else func.ends_at
+    _assert_valid_date_range(effective_starts, effective_ends)
     effective_venue = (
         body.venue_name if body.venue_name is not None else func.venue_name
     )
