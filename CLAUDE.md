@@ -97,7 +97,7 @@ Inject DB session with `session: AsyncSession = Depends(get_db)`. Call `row_to_d
 
 **Auth:** `POST /api/auth/login` returns `{user, organizer, access_token, refresh_token}` in body AND sets HttpOnly cookies. Frontend stores tokens in `localStorage` (`tys_access_token` / `tys_refresh_token`) as `Authorization: Bearer` — cookies can't be used cross-origin because the preview platform forces `Access-Control-Allow-Origin: *`.
 
-**RBAC:** roles `super_admin` and `organizer`. Login is never blocked — blocked organizers see a dashboard with reason.
+**RBAC:** four roles — `super_admin`, `organizer`, `buyer`, `org_staff`. `super_admin`/`organizer`/`buyer` are `User` rows (`models.UserRole`); `org_staff` has no `User` row — it's a self-contained JWT issued by staff login (`security.create_staff_token`), never validated against the DB per-request. `organizer_id` means different things depending on role: for `organizer` it's the org they run; for `buyer` and `org_staff` it's the org they registered with / were hired by — a route that checks only "is `organizer_id` set" instead of also checking `role` will incorrectly let buyers/staff through (`security.is_active_organizer` / `is_organizer_owner` do both checks; prefer them over a bare `organizer_id` truthy check). Login is never blocked — blocked organizers see a dashboard with reason.
 
 **Migrations:**
 ```bash
