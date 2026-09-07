@@ -814,15 +814,16 @@ function ManualPaymentDialog({ order, event, onClose, onChanged }) {
                         <div className="space-y-1.5">
                             <label
                                 htmlFor="confirm-reference"
-                                className="text-xs font-medium uppercase block space-y-1.5"
+                                className="text-xs font-medium uppercase flex flex-col gap-1.5"
                             >
-                                <span>Referencia (opcional)</span>
+                                Referencia (opcional)
                                 <input
                                     id="confirm-reference"
                                     type="text"
                                     value={reference}
                                     onChange={(e) => setReference(e.target.value)}
                                     placeholder="Ej: TRX-12345"
+                                    aria-label="Referencia (opcional)"
                                     className="w-full border rounded px-2 py-1.5 text-sm font-normal normal-case"
                                     maxLength={120}
                                     data-testid="confirm-reference"
@@ -832,14 +833,15 @@ function ManualPaymentDialog({ order, event, onClose, onChanged }) {
                         <div className="space-y-1.5">
                             <label
                                 htmlFor="confirm-notes"
-                                className="text-xs font-medium uppercase block space-y-1.5"
+                                className="text-xs font-medium uppercase flex flex-col gap-1.5"
                             >
-                                <span>Notas (opcional)</span>
+                                Notas (opcional)
                                 <textarea
                                     id="confirm-notes"
                                     value={notes}
                                     onChange={(e) => setNotes(e.target.value)}
                                     placeholder="Ej: Recibido en cuenta Pichincha"
+                                    aria-label="Notas (opcional)"
                                     rows={3}
                                     maxLength={500}
                                     className="w-full border rounded px-2 py-1.5 text-sm font-normal normal-case"
@@ -875,18 +877,23 @@ function ManualPaymentDialog({ order, event, onClose, onChanged }) {
                 {mode === "rejecting" && (
                     <div className="space-y-3">
                         <div className="space-y-1.5">
-                            <label className="text-xs font-medium uppercase">
+                            <label
+                                htmlFor="reject-reason"
+                                className="text-xs font-medium uppercase flex flex-col gap-1.5"
+                            >
                                 Razón (requerida — se enviará al comprador)
+                                <textarea
+                                    id="reject-reason"
+                                    value={reason}
+                                    onChange={(e) => setReason(e.target.value)}
+                                    placeholder="Ej: No recibimos la transferencia en el plazo"
+                                    aria-label="Razón (requerida — se enviará al comprador)"
+                                    rows={3}
+                                    maxLength={500}
+                                    className="w-full border rounded px-2 py-1.5 text-sm font-normal normal-case"
+                                    data-testid="reject-reason"
+                                />
                             </label>
-                            <textarea
-                                value={reason}
-                                onChange={(e) => setReason(e.target.value)}
-                                placeholder="Ej: No recibimos la transferencia en el plazo"
-                                rows={3}
-                                maxLength={500}
-                                className="w-full border rounded px-2 py-1.5 text-sm"
-                                data-testid="reject-reason"
-                            />
                         </div>
                         <div className="flex gap-2 justify-end">
                             <Button
