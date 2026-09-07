@@ -30,7 +30,6 @@ import {
     CreditCard,
     User,
     Lock,
-    ExternalLink,
     Sparkles,
     FileText,
 } from "lucide-react";
@@ -38,6 +37,8 @@ import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatCents } from "@/lib/orders";
 import { IVA_PERCENT_OPTIONS } from "@/lib/einvoice";
+import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
+import { nuveiCheckoutFromApi, type NuveiCheckoutConfig } from "@/lib/nuvei";
 
 export default function Configuracion() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -177,8 +178,8 @@ function PlanTab() {
     const [data, setData] = useState(null);
     const [plans, setPlans] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [openingPortal, setOpeningPortal] = useState(false);
     const [payingCode, setPayingCode] = useState(null);
+    const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
 
     useEffect(() => {
         Promise.all([api.get("/dashboard/me"), api.get("/plans")])
@@ -190,29 +191,17 @@ function PlanTab() {
             .finally(() => setLoading(false));
     }, []);
 
-    const openPortal = async () => {
-        setOpeningPortal(true);
-        try {
-            const { data: portal } = await api.post("/billing/portal", {
-                return_url: window.location.href,
-            });
-            window.location.href = portal.portal_url;
-        } catch (e) {
-            toast.error(formatApiError(e?.response?.data?.detail) || e.message);
-            setOpeningPortal(false);
-        }
-    };
-
     const startUpgrade = async (plan_code: string) => {
         setPayingCode(plan_code);
         try {
             const { data: checkout } = await api.post("/billing/checkout-session", {
                 plan_code,
                 origin_url: window.location.origin,
-                payment_method: "stripe",
+                payment_method: "nuvei",
             });
-            if (checkout?.checkout_url) {
-                window.location.href = checkout.checkout_url;
+            const nuvei = nuveiCheckoutFromApi(checkout);
+            if (nuvei) {
+                setNuveiCheckout(nuvei);
                 return;
             }
             toast.message(checkout?.message || "Registramos tu solicitud de cambio de plan.");
@@ -277,28 +266,39 @@ function PlanTab() {
                     </div>
                 )}
                 <div className="flex flex-wrap gap-2 pt-2 border-t">
-                    <Button
-                        onClick={openPortal}
-                        disabled={openingPortal}
-                        data-testid="cfg-portal-btn"
-                    >
-                        {openingPortal ? (
-                            <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                        ) : (
-                            <ExternalLink className="h-4 w-4 mr-1.5" />
-                        )}
-                        Ir al portal de Stripe
-                    </Button>
+                    <p className="text-sm text-muted-foreground">
+                        El cobro de planes se hace con Nuvei (Paymentez Checkout).
+                    </p>
                 </div>
             </CardContent>
         </Card>
+
+        {nuveiCheckout && (
+            <Card data-testid="cfg-nuvei-checkout">
+                <CardHeader>
+                    <CardTitle className="text-lg">Pagar plan con Nuvei</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <NuveiCheckoutPanel
+                        config={nuveiCheckout}
+                        onPaid={async () => {
+                            setNuveiCheckout(null);
+                            toast.success("Pago confirmado");
+                            const dash = await api.get("/dashboard/me");
+                            setData(dash.data);
+                        }}
+                        onCancel={() => setNuveiCheckout(null)}
+                    />
+                </CardContent>
+            </Card>
+        )}
 
         {upgrades.length > 0 && (
             <Card data-testid="cfg-upgrade-plans">
                 <CardHeader>
                     <CardTitle className="text-lg">Mejorar plan</CardTitle>
                     <CardDescription>
-                        Elegí un plan con las funciones que te faltan. El cobro se hace por Stripe.
+                        Elegí un plan con las funciones que te faltan. El cobro se hace por Nuvei.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="grid sm:grid-cols-2 gap-3">

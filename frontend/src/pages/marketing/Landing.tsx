@@ -24,7 +24,7 @@ const FEATURES = [
     {
         icon: Ticket,
         title: "Venta de tickets",
-        desc: "Cobros con Stripe, tickets digitales con QR, asignación numerada opcional.",
+        desc: "Cobros con Nuvei (tarjeta), tickets digitales con QR, asignación numerada opcional.",
     },
     {
         icon: ShieldCheck,
@@ -78,7 +78,7 @@ export default function Landing() {
                             </span>
                         </h1>
                         <p className="text-base sm:text-lg text-muted-foreground max-w-xl">
-                            Ticket Yourself te da tu propia página, cobros con Stripe,
+                            Ticket Yourself te da tu propia página, cobros con Nuvei,
                             tickets con QR y reportes — listo en minutos. Sin código.
                         </p>
                         <div className="flex flex-col gap-3 pt-2">

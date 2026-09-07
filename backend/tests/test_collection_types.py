@@ -3,17 +3,9 @@
 from __future__ import annotations
 
 import os
-import sys
-import types
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
-
-# order_service imports stripe at module level; stub for unit runs without deps.
-if "stripe" not in sys.modules:
-    _stripe = types.ModuleType("stripe")
-    _stripe.error = types.SimpleNamespace(StripeError=Exception)
-    sys.modules["stripe"] = _stripe
 
 import pytest
 from fastapi import HTTPException

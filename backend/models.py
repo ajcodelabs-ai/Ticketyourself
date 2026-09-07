@@ -417,25 +417,23 @@ class OrganizersList(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Billing / Stripe / gateways
+# Billing / Nuvei
 # ──────────────────────────────────────────────────────────────────────────────
-PlanPaymentMethod = Literal["stripe", "nuvei", "deuna"]
+PlanPaymentMethod = Literal["nuvei"]
 
 
 class CheckoutRequest(BaseModel):
     plan_code: str = Field(min_length=2, max_length=40)
     origin_url: str
-    payment_method: PlanPaymentMethod = "stripe"
+    payment_method: PlanPaymentMethod = "nuvei"
 
 
 class CheckoutResponse(BaseModel):
     checkout_url: Optional[str] = None
     session_id: Optional[str] = None
     mode: Optional[Literal["subscription", "payment", "gateway"]] = None
-    payment_method: PlanPaymentMethod = "stripe"
-    status: Literal[
-        "redirect", "pending_gateway", "nuvei_checkout", "deuna_checkout"
-    ] = "redirect"
+    payment_method: PlanPaymentMethod = "nuvei"
+    status: Literal["pending_gateway", "nuvei_checkout"] = "nuvei_checkout"
     message: Optional[str] = None
     plan_code: Optional[str] = None
     intent_id: Optional[str] = None
@@ -446,7 +444,8 @@ class CheckoutResponse(BaseModel):
     merchant_site_id: Optional[str] = None
     nuvei_env: Optional[str] = None  # stg | prod
     checkout_js_url: Optional[str] = None
-    checkout_mode: Optional[str] = None  # client | reference
+    checkout_mode: Optional[str] = None  # client | linktopay | reference
+    payment_url: Optional[str] = None
     client_app_code: Optional[str] = None
     client_app_key: Optional[str] = None
     client_unique_id: Optional[str] = None
@@ -458,10 +457,6 @@ class CheckoutResponse(BaseModel):
     order_installments_type: Optional[int] = None
     amount: Optional[str] = None
     currency: Optional[str] = None
-    # DEUNA Payment Widget
-    order_token: Optional[str] = None
-    public_api_key: Optional[str] = None
-    deuna_env: Optional[str] = None
 
 
 class PortalResponse(BaseModel):
@@ -474,7 +469,7 @@ class BillingIntentOut(TimestampedModel):
     plan_id: Optional[str] = None
     plan_code: str
     session_id: Optional[str] = None
-    payment_method: str = "stripe"
+    payment_method: str = "nuvei"
     mode: Optional[str] = None
     status: str
     created_at: datetime

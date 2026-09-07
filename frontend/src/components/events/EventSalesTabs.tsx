@@ -362,18 +362,18 @@ function Metric({ icon, label, value, sub }) {
 
 // ── Orders ───────────────────────────────────────────────────────────────────
 const METHOD_LABEL = {
-    stripe: "Tarjeta",
     nuvei: "Nuvei",
-    deuna: "DeUna",
     transfer: "Transferencia",
     cash: "Efectivo",
+    stripe: "Tarjeta",
+    deuna: "DeUna",
 };
 const METHOD_ICON = {
-    stripe: "💳",
     nuvei: "💳",
-    deuna: "📱",
     transfer: "🏦",
     cash: "💵",
+    stripe: "💳",
+    deuna: "📱",
 };
 
 function OrdersTab({ event }) {
@@ -427,7 +427,7 @@ function OrdersTab({ event }) {
     };
 
     const filtered = orders.filter((o) => {
-        if (filterMethod !== "all" && (o.payment_method || "stripe") !== filterMethod) {
+        if (filterMethod !== "all" && (o.payment_method || "nuvei") !== filterMethod) {
             return false;
         }
         if (filterStatus !== "all" && o.status !== filterStatus) return false;
@@ -479,7 +479,7 @@ function OrdersTab({ event }) {
                     data-testid="filter-method"
                 >
                     <option value="all">Todos los métodos</option>
-                    <option value="stripe">💳 Tarjeta</option>
+                    <option value="nuvei">💳 Nuvei</option>
                     <option value="transfer">🏦 Transferencia</option>
                     <option value="cash">💵 Efectivo</option>
                 </select>
@@ -519,7 +519,7 @@ function OrdersTab({ event }) {
                     <TableBody>
                         {filtered.map((o) => {
                             const meta = ORDER_STATUS_META[o.status] || ORDER_STATUS_META.pending;
-                            const method = o.payment_method || "stripe";
+                            const method = o.payment_method || "nuvei";
                             const isManualPending = o.status === "pending_manual_payment";
                             return (
                                 <TableRow key={o.id} data-testid={`order-row-${o.order_number}`}>

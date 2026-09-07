@@ -24,19 +24,6 @@ export default function BillingSuccess() {
         let mounted = true;
         (async () => {
             try {
-                // Try to fire the simulator (dev only). If it 404s, we silently ignore.
-                if (sessionId) {
-                    try {
-                        await api.post("/stripe/_simulate_webhook", {
-                            event_type: "checkout.session.completed",
-                            session_id: sessionId,
-                        });
-                    } catch (err) {
-                        // 404 is expected when this is a real webhook environment.
-                        // Logged at warn level for diagnostics, never bubbled up.
-                        console.warn("Webhook simulator skipped:", err?.message);
-                    }
-                }
                 await refreshOrganizer();
                 if (!mounted) return;
                 setActivated(true);

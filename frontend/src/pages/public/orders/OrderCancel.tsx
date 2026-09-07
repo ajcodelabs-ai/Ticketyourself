@@ -1,10 +1,10 @@
 /**
- * /o/:slug/orden/:order_number/cancelado — buyer hit cancel in Stripe.
+ * /o/:slug/orden/:order_number/cancelado — el comprador canceló el checkout de Nuvei.
  *
- * The order is still in DB with status=pending (Stripe didn't capture).
+ * The order is still in DB with status=pending (Nuvei didn't capture).
  * Reservation expires automatically after 15min. We expose:
- *  - retry: re-attempt via Stripe checkout (we re-create a checkout session
- *    by reposting to /public/orders. Order_number changes.)
+ *  - retry: re-attempt via Nuvei Checkout
+ *    (reposting to /public/orders. Order_number changes.)
  *  - dev simulate paid (preview only).
  */
 import { useEffect, useState } from "react";
@@ -129,7 +129,7 @@ export default function OrderCancel() {
                                     Modo preview
                                 </p>
                                 <p className="text-xs text-muted-foreground mb-2">
-                                    Para demos sin Stripe real, podés marcar esta orden como
+                                    Para demos sin Nuvei real, podés marcar esta orden como
                                     pagada y emitir los tickets.
                                 </p>
                                 <Button

@@ -29,7 +29,7 @@ def test_resolve_enabled_codes_legacy_flags():
             "transfer": {"enabled": True},
             "cash": {"enabled": False},
         }
-    ) == ["stripe", "transfer"]
+    ) == ["nuvei", "transfer"]
 
 
 def test_normalize_defaults_to_nuvei():
@@ -45,7 +45,7 @@ def test_normalize_syncs_manual_flags():
             "transfer": {"bank_name": "Pichincha"},
             "cash": {"location": "Oficina"},
         },
-        allowed_codes={"nuvei", "deuna", "stripe", "paypal", "transfer", "cash"},
+        allowed_codes={"nuvei", "transfer", "cash"},
     )
     assert out["transfer"]["enabled"] is True
     assert out["cash"]["enabled"] is True
@@ -57,7 +57,7 @@ def test_normalize_rejects_unknown_code():
     try:
         normalize_payment_methods(
             {"enabled_codes": ["bitcoin"]},
-            allowed_codes={"nuvei", "deuna", "transfer", "cash"},
+            allowed_codes={"nuvei", "transfer", "cash"},
         )
         assert False, "expected ValueError"
     except ValueError as exc:
@@ -67,5 +67,5 @@ def test_normalize_rejects_unknown_code():
 def test_accepts_payment_method():
     event = {"payment_methods": {"enabled_codes": ["deuna", "transfer"]}}
     assert accepts_payment_method(event, "deuna") is True
-    assert accepts_payment_method(event, "nuvei") is False
+    assert accepts_payment_method(event, "nuvei") is True
     assert accepts_payment_method(event, "season_pass") is True

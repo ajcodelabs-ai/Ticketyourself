@@ -3,7 +3,7 @@
  * No función/seat selection here — that happens later, on the redemption
  * page (`/o/{slug}/abono/{purchase_token}`), once the pass is paid.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2, Ticket as TicketIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -22,6 +22,8 @@ import api, { formatApiError } from "@/lib/api";
 import { formatCents } from "@/lib/orders";
 import { useAuth } from "@/contexts/AuthContext";
 import BuyerAuthPanel from "@/components/orders/BuyerAuthPanel";
+import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
+import { nuveiCheckoutFromApi, type NuveiCheckoutConfig } from "@/lib/nuvei";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -34,6 +36,9 @@ export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass
     const [buyer, setBuyer] = useState({ name: "", email: "", phone: "", document_id: "" });
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
+    const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
+    const nuveiActiveRef = useRef(false);
+    const [purchaseToken, setPurchaseToken] = useState<string | null>(null);
 
     useEffect(() => {
         if (open) {
@@ -44,6 +49,8 @@ export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass
                 document_id: "",
             });
             setErrors({});
+            setNuveiCheckout(null);
+            setPurchaseToken(null);
         }
     }, [open, user]);
 
@@ -77,8 +84,20 @@ export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass
                 onOpenChange(false);
                 return;
             }
-            if (data.checkout_url) {
-                window.location.href = data.checkout_url;
+            if (data.status === "pending_gateway") {
+                toast.message(
+                    data.message ||
+                        "Pago digital en preparación. Tu abono quedó registrado; el cobro real aún no está disponible.",
+                );
+                if (data.redirect_to) navigate(data.redirect_to);
+                onOpenChange(false);
+                return;
+            }
+            const nuvei = nuveiCheckoutFromApi(data);
+            if (nuvei) {
+                nuveiActiveRef.current = true;
+                setPurchaseToken(data.purchase_token || null);
+                setNuveiCheckout(nuvei);
                 return;
             }
             toast.error("No se pudo generar la compra del abono.");
@@ -90,100 +109,131 @@ export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass
     };
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <>
+        <Dialog
+            open={open && !nuveiCheckout}
+            onOpenChange={(next) => {
+                if (!next && nuveiActiveRef.current) return;
+                nuveiActiveRef.current = false;
+                setNuveiCheckout(null);
+                setPurchaseToken(null);
+                onOpenChange(next);
+            }}
+        >
             <DialogContent className="sm:max-w-md" data-testid="season-pass-purchase-modal">
-                <DialogHeader>
-                    <DialogTitle className="text-2xl">Comprar abono</DialogTitle>
-                    <DialogDescription className="text-base">{seasonPass.name}</DialogDescription>
-                </DialogHeader>
+                    <>
+                        <DialogHeader>
+                            <DialogTitle className="text-2xl">Comprar abono</DialogTitle>
+                            <DialogDescription className="text-base">{seasonPass.name}</DialogDescription>
+                        </DialogHeader>
 
-                {isAdmin ? (
-                    <p className="text-sm text-muted-foreground">
-                        Las cuentas de administración no pueden comprar. Usá una cuenta de comprador.
-                    </p>
-                ) : !canPurchase ? (
-                    <BuyerAuthPanel />
-                ) : (
-                <>
-                <div className="rounded-lg border bg-secondary/40 p-3 space-y-1 text-sm">
-                    <div className="flex justify-between">
-                        <span className="text-muted-foreground">Créditos incluidos</span>
-                        <span className="font-medium">{seasonPass.credits_total}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-muted-foreground">Evento</span>
-                        <span className="font-medium">{event?.title}</span>
-                    </div>
-                    <div className="flex justify-between text-base font-semibold pt-1">
-                        <span>Total</span>
-                        <span>{isFree ? "Gratis" : formatCents(seasonPass.price_cents, seasonPass.currency)}</span>
-                    </div>
-                </div>
-
-                <p className="text-xs text-muted-foreground">
-                    No elegís funciones todavía — eso lo hacés después, desde el link que te
-                    enviamos por email, cuando quieras durante la temporada.
-                </p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                    <div className="space-y-1.5">
-                        <Label htmlFor="pass-buyer-name">Nombre completo *</Label>
-                        <Input
-                            id="pass-buyer-name"
-                            value={buyer.name}
-                            onChange={(e) => setBuyer((b) => ({ ...b, name: e.target.value }))}
-                            data-testid="pass-buyer-name"
-                            aria-invalid={!!errors.name}
-                        />
-                        {errors.name && <p className="text-xs text-red-600">{errors.name}</p>}
-                    </div>
-                    <div className="space-y-1.5">
-                        <Label htmlFor="pass-buyer-email">Email *</Label>
-                        <Input
-                            id="pass-buyer-email"
-                            type="email"
-                            value={buyer.email}
-                            disabled
-                            data-testid="pass-buyer-email"
-                            aria-invalid={!!errors.email}
-                        />
-                        {errors.email && <p className="text-xs text-red-600">{errors.email}</p>}
-                    </div>
-                    <div className="space-y-1.5">
-                        <Label htmlFor="pass-buyer-phone">Teléfono</Label>
-                        <PhoneInput
-                            id="pass-buyer-phone"
-                            value={buyer.phone}
-                            onChange={(v) => setBuyer((b) => ({ ...b, phone: v || "" }))}
-                            data-testid="pass-buyer-phone"
-                        />
-                    </div>
-                    <div className="space-y-1.5">
-                        <Label htmlFor="pass-buyer-doc">Documento / cédula</Label>
-                        <Input
-                            id="pass-buyer-doc"
-                            value={buyer.document_id}
-                            onChange={(e) => setBuyer((b) => ({ ...b, document_id: e.target.value }))}
-                            data-testid="pass-buyer-doc"
-                        />
-                    </div>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-                        Cancelar
-                    </Button>
-                    <Button onClick={submit} disabled={submitting} className="min-w-[160px]" data-testid="pass-purchase-submit">
-                        {submitting ? (
-                            <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" />Procesando…</>
+                        {isAdmin ? (
+                            <p className="text-sm text-muted-foreground">
+                                Las cuentas de administración no pueden comprar. Usá una cuenta de comprador.
+                            </p>
+                        ) : !canPurchase ? (
+                            <BuyerAuthPanel />
                         ) : (
-                            <><TicketIcon className="h-4 w-4 mr-1.5" />{isFree ? "Confirmar abono" : "Pagar abono"}</>
+                            <>
+                                <div className="rounded-lg border bg-secondary/40 p-3 space-y-1 text-sm">
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Créditos incluidos</span>
+                                        <span className="font-medium">{seasonPass.credits_total}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Evento</span>
+                                        <span className="font-medium">{event?.title}</span>
+                                    </div>
+                                    <div className="flex justify-between text-base font-semibold pt-1">
+                                        <span>Total</span>
+                                        <span>{isFree ? "Gratis" : formatCents(seasonPass.price_cents, seasonPass.currency)}</span>
+                                    </div>
+                                </div>
+
+                                <p className="text-xs text-muted-foreground">
+                                    No elegís funciones todavía — eso lo hacés después, desde el link que te
+                                    enviamos por email, cuando quieras durante la temporada.
+                                </p>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="pass-buyer-name">Nombre completo *</Label>
+                                        <Input
+                                            id="pass-buyer-name"
+                                            value={buyer.name}
+                                            onChange={(e) => setBuyer((b) => ({ ...b, name: e.target.value }))}
+                                            data-testid="pass-buyer-name"
+                                            aria-invalid={!!errors.name}
+                                        />
+                                        {errors.name && <p className="text-xs text-red-600">{errors.name}</p>}
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="pass-buyer-email">Email *</Label>
+                                        <Input
+                                            id="pass-buyer-email"
+                                            type="email"
+                                            value={buyer.email}
+                                            disabled
+                                            data-testid="pass-buyer-email"
+                                            aria-invalid={!!errors.email}
+                                        />
+                                        {errors.email && <p className="text-xs text-red-600">{errors.email}</p>}
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="pass-buyer-phone">Teléfono</Label>
+                                        <PhoneInput
+                                            id="pass-buyer-phone"
+                                            value={buyer.phone}
+                                            onChange={(v) => setBuyer((b) => ({ ...b, phone: v || "" }))}
+                                            data-testid="pass-buyer-phone"
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="pass-buyer-doc">Documento / cédula</Label>
+                                        <Input
+                                            id="pass-buyer-doc"
+                                            value={buyer.document_id}
+                                            onChange={(e) => setBuyer((b) => ({ ...b, document_id: e.target.value }))}
+                                            data-testid="pass-buyer-doc"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="flex justify-end gap-2 pt-2">
+                                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+                                        Cancelar
+                                    </Button>
+                                    <Button onClick={submit} disabled={submitting} className="min-w-[160px]" data-testid="pass-purchase-submit">
+                                        {submitting ? (
+                                            <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" />Procesando…</>
+                                        ) : (
+                                            <><TicketIcon className="h-4 w-4 mr-1.5" />{isFree ? "Confirmar abono" : "Pagar abono"}</>
+                                        )}
+                                    </Button>
+                                </div>
+                            </>
                         )}
-                    </Button>
-                </div>
-                </>
-                )}
+                    </>
             </DialogContent>
         </Dialog>
+        {nuveiCheckout && (
+            <NuveiCheckoutPanel
+                config={nuveiCheckout}
+                onPaid={() => {
+                    nuveiActiveRef.current = false;
+                    setNuveiCheckout(null);
+                    onOpenChange(false);
+                    toast.success("¡Abono confirmado! Te enviamos el link por email.");
+                    if (purchaseToken) {
+                        navigate(`/o/${tenantSlug}/abono/${purchaseToken}`);
+                    }
+                }}
+                onCancel={() => {
+                    nuveiActiveRef.current = false;
+                    setNuveiCheckout(null);
+                }}
+            />
+        )}
+        </>
     );
 }

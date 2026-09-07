@@ -2,42 +2,44 @@
  * Payment method catalog helpers — dual-read of enabled_codes + legacy flags.
  */
 
-export const CATALOG_PAYMENT_CODES = [
-    "nuvei",
-    "deuna",
-    "stripe",
-    "paypal",
-    "transfer",
-    "cash",
-] as const;
+export const CATALOG_PAYMENT_CODES = ["nuvei", "transfer", "cash"] as const;
 export type CatalogPaymentCode = (typeof CATALOG_PAYMENT_CODES)[number];
 
-/** Gateways without a live charge path yet (order stays pending_gateway). */
-export const GATEWAY_STUB_CODES = new Set(["paypal"]);
+const RETIRED_GATEWAY_ALIASES: Record<string, string> = {
+    stripe: "nuvei",
+    deuna: "nuvei",
+    paypal: "nuvei",
+};
+
+/** Gateways without a live charge path (none — Nuvei is the only digital checkout). */
+export const GATEWAY_STUB_CODES = new Set<string>();
 
 const CATALOG_SET = new Set<string>(CATALOG_PAYMENT_CODES);
+
+function canonicalCode(code: string): string {
+    const lowered = code.trim().toLowerCase();
+    return RETIRED_GATEWAY_ALIASES[lowered] || lowered;
+}
 
 export function resolveEnabledPaymentCodes(
     pm: Record<string, any> | null | undefined,
     { includeLegacyStripe = false }: { includeLegacyStripe?: boolean } = {},
 ): string[] {
+    void includeLegacyStripe;
     if (!pm) return ["nuvei"];
     if (Array.isArray(pm.enabled_codes)) {
         const out: string[] = [];
         for (const c of pm.enabled_codes) {
             if (typeof c !== "string") continue;
-            const code = c.trim().toLowerCase();
+            const code = canonicalCode(c);
             if (CATALOG_SET.has(code) && !out.includes(code)) {
                 out.push(code);
             }
         }
-        // An explicit (even empty) `enabled_codes` array is respected as-is —
-        // matches backend's resolve_enabled_codes.
-        void includeLegacyStripe;
         return out;
     }
     const codes: string[] = [];
-    if (pm.stripe?.enabled) codes.push("stripe");
+    if (pm.stripe?.enabled) codes.push("nuvei");
     if (pm.transfer?.enabled) codes.push("transfer");
     if (pm.cash?.enabled) codes.push("cash");
     return codes.length ? codes : ["nuvei"];
@@ -65,7 +67,7 @@ export function normalizePaymentMethodsForForm(pm: Record<string, any> | null | 
     const enabled_codes = resolveEnabledPaymentCodes(pm);
     return {
         enabled_codes,
-        stripe: { enabled: enabled_codes.includes("stripe") },
+        stripe: { enabled: false },
         transfer: {
             enabled: enabled_codes.includes("transfer"),
             bank_name: pm.transfer?.bank_name || "",
@@ -86,11 +88,14 @@ export function withEnabledCodes(
     pm: Record<string, any>,
     codes: string[],
 ) {
-    const enabled_codes = codes.filter((c) => CATALOG_SET.has(c));
+    const enabled_codes = codes
+        .map(canonicalCode)
+        .filter((c) => CATALOG_SET.has(c))
+        .filter((c, i, arr) => arr.indexOf(c) === i);
     return {
         ...pm,
         enabled_codes,
-        stripe: { enabled: enabled_codes.includes("stripe") },
+        stripe: { enabled: false },
         transfer: {
             ...(pm.transfer || baseTransfer()),
             enabled: enabled_codes.includes("transfer"),

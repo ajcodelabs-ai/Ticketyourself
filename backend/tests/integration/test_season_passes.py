@@ -202,7 +202,7 @@ class TestPurchaseSeasonPass:
         )
         assert r.status_code == 200, r.text
         data = r.json()
-        assert data["status"] == "pending"
+        assert data["status"] in ("pending", "pending_gateway", "nuvei_checkout")
         order_number = data["order_number"]
 
         # Simulate payment

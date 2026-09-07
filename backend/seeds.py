@@ -299,34 +299,39 @@ PAYMENT_METHOD_CATALOG = [
         "name": "Nuvei",
         "kind": "gateway",
         "sort_order": 10,
-        "description": "Pago digital con tarjeta vía Nuvei (Simply Connect).",
+        "is_active": True,
+        "description": "Pago digital con tarjeta vía Nuvei (Paymentez Checkout).",
     },
     {
         "code": "deuna",
         "name": "DeUna",
         "kind": "gateway",
         "sort_order": 20,
-        "description": "Pago digital con DEUNA (Payment Widget).",
+        "is_active": False,
+        "description": "Retirado — el cobro digital es Nuvei.",
     },
     {
         "code": "stripe",
         "name": "Stripe",
         "kind": "gateway",
         "sort_order": 25,
-        "description": "Pago digital con tarjeta vía Stripe Checkout.",
+        "is_active": False,
+        "description": "Retirado — el cobro digital es Nuvei.",
     },
     {
         "code": "paypal",
         "name": "PayPal",
         "kind": "gateway",
         "sort_order": 28,
-        "description": "Pago digital PayPal (integración en preparación).",
+        "is_active": False,
+        "description": "Retirado — el cobro digital es Nuvei.",
     },
     {
         "code": "transfer",
         "name": "Transferencia",
         "kind": "manual",
         "sort_order": 30,
+        "is_active": True,
         "description": "Transferencia bancaria con confirmación manual.",
     },
     {
@@ -334,6 +339,7 @@ PAYMENT_METHOD_CATALOG = [
         "name": "Efectivo",
         "kind": "manual",
         "sort_order": 40,
+        "is_active": True,
         "description": "Pago en efectivo en el punto de cobro del organizador.",
     },
 ]
@@ -356,18 +362,18 @@ async def _seed_payment_method_catalog() -> None:
                         name=item["name"],
                         kind=item["kind"],
                         sort_order=item["sort_order"],
-                        is_active=True,
+                        is_active=item.get("is_active", True),
                         description=item["description"],
                         created_at=now,
                         updated_at=now,
                     )
                 )
             else:
-                # Keep operator toggles (is_active). Sync labels from code.
                 existing.name = item["name"]
                 existing.kind = item["kind"]
                 existing.sort_order = item["sort_order"]
                 existing.description = item["description"]
+                existing.is_active = item.get("is_active", existing.is_active)
                 existing.updated_at = now
         await session.commit()
         logger.info(
@@ -498,7 +504,7 @@ async def _seed_demo_buyer_tickets() -> None:
             "document_type": "",
         },
         totals=totals,
-        payment_method="stripe",
+        payment_method="nuvei",
         buyer_user_id=buyer_id,
     )
     await order_service.finalize_paid_order(order=order)
@@ -1280,8 +1286,8 @@ async def _seed_demo_events() -> None:
     from sqlalchemy.orm.attributes import flag_modified as _flag_modified
 
     _demo_payment_methods_full = {
-        "enabled_codes": ["nuvei", "deuna", "stripe", "paypal", "transfer", "cash"],
-        "stripe": {"enabled": True},
+        "enabled_codes": ["nuvei", "transfer", "cash"],
+        "stripe": {"enabled": False},
         "transfer": {
             "enabled": True,
             "bank_name": "Banco Pichincha",
@@ -1296,16 +1302,16 @@ async def _seed_demo_events() -> None:
             "contact": "+593 98 765 4321",
         },
     }
-    # Legacy stripe-only shape (no enabled_codes) — keeps Stripe checkout tests
-    # working via dual-read; not offered in the new organizer wizard UI.
-    _demo_payment_methods_stripe = {
-        "stripe": {"enabled": True},
+    # Transfer-only event — used to assert Nuvei is rejected when not enabled.
+    _demo_payment_methods_manual_only = {
+        "enabled_codes": ["transfer"],
+        "stripe": {"enabled": False},
         "transfer": {
-            "enabled": False,
-            "bank_name": "",
-            "account_number": "",
-            "account_holder": "",
-            "instructions": "",
+            "enabled": True,
+            "bank_name": "Banco Pichincha",
+            "account_number": "2100123456",
+            "account_holder": "Eventos Demo S.A.",
+            "instructions": "Solo transferencia.",
         },
         "cash": {"enabled": False, "location": "", "schedule": "", "contact": ""},
     }
@@ -1331,7 +1337,7 @@ async def _seed_demo_events() -> None:
         _pm = (
             _demo_payment_methods_full
             if s["slug"] == "concierto-acustico-demo"
-            else _demo_payment_methods_stripe
+            else _demo_payment_methods_manual_only
         )
         now_dt = datetime.now(timezone.utc)
         async with AsyncSessionLocal() as session:
@@ -2251,8 +2257,8 @@ async def _seed_demo_numbered_event() -> None:
     now = datetime.now(timezone.utc)
     slug = "funcion-especial-demo-numerado"
     _pm_num = {
-        "enabled_codes": ["nuvei", "deuna", "stripe", "paypal", "transfer", "cash"],
-        "stripe": {"enabled": True},
+        "enabled_codes": ["nuvei", "transfer", "cash"],
+        "stripe": {"enabled": False},
         "transfer": {
             "enabled": True,
             "bank_name": "Banco Pichincha",

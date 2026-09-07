@@ -17,11 +17,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PlanCard } from "@/components/PlansShowcase";
 import { SIGNUP_PLAN_KEY } from "@/pages/marketing/Register";
 import api, { formatApiError } from "@/lib/api";
-import { PAYMENT_METHOD_META, PLAN_PAYMENT_METHODS } from "@/lib/orders";
+import { PAYMENT_METHOD_META } from "@/lib/orders";
 import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
-import type { NuveiCheckoutConfig } from "@/lib/nuvei";
-import DeunaCheckoutPanel from "@/components/orders/DeunaCheckoutPanel";
-import type { DeunaCheckoutConfig } from "@/lib/deuna";
+import { nuveiCheckoutFromApi, type NuveiCheckoutConfig } from "@/lib/nuvei";
 import {
     Upload,
     CheckCircle2,
@@ -53,11 +51,10 @@ export default function Onboarding() {
     const [pendingFile, setPendingFile] = useState(null);
     const [resubmitting, setResubmitting] = useState(false);
     const [signupPlanCode, setSignupPlanCode] = useState(null);
-    const [planPaymentMethod, setPlanPaymentMethod] = useState("stripe");
+    const [planPaymentMethod] = useState("nuvei");
     const [payingPlan, setPayingPlan] = useState(false);
     const [gatewayPending, setGatewayPending] = useState(null);
     const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
-    const [deunaCheckout, setDeunaCheckout] = useState<DeunaCheckoutConfig | null>(null);
 
     useEffect(() => {
         const saved = localStorage.getItem(SIGNUP_PLAN_KEY);
@@ -237,46 +234,12 @@ export default function Onboarding() {
                 toast.success(data.message || "Solicitud de pago registrada");
                 return;
             }
-            if (
-                data?.status === "nuvei_checkout" &&
-                (data.reference || data.session_token)
-            ) {
-                setNuveiCheckout({
-                    reference: data.reference || data.session_token,
-                    session_token: data.session_token || data.reference,
-                    checkout_mode: data.checkout_mode,
-                    nuvei_env: data.nuvei_env,
-                    checkout_js_url: data.checkout_js_url,
-                    checkout_url: data.checkout_url,
-                    client_app_code: data.client_app_code,
-                    client_app_key: data.client_app_key,
-                    client_unique_id: data.client_unique_id || data.session_id,
-                    amount: data.amount,
-                    currency: data.currency,
-                    user_id: data.user_id,
-                    user_email: data.user_email,
-                    user_phone: data.user_phone,
-                    order_description: data.order_description,
-                    order_vat: data.order_vat,
-                    order_installments_type: data.order_installments_type,
-                });
+            const nuvei = nuveiCheckoutFromApi(data);
+            if (nuvei) {
+                setNuveiCheckout(nuvei);
                 return;
             }
-            if (data?.status === "deuna_checkout" && data.order_token) {
-                setDeunaCheckout({
-                    order_token: data.order_token,
-                    public_api_key: data.public_api_key,
-                    deuna_env: data.deuna_env,
-                    checkout_js_url: data.checkout_js_url,
-                    order_id: data.client_unique_id || data.session_id,
-                });
-                return;
-            }
-            if (data?.checkout_url) {
-                window.location.href = data.checkout_url;
-            } else {
-                toast.error("No se pudo iniciar el checkout");
-            }
+            toast.error("No se pudo iniciar el checkout");
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
         } finally {
@@ -484,19 +447,6 @@ export default function Onboarding() {
                                     onCancel={() => setNuveiCheckout(null)}
                                 />
                             </div>
-                        ) : deunaCheckout ? (
-                            <div data-testid="onboarding-deuna-checkout">
-                                <DeunaCheckoutPanel
-                                    config={deunaCheckout}
-                                    onPaid={async () => {
-                                        setDeunaCheckout(null);
-                                        toast.success("Pago confirmado. Activando tu plan…");
-                                        await refreshOrganizer();
-                                        navigate("/app");
-                                    }}
-                                    onCancel={() => setDeunaCheckout(null)}
-                                />
-                            </div>
                         ) : gatewayPending ? (
                             <div
                                 className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 space-y-2"
@@ -526,35 +476,9 @@ export default function Onboarding() {
                             </div>
                         ) : (
                             <>
-                                <div className="space-y-2" data-testid="plan-payment-methods">
-                                    <Label>Forma de pago</Label>
-                                    <div className="grid sm:grid-cols-3 gap-3">
-                                        {PLAN_PAYMENT_METHODS.map((code) => {
-                                            const meta = PAYMENT_METHOD_META[code];
-                                            const selected = planPaymentMethod === code;
-                                            return (
-                                                <button
-                                                    key={code}
-                                                    type="button"
-                                                    data-testid={`plan-pay-${code}`}
-                                                    onClick={() => setPlanPaymentMethod(code)}
-                                                    className={`text-left rounded-lg border p-3 transition ${
-                                                        selected
-                                                            ? "border-primary bg-primary/5 ring-1 ring-primary"
-                                                            : "border-border/70 hover:border-primary/40"
-                                                    }`}
-                                                >
-                                                    <div className="text-sm font-medium">
-                                                        {meta.icon} {meta.label}
-                                                    </div>
-                                                    <div className="text-xs text-muted-foreground mt-1">
-                                                        {meta.description}
-                                                    </div>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
+                                <p className="text-sm text-muted-foreground" data-testid="plan-payment-methods">
+                                    El cobro del plan se hace con Nuvei (Paymentez Checkout).
+                                </p>
 
                                 <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 pt-2">
                                     {plans.map((p) => (
@@ -774,7 +698,7 @@ function DemoShortcut({ onActivated }) {
             </p>
             <p className="text-sm text-amber-900/80">
                 ¿Querés saltarte el pago y la aprobación para explorar el dashboard?
-                Activa tu cuenta como aprobada con plan Profesional, sin tocar Stripe ni
+                Activa tu cuenta como aprobada con plan Profesional, sin tocar Nuvei ni
                 esperar a admin. Solo en este entorno de preview.
             </p>
             <Button

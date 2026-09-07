@@ -8,7 +8,7 @@ reusing order_service's per-función tracking (Fase 2), not at purchase time.
 
 Scope (v1): general-admission events only (no venue_id) — redemption doesn't
 support seat selection, so numbered events are rejected at SeasonPass
-creation. Purchase payment: Stripe only (or instant-free when price_cents=0,
+creation. Purchase payment: Nuvei Checkout (or instant-free when price_cents=0,
 mirroring the free-ticket-event pattern) — no transfer/cash for the pass
 itself.
 """
@@ -17,7 +17,6 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-import stripe
 from fastapi import HTTPException
 
 from database import AsyncSessionLocal
@@ -88,7 +87,7 @@ async def create_purchase_skeleton(
         total_cents=subtotal,
         currency=season_pass.get("currency", "USD"),
         status="pending",
-        payment_method="stripe",
+        payment_method="nuvei",
         created_at=now,
         updated_at=now,
     )
@@ -97,44 +96,6 @@ async def create_purchase_skeleton(
         await session.commit()
         await session.refresh(purchase)
         return row_to_dict(purchase)
-
-
-def create_pass_checkout_session(
-    *,
-    purchase: dict,
-    season_pass: dict,
-    event: dict,
-    success_url: str,
-    cancel_url: str,
-) -> dict:
-    line_items = [
-        {
-            "price_data": {
-                "currency": purchase.get("currency", "usd").lower(),
-                "product_data": {
-                    "name": f"{event['title']} · {season_pass['name']} ({purchase['credits_total']} créditos)",
-                    "description": purchase["buyer"]["email"],
-                },
-                "unit_amount": purchase["total_cents"],
-            },
-            "quantity": 1,
-        }
-    ]
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        payment_method_types=["card"],
-        customer_email=purchase["buyer"]["email"],
-        line_items=line_items,
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={
-            "purchase_id": purchase["id"],
-            "order_number": purchase["order_number"],
-            "event_id": event["id"],
-            "tys_purpose": "season_pass_purchase",
-        },
-    )
-    return {"id": session.id, "url": session.url}
 
 
 async def finalize_paid_purchase(

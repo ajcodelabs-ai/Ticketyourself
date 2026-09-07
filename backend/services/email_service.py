@@ -9,6 +9,7 @@ during testing without setting up a real provider.
 """
 
 import asyncio
+import html
 import logging
 import os
 import re
@@ -33,6 +34,44 @@ if _API_KEY:
 
 def _sanitize_filename(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", value)[:80]
+
+
+def _nuvei_receipt_html(record: dict) -> str:
+    """Nuvei requires the buyer email to include transaction_ID (DF) + authorization_code."""
+    meta = record.get("metadata") or {}
+    info = record.get("manual_payment_info") or {}
+    txn = (
+        meta.get("nuvei_transaction_id")
+        or info.get("nuvei_transaction_id")
+        or record.get("nuvei_transaction_id")
+        or ""
+    )
+    auth = (
+        meta.get("nuvei_authorization_code")
+        or info.get("nuvei_authorization_code")
+        or record.get("nuvei_authorization_code")
+        or ""
+    )
+    txn = html.escape(str(txn).strip())
+    auth = html.escape(str(auth).strip())
+    if not txn and not auth:
+        return ""
+    rows = ""
+    if txn:
+        rows += (
+            "<tr><td style='padding:4px 0;color:#6e6e84;'>Transaction ID (DF)</td>"
+            f"<td style='padding:4px 0;font-weight:600;font-family:monospace;'>{txn}</td></tr>"
+        )
+    if auth:
+        rows += (
+            "<tr><td style='padding:4px 0;color:#6e6e84;'>Código de autorización</td>"
+            f"<td style='padding:4px 0;font-weight:600;font-family:monospace;'>{auth}</td></tr>"
+        )
+    return f"""
+        <p style="margin:16px 0 4px;color:#6e6e84;font-size:13px;">Comprobante de pago Nuvei</p>
+        <table cellpadding="0" cellspacing="0" border="0" width="100%"
+               style="margin:0 0 16px;font-size:14px;">{rows}</table>
+    """
 
 
 def _is_real_resend() -> bool:
@@ -75,6 +114,49 @@ async def _send_mock(to: str, subject: str, html: str) -> dict:
     fname.write_text(wrapper, encoding="utf-8")
     logger.info("Mock email written → %s", fname.name)
     return {"id": f"mock_{ts}", "mock_file": str(fname)}
+
+
+async def send_nuvei_transaction_confirmation(
+    *,
+    to: str,
+    subject: str,
+    heading: str,
+    detail: str,
+    transaction_id: Optional[str] = None,
+    authorization_code: Optional[str] = None,
+) -> dict:
+    """Confirmation email required by Nuvei after every approved charge."""
+    if not (to or "").strip():
+        return {"id": "", "error": "missing_recipient"}
+    receipt = _nuvei_receipt_html(
+        {
+            "nuvei_transaction_id": transaction_id or "",
+            "nuvei_authorization_code": authorization_code or "",
+        }
+    )
+    safe_heading = html.escape(heading)
+    safe_detail = html.escape(detail)
+    body = f"""
+<table cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background:#f4f4f9;padding:32px 0;font-family:Helvetica,Arial,sans-serif;color:#1f1f33;">
+  <tr><td align="center">
+    <table cellpadding="0" cellspacing="0" border="0" width="560"
+           style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e6e6f0;">
+      <tr><td style="background:#4f46e5;padding:24px 32px;color:#ffffff;">
+        <div style="font-size:13px;letter-spacing:2px;text-transform:uppercase;opacity:.8;">
+          Ticket Yourself
+        </div>
+        <div style="font-size:22px;font-weight:600;margin-top:4px;">{safe_heading}</div>
+      </td></tr>
+      <tr><td style="padding:32px;line-height:1.55;font-size:15px;color:#33334a;">
+        <p style="margin:0 0 16px;">{safe_detail}</p>
+        {receipt}
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+""".strip()
+    return await send_email(to=to.strip(), subject=subject, html=body)
 
 
 async def send_email(
@@ -351,6 +433,7 @@ def render_purchase_html(
     qty = order["quantity_total"]
     total = f"${(order['total_cents'] / 100):.2f} {order.get('currency', 'USD')}"
     success_url = f"{frontend_base}/o/{organizer['slug']}/orden/{order['order_number']}"
+    receipt_html = _nuvei_receipt_html(order)
 
     return f"""
 <table cellpadding="0" cellspacing="0" border="0" width="100%"
@@ -371,6 +454,7 @@ def render_purchase_html(
         <p style="margin:0 0 16px;color:#6e6e84;">{event.get('venue_name','')}</p>
         <p style="margin:0 0 4px;color:#6e6e84;font-size:13px;">Orden</p>
         <p style="margin:0 0 16px;font-weight:600;">{order['order_number']} · {qty} entrada{'s' if qty != 1 else ''} · {total}</p>
+        {receipt_html}
 
         <table cellpadding="0" cellspacing="0" border="0" width="100%">{rows}</table>
 
@@ -437,6 +521,7 @@ def render_season_pass_html(
     redeem_url = (
         f"{frontend_base}/o/{organizer['slug']}/abono/{purchase['purchase_token']}"
     )
+    receipt_html = _nuvei_receipt_html(purchase)
 
     return f"""
 <table cellpadding="0" cellspacing="0" border="0" width="100%"
@@ -459,6 +544,7 @@ def render_season_pass_html(
         <p style="margin:0 0 16px;font-weight:600;">
           {purchase['order_number']} · {purchase['credits_total']} crédito{'s' if purchase['credits_total'] != 1 else ''} · {total}
         </p>
+        {receipt_html}
         <p style="margin:0 0 16px;color:#6e6e84;">
           Todavía no elegiste a qué funciones vas a ir — entrá al link de abajo cuando quieras
           durante la temporada para redimir tus créditos, función por función.

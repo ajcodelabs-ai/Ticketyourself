@@ -275,6 +275,7 @@ async def organizer_refund_order(
     payload: RefundBody,
     user=Depends(get_current_user),
 ):
+    """Refund a paid order via Nuvei POST /v2/transaction/refund/ when a txn id exists."""
     _org, _event = await _require_event_for_user(event_id, user)
     async with AsyncSessionLocal() as session:
         order_row = await session.scalar(

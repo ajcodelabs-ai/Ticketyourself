@@ -545,7 +545,7 @@ export default function AdminPlans() {
                         <div className="space-y-1.5">
                             <FieldHint
                                 label="Precio (USD)"
-                                tip="Monto de la membresía en dólares con decimales. Ej: 20.00. Se cobra vía Stripe / Nuvei / DeUna al activar el plan. Internamente se guarda en centavos."
+                                tip="Monto de la membresía en dólares con decimales. Ej: 20.00. Se cobra vía Nuvei (Paymentez Checkout) al activar el plan. Internamente se guarda en centavos."
                             />
                             <div className="relative">
                                 <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">

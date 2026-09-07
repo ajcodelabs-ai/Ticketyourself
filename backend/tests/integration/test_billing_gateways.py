@@ -1,4 +1,4 @@
-"""Plan payment methods: Stripe + Nuvei/DeUna gateway intents."""
+"""Plan payment methods: Nuvei Checkout intents."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class TestPlanGatewayPayments:
         assert r.status_code == 200, r.text
         data = r.json()
         assert data["payment_method"] == "nuvei"
-        assert data["checkout_url"] is None
+        assert data["checkout_url"] is None or data.get("reference")
         assert data["intent_id"]
         # Without NUVEI_* credentials → manual pending_gateway; with creds → nuvei_checkout
         assert data["status"] in ("pending_gateway", "nuvei_checkout")
@@ -63,8 +63,8 @@ class TestPlanGatewayPayments:
         intents = r.json()
         assert any(i["payment_method"] == "nuvei" for i in intents)
 
-    def test_admin_confirms_deuna_payment(self, admin_client):
-        org_id, org_client, _ = _register_and_approve(admin_client)
+    def test_rejects_retired_gateways(self, admin_client):
+        _, org_client, _ = _register_and_approve(admin_client)
         r = org_client.post(
             f"{API}/billing/checkout-session",
             json={
@@ -73,31 +73,10 @@ class TestPlanGatewayPayments:
                 "payment_method": "deuna",
             },
         )
-        assert r.status_code == 200, r.text
-        data = r.json()
-        assert data["payment_method"] == "deuna"
-        assert data["status"] in ("pending_gateway", "deuna_checkout")
-        if data["status"] != "pending_gateway":
-            # Live DEUNA credentials in env — skip admin confirm path.
-            assert data.get("order_token")
-            return
-        intent_id = data["intent_id"]
+        assert r.status_code == 422, r.text
 
-        r = admin_client.post(
-            f"{API}/admin/organizers/{org_id}/confirm-plan-payment",
-            json={"intent_id": intent_id, "comment": "DeUna OK"},
-        )
-        assert r.status_code == 200, r.text
-        org = r.json()
-        assert org["plan_code"] == "profesional"
-        assert org["subscription_status"] == "active"
-
-        r = org_client.get(f"{API}/billing/me/pending-intent")
-        assert r.status_code == 200
-        assert r.json() is None
-
-    def test_stripe_still_default(self, admin_client):
-        """Without payment_method, request defaults to stripe (may 502 if Stripe down)."""
+    def test_nuvei_is_default(self, admin_client):
+        """Without payment_method, request defaults to Nuvei."""
         _, org_client, _ = _register_and_approve(admin_client)
         r = org_client.post(
             f"{API}/billing/checkout-session",
@@ -106,10 +85,7 @@ class TestPlanGatewayPayments:
                 "origin_url": "http://localhost:3000",
             },
         )
-        # Stripe may succeed (redirect) or 502 in local without keys — both ok for default path
-        assert r.status_code in (200, 502), r.text
-        if r.status_code == 200:
-            data = r.json()
-            assert data.get("payment_method", "stripe") == "stripe"
-            assert data["status"] == "redirect"
-            assert data["checkout_url"]
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data.get("payment_method") == "nuvei"
+        assert data["status"] in ("pending_gateway", "nuvei_checkout")

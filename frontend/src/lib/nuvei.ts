@@ -1,96 +1,63 @@
 /**
- * Nuvei Ecuador (Paymentez):
- * - reference mode: PaymentCheckout.modal (SERVER init_reference)
- * - tokenize mode: PaymentGateway + /nuvei/charge (CLIENT; SERVER → 401)
- *
- * CDN scripts expose classes in classic-script scope; we bridge to window for ESM.
+ * Nuvei Ecuador (Paymentez) Checkout v3.
+ * Backend POST init_reference → browser PaymentCheckout.modal.open({ reference }).
+ * Checkout v2 (init_checkout + payment_checkout_stable.js) is deprecated.
  */
 
 declare global {
     interface Window {
-        PaymentGateway?: new (
-            env: string,
-            appCode: string,
-            appKey: string,
-        ) => PaymentGatewayInstance;
-        __TYS_PaymentGateway?: new (
-            env: string,
-            appCode: string,
-            appKey: string,
-        ) => PaymentGatewayInstance;
         PaymentCheckout?: {
-            // Must be called with `new` (constructor); bare call → this.init is not a function
             modal: new (opts: Record<string, unknown>) => PaymentCheckoutModal;
         };
         jQuery?: unknown;
     }
 }
 
-type PaymentGatewayInstance = {
-    generate_tokenize: (
-        data: Record<string, unknown>,
-        selector: string,
-        onSuccess: (response: Record<string, unknown>) => void,
-        onIncomplete: (message: string) => void,
-    ) => void;
-    tokenize: () => void;
-};
-
 type PaymentCheckoutModal = {
-    open: (opts: { reference: string }) => void;
+    open: (opts: Record<string, unknown>) => void;
     close: () => void;
 };
 
 export type NuveiCheckoutConfig = {
-    checkout_mode?: "tokenize" | "reference" | "client" | string;
+    checkout_mode?: "client" | "linktopay" | "reference" | string;
     reference?: string;
     session_token?: string;
     nuvei_env?: string;
     env?: string;
     checkout_js_url?: string;
     checkout_url?: string;
-    client_unique_id?: string;
+    payment_url?: string;
     client_app_code?: string;
     client_app_key?: string;
+    client_unique_id?: string;
     amount?: string | number;
     currency?: string;
     user_id?: string;
     user_email?: string;
     user_phone?: string;
+    user_first_name?: string;
+    user_last_name?: string;
     order_description?: string;
     order_vat?: string | number;
     order_installments_type?: number;
-    merchant_id?: string;
-    merchant_site_id?: string;
 };
 
-const TOKENIZE_JS =
-    "https://cdn.paymentez.com/ccapi/sdk/payment_sdk_stable.min.js";
-const CHECKOUT_JS =
+/** SDK 3.x: `open({ reference })` after `POST /v2/transaction/init_reference/`. */
+export const CHECKOUT_JS_REFERENCE =
     "https://cdn.paymentez.com/ccapi/sdk/payment_checkout_3.0.0.min.js";
 const JQUERY_JS = "https://code.jquery.com/jquery-3.5.0.min.js";
 
-let tokenizeLoading: Promise<void> | null = null;
-let checkoutLoading: Promise<void> | null = null;
+const checkoutLoadingByUrl = new Map<string, Promise<void>>();
+
+export function nuveiPaymentUrl(config: NuveiCheckoutConfig | null | undefined): string {
+    if (!config) return "";
+    return String(config.payment_url || "").trim();
+}
 
 function envMode(config: NuveiCheckoutConfig): "stg" | "prod" {
     const raw = String(config.nuvei_env || config.env || "stg").toLowerCase();
     if (raw === "prod" || raw === "live" || raw === "production") return "prod";
     return "stg";
-}
-
-function resolvePaymentGateway() {
-    return window.__TYS_PaymentGateway || window.PaymentGateway;
-}
-
-function bridgePaymentGatewayFromClassicScope(): void {
-    if (resolvePaymentGateway()) return;
-    const bridge = document.createElement("script");
-    bridge.textContent =
-        "window.__TYS_PaymentGateway = typeof PaymentGateway !== 'undefined' ? PaymentGateway : undefined;" +
-        "window.PaymentGateway = window.__TYS_PaymentGateway;";
-    document.head.appendChild(bridge);
-    bridge.remove();
 }
 
 function loadScript(src: string, marker: string): Promise<void> {
@@ -122,80 +89,70 @@ function loadScript(src: string, marker: string): Promise<void> {
     });
 }
 
-export async function loadNuveiTokenizeJs(src?: string): Promise<void> {
-    if (resolvePaymentGateway()) return;
-    if (tokenizeLoading) return tokenizeLoading;
-    tokenizeLoading = (async () => {
-        await loadScript(src || TOKENIZE_JS, "paymentez-tokenize");
-        bridgePaymentGatewayFromClassicScope();
-        if (!resolvePaymentGateway()) {
-            throw new Error(
-                "PaymentGateway no está disponible tras cargar el SDK de Nuvei",
-            );
-        }
-    })();
-    try {
-        await tokenizeLoading;
-    } catch (e) {
-        tokenizeLoading = null;
-        throw e;
-    }
+function checkoutScriptMarker(src: string): string {
+    return `paymentez-${src.split("/").pop() || "checkout"}`;
+}
+
+function ensurePaymentezOverlayCss(): void {
+    const id = "tys-paymentez-overlay-z";
+    if (document.getElementById(id)) return;
+    const style = document.createElement("style");
+    style.id = id;
+    // Paymentez usa z-index:1000 e inserta el nodo como primer hijo de body.
+    // El Dialog de Radix (z-50 + portal al final de body) lo tapaba.
+    style.textContent = `
+      .payment-checkout-modal {
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 2147483000 !important;
+      }
+    `;
+    document.head.appendChild(style);
 }
 
 export async function loadNuveiCheckoutJs(src?: string): Promise<void> {
-    if (window.PaymentCheckout?.modal) return;
-    if (checkoutLoading) return checkoutLoading;
-    checkoutLoading = (async () => {
+    const url = src || CHECKOUT_JS_REFERENCE;
+    const pending = checkoutLoadingByUrl.get(url);
+    if (pending) return pending;
+    const loading = (async () => {
         if (!window.jQuery) {
             await loadScript(JQUERY_JS, "jquery");
         }
-        await loadScript(src || CHECKOUT_JS, "paymentez-checkout");
+        await loadScript(url, checkoutScriptMarker(url));
+        ensurePaymentezOverlayCss();
         if (!window.PaymentCheckout?.modal) {
             throw new Error(
                 "PaymentCheckout no está disponible tras cargar el SDK de Nuvei",
             );
         }
     })();
+    checkoutLoadingByUrl.set(url, loading);
     try {
-        await checkoutLoading;
+        await loading;
     } catch (e) {
-        checkoutLoading = null;
+        checkoutLoadingByUrl.delete(url);
         throw e;
     }
 }
 
-export function extractCardToken(
-    response: Record<string, unknown> | null | undefined,
-): string | null {
-    if (!response || response.error) return null;
-    const card = (response.card || response) as Record<string, unknown>;
-    const token = card.token;
-    return token != null ? String(token) : null;
-}
+type CheckoutHandlers = {
+    onResponse: (response: Record<string, unknown>) => void;
+    onError?: (message: string) => void;
+    onOpen?: () => void;
+    onClose?: () => void;
+};
 
-/** SERVER flow: open PaymentCheckout.modal with init_reference. */
-export async function openNuveiReferenceCheckout(
+function attachModalHandlers(
     config: NuveiCheckoutConfig,
-    {
-        onResponse,
-        onError,
-    }: {
-        onResponse: (response: Record<string, unknown>) => void;
-        onError?: (message: string) => void;
-    },
-): Promise<{ open: () => void; close: () => void }> {
-    const reference = String(config.reference || config.session_token || "").trim();
-    if (!reference) {
-        throw new Error("Falta reference de Nuvei (init_reference)");
-    }
-    await loadNuveiCheckoutJs(config.checkout_js_url);
-
-    // Docs: `new PaymentCheckout.modal({ ... })` — without `new`, this.init breaks.
+    extraCtor: Record<string, unknown>,
+    { onResponse, onError, onOpen, onClose }: CheckoutHandlers,
+) {
     const ModalCtor = window.PaymentCheckout!.modal;
-    const modal = new ModalCtor({
+    return new ModalCtor({
         env_mode: envMode(config),
-        onOpen: () => {},
-        onClose: () => {},
+        locale: "es",
+        onOpen: () => onOpen?.(),
+        onClose: () => onClose?.(),
         onResponse: (response: Record<string, unknown>) => {
             if (response?.error) {
                 const err = response.error as Record<string, unknown>;
@@ -211,94 +168,58 @@ export async function openNuveiReferenceCheckout(
             }
             onResponse(response);
         },
+        ...extraCtor,
     });
+}
 
+export async function openNuveiReferenceCheckout(
+    config: NuveiCheckoutConfig,
+    handlers: CheckoutHandlers,
+): Promise<{ open: () => void; close: () => void }> {
+    const reference = String(config.reference || config.session_token || "").trim();
+    if (!reference) {
+        throw new Error("Falta reference de Nuvei (init_reference)");
+    }
+    await loadNuveiCheckoutJs(config.checkout_js_url || CHECKOUT_JS_REFERENCE);
+    const modal = attachModalHandlers(config, {}, handlers);
     return {
         open: () => modal.open({ reference }),
         close: () => modal.close(),
     };
 }
 
-export async function mountNuveiTokenizeForm(
-    config: NuveiCheckoutConfig,
-    {
-        containerSelector,
-        onToken,
-        onError,
-    }: {
-        containerSelector: string;
-        onToken: (token: string, raw: Record<string, unknown>) => void;
-        onError?: (message: string) => void;
-    },
-): Promise<{ tokenize: () => void }> {
-    if (!config.client_app_code || !config.client_app_key) {
-        throw new Error(
-            "Faltan credenciales CLIENT de Nuvei para tokenize (SERVER da 401).",
-        );
-    }
-    await loadNuveiTokenizeJs(config.checkout_js_url);
-
-    const Gateway = resolvePaymentGateway();
-    if (!Gateway) {
-        throw new Error("PaymentGateway no está disponible");
-    }
-
-    await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    const el = document.querySelector(containerSelector);
-    if (!el) {
-        throw new Error(`Contenedor ${containerSelector} no encontrado`);
-    }
-
-    const pg = new Gateway(
-        envMode(config),
-        config.client_app_code,
-        config.client_app_key,
+export function nuveiCheckoutFromApi(
+    data: Record<string, unknown> | null | undefined,
+): NuveiCheckoutConfig | null {
+    if (!data || data.status !== "nuvei_checkout") return null;
+    const mode = String(data.checkout_mode || "");
+    const hasGateway = Boolean(
+        data.reference || data.session_token || data.payment_url,
     );
-
-    const tokenizeData = {
-        locale: "es",
-        user: {
-            id: String(config.user_id || config.user_email || config.client_unique_id),
-            email: config.user_email || "noreply@ticketyourself.com",
-        },
-        configuration: {
-            default_country: "ECU",
-        },
-    };
-
-    pg.generate_tokenize(
-        tokenizeData,
-        containerSelector,
-        (response) => {
-            const token = extractCardToken(response);
-            if (!token) {
-                const err = response?.error as Record<string, unknown> | undefined;
-                onError?.(
-                    String(
-                        err?.description ||
-                            err?.type ||
-                            err?.help ||
-                            "No se pudo tokenizar la tarjeta",
-                    ),
-                );
-                return;
-            }
-            onToken(token, response);
-        },
-        (message) => {
-            onError?.(message || "Completá los datos de la tarjeta");
-        },
-    );
-
+    if (!hasGateway) return null;
     return {
-        tokenize: () => {
-            try {
-                pg.tokenize();
-            } catch (e: any) {
-                onError?.(e?.message || String(e) || "Error al tokenizar");
-                throw e;
-            }
-        },
+        reference: String(data.reference || data.session_token || ""),
+        session_token: String(data.session_token || data.reference || ""),
+        checkout_mode: mode || undefined,
+        nuvei_env: data.nuvei_env as string | undefined,
+        checkout_js_url: data.checkout_js_url as string | undefined,
+        checkout_url: data.checkout_url as string | undefined,
+        payment_url: String(data.payment_url || ""),
+        client_app_code: data.client_app_code as string | undefined,
+        client_app_key: data.client_app_key as string | undefined,
+        client_unique_id: String(
+            data.client_unique_id || data.order_number || data.session_id || "",
+        ),
+        amount: data.amount as string | number | undefined,
+        currency: data.currency as string | undefined,
+        user_id: data.user_id as string | undefined,
+        user_email: data.user_email as string | undefined,
+        user_phone: data.user_phone as string | undefined,
+        user_first_name: data.user_first_name as string | undefined,
+        user_last_name: data.user_last_name as string | undefined,
+        order_description: data.order_description as string | undefined,
+        order_vat: data.order_vat as string | number | undefined,
+        order_installments_type: data.order_installments_type as number | undefined,
     };
 }
 
@@ -313,8 +234,8 @@ export function isApprovedNuveiResult(
         detailRaw === undefined || detailRaw === null || detailRaw === ""
             ? null
             : Number(detailRaw);
-    if (!["success", "1", "approved", "ok"].includes(status)) return false;
-    if (detail === null || Number.isNaN(detail)) return true;
+    // Nuvei Ecuador: approved iff status success|1 AND status_detail 3.
+    if (!["success", "1"].includes(status)) return false;
     return detail === 3;
 }
 
