@@ -22,6 +22,7 @@ export default function AssignLocalityPanel({
     selection,
     pricingById = {},
     onAssign,
+    onClearSelection,
     onClearLocality,
     onClearAll,
     readOnly,
@@ -35,6 +36,10 @@ export default function AssignLocalityPanel({
         const el = (elements || []).find((e) => e.id === id);
         return el && elementAcceptsLocality(el.kind);
     });
+    const selectionWithLocality = (selection || []).filter((id) => {
+        const el = (elements || []).find((e) => e.id === id);
+        return el && el.locality_id;
+    });
 
     return (
         <section className="flex flex-col min-h-0 gap-3" data-testid="assign-locality-panel">
@@ -45,17 +50,30 @@ export default function AssignLocalityPanel({
                         Seleccioná elementos en el mapa (click o Shift+arrastrar) y asignalos a una localidad.
                     </p>
                 </div>
-                {!readOnly && onClearAll && assignedElems.length > 0 && (
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-xs shrink-0"
-                        onClick={onClearAll}
-                        data-testid="assign-clear-all"
-                    >
-                        Limpiar todo
-                    </Button>
-                )}
+                <div className="flex gap-1.5 shrink-0">
+                    {!readOnly && onClearSelection && selectionWithLocality.length > 0 && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={onClearSelection}
+                            data-testid="assign-clear-selection"
+                        >
+                            Quitar selección ({selectionWithLocality.length})
+                        </Button>
+                    )}
+                    {!readOnly && onClearAll && assignedElems.length > 0 && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={onClearAll}
+                            data-testid="assign-clear-all"
+                        >
+                            Limpiar todo
+                        </Button>
+                    )}
+                </div>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto space-y-2 pr-0.5">

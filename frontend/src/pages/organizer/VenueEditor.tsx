@@ -316,6 +316,21 @@ export default function VenueEditor() {
         toast.success(`${affected.length} elemento(s) asignados a '${localitiesById[locId]?.name || "localidad"}'.`);
     };
 
+    const clearLocalityFromSelection = () => {
+        const affected = elements.filter((e) => selection.includes(e.id) && e.locality_id);
+        if (affected.length === 0) {
+            toast.error("Seleccioná elementos con localidad asignada.");
+            return;
+        }
+        mutateVenue((v) => ({
+            ...v,
+            elements: v.elements.map((e) =>
+                selection.includes(e.id) ? { ...e, locality_id: null } : e,
+            ),
+        }));
+        toast.success(`Se quitó la localidad de ${affected.length} elemento(s).`);
+    };
+
     const clearLocalityAssignments = (locId) => {
         const n = elements.filter((e) => e.locality_id === locId).length;
         if (n === 0) return;
@@ -979,6 +994,7 @@ export default function VenueEditor() {
                                 selection={selection}
                                 pricingById={pricingById}
                                 onAssign={assignLocalityToSelection}
+                                onClearSelection={clearLocalityFromSelection}
                                 onClearLocality={clearLocalityAssignments}
                                 onClearAll={clearAllLocalityAssignments}
                                 readOnly={locked}
