@@ -1,7 +1,7 @@
 """
 Order business logic — capacity reservation, ticket emission, totals.
 
-Mode-agnostic: works for free events (instant paid), Stripe checkout, and the
+Mode-agnostic: works for free events (instant paid), Nuvei Checkout, and the
 DEV simulator. The webhook handler delegates the "mark paid + emit tickets"
 step to `finalize_paid_order` so the path is single-sourced.
 """
@@ -11,7 +11,6 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
-import stripe
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,10 +26,7 @@ MANUAL_RESERVATION_TTL_HOURS = 48  # transfer / cash buyers get 48h to complete
 MAX_QUANTITY = 10
 ORDER_PREFIX = "TYS-"
 VALID_PAYMENT_METHODS = (
-    "stripe",
     "nuvei",
-    "deuna",
-    "paypal",
     "transfer",
     "cash",
     "season_pass",
@@ -497,7 +493,7 @@ async def create_order_skeleton(
     quantity: int,
     buyer: dict,
     totals: dict,
-    payment_method: str = "stripe",
+    payment_method: str = "nuvei",
     seat_ids: list[str] | None = None,
     seat_holds_session_token: str | None = None,
     function: dict | None = None,
@@ -545,7 +541,7 @@ async def create_order_skeleton(
 
     is_manual = payment_method in MANUAL_CODES
     is_gateway_stub = payment_method in GATEWAY_STUB_CODES
-    is_live_gateway = payment_method in ("nuvei", "deuna")
+    is_live_gateway = payment_method == "nuvei"
     if is_manual:
         ttl = timedelta(hours=MANUAL_RESERVATION_TTL_HOURS)
         initial_status = "pending_manual_payment"
@@ -816,7 +812,7 @@ async def _adjust_function_counters(order: dict, delta: int) -> None:
 # ── Consume codes on payment confirmation ───────────────────────────────────
 async def _consume_purchase_side_effects(order: dict) -> None:
     """Bump promo-code / access-code use counters and stamp guest-list entries
-    as used. Shared by `finalize_paid_order` (Stripe/free) and
+    as used. Shared by `finalize_paid_order` (Nuvei/free) and
     `confirm_manual_payment` (transfer/cash) — both transition an order into
     `status=paid` and must consume codes exactly once, here."""
     for applied in order.get("discounts_applied") or []:
@@ -943,46 +939,10 @@ async def finalize_paid_order(
     return refreshed, tickets
 
 
-# ── Stripe Checkout for ticket purchase ─────────────────────────────────────
-def create_ticket_checkout_session(
-    *,
-    order: dict,
-    event: dict,
-    success_url: str,
-    cancel_url: str,
-) -> dict:
-    line_items = [
-        {
-            "price_data": {
-                "currency": order.get("currency", "usd").lower(),
-                "product_data": {
-                    "name": f"{event['title']} · {order['quantity_total']} entradas",
-                    "description": order["buyer"]["email"],
-                },
-                "unit_amount": order["total_cents"],
-            },
-            "quantity": 1,
-        }
-    ]
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        payment_method_types=["card"],
-        customer_email=order["buyer"]["email"],
-        line_items=line_items,
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={
-            "order_id": order["id"],
-            "order_number": order["order_number"],
-            "event_id": event["id"],
-            "tys_purpose": "ticket_purchase",
-        },
-    )
-    return {"id": session.id, "url": session.url}
-
-
 # ── Refund ──────────────────────────────────────────────────────────────────
-async def refund_order(*, order: dict, reason: str | None = None) -> dict:
+async def refund_order(
+    *, order: dict, reason: str | None = None, skip_gateway: bool = False
+) -> dict:
     from sqlalchemy import select
     from sqlalchemy import update as _sa_update
 
@@ -994,14 +954,31 @@ async def refund_order(*, order: dict, reason: str | None = None) -> dict:
     if order["status"] != "paid":
         raise HTTPException(422, "Sólo órdenes pagadas pueden reembolsarse")
 
-    if order.get("stripe_session_id"):
-        try:
-            stripe_sesh = stripe.checkout.Session.retrieve(order["stripe_session_id"])
-            pi = stripe_sesh.payment_intent
-            if pi:
-                stripe.Refund.create(payment_intent=pi, reason="requested_by_customer")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Stripe refund failed for %s: %s", order["order_number"], e)
+    if not skip_gateway:
+        method = (order.get("payment_method") or "").strip().lower()
+        meta = order.get("metadata") or {}
+        if method == "nuvei":
+            from services import nuvei_service
+
+            txn_id = str(meta.get("nuvei_transaction_id") or "").strip()
+            if txn_id:
+                try:
+                    nuvei_service.refund_transaction(txn_id)
+                except nuvei_service.NuveiError as e:
+                    logger.error(
+                        "Nuvei refund failed for %s: %s",
+                        order["order_number"],
+                        type(e).__name__,
+                    )
+                    raise HTTPException(
+                        502,
+                        "No pudimos reembolsar el cobro en Nuvei. Intentá de nuevo.",
+                    ) from e
+            else:
+                logger.info(
+                    "Nuvei refund skipped (no transaction id) for %s",
+                    order["order_number"],
+                )
 
     now = _now()
     async with AsyncSessionLocal() as session:
@@ -1186,7 +1163,7 @@ async def reject_manual_payment(
 
 
 def get_payment_instructions(*, event: dict, payment_method: str) -> dict:
-    if payment_method == "stripe":
+    if payment_method == "nuvei":
         return {}
     pm = (event.get("payment_methods") or {}).get(payment_method) or {}
     if payment_method == "transfer":

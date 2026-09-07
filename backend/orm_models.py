@@ -611,7 +611,7 @@ class TicketOrder(Base):
 
     # Status & payment
     status = Column(String(30), nullable=False, default="pending")
-    payment_method = Column(String(20), nullable=False, default="stripe")
+    payment_method = Column(String(20), nullable=False, default="nuvei")
 
     # Totals
     quantity_total = Column(Integer, nullable=False, default=1)
@@ -623,7 +623,7 @@ class TicketOrder(Base):
     discount_total_cents = Column(Integer, nullable=False, default=0)
     discounts_applied = Column(JSONB, nullable=False, default=list)
 
-    # Stripe
+    # Nuvei checkout reference (column name kept for compatibility)
     stripe_session_id = Column(String(200), nullable=True)
     stripe_payment_intent_id = Column(String(200), nullable=True)
 
@@ -862,10 +862,10 @@ class BillingIntent(Base):
     plan_code = Column(String(40), nullable=False)
     session_id = Column(
         String(200), nullable=True, index=True
-    )  # Stripe checkout session ID or local gateway ref
+    )  # Nuvei reference or local gateway ref
     payment_method = Column(
-        String(20), nullable=False, default="stripe"
-    )  # stripe | nuvei | deuna
+        String(20), nullable=False, default="nuvei"
+    )  # nuvei | transfer | cash
     mode = Column(String(20), nullable=True)  # subscription | payment | gateway
     status = Column(String(20), nullable=False, default="pending")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
@@ -1197,7 +1197,7 @@ class SeasonPassPurchase(Base):
     currency = Column(String(3), nullable=False, default="USD")
     # pending | pending_manual_payment | paid | cancelled — mirrors TicketOrder.
     status = Column(String(30), nullable=False, default="pending")
-    payment_method = Column(String(20), nullable=False, default="stripe")
+    payment_method = Column(String(20), nullable=False, default="nuvei")
     stripe_session_id = Column(String(200), nullable=True)
     manual_payment_info = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)

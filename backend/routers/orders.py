@@ -6,10 +6,8 @@ Lookup by order_number / token stays public so confirmation emails keep working.
 """
 
 import logging
-import os
 from typing import Literal, Optional
 
-import stripe
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field
@@ -25,26 +23,31 @@ from db_helpers import (
 )
 from orm_models import Organizer
 from security import assert_purchase_on_organizer, require_purchase_account
-from services import discount_service, order_service
+from services import discount_service, nuvei_service, order_service
 from services.ec_id import law_document_error
 from services.event_venue import resolve_event_venue
 from services.pdf_service import render_ticket_pdf
 from services.sales_fees import apply_platform_fee, list_sales_fee_rules
 
+
+def _public_order_fields(order: dict) -> tuple[dict, Optional[dict]]:
+    receipt = nuvei_service.public_payment_receipt(order.get("metadata"))
+    public = {
+        k: v
+        for k, v in order.items()
+        if k
+        not in (
+            "order_token",
+            "stripe_session_id",
+            "stripe_payment_intent_id",
+            "metadata",
+        )
+    }
+    return public, receipt
+
+
 logger = logging.getLogger("tys.public_orders")
 router = APIRouter(prefix="/api/public/orders", tags=["public-orders"])
-
-
-def _frontend_base(payload_origin: Optional[str]) -> str:
-    """Resolve the origin used to build Stripe success/cancel URLs."""
-    candidate = (payload_origin or "").rstrip("/")
-    if candidate.startswith("http://") or candidate.startswith("https://"):
-        return candidate
-    env_url = (os.environ.get("FRONTEND_URL") or "").rstrip("/")
-    if env_url:
-        return env_url
-    # Last resort — must be absolute or Stripe rejects it.
-    raise HTTPException(500, "FRONTEND_URL not configured and origin_url missing")
 
 
 async def _sales_fee_ctx(organizer: dict) -> dict:
@@ -78,9 +81,7 @@ class CreateOrderBody(BaseModel):
     buyer: BuyerIn
     donation_amount_cents: Optional[int] = None
     origin_url: Optional[str] = None  # for success/cancel URL construction
-    payment_method: str = Field(
-        default="nuvei"
-    )  # nuvei | deuna | transfer | cash | stripe
+    payment_method: str = Field(default="nuvei")  # nuvei | transfer | cash | demo
     # Phase 7 — numbered events
     seat_holds_session_token: Optional[str] = None
     seat_ids: Optional[list[str]] = None
@@ -536,7 +537,12 @@ async def create_order(
     is_pure_free = event.get("pricing_type") == "free" and not (
         event.get("optional_donation_enabled") and donation_cents > 0
     )
-    effective_method = "stripe" if is_pure_free else payload.payment_method
+    from services.payment_methods import RETIRED_GATEWAY_ALIASES
+
+    raw_method = (payload.payment_method or "nuvei").strip().lower()
+    effective_method = (
+        "nuvei" if is_pure_free else RETIRED_GATEWAY_ALIASES.get(raw_method, raw_method)
+    )
 
     # Demo payment bypass — lets QA finish a purchase when a real gateway
     # (e.g. Nuvei in this environment) can't be reached. Off unless the
@@ -698,7 +704,7 @@ async def create_order(
             "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}/instrucciones",
         }
 
-    # ── Nuvei Ecuador (Paymentez) — init_reference + Checkout JS ──────────────
+    # ── Nuvei Ecuador (Paymentez) — Checkout v3 / Link to Pay ──────────────────
     if effective_method == "nuvei":
         from services import nuvei_service
 
@@ -733,6 +739,7 @@ async def create_order(
         first_name, last_name = nuvei_service.split_buyer_name(
             (payload.buyer.name if payload.buyer else "") or ""
         )
+        order_path = f"/o/{organizer['slug']}/orden/{order['order_number']}"
         try:
             nuvei = nuvei_service.open_order(
                 amount_cents=order["total_cents"],
@@ -744,16 +751,20 @@ async def create_order(
                 first_name=first_name,
                 last_name=last_name,
                 custom_data=f"ticket:{order['id']}",
+                **nuvei_service.checkout_return_urls(
+                    success_path=order_path,
+                    failure_path=f"{order_path}/cancelado",
+                ),
             )
         except nuvei_service.NuveiError as e:
             logger.error(
                 "Nuvei checkout prepare failed for %s: %s",
                 order["order_number"],
-                type(e).__name__,
+                nuvei_service.describe_error(e),
             )
             raise HTTPException(
                 502,
-                "No pudimos iniciar el pago con Nuvei. Intentá de nuevo en unos minutos.",
+                nuvei_service.checkout_http_detail(e),
             ) from e
 
         async with AsyncSessionLocal() as _pg:
@@ -763,6 +774,7 @@ async def create_order(
             _row.stripe_session_id = nuvei["reference"]
             meta = dict(_row.metadata_ or {})
             meta["nuvei_reference"] = nuvei.get("reference")
+            meta["nuvei_payment_url"] = nuvei.get("payment_url")
             meta["nuvei_checkout_mode"] = nuvei.get("checkout_mode")
             meta["nuvei_client_unique_id"] = order["order_number"]
             _row.metadata_ = meta
@@ -782,11 +794,12 @@ async def create_order(
             "order_number": order["order_number"],
             "status": "nuvei_checkout",
             "payment_method": "nuvei",
-            "checkout_mode": nuvei.get("checkout_mode") or "reference",
+            "checkout_mode": nuvei.get("checkout_mode") or "linktopay",
             "reference": nuvei["reference"],
             "session_token": nuvei["reference"],
             "session_id": nuvei["reference"],
-            "checkout_url": nuvei.get("checkout_url"),
+            "payment_url": nuvei.get("payment_url"),
+            "checkout_url": nuvei.get("payment_url") or nuvei.get("checkout_url"),
             "nuvei_env": nuvei["env"],
             "checkout_js_url": nuvei["checkout_js_url"],
             "client_app_code": nuvei.get("client_app_code"),
@@ -803,168 +816,11 @@ async def create_order(
             "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
         }
 
-    # ── DEUNA — Create Order + Payment Widget Web SDK ─────────────────────────
-    if effective_method == "deuna":
-        from services import deuna_service
-
-        if not deuna_service.is_configured():
-            async with AsyncSessionLocal() as _pg:
-                from orm_models import TicketOrder as _TOModel
-
-                _row = await _pg.scalar(
-                    select(_TOModel).where(_TOModel.id == order["id"])
-                )
-                if _row:
-                    _row.status = "pending_gateway"
-                    await _pg.commit()
-            await order_service.reserve_capacity(
-                event=event,
-                order_id=order["id"],
-                quantity=quantity,
-                ttl_minutes=order_service.RESERVATION_TTL_MIN,
-                function_id=function["id"] if function else None,
-            )
-            return {
-                "order_number": order["order_number"],
-                "status": "pending_gateway",
-                "payment_method": "deuna",
-                "message": (
-                    "DEUNA aún no está configurado en este entorno. "
-                    "Tu reserva quedó registrada; contactá a soporte TYS."
-                ),
-                "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
-            }
-
-        first_name, last_name = deuna_service.split_buyer_name(
-            (payload.buyer.name if payload.buyer else "") or ""
-        )
-        try:
-            deuna = deuna_service.create_order(
-                order_id=order["order_number"],
-                amount_cents=order["total_cents"],
-                currency=order.get("currency") or event.get("currency") or "USD",
-                item_name=f"{event.get('title') or 'Evento'} · {order['quantity_total']} entradas",
-                item_description=order["buyer_email"],
-                email=order["buyer_email"],
-                first_name=first_name,
-                last_name=last_name,
-                phone=(payload.buyer.phone if payload.buyer else None),
-                metadata={
-                    "tys_purpose": "ticket_purchase",
-                    "order_id": order["id"],
-                    "event_id": event["id"],
-                },
-            )
-        except deuna_service.DeunaError as e:
-            logger.error(
-                "DEUNA create_order failed for %s: %s",
-                order["order_number"],
-                type(e).__name__,
-            )
-            raise HTTPException(
-                502,
-                "No pudimos iniciar el pago con DEUNA. Intentá de nuevo en unos minutos.",
-            ) from e
-
-        async with AsyncSessionLocal() as _pg:
-            from orm_models import TicketOrder as _TOModel
-
-            _row = await _pg.scalar(select(_TOModel).where(_TOModel.id == order["id"]))
-            _row.stripe_session_id = deuna["order_token"]
-            meta = dict(_row.metadata_ or {})
-            meta["deuna_order_token"] = deuna["order_token"]
-            meta["deuna_order_id"] = order["order_number"]
-            _row.metadata_ = meta
-            from sqlalchemy.orm.attributes import flag_modified
-
-            flag_modified(_row, "metadata_")
-            _row.status = "pending"
-            await _pg.commit()
-
-        await order_service.reserve_capacity(
-            event=event,
-            order_id=order["id"],
-            quantity=quantity,
-            function_id=function["id"] if function else None,
-        )
-        return {
-            "order_number": order["order_number"],
-            "status": "deuna_checkout",
-            "payment_method": "deuna",
-            "order_token": deuna["order_token"],
-            "session_id": deuna["order_token"],
-            "public_api_key": deuna["public_api_key"],
-            "deuna_env": deuna["env"],
-            "checkout_js_url": deuna["checkout_js_url"],
-            "client_unique_id": order["order_number"],
-            "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
-        }
-
-    # ── Gateway stubs (PayPal) — order held; real charge not wired yet ──
-    if effective_method == "paypal":
-        await order_service.reserve_capacity(
-            event=event,
-            order_id=order["id"],
-            quantity=quantity,
-            ttl_minutes=order_service.RESERVATION_TTL_MIN,
-            function_id=function["id"] if function else None,
-        )
-        return {
-            "order_number": order["order_number"],
-            "status": "pending_gateway",
-            "payment_method": effective_method,
-            "message": (
-                "Integración pendiente: el cobro con PayPal aún no está disponible. "
-                "Tu reserva quedó registrada; te avisaremos cuando puedas completar el pago."
-            ),
-            "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
-        }
-
-    # Paid or donation > 0 — Stripe checkout.
-    origin = _frontend_base(payload.origin_url)
-    success_url = (
-        f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}"
-        "?session_id={CHECKOUT_SESSION_ID}"
+    raise HTTPException(
+        400,
+        f"El método de pago '{effective_method}' no está disponible. "
+        "Usá Nuvei, transferencia o efectivo.",
     )
-    cancel_url = (
-        f"{origin}/o/{organizer['slug']}/orden/{order['order_number']}/cancelado"
-    )
-    try:
-        session = order_service.create_ticket_checkout_session(
-            order=order, event=event, success_url=success_url, cancel_url=cancel_url
-        )
-    except stripe.error.StripeError as e:
-        # logger.error, not .exception — Stripe error messages can echo back
-        # request data; type(e).__name__ is enough to triage without it, and
-        # the same reasoning means `e` must not reach the client either.
-        logger.error(
-            "Stripe checkout failed for order %s: %s",
-            order["order_number"],
-            type(e).__name__,
-        )
-        raise HTTPException(
-            502,
-            "No pudimos iniciar el pago con Stripe. Intentá de nuevo en unos minutos.",
-        ) from e
-
-    async with AsyncSessionLocal() as _pg:
-        from orm_models import TicketOrder as _TOModel
-
-        _row = await _pg.scalar(select(_TOModel).where(_TOModel.id == order["id"]))
-        _row.stripe_session_id = session["id"]
-        await _pg.commit()
-    await order_service.reserve_capacity(
-        event=event,
-        order_id=order["id"],
-        quantity=quantity,
-        function_id=function["id"] if function else None,
-    )
-    return {
-        "order_number": order["order_number"],
-        "checkout_url": session["url"],
-        "session_id": session["id"],
-        "status": "pending",
-    }
 
 
 @router.get("/{order_number}")
@@ -984,35 +840,6 @@ async def get_order(
         raise HTTPException(404, "Orden no encontrada")
     order = row_to_dict(order_row)
 
-    if (
-        order["status"] == "pending"
-        and session_id
-        and order.get("stripe_session_id") == session_id
-    ):
-        try:
-            stripe_session = stripe.checkout.Session.retrieve(session_id)
-            if stripe_session.get("payment_status") == "paid":
-                order, _tickets = await order_service.finalize_paid_order(
-                    order=order, stripe_session_id=session_id
-                )
-                event = await get_event_by_id(order["event_id"])
-                organizer = await get_organizer_by_id(order["organizer_id"])
-                from services.email_service import send_purchase_confirmation
-
-                background_tasks.add_task(
-                    send_purchase_confirmation,
-                    order=order,
-                    event=event,
-                    organizer=organizer,
-                    tickets=_tickets,
-                )
-        except stripe.error.StripeError as e:
-            # See the checkout-create catch above: log the exception type
-            # only, since `e` can echo back request data.
-            logger.warning(
-                "Could not refresh session %s: %s", session_id, type(e).__name__
-            )
-
     async with AsyncSessionLocal() as _pg:
         _t_result = await _pg.execute(
             select(_TModel).where(_TModel.order_id == order["id"])
@@ -1027,18 +854,10 @@ async def get_order(
     invoice = None
     async with AsyncSessionLocal() as _inv:
         invoice = public_invoice_view(await get_invoice_for_order(_inv, order["id"]))
+    public_order, payment_receipt = _public_order_fields(order)
     return {
-        "order": {
-            k: v
-            for k, v in order.items()
-            if k
-            not in (
-                "order_token",
-                "stripe_session_id",
-                "stripe_payment_intent_id",
-                "metadata",
-            )
-        },
+        "order": public_order,
+        "payment_receipt": payment_receipt,
         "tickets": tickets,
         "event": event,
         "organizer": {
@@ -1069,22 +888,12 @@ async def get_payment_instructions(order_number: str):
     event = await get_event_by_id(order["event_id"])
     organizer = await get_organizer_by_id(order["organizer_id"])
     microsite = await get_microsite_by_organizer(order["organizer_id"])
-    method = order.get("payment_method") or "stripe"
+    method = order.get("payment_method") or "nuvei"
     instructions = order_service.get_payment_instructions(
         event=event or {}, payment_method=method
     )
     return {
-        "order": {
-            k: v
-            for k, v in order.items()
-            if k
-            not in (
-                "order_token",
-                "stripe_session_id",
-                "stripe_payment_intent_id",
-                "metadata",
-            )
-        },
+        "order": _public_order_fields(order)[0],
         "event": event,
         "organizer": {
             "slug": organizer["slug"] if organizer else None,
@@ -1132,18 +941,10 @@ async def get_order_by_token(order_token: str):
     async with AsyncSessionLocal() as _inv:
         invoice = public_invoice_view(await get_invoice_for_order(_inv, order["id"]))
 
+    public_order, payment_receipt = _public_order_fields(order)
     return {
-        "order": {
-            k: v
-            for k, v in order.items()
-            if k
-            not in (
-                "order_token",
-                "stripe_session_id",
-                "stripe_payment_intent_id",
-                "metadata",
-            )
-        },
+        "order": public_order,
+        "payment_receipt": payment_receipt,
         "tickets": tickets,
         "event": event,
         "organizer": {

@@ -55,9 +55,7 @@ import { buyerDocumentError, isCedulaDocumentType, lawDocumentError, resolveLawD
 import { useAuth } from "@/contexts/AuthContext";
 import BuyerAuthPanel from "@/components/orders/BuyerAuthPanel";
 import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
-import type { NuveiCheckoutConfig } from "@/lib/nuvei";
-import DeunaCheckoutPanel from "@/components/orders/DeunaCheckoutPanel";
-import type { DeunaCheckoutConfig } from "@/lib/deuna";
+import { nuveiCheckoutFromApi, type NuveiCheckoutConfig } from "@/lib/nuvei";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -198,7 +196,7 @@ export default function PurchaseModal({
     const [submitting, setSubmitting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
-    const [deunaCheckout, setDeunaCheckout] = useState<DeunaCheckoutConfig | null>(null);
+    const nuveiActiveRef = useRef(false);
     // §4.2.8 — preguntas adicionales al comprador, por id de pregunta
     const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
     const selectedLocalityIds = useMemo(() => {
@@ -529,7 +527,7 @@ export default function PurchaseModal({
             tenant_slug: tenantSlug,
             event_slug: event.slug,
             quantity: effectiveQty || 1,
-            payment_method: pricingType === "free" ? "stripe" : paymentMethod,
+            payment_method: pricingType === "free" ? "nuvei" : paymentMethod,
         };
         if (appliedPromo?.code) body.promo_code = appliedPromo.code;
         if (lawCategory) body.law_category = lawCategory;
@@ -696,7 +694,7 @@ export default function PurchaseModal({
                 payment_method:
                     pricingType === "free" &&
                     !(optionalDonation && Math.round(parseFloat(donation || "0") * 100) > 0)
-                        ? "stripe"
+                        ? "nuvei"
                         : paymentMethod,
             };
 
@@ -761,43 +759,14 @@ export default function PurchaseModal({
                 onOpenChange(false);
                 return;
             }
-            if (
-                data.status === "nuvei_checkout" &&
-                (data.reference || data.session_token)
-            ) {
-                setNuveiCheckout({
-                    reference: data.reference || data.session_token,
-                    session_token: data.session_token || data.reference,
-                    checkout_mode: data.checkout_mode,
-                    nuvei_env: data.nuvei_env,
-                    checkout_js_url: data.checkout_js_url,
-                    checkout_url: data.checkout_url,
-                    client_app_code: data.client_app_code,
-                    client_app_key: data.client_app_key,
-                    client_unique_id: data.client_unique_id || data.order_number,
-                    amount: data.amount,
-                    currency: data.currency,
-                    user_id: data.user_id,
-                    user_email: data.user_email,
-                    user_phone: data.user_phone,
-                    order_description: data.order_description,
-                    order_vat: data.order_vat,
-                    order_installments_type: data.order_installments_type,
-                });
-                return;
-            }
-            if (data.status === "deuna_checkout" && data.order_token) {
-                setDeunaCheckout({
-                    order_token: data.order_token,
-                    public_api_key: data.public_api_key,
-                    deuna_env: data.deuna_env,
-                    checkout_js_url: data.checkout_js_url,
-                    order_id: data.client_unique_id || data.order_number,
-                });
+            const nuvei = nuveiCheckoutFromApi(data);
+            if (nuvei) {
+                nuveiActiveRef.current = true;
+                setNuveiCheckout(nuvei);
                 return;
             }
             if (data.checkout_url) {
-                window.location.href = data.checkout_url;
+                toast.error("Este método de pago ya no está disponible. Usá Nuvei.");
                 return;
             }
             toast.error("No se pudo generar la orden.");
@@ -819,14 +788,13 @@ export default function PurchaseModal({
         : pricingType === "free" && !(optionalDonation && donationCents > 0);
 
     return (
+        <>
         <Dialog
-            open={open}
-            modal={!nuveiCheckout && !deunaCheckout}
+            open={open && !nuveiCheckout}
             onOpenChange={(next) => {
-                if (!next) {
-                    setNuveiCheckout(null);
-                    setDeunaCheckout(null);
-                }
+                if (!next && nuveiActiveRef.current) return;
+                nuveiActiveRef.current = false;
+                setNuveiCheckout(null);
                 onOpenChange(next);
             }}
         >
@@ -834,50 +802,6 @@ export default function PurchaseModal({
                 className="sm:max-w-lg max-h-[92vh] overflow-y-auto"
                 data-testid="purchase-modal"
             >
-                {nuveiCheckout ? (
-                    <>
-                        <DialogHeader>
-                            <DialogTitle>Completar pago</DialogTitle>
-                            <DialogDescription>
-                                Ingresá los datos de tu tarjeta en el checkout seguro de Nuvei.
-                            </DialogDescription>
-                        </DialogHeader>
-                        <NuveiCheckoutPanel
-                            config={nuveiCheckout}
-                            onPaid={() => {
-                                const orderNumber =
-                                    nuveiCheckout.client_unique_id || "";
-                                setNuveiCheckout(null);
-                                onOpenChange(false);
-                                if (orderNumber) {
-                                    navigate(orderSuccessPath(tenantSlug, orderNumber));
-                                }
-                            }}
-                            onCancel={() => setNuveiCheckout(null)}
-                        />
-                    </>
-                ) : deunaCheckout ? (
-                    <>
-                        <DialogHeader>
-                            <DialogTitle>Completar pago</DialogTitle>
-                            <DialogDescription>
-                                Completá el cobro en el widget seguro de DEUNA.
-                            </DialogDescription>
-                        </DialogHeader>
-                        <DeunaCheckoutPanel
-                            config={deunaCheckout}
-                            onPaid={() => {
-                                const orderNumber = deunaCheckout.order_id || "";
-                                setDeunaCheckout(null);
-                                onOpenChange(false);
-                                if (orderNumber) {
-                                    navigate(orderSuccessPath(tenantSlug, orderNumber));
-                                }
-                            }}
-                            onCancel={() => setDeunaCheckout(null)}
-                        />
-                    </>
-                ) : (
                 <>
                 <DialogHeader>
                     <div className="flex items-start justify-between gap-2">
@@ -1727,12 +1651,6 @@ export default function PurchaseModal({
                                 ? "Te enviaremos tu ticket por email al confirmar."
                                 : paymentMethod === "nuvei"
                                   ? "El cobro se procesa con Nuvei (Paymentez Ecuador). Los datos de tarjeta no quedan en TYS."
-                                  : paymentMethod === "deuna"
-                                    ? "El cobro se procesa con DEUNA (Payment Widget). Los datos de tarjeta no quedan en TYS."
-                                  : paymentMethod === "stripe"
-                                    ? "Te redirigimos a Stripe (procesamiento seguro). Los datos del tarjetahabiente no quedan en TYS."
-                                    : paymentMethod === "paypal"
-                                      ? "PayPal aún está en integración: tu reserva queda registrada."
                                       : paymentMethod === "demo"
                                         ? "No se realiza ningún cobro real — la entrada se confirma al instante."
                                         : "Te mostramos las instrucciones de pago. La entrada se confirma cuando el organizador valida el cobro."}
@@ -1763,19 +1681,10 @@ export default function PurchaseModal({
                                         <TicketIcon className="h-4 w-4 mr-1.5" />
                                         Confirmar reserva
                                     </>
-                                ) : paymentMethod === "stripe" ? (
+                                ) : paymentMethod === "nuvei" ? (
                                     <>
                                         <TicketIcon className="h-4 w-4 mr-1.5" />
-                                        Pagar{" "}
-                                        {totals.total > 0
-                                            ? formatCents(totals.total, event.currency)
-                                            : ""}
-                                    </>
-                                ) : paymentMethod === "nuvei" || paymentMethod === "deuna" ? (
-                                    <>
-                                        <TicketIcon className="h-4 w-4 mr-1.5" />
-                                        Continuar con{" "}
-                                        {PAYMENT_METHOD_META[paymentMethod]?.label || "pago digital"}
+                                        Continuar con Nuvei
                                     </>
                                 ) : paymentMethod === "demo" ? (
                                     <>
@@ -1793,9 +1702,27 @@ export default function PurchaseModal({
                     </>
                 )}
                 </>
-                )}
             </DialogContent>
         </Dialog>
+        {nuveiCheckout && (
+            <NuveiCheckoutPanel
+                config={nuveiCheckout}
+                onPaid={() => {
+                    const orderNumber = nuveiCheckout.client_unique_id || "";
+                    nuveiActiveRef.current = false;
+                    setNuveiCheckout(null);
+                    onOpenChange(false);
+                    if (orderNumber) {
+                        navigate(orderSuccessPath(tenantSlug, orderNumber));
+                    }
+                }}
+                onCancel={() => {
+                    nuveiActiveRef.current = false;
+                    setNuveiCheckout(null);
+                }}
+            />
+        )}
+        </>
     );
 }
 

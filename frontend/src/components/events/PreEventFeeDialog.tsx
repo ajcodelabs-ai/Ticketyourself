@@ -16,11 +16,9 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import { PAYMENT_METHOD_META, PLAN_PAYMENT_METHODS, formatCents } from "@/lib/orders";
+import { PAYMENT_METHOD_META, formatCents } from "@/lib/orders";
 import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
-import type { NuveiCheckoutConfig } from "@/lib/nuvei";
-import DeunaCheckoutPanel from "@/components/orders/DeunaCheckoutPanel";
-import type { DeunaCheckoutConfig } from "@/lib/deuna";
+import { nuveiCheckoutFromApi, type NuveiCheckoutConfig } from "@/lib/nuvei";
 
 type FeeBreakdown = {
     enabled?: boolean;
@@ -55,15 +53,13 @@ export default function PreEventFeeDialog({
     const [loading, setLoading] = useState(false);
     const [paying, setPaying] = useState(false);
     const [fee, setFee] = useState<FeeBreakdown | null>(seed || null);
-    const [method, setMethod] = useState("stripe");
+    const [method, setMethod] = useState("nuvei");
     const [pendingMessage, setPendingMessage] = useState<string | null>(null);
     const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
-    const [deunaCheckout, setDeunaCheckout] = useState<DeunaCheckoutConfig | null>(null);
 
     useEffect(() => {
         if (!open) {
             setNuveiCheckout(null);
-            setDeunaCheckout(null);
             setPendingMessage(null);
             setPaying(false);
             return;
@@ -73,7 +69,7 @@ export default function PreEventFeeDialog({
                 ? { ...seed.breakdown, ...seed }
                 : seed;
             setFee(flattened);
-            setMethod(flattened.simulate_allowed ? "simulate" : "stripe");
+            setMethod(flattened.simulate_allowed ? "simulate" : "nuvei");
         }
         if (!eventId) return;
         let alive = true;
@@ -82,7 +78,7 @@ export default function PreEventFeeDialog({
             .then(({ data }) => {
                 if (!alive) return;
                 setFee(data);
-                setMethod(data?.simulate_allowed ? "simulate" : "stripe");
+                setMethod(data?.simulate_allowed ? "simulate" : "nuvei");
             })
             .catch((err) => {
                 if (!alive) return;
@@ -120,39 +116,9 @@ export default function PreEventFeeDialog({
                 onPaid();
                 return;
             }
-            if (
-                data?.status === "nuvei_checkout" &&
-                (data.reference || data.session_token)
-            ) {
-                setNuveiCheckout({
-                    reference: data.reference || data.session_token,
-                    session_token: data.session_token || data.reference,
-                    checkout_mode: data.checkout_mode,
-                    nuvei_env: data.nuvei_env,
-                    checkout_js_url: data.checkout_js_url,
-                    checkout_url: data.checkout_url,
-                    client_app_code: data.client_app_code,
-                    client_app_key: data.client_app_key,
-                    client_unique_id: data.client_unique_id,
-                    amount: data.amount,
-                    currency: data.currency,
-                    user_id: data.user_id,
-                    user_email: data.user_email,
-                    user_phone: data.user_phone,
-                    order_description: data.order_description,
-                    order_vat: data.order_vat,
-                    order_installments_type: data.order_installments_type,
-                });
-                return;
-            }
-            if (data?.status === "deuna_checkout" && data.order_token) {
-                setDeunaCheckout({
-                    order_token: data.order_token,
-                    public_api_key: data.public_api_key,
-                    deuna_env: data.deuna_env,
-                    checkout_js_url: data.checkout_js_url,
-                    order_id: data.client_unique_id,
-                });
+            const nuvei = nuveiCheckoutFromApi(data);
+            if (nuvei) {
+                setNuveiCheckout(nuvei);
                 return;
             }
             if (data?.status === "pending_gateway" || data?.status === "pending") {
@@ -218,18 +184,6 @@ export default function PreEventFeeDialog({
                             onCancel={() => setNuveiCheckout(null)}
                         />
                     </div>
-                ) : deunaCheckout ? (
-                    <div data-testid="pre-event-fee-deuna">
-                        <DeunaCheckoutPanel
-                            config={deunaCheckout}
-                            onPaid={() => {
-                                setDeunaCheckout(null);
-                                onOpenChange(false);
-                                onPaid();
-                            }}
-                            onCancel={() => setDeunaCheckout(null)}
-                        />
-                    </div>
                 ) : pendingMessage ? (
                     <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 space-y-2">
                         <p className="text-sm text-sky-900">{pendingMessage}</p>
@@ -292,36 +246,29 @@ export default function PreEventFeeDialog({
                                         </div>
                                     </button>
                                 )}
-                                {PLAN_PAYMENT_METHODS.map((code) => {
-                                    const meta = PAYMENT_METHOD_META[code];
-                                    const selected = method === code;
-                                    return (
-                                        <button
-                                            key={code}
-                                            type="button"
-                                            data-testid={`pre-event-fee-pay-${code}`}
-                                            onClick={() => setMethod(code)}
-                                            className={`text-left rounded-lg border p-3 transition ${
-                                                selected
-                                                    ? "border-primary bg-primary/5 ring-1 ring-primary"
-                                                    : "border-border/70 hover:border-primary/40"
-                                            }`}
-                                        >
-                                            <div className="text-sm font-medium">
-                                                {meta.icon} {meta.label}
-                                            </div>
-                                            <div className="text-xs text-muted-foreground mt-1">
-                                                {meta.description}
-                                            </div>
-                                        </button>
-                                    );
-                                })}
+                                <button
+                                    type="button"
+                                    data-testid="pre-event-fee-pay-nuvei"
+                                    onClick={() => setMethod("nuvei")}
+                                    className={`text-left rounded-lg border p-3 transition ${
+                                        method === "nuvei"
+                                            ? "border-primary bg-primary/5 ring-1 ring-primary"
+                                            : "border-border/70 hover:border-primary/40"
+                                    }`}
+                                >
+                                    <div className="text-sm font-medium">
+                                        {PAYMENT_METHOD_META.nuvei.icon} {PAYMENT_METHOD_META.nuvei.label}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground mt-1">
+                                        {PAYMENT_METHOD_META.nuvei.description}
+                                    </div>
+                                </button>
                             </div>
                         </div>
                     </div>
                 )}
 
-                {!nuveiCheckout && !deunaCheckout && !pendingMessage && (
+                {!nuveiCheckout && !pendingMessage && (
                     <DialogFooter>
                         <Button variant="outline" onClick={() => onOpenChange(false)}>
                             Ahora no

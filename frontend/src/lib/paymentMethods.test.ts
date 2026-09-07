@@ -16,4 +16,13 @@ describe("resolveEnabledPaymentCodes", () => {
             "cash",
         ]);
     });
+
+    it("maps retired gateways (stripe, deuna, paypal) to nuvei", () => {
+        expect(resolveEnabledPaymentCodes({ enabled_codes: ["stripe", "cash"] })).toEqual([
+            "nuvei",
+            "cash",
+        ]);
+        expect(resolveEnabledPaymentCodes({ enabled_codes: ["deuna"] })).toEqual(["nuvei"]);
+        expect(resolveEnabledPaymentCodes({ stripe: { enabled: true } })).toEqual(["nuvei"]);
+    });
 });

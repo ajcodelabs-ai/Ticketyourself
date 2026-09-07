@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy import select
 
 from audit import log_audit
@@ -18,6 +19,8 @@ from orm_models import (
     BillingIntent,
     Event,
     Organizer,
+    SeasonPass,
+    SeasonPassPurchase,
     SubscriptionPlan,
     Tenant,
     TicketOrder,
@@ -43,6 +46,7 @@ async def finalize_ticket_order_from_nuvei(
     order: dict,
     session_token: Optional[str] = None,
     transaction_id: Optional[str] = None,
+    authorization_code: Optional[str] = None,
     source: str = "webhook",
 ) -> dict:
     from services import order_service
@@ -51,27 +55,36 @@ async def finalize_ticket_order_from_nuvei(
         order=order,
         stripe_session_id=session_token or order.get("stripe_session_id"),
     )
-    if transaction_id:
+    if transaction_id or authorization_code:
         async with AsyncSessionLocal() as session:
             row = await session.scalar(
                 select(TicketOrder).where(TicketOrder.id == order["id"])
             )
             if row:
-                meta = dict(row.metadata_ or {})
-                meta["nuvei_transaction_id"] = transaction_id
+                meta = nuvei_service.merge_payment_receipt(
+                    row.metadata_,
+                    transaction_id=transaction_id,
+                    authorization_code=authorization_code,
+                )
                 row.metadata_ = meta
                 from sqlalchemy.orm.attributes import flag_modified
 
                 flag_modified(row, "metadata_")
                 row.updated_at = datetime.now(timezone.utc)
                 await session.commit()
+                await session.refresh(row)
+                finalized = row_to_dict(row)
 
     await log_audit(
         None,
         f"nuvei.{source}",
         "ticket_order",
         order["id"],
-        {"order_number": order["order_number"], "transaction_id": transaction_id},
+        {
+            "order_number": order["order_number"],
+            "transaction_id": transaction_id,
+            "authorization_code": authorization_code,
+        },
     )
 
     async def _send_confirmation():
@@ -91,10 +104,92 @@ async def finalize_ticket_order_from_nuvei(
     return finalized
 
 
+async def finalize_season_pass_from_nuvei(
+    *,
+    purchase: dict,
+    session_token: Optional[str] = None,
+    transaction_id: Optional[str] = None,
+    authorization_code: Optional[str] = None,
+    source: str = "webhook",
+) -> dict:
+    from services import season_pass_service
+
+    finalized = await season_pass_service.finalize_paid_purchase(
+        purchase=purchase,
+        stripe_session_id=session_token or purchase.get("stripe_session_id"),
+    )
+    if transaction_id or authorization_code:
+        async with AsyncSessionLocal() as session:
+            row = await session.scalar(
+                select(SeasonPassPurchase).where(
+                    SeasonPassPurchase.id == purchase["id"]
+                )
+            )
+            if row:
+                info = dict(row.manual_payment_info or {})
+                receipt = nuvei_service.merge_payment_receipt(
+                    info,
+                    transaction_id=transaction_id,
+                    authorization_code=authorization_code,
+                )
+                row.manual_payment_info = receipt
+                from sqlalchemy.orm.attributes import flag_modified
+
+                flag_modified(row, "manual_payment_info")
+                row.updated_at = datetime.now(timezone.utc)
+                await session.commit()
+                await session.refresh(row)
+                finalized = row_to_dict(row)
+
+    await log_audit(
+        None,
+        f"nuvei.{source}",
+        "season_pass_purchase",
+        purchase["id"],
+        {
+            "order_number": purchase["order_number"],
+            "transaction_id": transaction_id,
+            "authorization_code": authorization_code,
+        },
+    )
+
+    async def _send_confirmation():
+        try:
+            from services.email_service import send_season_pass_confirmation
+
+            async with AsyncSessionLocal() as session:
+                sp = await session.scalar(
+                    select(SeasonPass).where(
+                        SeasonPass.id == finalized["season_pass_id"]
+                    )
+                )
+                ev = await session.scalar(
+                    select(Event).where(Event.id == finalized["event_id"])
+                )
+                org = None
+                if ev is not None:
+                    org = await session.scalar(
+                        select(Organizer).where(Organizer.id == ev.organizer_id)
+                    )
+            if sp and ev and org:
+                await send_season_pass_confirmation(
+                    purchase=finalized,
+                    season_pass=row_to_dict(sp),
+                    event=row_to_dict(ev),
+                    organizer=row_to_dict(org),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed sending Nuvei season pass confirmation")
+
+    asyncio.create_task(_send_confirmation())
+    return finalized
+
+
 async def finalize_billing_intent_from_nuvei(
     *,
     intent: BillingIntent,
     transaction_id: Optional[str] = None,
+    authorization_code: Optional[str] = None,
     source: str = "webhook",
 ) -> None:
     if intent.status == "completed":
@@ -125,10 +220,15 @@ async def finalize_billing_intent_from_nuvei(
             org_slug = org.slug
             org_status = org.status
             org_id = org.id
+            org_email = org.email
+            org_name = org.company_name or ""
         else:
             org_slug = None
             org_status = None
             org_id = intent_row.organizer_id
+            org_email = None
+            org_name = ""
+        plan_code = intent_row.plan_code
         await session.commit()
 
     if org_slug and org_status == "approved":
@@ -142,6 +242,7 @@ async def finalize_billing_intent_from_nuvei(
         {
             "plan_code": intent.plan_code,
             "transaction_id": transaction_id,
+            "authorization_code": authorization_code,
             "organizer_id": org_id,
         },
     )
@@ -152,6 +253,20 @@ async def finalize_billing_intent_from_nuvei(
     except Exception:  # noqa: BLE001
         pass
 
+    if org_email:
+        from services.email_service import send_nuvei_transaction_confirmation
+
+        asyncio.create_task(
+            send_nuvei_transaction_confirmation(
+                to=org_email,
+                subject="Confirmación de pago de plan — TYS",
+                heading="Pago de suscripción recibido",
+                detail=f"Plan {plan_code} · {org_name}".strip(" ·"),
+                transaction_id=transaction_id,
+                authorization_code=authorization_code,
+            )
+        )
+
 
 async def apply_nuvei_notification(
     parsed: dict[str, Any], *, source: str, checksum_verified: bool = False
@@ -161,12 +276,19 @@ async def apply_nuvei_notification(
     status_detail = parsed.get("status_detail")
     client_unique_id = (parsed.get("client_unique_id") or "").strip()
     transaction_id = parsed.get("transaction_id")
+    authorization_code = parsed.get("authorization_code")
     reference = (parsed.get("reference") or parsed.get("session_token") or "").strip()
     amount = parsed.get("amount") or parsed.get("total_amount")
 
     if checksum_verified:
-        # Cryptographic stoken (or prior server-side get_transaction) already
-        # proved this came from Paymentez.
+        # Prior server-side get_transaction already proved this came from Paymentez.
+        if nuvei_service.is_cancelled_or_refunded(status, status_detail):
+            return await _reverse_nuvei_payment(
+                client_unique_id=client_unique_id,
+                reference=reference,
+                transaction_id=str(transaction_id) if transaction_id else None,
+                source=source,
+            )
         if not nuvei_service.is_approved_status(status, status_detail):
             return "ignored_not_approved"
     else:
@@ -186,16 +308,27 @@ async def apply_nuvei_notification(
         except nuvei_service.NuveiError as e:
             logger.warning("get_transaction during %s failed: %s", source, e)
             return "ignored_unverified"
+        client_unique_id = (
+            verified.get("client_unique_id") or client_unique_id or ""
+        ).strip()
+        transaction_id = verified.get("transaction_id") or transaction_id
+        authorization_code = verified.get("authorization_code") or authorization_code
+        amount = verified.get("amount") or amount
+        if nuvei_service.is_cancelled_or_refunded(
+            verified.get("transaction_status"),
+            verified.get("status_detail"),
+        ):
+            return await _reverse_nuvei_payment(
+                client_unique_id=client_unique_id,
+                reference=reference,
+                transaction_id=str(transaction_id) if transaction_id else None,
+                source=source,
+            )
         if not nuvei_service.is_approved_status(
             verified.get("transaction_status"),
             verified.get("status_detail"),
         ):
             return "ignored_status_mismatch"
-        client_unique_id = (
-            verified.get("client_unique_id") or client_unique_id or ""
-        ).strip()
-        transaction_id = verified.get("transaction_id") or transaction_id
-        amount = verified.get("amount") or amount
 
     # Both branches above already returned early on a non-approved status, so
     # by this point the notification is provably approved.
@@ -205,6 +338,8 @@ async def apply_nuvei_notification(
 
     order_row = None
     order: dict = {}
+    pass_row = None
+    purchase: dict = {}
     intent_row = None
     intent_plan_price_cents: Optional[int] = None
     async with AsyncSessionLocal() as session:
@@ -220,22 +355,39 @@ async def apply_nuvei_notification(
             order = row_to_dict(order_row)
         else:
             if client_unique_id:
-                intent_row = await session.scalar(
-                    select(BillingIntent).where(
-                        BillingIntent.session_id == client_unique_id
+                pass_row = await session.scalar(
+                    select(SeasonPassPurchase).where(
+                        SeasonPassPurchase.order_number == client_unique_id
                     )
                 )
-            if intent_row is None and reference:
-                intent_row = await session.scalar(
-                    select(BillingIntent).where(BillingIntent.session_id == reference)
-                )
-            if intent_row is not None:
-                plan = await session.scalar(
-                    select(SubscriptionPlan).where(
-                        SubscriptionPlan.code == intent_row.plan_code
+            if pass_row is None and reference:
+                pass_row = await session.scalar(
+                    select(SeasonPassPurchase).where(
+                        SeasonPassPurchase.stripe_session_id == reference
                     )
                 )
-                intent_plan_price_cents = plan.price_cents if plan else None
+            if pass_row is not None:
+                purchase = row_to_dict(pass_row)
+            else:
+                if client_unique_id:
+                    intent_row = await session.scalar(
+                        select(BillingIntent).where(
+                            BillingIntent.session_id == client_unique_id
+                        )
+                    )
+                if intent_row is None and reference:
+                    intent_row = await session.scalar(
+                        select(BillingIntent).where(
+                            BillingIntent.session_id == reference
+                        )
+                    )
+                if intent_row is not None:
+                    plan = await session.scalar(
+                        select(SubscriptionPlan).where(
+                            SubscriptionPlan.code == intent_row.plan_code
+                        )
+                    )
+                    intent_plan_price_cents = plan.price_cents if plan else None
 
     if order_row is not None:
         if order.get("status") == "paid":
@@ -257,9 +409,31 @@ async def apply_nuvei_notification(
             # good value.
             session_token=order.get("stripe_session_id") or reference,
             transaction_id=str(transaction_id) if transaction_id else None,
+            authorization_code=str(authorization_code) if authorization_code else None,
             source=source,
         )
         return "order_paid"
+
+    if pass_row is not None:
+        if purchase.get("status") == "paid":
+            return "already_paid"
+        if not nuvei_service.amount_matches(amount, purchase.get("total_cents") or 0):
+            logger.warning(
+                "Nuvei %s: amount mismatch for season pass %s (reported=%s, expected_cents=%s)",
+                source,
+                purchase.get("order_number"),
+                amount,
+                purchase.get("total_cents"),
+            )
+            return "ignored_amount_mismatch"
+        await finalize_season_pass_from_nuvei(
+            purchase=purchase,
+            session_token=purchase.get("stripe_session_id") or reference,
+            transaction_id=str(transaction_id) if transaction_id else None,
+            authorization_code=str(authorization_code) if authorization_code else None,
+            source=source,
+        )
+        return "season_pass_paid"
 
     if intent_row is not None:
         if not nuvei_service.amount_matches(amount, intent_plan_price_cents or 0):
@@ -275,6 +449,7 @@ async def apply_nuvei_notification(
         await finalize_billing_intent_from_nuvei(
             intent=intent_row,
             transaction_id=str(transaction_id) if transaction_id else None,
+            authorization_code=str(authorization_code) if authorization_code else None,
             source=source,
         )
         return "billing_completed"
@@ -306,20 +481,52 @@ async def apply_nuvei_notification(
             return "ignored_amount_mismatch"
         async with AsyncSessionLocal() as session:
             row = await session.scalar(select(Event).where(Event.id == event_id))
+            org_email = None
+            org_name = ""
+            event_title = ""
             if row:
                 mark_pre_event_fee_paid(
                     row,
                     transaction_id=str(transaction_id) if transaction_id else None,
+                    authorization_code=(
+                        str(authorization_code) if authorization_code else None
+                    ),
                     payment_method="nuvei",
                 )
+                event_title = row.title or ""
+                org = await session.scalar(
+                    select(Organizer).where(Organizer.id == row.organizer_id)
+                )
+                if org:
+                    org_email = org.email
+                    org_name = org.company_name or ""
                 await session.commit()
         await log_audit(
             None,
             f"nuvei.{source}",
             "event",
             event_id,
-            {"purpose": "pre_event_fee", "transaction_id": transaction_id},
+            {
+                "purpose": "pre_event_fee",
+                "transaction_id": transaction_id,
+                "authorization_code": authorization_code,
+            },
         )
+        if org_email:
+            from services.email_service import send_nuvei_transaction_confirmation
+
+            asyncio.create_task(
+                send_nuvei_transaction_confirmation(
+                    to=org_email,
+                    subject="Confirmación de cargo pre-evento — TYS",
+                    heading="Cargo pre-evento pagado",
+                    detail=f"{event_title} · {org_name}".strip(" ·"),
+                    transaction_id=str(transaction_id) if transaction_id else None,
+                    authorization_code=(
+                        str(authorization_code) if authorization_code else None
+                    ),
+                )
+            )
         return "pre_event_fee_paid"
 
     logger.warning(
@@ -331,20 +538,84 @@ async def apply_nuvei_notification(
     return "not_found"
 
 
+async def _reverse_nuvei_payment(
+    *,
+    client_unique_id: str,
+    reference: str,
+    transaction_id: Optional[str],
+    source: str,
+) -> str:
+    """Apply a Paymentez cancelled/refunded webhook to a previously paid order.
+
+    Does not call Nuvei again — the gateway already reversed the charge.
+    """
+    from services import order_service
+
+    order: dict = {}
+    async with AsyncSessionLocal() as session:
+        order_row = None
+        if client_unique_id:
+            order_row = await session.scalar(
+                select(TicketOrder).where(TicketOrder.order_number == client_unique_id)
+            )
+        if order_row is None and reference:
+            order_row = await session.scalar(
+                select(TicketOrder).where(TicketOrder.stripe_session_id == reference)
+            )
+        if order_row is not None:
+            order = row_to_dict(order_row)
+
+    if not order:
+        logger.info(
+            "Nuvei %s cancel: no ticket order for ref=%s cuid=%s txn=%s",
+            source,
+            reference,
+            client_unique_id,
+            transaction_id,
+        )
+        return "ignored_cancel_unmatched"
+
+    if order.get("status") == "refunded":
+        return "already_refunded"
+    if order.get("status") != "paid":
+        return "ignored_cancel_not_paid"
+
+    await order_service.refund_order(
+        order=order,
+        reason=f"Nuvei {source}: transacción cancelada o reembolsada",
+        skip_gateway=True,
+    )
+    await log_audit(
+        None,
+        f"nuvei.{source}.cancelled",
+        "ticket_order",
+        order["id"],
+        {"order_number": order.get("order_number"), "transaction_id": transaction_id},
+    )
+    return "order_refunded"
+
+
 async def _params_from_request(request: Request) -> dict[str, Any]:
+    """Parse Paymentez callback: JSON body (required by Nuvei) with form/query fallback."""
+    from urllib.parse import parse_qsl
+
     params: dict[str, Any] = dict(request.query_params)
-    if request.method == "POST":
-        content_type = (request.headers.get("content-type") or "").lower()
-        if "application/json" in content_type:
-            try:
-                body = await request.json()
-                if isinstance(body, dict):
-                    params.update(body)
-            except Exception:  # noqa: BLE001
-                pass
-        else:
-            form = await request.form()
-            params.update({k: v for k, v in form.items()})
+    if request.method != "POST":
+        return params
+    raw = await request.body()
+    if not raw:
+        return params
+    try:
+        body = json.loads(raw)
+        if isinstance(body, dict):
+            params.update(body)
+            return params
+    except ValueError:
+        pass
+    try:
+        params.update(dict(parse_qsl(raw.decode("utf-8"), keep_blank_values=True)))
+    except UnicodeDecodeError:
+        pass
     return params
 
 
@@ -352,15 +623,21 @@ async def _params_from_request(request: Request) -> dict[str, Any]:
 @router.api_route("/dmn", methods=["GET", "POST"])
 async def nuvei_webhook(request: Request):
     """
-    Paymentez / Nuvei Ecuador webhook listener.
-    Always return 200 OK so the gateway does not retry endlessly on business misses.
-    Register this URL in the Paymentez dashboard (BACKEND_PUBLIC_URL/api/nuvei/webhook).
+    Paymentez / Nuvei Ecuador JSON webhook (callback de validación).
+
+    Register this URL in the Paymentez dashboard (Link to Pay + cards):
+    ``{BACKEND_PUBLIC_URL}/api/nuvei/webhook``
+    Docs: https://developers.paymentez.com/api/#webhook
+
+    200 OK = received (gateway must not retry on business misses).
+    203 = stoken inválido (token error, sin loop de 48h).
     """
     params = await _params_from_request(request)
     checksum_result = nuvei_service.verify_dmn_checksum(params)
     if checksum_result is False:
         logger.warning("Nuvei webhook stoken mismatch")
-        raise HTTPException(400, "Invalid webhook stoken")
+        # Paymentez docs: 203 = token error (avoids the 48h retry loop of 4xx).
+        return Response(content="Invalid webhook stoken", status_code=203)
 
     parsed = nuvei_service.parse_webhook_payload(params)
     # The stoken only covers transaction_id+application_code+user_id+app_key —
@@ -381,149 +658,15 @@ async def nuvei_webhook(request: Request):
     return PlainTextResponse("OK")
 
 
-@router.post("/charge")
-async def charge_nuvei_with_token(body: dict[str, Any]):
-    """
-    Charge a card token from PaymentGateway tokenization.
-    Body: { card_token, client_unique_id, amount_cents? }
-    """
-    if not nuvei_service.is_configured():
-        raise HTTPException(503, "Nuvei no está configurado")
-
-    card_token = str(body.get("card_token") or "").strip()
-    client_unique_id = str(body.get("client_unique_id") or "").strip()
-    if not card_token:
-        raise HTTPException(422, "card_token requerido")
-    if not client_unique_id:
-        raise HTTPException(422, "client_unique_id requerido")
-
-    order = None
-    intent = None
-    plan = None
-    fee_event_id = None
-    fee_event_cents = 0
-    fee_event_paid = False
-    async with AsyncSessionLocal() as session:
-        order_row = await session.scalar(
-            select(TicketOrder).where(TicketOrder.order_number == client_unique_id)
-        )
-        if order_row is not None:
-            order = row_to_dict(order_row)
-        else:
-            intent = await session.scalar(
-                select(BillingIntent).where(
-                    BillingIntent.session_id == client_unique_id
-                )
-            )
-            if intent is not None:
-                plan = await session.scalar(
-                    select(SubscriptionPlan).where(
-                        SubscriptionPlan.code == intent.plan_code
-                    )
-                )
-            else:
-                from services.event_fees import find_event_by_fee_session
-
-                found = await find_event_by_fee_session(session, client_unique_id)
-                if found is not None:
-                    fee_event_id = found.id
-                    fee_event_cents = int(found.pre_event_fee_cents or 0)
-                    fee_event_paid = (found.pre_event_fee_status or "") == "paid"
-
-    if order is None and intent is None and fee_event_id is None:
-        raise HTTPException(404, "No encontramos la orden, el plan o el cargo asociado")
-
-    if order is not None and order.get("status") == "paid":
-        return {"ok": True, "result": "already_paid"}
-
-    if fee_event_id is not None and fee_event_paid:
-        return {"ok": True, "result": "already_paid"}
-
-    if order is not None:
-        # Never trust the client's amount_cents — same principle as the billing
-        # branch below. A falsy/missing total_cents means the order isn't in a
-        # chargeable state, not an invitation to let the caller pick a price.
-        amount_cents = int(order.get("total_cents") or 0)
-        if amount_cents <= 0:
-            raise HTTPException(422, "La orden no tiene un monto válido para cobrar")
-        currency = order.get("currency") or "USD"
-        email = order.get("buyer_email") or ""
-        description = f"Orden {order.get('order_number')}"
-        user_id = email or order["id"]
-    elif fee_event_id is not None:
-        amount_cents = fee_event_cents
-        if amount_cents <= 0:
-            raise HTTPException(422, "El cargo de plataforma no tiene un monto válido")
-        currency = "USD"
-        email = str(body.get("email") or "")
-        description = str(
-            body.get("description") or f"Cargo plataforma {client_unique_id}"
-        )
-        user_id = str(body.get("user_id") or email or client_unique_id)
-    else:
-        # Billing: amount/currency are the plan's real price — never trust the
-        # client's amount_cents, or a $0.01 charge could activate the full plan.
-        if plan is None:
-            raise HTTPException(404, f"Plan '{intent.plan_code}' no encontrado")
-        amount_cents = int(plan.price_cents)
-        if amount_cents <= 0:
-            raise HTTPException(422, "El plan no tiene un precio configurado")
-        currency = plan.currency or "USD"
-        email = str(body.get("email") or "")
-        description = str(body.get("description") or f"Plan {client_unique_id}")
-        user_id = str(body.get("user_id") or email or client_unique_id)
-
-    try:
-        debit = nuvei_service.debit_with_token(
-            card_token=card_token,
-            amount_cents=amount_cents,
-            currency=currency.upper(),
-            dev_reference=client_unique_id,
-            description=description,
-            user_id=user_id,
-            email=email or "noreply@ticketyourself.com",
-        )
-    except nuvei_service.NuveiError as e:
-        logger.error("Nuvei debit failed: %s", e)
-        raise HTTPException(502, str(e) or "No pudimos cobrar con Nuvei") from e
-
-    if not nuvei_service.is_approved_status(
-        debit.get("transaction_status"),
-        debit.get("status_detail"),
-    ):
-        raise HTTPException(
-            402,
-            f"Pago no aprobado ({debit.get('transaction_status') or 'UNKNOWN'})",
-        )
-
-    parsed = {
-        "status": debit.get("transaction_status"),
-        "status_detail": debit.get("status_detail"),
-        "client_unique_id": client_unique_id,
-        "session_token": client_unique_id,
-        "reference": client_unique_id,
-        "transaction_id": debit.get("transaction_id"),
-        "amount": debit.get("amount"),
-    }
-    result = await apply_nuvei_notification(
-        parsed, source="charge", checksum_verified=True
-    )
-    return {"ok": True, "result": result, "transaction_id": debit.get("transaction_id")}
-
-
 @router.post("/confirm")
 async def confirm_nuvei_payment(body: dict[str, Any]):
     """
-    Client-side callback confirmation after PaymentCheckout.onResponse.
+    Client-side callback after PaymentCheckout.onResponse.
     Body: { transaction_id, client_unique_id?, reference? }
     Verifies with GET /v2/transaction/<id>/ before finalizing.
     """
     if not nuvei_service.is_configured():
         raise HTTPException(503, "Nuvei no está configurado")
-
-    # Token charge path (preferred)
-    if body.get("card_token"):
-        return await charge_nuvei_with_token(body)
 
     transaction_id = (
         body.get("transaction_id")
@@ -557,6 +700,7 @@ async def confirm_nuvei_payment(body: dict[str, Any]):
         "session_token": body.get("reference") or body.get("session_token"),
         "reference": body.get("reference") or body.get("session_token"),
         "transaction_id": status.get("transaction_id") or transaction_id,
+        "authorization_code": status.get("authorization_code"),
         "amount": status.get("amount"),
     }
     result = await apply_nuvei_notification(
@@ -564,6 +708,7 @@ async def confirm_nuvei_payment(body: dict[str, Any]):
     )
     if result == "not_found":
         raise HTTPException(
-            404, "No encontramos la orden, el plan o el cargo asociado al pago"
+            404,
+            "No encontramos la orden, el plan, el abono o el cargo asociado al pago",
         )
     return {"ok": True, "result": result}

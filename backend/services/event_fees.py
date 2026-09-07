@@ -121,6 +121,7 @@ def mark_pre_event_fee_paid(
     row,
     *,
     transaction_id: Optional[str] = None,
+    authorization_code: Optional[str] = None,
     payment_method: Optional[str] = None,
 ) -> bool:
     """Mark the event fee paid. Returns False if it was already paid."""
@@ -131,6 +132,9 @@ def mark_pre_event_fee_paid(
     breakdown = dict(row.pre_event_fee_breakdown or {})
     if transaction_id:
         breakdown["transaction_id"] = transaction_id
+        breakdown["nuvei_transaction_id"] = transaction_id
+    if authorization_code:
+        breakdown["nuvei_authorization_code"] = authorization_code
     if payment_method:
         breakdown["payment_method"] = payment_method
     row.pre_event_fee_breakdown = breakdown

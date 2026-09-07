@@ -33,10 +33,8 @@ import { toast } from "sonner";
 
 const PAYMENT_METHOD_LABELS = {
     nuvei: "Nuvei",
-    deuna: "DeUna",
     transfer: "Transferencia",
     cash: "Efectivo",
-    stripe: "Tarjeta (Stripe)",
 };
 
 /** UI modality (not the same as backend `type`). */

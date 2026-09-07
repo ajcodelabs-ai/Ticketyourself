@@ -428,7 +428,7 @@ class TestTicketOrder:
 
     def test_defaults(self):
         assert _col_default(TicketOrder, "status") == "pending"
-        assert _col_default(TicketOrder, "payment_method") == "stripe"
+        assert _col_default(TicketOrder, "payment_method") == "nuvei"
         assert _col_default(TicketOrder, "quantity_total") == 1
         assert _col_default(TicketOrder, "subtotal_cents") == 0
         assert _col_default(TicketOrder, "fees_cents") == 0

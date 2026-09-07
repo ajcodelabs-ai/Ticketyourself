@@ -16,12 +16,10 @@ POST   /api/public/season-pass-purchases/{purchase_token}/redeem
 """
 
 import logging
-import os
 import uuid
 from datetime import datetime
 from typing import Optional
 
-import stripe
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
@@ -43,21 +41,11 @@ from security import (
     require_purchase_account,
     require_role,
 )
-from services import order_service, season_pass_service
+from services import nuvei_service, order_service, season_pass_service
 
 logger = logging.getLogger("tys.season_passes")
 router = APIRouter(tags=["season-passes"])
 public_router = APIRouter(tags=["season-passes-public"])
-
-
-def _frontend_base(payload_origin: Optional[str]) -> str:
-    candidate = (payload_origin or "").rstrip("/")
-    if candidate.startswith("http://") or candidate.startswith("https://"):
-        return candidate
-    env_url = (os.environ.get("FRONTEND_URL") or "").rstrip("/")
-    if env_url:
-        return env_url
-    raise HTTPException(500, "FRONTEND_URL not configured and origin_url missing")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -313,48 +301,82 @@ async def purchase_season_pass(
             "redirect_to": f"/o/{organizer['slug']}/abono/{finalized['purchase_token']}",
         }
 
-    origin = _frontend_base(payload.origin_url)
-    success_url = (
-        f"{origin}/o/{organizer['slug']}/abono/{purchase['purchase_token']}"
-        "?session_id={CHECKOUT_SESSION_ID}"
-    )
-    cancel_url = (
-        f"{origin}/o/{organizer['slug']}/abono/{purchase['purchase_token']}/cancelado"
-    )
+    from services import nuvei_service
+
+    if not nuvei_service.is_configured():
+        return {
+            "order_number": purchase["order_number"],
+            "status": "pending_gateway",
+            "payment_method": "nuvei",
+            "purchase_token": purchase["purchase_token"],
+            "message": (
+                "Nuvei aún no está configurado en este entorno. "
+                "Tu abono quedó registrado; contactá a soporte TYS."
+            ),
+            "redirect_to": f"/o/{organizer['slug']}/abono/{purchase['purchase_token']}",
+        }
+
+    first_name, last_name = nuvei_service.split_buyer_name(buyer.get("name") or "")
+    redeem_path = f"/o/{organizer['slug']}/abono/{purchase['purchase_token']}"
     try:
-        checkout = season_pass_service.create_pass_checkout_session(
-            purchase=purchase,
-            season_pass=season_pass,
-            event=event,
-            success_url=success_url,
-            cancel_url=cancel_url,
+        nuvei = nuvei_service.open_order(
+            amount_cents=purchase["total_cents"],
+            currency=purchase.get("currency") or "USD",
+            client_unique_id=purchase["order_number"],
+            user_token_id=purchase["buyer_email"],
+            email=purchase["buyer_email"],
+            phone=buyer.get("phone"),
+            first_name=first_name,
+            last_name=last_name,
+            custom_data=f"season_pass:{purchase['id']}",
+            **nuvei_service.checkout_return_urls(
+                success_path=redeem_path,
+                failure_path=redeem_path,
+            ),
         )
-    except stripe.error.StripeError as e:
-        # logger.error, not .exception — Stripe error messages can echo back
-        # request data; type(e).__name__ is enough to triage without it, and
-        # the same reasoning means `e` must not reach the client either.
+    except nuvei_service.NuveiError as e:
         logger.error(
-            "Stripe checkout failed for pass purchase %s: %s",
+            "Nuvei checkout prepare failed for pass %s: %s",
             purchase["order_number"],
-            type(e).__name__,
+            nuvei_service.describe_error(e),
         )
         raise HTTPException(
             502,
-            "No pudimos iniciar el pago con Stripe. Intentá de nuevo en unos minutos.",
+            nuvei_service.checkout_http_detail(e),
         ) from e
 
     async with AsyncSessionLocal() as _pg:
         _row = await _pg.scalar(
             select(SeasonPassPurchase).where(SeasonPassPurchase.id == purchase["id"])
         )
-        _row.stripe_session_id = checkout["id"]
+        _row.stripe_session_id = nuvei["reference"]
         await _pg.commit()
 
     return {
         "order_number": purchase["order_number"],
-        "checkout_url": checkout["url"],
-        "session_id": checkout["id"],
-        "status": "pending",
+        "status": "nuvei_checkout",
+        "payment_method": "nuvei",
+        "purchase_token": purchase["purchase_token"],
+        "checkout_mode": nuvei.get("checkout_mode") or "linktopay",
+        "reference": nuvei["reference"],
+        "session_token": nuvei["reference"],
+        "session_id": nuvei["reference"],
+        "payment_url": nuvei.get("payment_url"),
+        "checkout_url": nuvei.get("payment_url") or nuvei.get("checkout_url"),
+        "nuvei_env": nuvei["env"],
+        "checkout_js_url": nuvei["checkout_js_url"],
+        "client_app_code": nuvei.get("client_app_code"),
+        "client_app_key": nuvei.get("client_app_key"),
+        "client_unique_id": purchase["order_number"],
+        "amount": nuvei["amount"],
+        "currency": nuvei["currency"],
+        "user_id": nuvei.get("user_id"),
+        "user_email": nuvei.get("user_email"),
+        "user_phone": nuvei.get("user_phone"),
+        "order_description": nuvei.get("order_description"),
+        "order_vat": nuvei.get("order_vat"),
+        "order_installments_type": nuvei.get("order_installments_type"),
+        "redirect_to": f"/o/{organizer['slug']}/abono/{purchase['purchase_token']}",
     }
 
 
@@ -395,32 +417,6 @@ async def get_pass_purchase(
     purchase = await _load_purchase_or_404(purchase_token)
     season_pass, event, organizer = await _load_pass_or_404(purchase["season_pass_id"])
 
-    if (
-        purchase["status"] == "pending"
-        and session_id
-        and purchase.get("stripe_session_id") == session_id
-    ):
-        try:
-            stripe_session = stripe.checkout.Session.retrieve(session_id)
-            if stripe_session.get("payment_status") == "paid":
-                purchase = await season_pass_service.finalize_paid_purchase(
-                    purchase=purchase,
-                    stripe_session_id=session_id,
-                )
-                background_tasks.add_task(
-                    _send_pass_confirmation_safe,
-                    purchase,
-                    season_pass,
-                    event,
-                    organizer,
-                )
-        except stripe.error.StripeError as e:
-            # See the checkout-create catch above: log the exception type
-            # only, since `e` can echo back request data.
-            logger.warning(
-                "Could not refresh pass session %s: %s", session_id, type(e).__name__
-            )
-
     async with AsyncSessionLocal() as pg:
         fn_result = await pg.execute(
             select(EventFunction)
@@ -434,6 +430,9 @@ async def get_pass_purchase(
 
     return {
         "purchase": purchase,
+        "payment_receipt": nuvei_service.public_payment_receipt(
+            purchase.get("manual_payment_info")
+        ),
         "season_pass": season_pass,
         "event": {
             "id": event["id"],

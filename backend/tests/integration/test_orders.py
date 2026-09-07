@@ -44,11 +44,6 @@ from conftest import (
     unique_buyer,
 )
 
-STRIPE_SKIP = pytest.mark.skipif(
-    not os.environ.get("STRIPE_SECRET_KEY"),
-    reason="Stripe key not configured",
-)
-
 EMAIL_LOG_DIR = "/app/backend/email_log"
 
 
@@ -120,30 +115,28 @@ class TestFreeEventPurchase:
 
 
 class TestPaidEventPurchase:
-    pytestmark = STRIPE_SKIP
-
     @pytest.fixture(scope="class")
     def paid_order(self):
         payload = {
             "tenant_slug": DEMO_TENANT,
-            "event_slug": EVENT_STRIPE_ONLY_SLUG,
+            "event_slug": PAID_EVENT_SLUG,
             "quantity": 2,
             "buyer": {
                 "name": "Juan TEST",
                 "email": f"juan_{int(time.time())}@example.com",
             },
-            "payment_method": "stripe",
+            "payment_method": "nuvei",
             "origin_url": BASE_URL,
         }
         r = place_order(payload)
         assert r.status_code == 200, r.text
         return r.json()
 
-    def test_paid_creates_stripe_session(self, paid_order):
-        assert paid_order["status"] == "pending"
-        assert paid_order["checkout_url"].startswith("http")
-        assert paid_order["session_id"]
+    def test_paid_creates_nuvei_checkout(self, paid_order):
+        assert paid_order["status"] in ("pending", "pending_gateway", "nuvei_checkout")
         assert paid_order["order_number"].startswith("TYS-")
+        if paid_order["status"] == "nuvei_checkout":
+            assert paid_order.get("reference") or paid_order.get("session_token")
 
     def test_simulate_purchase_paid_finalizes(self, paid_order):
         r = new_session().post(
@@ -325,19 +318,17 @@ class TestOrganizerEndpoints:
 
 
 class TestRefundAndResend:
-    pytestmark = STRIPE_SKIP
-
     def _new_paid_order(self):
         cr = place_order(
             {
                 "tenant_slug": DEMO_TENANT,
-                "event_slug": EVENT_STRIPE_ONLY_SLUG,
+                "event_slug": PAID_EVENT_SLUG,
                 "quantity": 1,
                 "buyer": {
                     "name": "Refund TEST",
                     "email": f"rf_{int(time.time()*1000)}@example.com",
                 },
-                "payment_method": "stripe",
+                "payment_method": "nuvei",
                 "origin_url": BASE_URL,
             },
         )
@@ -351,7 +342,7 @@ class TestRefundAndResend:
     def test_refund_changes_status_and_decrements_sold(
         self, demo_client, demo_event_ids
     ):
-        ev_id = demo_event_ids[EVENT_STRIPE_ONLY_SLUG]
+        ev_id = demo_event_ids[PAID_EVENT_SLUG]
         stats_before = demo_client.get(f"{API}/events/me/{ev_id}/stats").json()
         sold_before = stats_before["sold"]
 
@@ -376,7 +367,7 @@ class TestRefundAndResend:
         assert stats_after["sold"] == sold_before
 
     def test_resend_email_for_paid_order(self, demo_client, demo_event_ids):
-        ev_id = demo_event_ids[EVENT_STRIPE_ONLY_SLUG]
+        ev_id = demo_event_ids[PAID_EVENT_SLUG]
         on = self._new_paid_order()
         lo = demo_client.get(f"{API}/events/me/{ev_id}/orders?limit=20").json()
         order = next(o for o in lo["items"] if o["order_number"] == on)
@@ -512,32 +503,19 @@ def test_create_order_nuvei_returns_pending_gateway_stub():
             or "configurado" in (data.get("message") or "").lower()
         )
     else:
-        assert data.get("session_token")
-        assert data.get("merchant_id")
+        assert data.get("reference") or data.get("session_token")
 
 
-def test_create_order_paypal_returns_pending_gateway_stub():
-    data = _create_manual_order("paypal")
-    assert data["status"] == "pending_gateway"
-    assert data["payment_method"] == "paypal"
-    assert "PayPal" in (data.get("message") or "")
-
-
-def test_create_order_deuna_returns_pending_gateway_stub():
-    """Without DEUNA_* credentials, checkout falls back to pending_gateway stub."""
-    data = _create_manual_order("deuna")
-    assert data["payment_method"] == "deuna"
-    assert data["status"] in ("pending_gateway", "deuna_checkout")
-    if data["status"] == "pending_gateway":
-        msg = data.get("message") or ""
-        assert "DEUNA" in msg or "DeUna" in msg
-    else:
-        assert data.get("order_token")
-        assert data.get("public_api_key")
+def test_create_order_legacy_gateway_alias_uses_nuvei():
+    """stripe / deuna / paypal on old clients map to Nuvei Checkout."""
+    for method in ("stripe", "deuna", "paypal"):
+        data = _create_manual_order(method)
+        assert data["payment_method"] == "nuvei"
+        assert data["status"] in ("pending_gateway", "nuvei_checkout")
 
 
 def test_nuvei_rejected_when_not_enabled():
-    """Stripe-only seed event must reject nuvei."""
+    """Transfer-only seed event must reject Nuvei."""
     r = place_order(
         {
             "tenant_slug": DEMO_TENANT,
@@ -738,16 +716,12 @@ def _create(method: str, slug: str = PAID_EVENT_SLUG):
 def test_transfer_on_event_without_transfer_returns_400(): ...
 
 
-@STRIPE_SKIP
-def test_stripe_method_returns_checkout_url():
-    r = _create("stripe", slug=EVENT_STRIPE_ONLY_SLUG)
+def test_legacy_stripe_alias_on_full_event_uses_nuvei():
+    r = _create("stripe", slug=PAID_EVENT_SLUG)
     assert r.status_code == 200, r.text
     data = r.json()
-    assert (
-        "checkout_url" in data
-        or (data.get("redirect_to") and "stripe" in data["redirect_to"].lower())
-        or (data.get("redirect_to") and "checkout" in data["redirect_to"].lower())
-    ), f"No checkout_url-like field in: {data}"
+    assert data["payment_method"] == "nuvei"
+    assert data["status"] in ("pending_gateway", "nuvei_checkout")
 
 
 def test_free_event_ignores_payment_method():

@@ -236,6 +236,26 @@ export default function OrderSuccess() {
                             }
                             value={order.buyer.email}
                         />
+                        {data.payment_receipt?.transaction_id && (
+                            <Row
+                                label="Transaction ID (DF)"
+                                value={
+                                    <code className="font-mono text-xs">
+                                        {data.payment_receipt.transaction_id}
+                                    </code>
+                                }
+                            />
+                        )}
+                        {data.payment_receipt?.authorization_code && (
+                            <Row
+                                label="Código de autorización"
+                                value={
+                                    <code className="font-mono text-xs">
+                                        {data.payment_receipt.authorization_code}
+                                    </code>
+                                }
+                            />
+                        )}
                     </CardContent>
                 </Card>
 
@@ -309,7 +329,7 @@ export default function OrderSuccess() {
                                     Modo preview
                                 </p>
                                 <p className="text-muted-foreground">
-                                    En preview los webhooks de Stripe no llegan. Podés simular el pago
+                                    En preview los webhooks de Nuvei pueden no llegar. Podés simular el pago
                                     para emitir los tickets.
                                 </p>
                             </div>

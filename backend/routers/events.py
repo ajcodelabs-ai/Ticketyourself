@@ -123,7 +123,7 @@ asset_router = APIRouter(prefix="/api/events/assets", tags=["events-assets"])
 class PaymentMethodConfig(BaseModel):
     """Per-event payment methods.
 
-    Canonical shape uses ``enabled_codes`` (nuvei | deuna | transfer | cash).
+    Canonical shape uses ``enabled_codes`` (nuvei | transfer | cash).
     Legacy ``{stripe,transfer,cash}.enabled`` is still accepted on input and
     mapped via ``services.payment_methods.normalize_payment_methods``.
     """
@@ -154,9 +154,7 @@ class DiscountConditions(BaseModel):
     max_per_buyer: Optional[int] = Field(default=None, ge=1)
     valid_from: Optional[datetime] = None
     valid_until: Optional[datetime] = None
-    payment_methods: Optional[
-        List[Literal["stripe", "nuvei", "deuna", "transfer", "cash"]]
-    ] = None
+    payment_methods: Optional[List[Literal["nuvei", "transfer", "cash"]]] = None
 
 
 class DiscountBenefit(BaseModel):
@@ -1600,14 +1598,13 @@ async def pay_pre_event_fee(
     """
     Start or confirm the pre-event platform fee payment.
 
-    payment_method: simulate | stripe | nuvei | deuna
-    - simulate / stripe in development: marks paid immediately
-    - nuvei / deuna: opens gateway checkout when configured; otherwise pending
-      for admin confirmation (or paid immediately in development)
+    payment_method: simulate | nuvei
+    - simulate: marks paid immediately (dev)
+    - nuvei: Paymentez Checkout when configured; otherwise pending
     """
     org = await _require_active_organizer(user)
     payment_method = (payload or {}).get("payment_method") or (
-        "simulate" if _dev_env() else "stripe"
+        "simulate" if _dev_env() else "nuvei"
     )
     async with AsyncSessionLocal() as session:
         row = await session.scalar(
@@ -1638,9 +1635,7 @@ async def pay_pre_event_fee(
                 "breakdown": breakdown,
             }
 
-        instant_pay = payment_method == "simulate" or (
-            payment_method == "stripe" and _dev_env()
-        )
+        instant_pay = payment_method == "simulate"
         if instant_pay:
             mark_pre_event_fee_paid(row, payment_method=payment_method)
             await session.commit()
@@ -1649,20 +1644,6 @@ async def pay_pre_event_fee(
                 "status": "paid",
                 "fee_cents": breakdown["fee_cents"],
                 "payment_method": payment_method,
-                "breakdown": breakdown,
-            }
-
-        if payment_method == "stripe":
-            # Production Stripe Checkout for this fee is not wired yet; the
-            # previous stub marked paid. Keep that until a dedicated session
-            # exists, so organizers are not blocked.
-            mark_pre_event_fee_paid(row, payment_method="stripe")
-            await session.commit()
-            return {
-                "ok": True,
-                "status": "paid",
-                "fee_cents": breakdown["fee_cents"],
-                "payment_method": "stripe",
                 "breakdown": breakdown,
             }
 
@@ -1712,12 +1693,20 @@ async def pay_pre_event_fee(
                     first_name=(org.get("company_name") or "Organizer")[:30],
                     last_name="TYS",
                     custom_data=f"pre_event_fee:{event_id}",
+                    expiration_time=36000,
+                    **nuvei_service.checkout_return_urls(
+                        success_path=f"/app/eventos/{event_id}",
+                        failure_path=f"/app/eventos/{event_id}",
+                    ),
                 )
             except nuvei_service.NuveiError as e:
-                logger.error("Nuvei pre-event fee init failed: %s", type(e).__name__)
+                logger.error(
+                    "Nuvei pre-event fee init failed: %s",
+                    nuvei_service.describe_error(e),
+                )
                 raise HTTPException(
                     502,
-                    "No pudimos iniciar el pago con Nuvei. Intentá de nuevo en unos minutos.",
+                    nuvei_service.checkout_http_detail(e),
                 ) from e
             row.pre_event_fee_status = "pending"
             row.pre_event_fee_breakdown = stored
@@ -1734,7 +1723,8 @@ async def pay_pre_event_fee(
                 "checkout_mode": nuvei.get("checkout_mode"),
                 "nuvei_env": nuvei.get("env"),
                 "checkout_js_url": nuvei.get("checkout_js_url"),
-                "checkout_url": nuvei.get("checkout_url"),
+                "payment_url": nuvei.get("payment_url"),
+                "checkout_url": nuvei.get("payment_url") or nuvei.get("checkout_url"),
                 "client_app_code": nuvei.get("client_app_code"),
                 "client_app_key": nuvei.get("client_app_key"),
                 "client_unique_id": session_id,
@@ -1747,81 +1737,6 @@ async def pay_pre_event_fee(
                 "order_vat": nuvei.get("order_vat"),
                 "order_installments_type": nuvei.get("order_installments_type"),
                 "message": "Completá el cargo de plataforma con Nuvei.",
-            }
-
-        if payment_method == "deuna":
-            from services import deuna_service
-
-            if not deuna_service.is_configured():
-                if _dev_env():
-                    mark_pre_event_fee_paid(row, payment_method="simulate")
-                    await session.commit()
-                    return {
-                        "ok": True,
-                        "status": "paid",
-                        "fee_cents": breakdown["fee_cents"],
-                        "payment_method": "simulate",
-                        "breakdown": breakdown,
-                    }
-                row.pre_event_fee_status = "pending"
-                row.pre_event_fee_breakdown = stored
-                flag_modified(row, "pre_event_fee_breakdown")
-                await session.commit()
-                return {
-                    "ok": True,
-                    "status": "pending_gateway",
-                    "fee_cents": breakdown["fee_cents"],
-                    "payment_method": "deuna",
-                    "breakdown": stored,
-                    "message": (
-                        "DEUNA aún no está configurado. Registramos tu solicitud; "
-                        "el equipo TYS confirmará el cobro."
-                    ),
-                }
-            try:
-                first_name, last_name = deuna_service.split_buyer_name(
-                    org.get("company_name") or user.get("email") or "Organizer"
-                )
-                deuna = deuna_service.create_order(
-                    order_id=session_id,
-                    amount_cents=breakdown["fee_cents"],
-                    currency="USD",
-                    item_name="Cargo de plataforma TYS",
-                    item_description=row.title or event_id,
-                    email=user.get("email") or "",
-                    first_name=first_name,
-                    last_name=last_name,
-                    metadata={
-                        "tys_purpose": "pre_event_fee",
-                        "event_id": event_id,
-                        "organizer_id": org["id"],
-                    },
-                )
-            except deuna_service.DeunaError as e:
-                logger.error(
-                    "DEUNA pre-event fee create_order failed: %s", type(e).__name__
-                )
-                raise HTTPException(
-                    502,
-                    "No pudimos iniciar el pago con DEUNA. Intentá de nuevo en unos minutos.",
-                ) from e
-            stored["session_id"] = deuna.get("order_id") or session_id
-            row.pre_event_fee_status = "pending"
-            row.pre_event_fee_breakdown = stored
-            flag_modified(row, "pre_event_fee_breakdown")
-            await session.commit()
-            return {
-                "ok": True,
-                "status": "deuna_checkout",
-                "fee_cents": breakdown["fee_cents"],
-                "payment_method": "deuna",
-                "breakdown": stored,
-                "order_token": deuna.get("order_token"),
-                "public_api_key": deuna.get("public_api_key"),
-                "deuna_env": deuna.get("env"),
-                "checkout_js_url": deuna.get("checkout_js_url"),
-                "client_unique_id": stored["session_id"],
-                "message": "Completá el cargo de plataforma con DEUNA.",
             }
 
         raise HTTPException(400, f"Unsupported payment_method: {payment_method}")

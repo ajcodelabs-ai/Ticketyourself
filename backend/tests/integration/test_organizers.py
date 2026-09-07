@@ -276,11 +276,10 @@ class TestRegister:
 
 
 class TestBilling:
-    @STRIPE_SKIP
-    def test_checkout_inactive_plan_404(self, prueba_client, admin_client):
+    def test_checkout_inactive_plan_404(self, demo_client, admin_client):
         admin_client.patch(f"{API}/admin/plans/enterprise", json={"active": False})
         try:
-            r = prueba_client.post(
+            r = demo_client.post(
                 f"{API}/billing/checkout-session",
                 json={"plan_code": "enterprise", "origin_url": "https://x.test"},
             )
@@ -288,32 +287,27 @@ class TestBilling:
         finally:
             admin_client.patch(f"{API}/admin/plans/enterprise", json={"active": True})
 
-    @STRIPE_SKIP
-    def test_checkout_subscription_or_502(self, prueba_client):
-        r = prueba_client.post(
+    def test_checkout_subscription_nuvei(self, demo_client):
+        r = demo_client.post(
             f"{API}/billing/checkout-session",
             json={"plan_code": "profesional", "origin_url": "https://x.test"},
         )
-        assert r.status_code in (200, 502), r.text
-        if r.status_code == 200:
-            body = r.json()
-            assert body["mode"] == "subscription"
-            assert body["checkout_url"].startswith("http")
-            assert body["session_id"]
-        else:
-            assert "Stripe" in r.text or "stripe" in r.text
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["payment_method"] == "nuvei"
+        assert body["status"] in ("pending_gateway", "nuvei_checkout")
 
-    @STRIPE_SKIP
-    def test_checkout_one_time_or_502(self, prueba_client):
-        r = prueba_client.post(
+    def test_checkout_one_time_nuvei(self, demo_client):
+        r = demo_client.post(
             f"{API}/billing/checkout-session",
             json={"plan_code": "evento_unico", "origin_url": "https://x.test"},
         )
-        assert r.status_code in (200, 502), r.text
-        if r.status_code == 200:
-            assert r.json()["mode"] == "payment"
+        assert r.status_code == 200, r.text
+        assert r.json()["payment_method"] == "nuvei"
+        assert r.json()["status"] in ("pending_gateway", "nuvei_checkout")
 
 
+@pytest.mark.skip(reason="Stripe webhook retirado — cobros con Nuvei")
 class TestStripeWebhook:
     @STRIPE_SKIP
     def test_real_webhook_503_without_secret(self):

@@ -126,6 +126,18 @@ export default function SeasonPassRedeem() {
                                     <p className="text-sm text-muted-foreground">N° de abono</p>
                                     <p className="font-mono font-semibold">{purchase.order_number}</p>
                                 </div>
+                                {data.payment_receipt?.transaction_id && (
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-sm text-muted-foreground">Transaction ID (DF)</p>
+                                        <p className="font-mono text-xs">{data.payment_receipt.transaction_id}</p>
+                                    </div>
+                                )}
+                                {data.payment_receipt?.authorization_code && (
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-sm text-muted-foreground">Código de autorización</p>
+                                        <p className="font-mono text-xs">{data.payment_receipt.authorization_code}</p>
+                                    </div>
+                                )}
                                 <div className="flex items-center justify-between">
                                     <p className="text-sm text-muted-foreground">Créditos disponibles</p>
                                     <p className="text-2xl font-bold" data-testid="credits-left">

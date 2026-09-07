@@ -4,18 +4,25 @@ from __future__ import annotations
 
 from typing import Any
 
-# Platform catalog for wizard / new events (PRD §4.2.1 Pagado / Por Donación).
-CATALOG_CODES = ("nuvei", "deuna", "stripe", "paypal", "transfer", "cash")
-# PayPal remains stubbed; Nuvei + DeUna use live gateway SDKs.
-GATEWAY_STUB_CODES = ("paypal",)
+# Platform catalog for wizard / new events.
+CATALOG_CODES = ("nuvei", "transfer", "cash")
+# Retired gateways still present on old events → treated as Nuvei.
+RETIRED_GATEWAY_ALIASES = {"stripe": "nuvei", "deuna": "nuvei", "paypal": "nuvei"}
+GATEWAY_STUB_CODES = ()
 MANUAL_CODES = ("transfer", "cash")
+
+
+def _canonical_code(code: str) -> str:
+    lowered = code.strip().lower()
+    return RETIRED_GATEWAY_ALIASES.get(lowered, lowered)
 
 
 def resolve_enabled_codes(pm: dict | None) -> list[str]:
     """Return enabled payment codes for an event's payment_methods JSON.
 
     Prefer ``enabled_codes`` when present; otherwise map legacy
-    ``{stripe,transfer,cash}.enabled`` flags.
+    ``{stripe,transfer,cash}.enabled`` flags. Stripe/DEUNA/PayPal aliases
+    resolve to Nuvei so eventos viejos siguen cobrando.
     """
     pm = pm or {}
     raw = pm.get("enabled_codes")
@@ -24,15 +31,14 @@ def resolve_enabled_codes(pm: dict | None) -> list[str]:
         for c in raw:
             if not isinstance(c, str):
                 continue
-            code = c.strip().lower()
-            if code in CATALOG_CODES:
-                if code not in out:
-                    out.append(code)
+            code = _canonical_code(c)
+            if code in CATALOG_CODES and code not in out:
+                out.append(code)
         return out
 
     codes: list[str] = []
     if (pm.get("stripe") or {}).get("enabled"):
-        codes.append("stripe")
+        codes.append("nuvei")
     if (pm.get("transfer") or {}).get("enabled"):
         codes.append("transfer")
     if (pm.get("cash") or {}).get("enabled"):
@@ -43,7 +49,8 @@ def resolve_enabled_codes(pm: dict | None) -> list[str]:
 def accepts_payment_method(event: dict, payment_method: str) -> bool:
     if payment_method == "season_pass":
         return True
-    return payment_method in resolve_enabled_codes(event.get("payment_methods") or {})
+    code = _canonical_code(payment_method)
+    return code in resolve_enabled_codes(event.get("payment_methods") or {})
 
 
 def normalize_payment_methods(
@@ -65,14 +72,19 @@ def normalize_payment_methods(
         for c in raw_codes:
             if not isinstance(c, str):
                 continue
-            code = c.strip().lower()
-            if code and code not in allowed_codes:
-                if code not in unknown:
-                    unknown.append(code)
+            code = _canonical_code(c)
+            if code and code not in allowed_codes and code not in CATALOG_CODES:
+                if c.strip().lower() not in unknown:
+                    unknown.append(c.strip().lower())
         if unknown:
-            raise ValueError(
-                f"Métodos de pago no válidos o inactivos: {', '.join(unknown)}"
-            )
+            # Retired aliases are accepted even if the catalog no longer lists them.
+            still_unknown = [
+                c for c in unknown if _canonical_code(c) not in CATALOG_CODES
+            ]
+            if still_unknown:
+                raise ValueError(
+                    f"Métodos de pago no válidos o inactivos: {', '.join(still_unknown)}"
+                )
 
     codes = resolve_enabled_codes(pm)
 
@@ -81,7 +93,8 @@ def normalize_payment_methods(
         codes = ["nuvei"]
 
     if allowed_codes is not None:
-        codes = [c for c in codes if c in allowed_codes]
+        codes = [c for c in codes if c in allowed_codes or c in CATALOG_CODES]
+        codes = [c for c in codes if c in CATALOG_CODES]
 
     if not codes:
         raise ValueError("Debés seleccionar al menos una forma de pago.")
@@ -104,7 +117,7 @@ def normalize_payment_methods(
 
     return {
         "enabled_codes": codes,
-        "stripe": {"enabled": "stripe" in codes},
+        "stripe": {"enabled": False},
         "transfer": transfer,
         "cash": cash,
     }

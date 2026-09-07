@@ -57,7 +57,6 @@ import {
     Landmark,
     Banknote,
     Check,
-    Smartphone,
     Percent,
     Accessibility,
     CalendarClock,
@@ -103,7 +102,6 @@ import { planLockLabel } from "@/lib/planUnlock";
 import { PlanGateHint, UpgradePlanButton } from "@/components/plans/PlanGate";
 import {
     defaultPaymentMethods,
-    GATEWAY_STUB_CODES,
     normalizePaymentMethodsForForm,
     resolveEnabledPaymentCodes,
     withEnabledCodes,
@@ -2961,9 +2959,6 @@ function SectionTicketDesign({ form, update, eventId }) {
 
 const PAYMENT_CARD_ICONS = {
     nuvei: CreditCard,
-    deuna: Smartphone,
-    stripe: CreditCard,
-    paypal: CreditCard,
     transfer: Landmark,
     cash: Banknote,
 };
@@ -2982,9 +2977,6 @@ function SectionPayments({ form, update }) {
                 if (!cancelled) {
                     setCatalog([
                         { code: "nuvei", name: "Nuvei", kind: "gateway", description: "Pago digital" },
-                        { code: "deuna", name: "DeUna", kind: "gateway", description: "Pago digital" },
-                        { code: "stripe", name: "Stripe", kind: "gateway", description: "Pago digital" },
-                        { code: "paypal", name: "PayPal", kind: "gateway", description: "Pago digital" },
                         { code: "transfer", name: "Transferencia", kind: "manual", description: "Confirmación manual" },
                         { code: "cash", name: "Efectivo", kind: "manual", description: "Pago en persona" },
                     ]);
@@ -3016,9 +3008,7 @@ function SectionPayments({ form, update }) {
 
     const pm = form.payment_methods || defaultPayments();
     const selected = resolveEnabledPaymentCodes(pm);
-    const total = catalog.length || 6;
-    const hasFunctioningMethod = selected.some((code) => !GATEWAY_STUB_CODES.has(code));
-    const onlyGatewayStubsSelected = selected.length > 0 && !hasFunctioningMethod;
+    const total = catalog.length || 3;
 
     const setCodes = (codes) => {
         update("payment_methods", withEnabledCodes(pm, codes));
@@ -3067,20 +3057,6 @@ function SectionPayments({ form, update }) {
                     </Button>
                 </div>
             </div>
-
-            {onlyGatewayStubsSelected && (
-                <div
-                    className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
-                    data-testid="pay-gateway-stub-warning"
-                >
-                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                    <p>
-                        PayPal todavía no procesa cobros reales (integración en preparación):
-                        si publicás solo con PayPal, nadie va a poder completar una compra.
-                        Activá Nuvei, DEUNA, Transferencia o Efectivo si querés vender ya.
-                    </p>
-                </div>
-            )}
 
             {catalogLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
