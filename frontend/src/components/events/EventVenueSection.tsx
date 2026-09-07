@@ -57,6 +57,7 @@ type LocalityPricingEntry = {
     vxs_cents?: number;
     wallet_fee_cents?: number;
     max_per_purchase?: number | null;
+    reserved_quota?: number;
 };
 
 function FieldTip({ text }: { text: string }) {
@@ -262,6 +263,7 @@ export default function EventVenueSection({
                 vxs_cents: lp.vxs_cents || 0,
                 wallet_fee_cents: lp.wallet_fee_cents || 0,
                 max_per_purchase: lp.max_tickets_per_purchase ?? null,
+                reserved_quota: lp.reserved_quota || 0,
             };
         }
         for (const loc of linkedVenue.localities || []) {
@@ -273,6 +275,7 @@ export default function EventVenueSection({
                     vxs_cents: 0,
                     wallet_fee_cents: 0,
                     max_per_purchase: null,
+                    reserved_quota: 0,
                 };
             }
         }
@@ -339,8 +342,13 @@ export default function EventVenueSection({
     const summary = useMemo(() => {
         if (allLocalities.length === 0) return null;
         const prices = allLocalities.map((l) => pricing[l.id]?.price_cents ?? 0);
+        const reservedTotal = allLocalities.reduce(
+            (s, l) => s + (pricing[l.id]?.reserved_quota || 0),
+            0,
+        );
         return {
-            capacity: computeCapacity(elements),
+            capacity: Math.max(0, computeCapacity(elements) - reservedTotal),
+            reservedTotal,
             localityCount: allLocalities.length,
             minPrice: Math.min(...prices) / 100,
             maxPrice: Math.max(...prices) / 100,
@@ -410,6 +418,7 @@ export default function EventVenueSection({
                     row.max_per_purchase != null
                         ? Math.max(1, parseInt(row.max_per_purchase, 10) || 0) || null
                         : null,
+                reserved_quota: Math.max(0, parseInt(row.reserved_quota ?? 0, 10) || 0),
             };
         });
 
@@ -491,6 +500,7 @@ export default function EventVenueSection({
             service_fee_cents: p.service_fee_cents,
             admin_fee_cents: p.admin_fee_cents,
             wallet_fee_cents: p.wallet_fee_cents,
+            reserved_quota: p.reserved_quota || 0,
         });
         setFormOpen(true);
     };
@@ -530,6 +540,7 @@ export default function EventVenueSection({
                     vxs_cents: values.vxs_cents,
                     wallet_fee_cents: values.wallet_fee_cents,
                     max_per_purchase: pricing[locId]?.max_per_purchase ?? null,
+                    reserved_quota: values.reserved_quota || 0,
                 },
             };
 
@@ -968,6 +979,7 @@ export default function EventVenueSection({
                                 {summary.localityCount} localidad{summary.localityCount !== 1 ? "es" : ""}
                                 {" · "}
                                 capacidad {summary.capacity}
+                                {summary.reservedTotal > 0 && ` (${summary.reservedTotal} reservados)`}
                                 {" · "}
                                 entradas desde ${summary.minPrice.toFixed(2)}
                                 {summary.minPrice !== summary.maxPrice && ` hasta $${summary.maxPrice.toFixed(2)}`}

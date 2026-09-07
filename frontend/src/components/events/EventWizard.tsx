@@ -468,6 +468,17 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         update("venue_name", currentEvent.venue_name || "");
     }, [currentEvent?.venue_name, currentEvent?.venue_id]);
 
+    // Same staleness class as venue_name above: once a venue is linked,
+    // `capacity` is server-computed from the map (minus cupos reservados,
+    // TI-117) rather than typed by the organizer. Keep form.capacity synced
+    // so a later "Guardar" from an unrelated tab doesn't send the pre-link
+    // (or pre-reserva) value and silently undo it.
+    useEffect(() => {
+        if (!currentEvent?.venue_id) return;
+        update("capacity", currentEvent.capacity != null ? String(currentEvent.capacity) : "");
+        update("unlimited_capacity", currentEvent.capacity == null);
+    }, [currentEvent?.capacity, currentEvent?.venue_id]);
+
     // When building payload, use the latest form state via ref to avoid stale
     // closures in callbacks passed to child components (ensureEventId, etc.).
     const ensureEventId = async ({ silent = false } = {}) => {
