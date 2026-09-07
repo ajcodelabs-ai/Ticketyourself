@@ -442,7 +442,14 @@ def compute_totals_with_seats(
             + extras["wallet_fee_cents"]
         )
     if missing_loc:
-        raise HTTPException(422, f"El evento no tiene precio para: {set(missing_loc)}")
+        msg = (
+            "El asiento seleccionado no tiene una localidad o precio configurado. "
+            "Selecciona otro asiento o contacta al organizador."
+            if len(missing_loc) == 1
+            else "Uno o más asientos seleccionados no tienen una localidad o precio "
+            "configurado. Selecciona otros asientos o contacta al organizador."
+        )
+        raise HTTPException(422, msg)
     from services.sales_fees import apply_platform_fee
 
     avg_unit = entrada_subtotal // max(1, len(seat_ids))

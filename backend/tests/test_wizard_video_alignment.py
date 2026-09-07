@@ -151,6 +151,29 @@ def test_compute_totals_with_seats_missing_seat_raises():
         seats_mod.seats_by_id = original
 
 
+def test_compute_totals_with_seats_no_locality_has_clear_message():
+    """TI-122: a seat with no locality_id (or one with no matching
+    locality_pricing entry) must surface a buyer-facing message, not the raw
+    dict/set repr that used to leak through ('(sin localidad)')."""
+    event = {"locality_pricing": [{"locality_id": "A", "price_cents": 1000}]}
+    venue = {
+        "elements": [
+            {
+                "id": "row1",
+                "kind": "seat_row_straight",
+                "seats_count": 1,
+                "locality_id": None,
+            },
+        ]
+    }
+    with pytest.raises(HTTPException) as exc_info:
+        compute_totals_with_seats(event=event, venue=venue, seat_ids=["row1::s::0"])
+    detail = exc_info.value.detail
+    assert "sin localidad" not in detail
+    assert "{" not in detail
+    assert "asiento" in detail.lower()
+
+
 def test_locality_fee_cents_applies_to_ticket_type_bound_to_locality():
     """A TicketType with venue_locality_id set must pick up the same
     service/admin fees configured on locality_pricing — used by the GA
