@@ -24,7 +24,7 @@ from models import (
     RequiredDocumentsOut,
 )
 from orm_models import Organizer, OrganizerDocument, Tenant
-from security import require_role
+from security import is_active_organizer, require_role
 from services.document_types import is_valid_doc_type, list_document_types
 from services.required_documents import get_required_documents, is_satisfied
 
@@ -55,12 +55,11 @@ def _org_row_to_out(row: Organizer) -> OrganizerOut:
 
 
 async def _get_my_organizer(user: dict, session: AsyncSession) -> Organizer:
-    org_id = user.get("organizer_id")
-    if not org_id:
+    if not is_active_organizer(user):
         raise HTTPException(404, "Organizer profile not found")
     result = await session.execute(
         select(Organizer)
-        .where(Organizer.id == org_id)
+        .where(Organizer.id == user["organizer_id"])
         .options(selectinload(Organizer.admin_comments))
     )
     row = result.scalar_one_or_none()
