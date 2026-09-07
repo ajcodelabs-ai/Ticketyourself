@@ -2671,6 +2671,12 @@ function SectionMedia({
 }) {
     const readyCount = [banner, poster, small].filter(Boolean).length;
     const canPreview = isPublished && tenantSlug && eventSlug;
+    const previewDisabledReason =
+        !tenantSlug || !eventSlug
+            ? "Guardá el evento para poder previsualizarlo"
+            : !isPublished
+              ? "Publicá el evento para poder previsualizarlo"
+              : null;
 
     return (
         <div className="space-y-5" data-testid="section-media">
@@ -2709,30 +2715,34 @@ function SectionMedia({
                             ② Cards de tu página y ticket PDF · cuadrada · recomendado 1080×1080
                         </p>
                     </div>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={!canPreview}
-                        title={
-                            !tenantSlug || !eventSlug
-                                ? "Guardá el evento para poder previsualizarlo"
-                                : !isPublished
-                                  ? "Publicá el evento para poder previsualizarlo"
-                                  : "Abrir la página pública del evento"
-                        }
-                        onClick={() => {
-                            if (!canPreview) return;
-                            const url = eventPublicUrl(tenantSlug, eventSlug);
-                            if (url) {
-                                window.open(url, "_blank", "noopener,noreferrer");
-                            }
-                        }}
-                        data-testid="wiz-media-preview"
-                    >
-                        <ExternalLink className="h-4 w-4 mr-1.5" />
-                        Previsualizar
-                    </Button>
+                    <div className="flex flex-col items-end gap-1">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={!canPreview}
+                            title={previewDisabledReason || "Abrir la página pública del evento"}
+                            onClick={() => {
+                                if (!canPreview) return;
+                                const url = eventPublicUrl(tenantSlug, eventSlug);
+                                if (url) {
+                                    window.open(url, "_blank", "noopener,noreferrer");
+                                }
+                            }}
+                            data-testid="wiz-media-preview"
+                        >
+                            <ExternalLink className="h-4 w-4 mr-1.5" />
+                            Previsualizar
+                        </Button>
+                        {previewDisabledReason && (
+                            <p
+                                className="text-[11px] text-muted-foreground text-right"
+                                data-testid="wiz-media-preview-hint"
+                            >
+                                {previewDisabledReason}
+                            </p>
+                        )}
+                    </div>
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-start gap-4">
                     <div className="max-w-xs w-full">
