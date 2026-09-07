@@ -170,6 +170,139 @@ class TestEventVenueSnapshot:
         assert r.status_code == 409, r.text
 
 
+class TestReservedQuota:
+    """TI-117: reserved_quota subtracts from the event's aggregate capacity,
+    with two safety nets — it can't exceed the venue's raw capacity, and it
+    can't (combined with tickets already sold) drive capacity negative."""
+
+    def test_reserved_quota_subtracts_from_capacity(self, demo_client):
+        venue = _first_published_venue(demo_client)
+        ev = _create_draft_event(demo_client, "TI117 reserved quota")
+        link = demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue",
+            json={
+                "venue_id": venue["id"],
+                "locality_pricing": [],
+                "seat_holds_window_minutes": 10,
+            },
+        )
+        assert link.status_code == 200, link.text
+        raw_capacity = link.json()["capacity"]
+
+        layout = demo_client.get(f"{API}/events/me/{ev['id']}/venue-layout").json()
+        loc_id = "ti117-loc"
+        r = demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue-layout",
+            json={
+                "canvas": layout["canvas"],
+                "elements": layout["elements"],
+                "localities": [{"id": loc_id, "name": "General", "color": "#fff"}],
+            },
+        )
+        assert r.status_code == 200, r.text
+
+        r = demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue",
+            json={
+                "venue_id": venue["id"],
+                "locality_pricing": [
+                    {"locality_id": loc_id, "price_cents": 1000, "reserved_quota": 3}
+                ],
+                "seat_holds_window_minutes": 10,
+            },
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["capacity"] == raw_capacity - 3
+        assert body["locality_pricing"][0]["reserved_quota"] == 3
+
+        # A structural map edit must carry reserved_quota over untouched.
+        layout2 = demo_client.get(f"{API}/events/me/{ev['id']}/venue-layout").json()
+        r = demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue-layout",
+            json={
+                "canvas": layout2["canvas"],
+                "elements": layout2["elements"],
+                "localities": layout2["localities"],
+            },
+        )
+        assert r.status_code == 200, r.text
+        ev_after = demo_client.get(f"{API}/events/me/{ev['id']}").json()
+        assert ev_after["capacity"] == raw_capacity - 3
+        assert ev_after["locality_pricing"][0]["reserved_quota"] == 3
+
+        demo_client.delete(f"{API}/events/me/{ev['id']}/venue")
+
+    def test_reserved_quota_over_venue_capacity_rejected(self, demo_client):
+        venue = _first_published_venue(demo_client)
+        ev = _create_draft_event(demo_client, "TI117 quota overflow")
+        demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue",
+            json={
+                "venue_id": venue["id"],
+                "locality_pricing": [],
+                "seat_holds_window_minutes": 10,
+            },
+        )
+        r = demo_client.put(
+            f"{API}/events/me/{ev['id']}/venue",
+            json={
+                "venue_id": venue["id"],
+                "locality_pricing": [
+                    {
+                        "locality_id": "any-locality",
+                        "price_cents": 1000,
+                        "reserved_quota": 999999,
+                    }
+                ],
+                "seat_holds_window_minutes": 10,
+            },
+        )
+        assert r.status_code == 422, r.text
+
+    def test_reserved_quota_cannot_undercut_tickets_sold(self, demo_client):
+        """Demo numbered event has pre-sold tickets — reserving (almost) the
+        whole venue must be rejected rather than silently dropping capacity
+        below tickets_sold."""
+        r = demo_client.get(f"{API}/events/me")
+        items = r.json().get("items") or []
+        numbered = next(
+            (e for e in items if e.get("slug") == "funcion-especial-demo-numerado"),
+            None,
+        )
+        if (
+            not numbered
+            or not numbered.get("venue_id")
+            or not numbered.get("tickets_sold")
+        ):
+            pytest.skip("Demo numbered event with sales not seeded")
+        sold = numbered["tickets_sold"]
+        capacity = numbered["capacity"]
+        # Reserve just enough on ONE locality to push net capacity below
+        # `sold` while staying within the venue's raw capacity, so this hits
+        # the sold-vs-net-capacity guard rather than the raw-capacity one.
+        overreach = capacity - sold + 1
+        locality_pricing = [
+            {
+                "locality_id": lp["locality_id"],
+                "price_cents": lp["price_cents"],
+                "reserved_quota": overreach if i == 0 else 0,
+            }
+            for i, lp in enumerate(numbered["locality_pricing"])
+        ]
+        r = demo_client.put(
+            f"{API}/events/me/{numbered['id']}/venue",
+            json={
+                "venue_id": numbered["venue_id"],
+                "locality_pricing": locality_pricing,
+                "seat_holds_window_minutes": numbered.get(
+                    "seat_holds_window_minutes", 10
+                ),
+            },
+        )
+        assert r.status_code == 409, r.text
+
+
 class TestFreeEventLocalityPricing:
     """TI-121: a Gratuito event must never end up with a priced locality —
     across every save path that can set locality_pricing, not just publish."""

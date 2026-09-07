@@ -756,6 +756,13 @@ class LocalityPriceIn(BaseModel):
     vxs_cents: int = Field(default=0, ge=0)  # Impuestos
     wallet_fee_cents: int = Field(default=0, ge=0)  # Billetera Virtual
     max_tickets_per_purchase: Optional[int] = Field(default=None, ge=1, le=20)
+    # Cupos apartados para auspiciantes/staff/etc — restan del aforo agregado
+    # del evento, no de esta localidad puntual (ver TI-117 / _capacity_after_reserved).
+    reserved_quota: int = Field(default=0, ge=0)
+
+
+def _capacity_after_reserved(raw_capacity: int, reserved_total: int) -> int:
+    return max(0, raw_capacity - reserved_total)
 
 
 class LinkVenueBody(BaseModel):
@@ -838,12 +845,27 @@ async def link_venue_to_event(
                 "Marcá el evento como 'Pagado' o dejá todos los montos en $0.",
             )
 
+        reserved_total = sum(lp.reserved_quota for lp in body.locality_pricing)
+        if reserved_total > venue_capacity:
+            raise HTTPException(
+                422,
+                f"Los cupos reservados ({reserved_total}) superan el aforo del "
+                f"venue ({venue_capacity}).",
+            )
+        net_capacity = _capacity_after_reserved(venue_capacity, reserved_total)
+        if sold > 0 and net_capacity < sold:
+            raise HTTPException(
+                409,
+                f"Los cupos reservados ({reserved_total}) dejarían el aforo en "
+                f"{net_capacity}, por debajo de los {sold} ticket(s) ya vendido(s).",
+            )
+
         row.venue_id = body.venue_id
         row.venue_slug = venue.get("slug")
         row.venue_name = venue.get("name") or row.venue_name
         row.locality_pricing = [lp.model_dump() for lp in body.locality_pricing]
         row.seat_holds_window_minutes = body.seat_holds_window_minutes
-        row.capacity = venue_capacity
+        row.capacity = net_capacity
         row.updated_at = _now()
         flag_modified(row, "locality_pricing")
         await session.commit()
@@ -972,7 +994,6 @@ async def put_event_venue_layout(
         }
         capacity = recalc_layout_capacity(layout)
         row.venue_layout = layout
-        row.capacity = capacity
         row.updated_at = _now()
         flag_modified(row, "venue_layout")
 
@@ -1005,6 +1026,7 @@ async def put_event_venue_layout(
                 "vxs_cents": int(prev.get("vxs_cents") or 0),
                 "wallet_fee_cents": int(prev.get("wallet_fee_cents") or 0),
                 "max_tickets_per_purchase": prev.get("max_tickets_per_purchase"),
+                "reserved_quota": int(prev.get("reserved_quota") or 0),
             }
             if row.pricing_type == "free":
                 # Free events can't have localities that charge the buyer
@@ -1014,6 +1036,23 @@ async def put_event_venue_layout(
                 # aren't blocked.
                 entry.update({f: 0 for f in LOCALITY_CHARGE_FIELDS})
             new_pricing.append(entry)
+        reserved_total = sum(lp["reserved_quota"] for lp in new_pricing)
+        if reserved_total > capacity:
+            raise HTTPException(
+                422,
+                f"Este cambio de mapa deja el aforo en {capacity}, por debajo "
+                f"de los {reserved_total} cupo(s) ya reservados en localidades. "
+                "Bajá los cupos reservados antes de achicar el mapa.",
+            )
+        net_capacity = _capacity_after_reserved(capacity, reserved_total)
+        if sold > 0 and net_capacity < sold:
+            raise HTTPException(
+                409,
+                f"Este cambio dejaría el aforo en {net_capacity} (con "
+                f"{reserved_total} cupo(s) reservado(s)), por debajo de los "
+                f"{sold} ticket(s) ya vendido(s).",
+            )
+        row.capacity = net_capacity
         row.locality_pricing = new_pricing
         flag_modified(row, "locality_pricing")
         await session.commit()

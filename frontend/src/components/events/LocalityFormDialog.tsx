@@ -73,6 +73,8 @@ const FIELD_TIPS = {
         "TicketSeguro: cobertura / seguro por ticket. Dejá $0 si no aplica.",
     vxs: "Impuestos (IVA u otros) por ticket.",
     wallet: "Billetera Virtual: cargo o recarga asociada al ticket.",
+    reservedQuota:
+        "Cupos apartados para auspiciantes, producción, staff o familiares. Se restan del aforo total del evento — no garantiza que queden libres específicamente en esta localidad.",
 };
 
 const emptyDraftMoney = { price: "", vxs: "", service: "", admin: "", wallet: "" };
@@ -210,6 +212,7 @@ export default function LocalityFormDialog({
     const [color, setColor] = useState(LOCALITY_PALETTE[0]);
     const [description, setDescription] = useState("");
     const [money, setMoney] = useState(emptyDraftMoney);
+    const [reservedQuota, setReservedQuota] = useState("");
     const [addedServices, setAddedServices] = useState([]);
     const [seatingType, setSeatingType] = useState("numbered");
     const [draftId, setDraftId] = useState("");
@@ -253,6 +256,7 @@ export default function LocalityFormDialog({
             });
             setAddedServices(servicesWithAmount(initial));
             setAssignedIds(nextAssigned);
+            setReservedQuota(initial.reserved_quota ? String(initial.reserved_quota) : "");
         } else {
             setName("");
             setColor(LOCALITY_PALETTE[0]);
@@ -261,6 +265,7 @@ export default function LocalityFormDialog({
             setMoney(emptyDraftMoney);
             setAddedServices([]);
             setAssignedIds([]);
+            setReservedQuota("");
         }
     }, [open, initial, elements, allowNumbered]);
 
@@ -370,6 +375,7 @@ export default function LocalityFormDialog({
             description: description.trim() || null,
             seating_type: seatingType,
             assigned_element_ids: assignedIds,
+            reserved_quota: Math.max(0, parseInt(reservedQuota, 10) || 0),
             ...moneyPayload(pricingType, money),
         });
     };
@@ -447,6 +453,22 @@ export default function LocalityFormDialog({
                             onChange={(e) => setDescription(e.target.value)}
                             placeholder="Opcional"
                             data-testid="locality-form-description"
+                        />
+                    </div>
+
+                    <div className="space-y-1">
+                        <Label className="text-xs inline-flex items-center gap-1">
+                            Cupos reservados
+                            <FieldTip text={FIELD_TIPS.reservedQuota} />
+                        </Label>
+                        <Input
+                            type="number"
+                            min="0"
+                            value={reservedQuota}
+                            onChange={(e) => setReservedQuota(e.target.value)}
+                            placeholder="0"
+                            className="max-w-[140px]"
+                            data-testid="locality-form-reserved-quota"
                         />
                     </div>
 
