@@ -39,9 +39,17 @@ import {
     FileText,
     Loader2,
     RefreshCw,
+    RotateCcw,
     Save,
     ShieldCheck,
 } from "lucide-react";
+
+const DOC_STATUS_META = {
+    pending: { label: "En revisión", variant: "outline" },
+    approved: { label: "Aprobado", variant: "default" },
+    rejected: { label: "Rechazado", variant: "destructive" },
+    needs_correction: { label: "Requiere corrección", variant: "outline" },
+};
 
 const STATUS_STYLE = {
     pending: "bg-amber-100 text-amber-700",
@@ -70,6 +78,9 @@ export default function AdminOrganizerDetail() {
     const [billingIntents, setBillingIntents] = useState([]);
     const [confirmingPay, setConfirmingPay] = useState(false);
     const [refreshingVf, setRefreshingVf] = useState(false);
+    const [reviewDialog, setReviewDialog] = useState(null);
+    const [reviewComment, setReviewComment] = useState("");
+    const [reviewing, setReviewing] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -223,6 +234,24 @@ export default function AdminOrganizerDetail() {
             URL.revokeObjectURL(url);
         } catch (err) {
             toast.error(await formatBlobApiError(err, "No se pudo descargar"));
+        }
+    };
+
+    const reviewDoc = async (doc, status, comment?: string) => {
+        setReviewing(true);
+        try {
+            const { data } = await api.patch(
+                `/organizers/${id}/documents/${doc.id}/review`,
+                { status, comment },
+            );
+            setDocs((prev) => prev.map((d) => (d.id === doc.id ? data : d)));
+            toast.success("Documento actualizado");
+            setReviewDialog(null);
+            setReviewComment("");
+        } catch (err) {
+            toast.error(await formatBlobApiError(err, "No se pudo actualizar el documento"));
+        } finally {
+            setReviewing(false);
         }
     };
 
@@ -752,38 +781,88 @@ export default function AdminOrganizerDetail() {
                             <div
                                 key={d.id}
                                 data-testid={`admin-doc-${d.id}`}
-                                className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border/70"
+                                className="flex flex-col gap-2 p-3 rounded-lg border border-border/70"
                             >
-                                <div className="text-sm min-w-0">
-                                    <div className="font-medium truncate">
-                                        {d.original_filename || "(sin nombre)"}
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="text-sm min-w-0">
+                                        <div className="font-medium truncate">
+                                            {d.original_filename || "(sin nombre)"}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">
+                                            {d.doc_type} · {d.mime_type} · {(d.size_bytes / 1024).toFixed(1)} KB
+                                        </div>
                                     </div>
-                                    <div className="text-xs text-muted-foreground">
-                                        {d.doc_type} · {d.mime_type} · {(d.size_bytes / 1024).toFixed(1)} KB
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                    {isPreviewableMime(d.mime_type) && (
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <Badge
+                                            variant={DOC_STATUS_META[d.status]?.variant || "outline"}
+                                            data-testid={`admin-doc-status-${d.id}`}
+                                        >
+                                            {DOC_STATUS_META[d.status]?.label || d.status}
+                                        </Badge>
+                                        {isPreviewableMime(d.mime_type) && (
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => openPreview(d)}
+                                                data-testid={`admin-doc-preview-${d.id}`}
+                                            >
+                                                <Eye className="h-4 w-4 mr-1" />
+                                                Previsualizar
+                                            </Button>
+                                        )}
                                         <Button
                                             type="button"
-                                            variant="outline"
+                                            variant="ghost"
                                             size="sm"
-                                            onClick={() => openPreview(d)}
-                                            data-testid={`admin-doc-preview-${d.id}`}
+                                            onClick={() => downloadDoc(d)}
+                                            data-testid={`admin-doc-download-${d.id}`}
                                         >
-                                            <Eye className="h-4 w-4 mr-1" />
-                                            Previsualizar
+                                            <Download className="h-4 w-4 mr-1" />
+                                            Descargar
                                         </Button>
+                                    </div>
+                                </div>
+                                {d.review_comment &&
+                                    (d.status === "rejected" || d.status === "needs_correction") && (
+                                        <p className="text-xs text-destructive">
+                                            Motivo: {d.review_comment}
+                                        </p>
                                     )}
+                                <div className="flex items-center gap-2">
                                     <Button
                                         type="button"
-                                        variant="ghost"
                                         size="sm"
-                                        onClick={() => downloadDoc(d)}
-                                        data-testid={`admin-doc-download-${d.id}`}
+                                        variant={d.status === "approved" ? "default" : "outline"}
+                                        disabled={reviewing || d.status === "approved"}
+                                        onClick={() => reviewDoc(d, "approved")}
+                                        data-testid={`admin-doc-approve-${d.id}`}
                                     >
-                                        <Download className="h-4 w-4 mr-1" />
-                                        Descargar
+                                        <CheckCircle2 className="h-4 w-4 mr-1" />
+                                        Aprobar
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={reviewing}
+                                        onClick={() => setReviewDialog({ doc: d, status: "needs_correction" })}
+                                        data-testid={`admin-doc-request-correction-${d.id}`}
+                                    >
+                                        <RotateCcw className="h-4 w-4 mr-1" />
+                                        Pedir corrección
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="text-destructive"
+                                        disabled={reviewing}
+                                        onClick={() => setReviewDialog({ doc: d, status: "rejected" })}
+                                        data-testid={`admin-doc-reject-${d.id}`}
+                                    >
+                                        <XCircle className="h-4 w-4 mr-1" />
+                                        Rechazar
                                     </Button>
                                 </div>
                             </div>
@@ -912,6 +991,60 @@ export default function AdminOrganizerDetail() {
                                 className="w-full h-full border-0"
                             />
                         )}
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                open={!!reviewDialog}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setReviewDialog(null);
+                        setReviewComment("");
+                    }
+                }}
+            >
+                <DialogContent data-testid="admin-doc-review-dialog">
+                    <DialogHeader>
+                        <DialogTitle>
+                            {reviewDialog?.status === "rejected"
+                                ? "Rechazar documento"
+                                : "Pedir corrección"}
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-2">
+                        <Label htmlFor="review-comment">Motivo (obligatorio)</Label>
+                        <Textarea
+                            id="review-comment"
+                            data-testid="admin-doc-review-comment"
+                            value={reviewComment}
+                            onChange={(e) => setReviewComment(e.target.value)}
+                            placeholder="Explicá al organizador qué debe corregir o por qué se rechaza"
+                            rows={4}
+                        />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => {
+                                setReviewDialog(null);
+                                setReviewComment("");
+                            }}
+                            disabled={reviewing}
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            disabled={reviewing || !reviewComment.trim()}
+                            onClick={() => reviewDoc(reviewDialog.doc, reviewDialog.status, reviewComment.trim())}
+                            data-testid="admin-doc-review-confirm"
+                        >
+                            {reviewing && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+                            Confirmar
+                        </Button>
                     </div>
                 </DialogContent>
             </Dialog>

@@ -304,6 +304,14 @@ class OrganizerDocumentOut(TimestampedModel):
     mime_type: str
     size_bytes: int
     uploaded_at: datetime
+    status: str = "pending"
+    review_comment: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+
+
+class DocumentReviewIn(BaseModel):
+    status: Literal["approved", "rejected", "needs_correction"]
+    comment: Optional[str] = Field(default=None, max_length=2000)
 
 
 class RequiredDocumentsOut(BaseModel):
