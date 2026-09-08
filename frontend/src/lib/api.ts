@@ -229,9 +229,13 @@ function translateValidationError(entry) {
             msg = `No puede tener más de ${entry?.ctx?.max_length ?? ""} caracteres.`.replace("  ", " ");
             break;
         case "value_error":
-        case "string_pattern_mismatch":
-            msg = "El valor ingresado no es válido.";
+        case "string_pattern_mismatch": {
+            // Keep custom Spanish messages from the API (e.g. "Este correo ya
+            // está registrado"). Only replace Pydantic's generic "Value error, …".
+            const generic = !msg || /^value error/i.test(msg);
+            if (generic) msg = "El valor ingresado no es válido.";
             break;
+        }
         case "string_type":
         case "int_type":
         case "float_type":

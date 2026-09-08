@@ -53,14 +53,6 @@ yarn test       # Vitest (run once)
 yarn test:watch
 ```
 
-### Mobile (optional)
-
-```bash
-cd mobile && yarn install
-echo "EXPO_PUBLIC_BACKEND_URL=http://localhost:8000" > .env
-yarn start      # Expo DevTools; press i/a/w for iOS/Android/web
-```
-
 ### Stripe webhooks (local)
 
 ```bash
@@ -147,8 +139,6 @@ TYS_FEE_PERCENT=5
 ```
 
 **`frontend/.env`**: `VITE_BACKEND_URL=http://localhost:8000`
-
-**`mobile/.env`**: `EXPO_PUBLIC_BACKEND_URL=http://localhost:8000` (use LAN IP for physical devices)
 
 ## Demo Credentials (seeded automatically)
 

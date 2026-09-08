@@ -9,6 +9,7 @@ from typing import List, Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import EmailStr, TypeAdapter
 from sqlalchemy import func, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +21,7 @@ from db_helpers import organizer_row_to_dict, row_to_dict
 from models import (
     AuthMeResponse,
     BuyerRegisterRequest,
+    EmailCheckResponse,
     LoginRequest,
     OrganizerOut,
     RegisterRequest,
@@ -166,6 +168,56 @@ async def _claim_guest_purchases(
     )
 
 
+_EMAIL_ADAPTER = TypeAdapter(EmailStr)
+
+
+def _field_error(field: str, msg: str) -> dict:
+    """FastAPI-style loc/msg so the register form can map errors per input."""
+    return {"loc": ["body", field], "msg": msg, "type": "value_error"}
+
+
+def _legal_id_format_error(legal_id: str, org_type: str, country_row) -> Optional[str]:
+    value = (legal_id or "").strip()
+    digits = re.sub(r"\D", "", value)
+    if getattr(country_row, "code", None) == "EC":
+        if org_type == "individual":
+            if len(digits) != 10:
+                return "La cédula debe tener 10 dígitos."
+            from services.ec_id import is_valid_ec_cedula
+
+            if not is_valid_ec_cedula(value):
+                return "La cédula ecuatoriana no es válida."
+            return None
+        if len(digits) not in (10, 13):
+            return "El RUC debe tener 13 dígitos."
+    pattern = getattr(country_row, "legal_id_pattern", None)
+    if pattern:
+        try:
+            if not re.match(pattern, value):
+                if getattr(country_row, "code", None) == "EC":
+                    return (
+                        "El RUC debe tener 13 dígitos."
+                        if org_type == "company"
+                        else "La cédula debe tener 10 dígitos."
+                    )
+                label = country_row.legal_id_label or "documento"
+                return f"{label} no tiene un formato válido para {country_row.name}"
+        except re.error:
+            return None
+    return None
+
+
+def _raise_register_field_errors(errors: list) -> None:
+    if not errors:
+        return
+    uniqueness = any(
+        (e.get("loc") or [None])[-1] in ("email", "slug")
+        and ("ya está" in e.get("msg", "") or "ya esta" in e.get("msg", ""))
+        for e in errors
+    )
+    raise HTTPException(status_code=409 if uniqueness else 422, detail=errors)
+
+
 # ── Registration countries (public) ───────────────────────────────────────────
 
 
@@ -203,6 +255,25 @@ async def check_slug(
     )
 
 
+@router.post("/check-email", response_model=EmailCheckResponse)
+async def check_email(
+    payload: dict,
+    session: AsyncSession = Depends(get_db),
+):
+    """Tell the register form whether a platform email is already taken."""
+    raw = (payload.get("email") or "").strip().lower()
+    if not raw:
+        return EmailCheckResponse(email="", available=False, reason="empty")
+    try:
+        parsed = str(_EMAIL_ADAPTER.validate_python(raw)).lower()
+    except Exception:  # noqa: BLE001
+        return EmailCheckResponse(email=raw, available=False, reason="invalid")
+    existing = await _find_platform_user(session, parsed)
+    if existing:
+        return EmailCheckResponse(email=parsed, available=False, reason="taken")
+    return EmailCheckResponse(email=parsed, available=True, reason=None)
+
+
 # ── Register ──────────────────────────────────────────────────────────────────
 
 
@@ -213,10 +284,11 @@ async def register(
     session: AsyncSession = Depends(get_db),
 ):
     email = payload.email.lower().strip()
+    field_errors: list = []
 
     existing = await _find_platform_user(session, email)
     if existing:
-        raise HTTPException(status_code=409, detail="Email already registered")
+        field_errors.append(_field_error("email", "Este correo ya está registrado"))
 
     # Resolve country (ISO-2 preferred; fall back to display name → EC)
     country_code = (payload.country_code or "").upper().strip()
@@ -226,10 +298,66 @@ async def register(
         country_code = raw.upper() if len(raw) == 2 else "EC"
     country_row = await get_country(session, country_code)
     if not country_row or not country_row.is_active:
-        raise HTTPException(
-            status_code=400, detail=f"Country '{country_code}' is not available"
+        field_errors.append(
+            _field_error(
+                "country_code",
+                f"El país '{country_code}' no está disponible",
+            )
         )
+        _raise_register_field_errors(field_errors)
+
     country_label = country_row.name
+
+    einvoice_config = None
+    if country_code == "EC":
+        addr = (payload.legal_address or "").strip()
+        if len(addr) < 8:
+            field_errors.append(
+                _field_error(
+                    "legal_address",
+                    "Ingresa la dirección fiscal del establecimiento (SRI)",
+                )
+            )
+        else:
+            einvoice_config = datil_service.einvoice_config_from_registration(
+                company_name=payload.company_name.strip(),
+                legal_id=payload.legal_id.strip(),
+                org_type=payload.org_type,
+                country_code=country_code,
+                legal_name=payload.legal_name,
+                legal_address=addr,
+                establecimiento=payload.establecimiento,
+                punto_emision=payload.punto_emision,
+            )
+
+    legal_msg = _legal_id_format_error(payload.legal_id, payload.org_type, country_row)
+    if legal_msg:
+        field_errors.append(_field_error("legal_id", legal_msg))
+
+    desired_slug = (payload.slug or "").strip()
+    base_slug = (
+        normalize_slug(desired_slug)
+        if desired_slug
+        else normalize_slug(payload.company_name)
+    )
+    slug = None
+    if not base_slug:
+        field_errors.append(_field_error("slug", "La URL de tu página no es válida"))
+    elif not is_valid_slug(base_slug):
+        field_errors.append(
+            _field_error("slug", "La URL contiene caracteres no válidos")
+        )
+    else:
+        slug = await find_unique_slug_pg(base_slug, session, Organizer)
+        if desired_slug and slug != base_slug:
+            field_errors.append(
+                _field_error(
+                    "slug",
+                    f"Esta URL ya está en uso ('{base_slug}'). Prueba con: {slug}",
+                )
+            )
+
+    _raise_register_field_errors(field_errors)
 
     validate_compliance_payload(
         country_row,
@@ -238,47 +366,6 @@ async def register(
         uafe_declaration=payload.uafe_declaration,
         org_references=payload.org_references,
     )
-
-    einvoice_config = None
-    if country_code == "EC":
-        addr = (payload.legal_address or "").strip()
-        if len(addr) < 8:
-            raise HTTPException(
-                status_code=422,
-                detail="Dirección fiscal del establecimiento requerida para Ecuador",
-            )
-        einvoice_config = datil_service.einvoice_config_from_registration(
-            company_name=payload.company_name.strip(),
-            legal_id=payload.legal_id.strip(),
-            org_type=payload.org_type,
-            country_code=country_code,
-            legal_name=payload.legal_name,
-            legal_address=addr,
-            establecimiento=payload.establecimiento,
-            punto_emision=payload.punto_emision,
-        )
-
-    if country_row.legal_id_pattern:
-        if not re.match(country_row.legal_id_pattern, payload.legal_id.strip()):
-            label = country_row.legal_id_label or "legal_id"
-            raise HTTPException(400, f"Invalid {label} for {country_label}")
-
-    desired_slug = (payload.slug or "").strip()
-    base_slug = (
-        normalize_slug(desired_slug)
-        if desired_slug
-        else normalize_slug(payload.company_name)
-    )
-    if not base_slug:
-        raise HTTPException(status_code=400, detail="Invalid slug")
-    if not is_valid_slug(base_slug):
-        raise HTTPException(status_code=400, detail="Slug contains invalid characters")
-    slug = await find_unique_slug_pg(base_slug, session, Organizer)
-    if desired_slug and slug != base_slug:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Slug '{base_slug}' is taken. Suggestion: {slug}",
-        )
 
     now = datetime.now(timezone.utc)
     user_id = str(uuid.uuid4())

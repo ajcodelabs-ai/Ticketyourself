@@ -144,10 +144,6 @@ Se insertan al arrancar el backend (seeds idempotentes).
 | Preview venue      | [http://localhost:3000/o/demo-org/venues/teatro-demo/preview](http://localhost:3000/o/demo-org/venues/teatro-demo/preview)             |
 
 
-**Mobile** (escáner QR, opcional)
-
-Ver [mobile/](mobile/). Variable `EXPO_PUBLIC_BACKEND_URL=http://localhost:8000` (usa IP LAN en dispositivo físico).
-
 ---
 
 
@@ -280,8 +276,6 @@ echo "VITE_PUBLIC_DOMAIN=localhost" >> .env
 yarn start    # http://localhost:3000
 ```
 
-**Mobile** (opcional): `cd mobile && yarn install` — ver [mobile/](mobile/).
-
 Requisitos: Python 3.11+, Node 18+ / Yarn 1.x, PostgreSQL 14+.
 
 ---
@@ -299,7 +293,6 @@ Requisitos: Python 3.11+, Node 18+ / Yarn 1.x, PostgreSQL 14+.
 | ------------- | -------------------------------------------------- |
 | Backend       | Python 3.11 · FastAPI · SQLAlchemy async · Alembic |
 | Frontend      | React 19 · Vite · Tailwind · shadcn/ui             |
-| Mobile        | Expo 54 · React Native                             |
 | Base de datos | PostgreSQL 16                                      |
 | Pagos / email | Stripe · Resend                                    |
 | DevOps        | Docker Compose · Make                              |
@@ -312,7 +305,6 @@ Requisitos: Python 3.11+, Node 18+ / Yarn 1.x, PostgreSQL 14+.
 ```
 backend/                  API REST
 frontend/                 SPA (marketing, /app, /admin, /o/:slug)
-mobile/                   Escáner QR (Expo)
 docs/                     PRD, status, guías
 tools/                    Scripts — [tools/README.md](tools/README.md)
 docker-compose.yml        Desarrollo

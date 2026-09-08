@@ -1,6 +1,6 @@
 # Herramientas
 
-Scripts de utilidad para el repositorio. **No forman parte del runtime** de backend, frontend ni mobile.
+Scripts de utilidad para el repositorio. **No forman parte del runtime** de backend ni frontend.
 
 ```
 tools/
