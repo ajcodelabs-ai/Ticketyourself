@@ -79,7 +79,7 @@ services:
       NUVEI_ENV: ${NUVEI_ENV:-stg}
       BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-http://localhost:8000}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      EMAIL_FROM: ${EMAIL_FROM:-noreply@ticketyourself.com}
+      EMAIL_FROM: ${EMAIL_FROM:-onboarding@resend.dev}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
       DATIL_API_KEY: ${DATIL_API_KEY:-}

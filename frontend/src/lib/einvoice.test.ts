@@ -3,6 +3,7 @@ import {
     DOCUMENT_TYPES,
     documentTypeFieldLabel,
     formatEinvoiceError,
+    invoiceStillProcessing,
 } from "./einvoice";
 
 describe("DOCUMENT_TYPES", () => {
@@ -33,5 +34,15 @@ describe("formatEinvoiceError", () => {
 
     it("passes through a plain message", () => {
         expect(formatEinvoiceError("Clave inválida")).toBe("Clave inválida");
+    });
+});
+
+describe("invoiceStillProcessing", () => {
+    it("keeps polling while the SRI has only received the invoice", () => {
+        expect(invoiceStillProcessing({ estado: "ENVIADO" })).toBe(true);
+        expect(invoiceStillProcessing({ estado: "AUTORIZADO", ride_url: "https://app.datil.co/ver/x/pdf" })).toBe(
+            false,
+        );
+        expect(invoiceStillProcessing({ estado: "AUTORIZADO", ride_url: null, mock: false })).toBe(true);
     });
 });

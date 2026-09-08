@@ -2,7 +2,7 @@
  * /app/configuracion — tabs: plan, factura electrónica, perfil, seguridad.
  */
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
     Tabs,
@@ -37,8 +37,7 @@ import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatCents } from "@/lib/orders";
 import { IVA_PERCENT_OPTIONS } from "@/lib/einvoice";
-import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
-import { nuveiCheckoutFromApi, type NuveiCheckoutConfig } from "@/lib/nuvei";
+import { billingSuccessPath, saveBillingCheckout } from "@/lib/billingCheckout";
 
 export default function Configuracion() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -173,13 +172,13 @@ function ProfileTab() {
 }
 
 function PlanTab() {
+    const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const highlightCode = searchParams.get("upgrade");
     const [data, setData] = useState(null);
     const [plans, setPlans] = useState([]);
     const [loading, setLoading] = useState(true);
     const [payingCode, setPayingCode] = useState(null);
-    const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
 
     useEffect(() => {
         Promise.all([api.get("/dashboard/me"), api.get("/plans")])
@@ -199,12 +198,14 @@ function PlanTab() {
                 origin_url: window.location.origin,
                 payment_method: "nuvei",
             });
-            const nuvei = nuveiCheckoutFromApi(checkout);
-            if (nuvei) {
-                setNuveiCheckout(nuvei);
+            const sessionId = checkout?.session_id;
+            const intentId = checkout?.intent_id;
+            if (!sessionId && !intentId) {
+                toast.error("No se pudo iniciar el checkout");
                 return;
             }
-            toast.message(checkout?.message || "Registramos tu solicitud de cambio de plan.");
+            if (sessionId) saveBillingCheckout(sessionId, checkout);
+            navigate(billingSuccessPath({ sessionId, intentId }));
         } catch (e) {
             toast.error(formatApiError(e?.response?.data?.detail) || e.message);
         } finally {
@@ -272,26 +273,6 @@ function PlanTab() {
                 </div>
             </CardContent>
         </Card>
-
-        {nuveiCheckout && (
-            <Card data-testid="cfg-nuvei-checkout">
-                <CardHeader>
-                    <CardTitle className="text-lg">Pagar plan con Nuvei</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <NuveiCheckoutPanel
-                        config={nuveiCheckout}
-                        onPaid={async () => {
-                            setNuveiCheckout(null);
-                            toast.success("Pago confirmado");
-                            const dash = await api.get("/dashboard/me");
-                            setData(dash.data);
-                        }}
-                        onCancel={() => setNuveiCheckout(null)}
-                    />
-                </CardContent>
-            </Card>
-        )}
 
         {upgrades.length > 0 && (
             <Card data-testid="cfg-upgrade-plans">

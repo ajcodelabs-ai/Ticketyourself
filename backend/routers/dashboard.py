@@ -37,6 +37,18 @@ def _month_start() -> datetime:
     return n.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
+def _plan_public(row: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "code": row["code"],
+        "name": row["name"],
+        "price_cents": row["price_cents"],
+        "billing_period": row["billing_period"],
+        "features": row.get("features", []),
+    }
+
+
 @router.get("/me")
 async def my_dashboard(user=Depends(get_current_user)) -> Dict[str, Any]:
     if not is_active_organizer(user):
@@ -48,17 +60,28 @@ async def my_dashboard(user=Depends(get_current_user)) -> Dict[str, Any]:
         return {"organizer": None}
 
     # ── Plan info ─────────────────────────────────────────────────────────
+    # Assigned plan (plan_id) is what TYS bills. signup_plan_code is only the
+    # catalog the organizer picked at registration — used for dashboard copy.
     plan = None
     plan_row = None
-    if organizer.get("plan_id"):
-        async with AsyncSessionLocal() as pg:
+    signup_plan = None
+    async with AsyncSessionLocal() as pg:
+        if organizer.get("plan_id"):
             plan_result = await pg.execute(
                 select(SubscriptionPlan).where(
                     SubscriptionPlan.id == organizer["plan_id"]
                 )
             )
             plan_row = plan_result.scalar_one_or_none()
-        plan = row_to_dict(plan_row) if plan_row else None
+            plan = row_to_dict(plan_row) if plan_row else None
+        signup_code = organizer.get("signup_plan_code")
+        if signup_code:
+            signup_result = await pg.execute(
+                select(SubscriptionPlan).where(SubscriptionPlan.code == signup_code)
+            )
+            signup_row = signup_result.scalar_one_or_none()
+            if signup_row:
+                signup_plan = row_to_dict(signup_row)
 
     # ── This-month financials ─────────────────────────────────────────────
     month_start = _month_start()
@@ -185,20 +208,13 @@ async def my_dashboard(user=Depends(get_current_user)) -> Dict[str, Any]:
             "company_name": organizer["company_name"],
             "status": organizer["status"],
             "subscription_status": organizer.get("subscription_status"),
+            "plan_code": organizer.get("plan_code"),
+            "signup_plan_code": organizer.get("signup_plan_code"),
             "current_period_end": organizer.get("current_period_end"),
             "admin_comments": organizer.get("admin_comments", []),
         },
-        "plan": (
-            {
-                "code": plan["code"],
-                "name": plan["name"],
-                "price_cents": plan["price_cents"],
-                "billing_period": plan["billing_period"],
-                "features": plan.get("features", []),
-            }
-            if plan
-            else None
-        ),
+        "plan": _plan_public(plan),
+        "signup_plan": _plan_public(signup_plan),
         "stats": {
             "revenue_cents": month["revenue"] or 0,
             "fees_cents": month["fees"] or 0,

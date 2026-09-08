@@ -2,7 +2,7 @@
  * /app/dashboard — Phase 5 organizer home.
  * Pulls from /api/dashboard/me (single aggregated payload).
  */
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
     Loader2,
@@ -40,14 +40,7 @@ import { useDashboard } from "@/hooks/queries/useDashboard";
 import { publicMicrositeHost, publicMicrositeUrl } from "@/lib/config";
 import { formatEventDate, EVENT_STATUS_META } from "@/lib/events";
 import { formatCents } from "@/lib/orders";
-
-const SUB_STATUS_META = {
-    active: { label: "Activa", className: "bg-emerald-100 text-emerald-800" },
-    trialing: { label: "Trial", className: "bg-sky-100 text-sky-800" },
-    past_due: { label: "Pago atrasado", className: "bg-amber-100 text-amber-800" },
-    canceled: { label: "Cancelada", className: "bg-slate-100 text-slate-700" },
-    none: { label: "Sin plan", className: "bg-slate-100 text-slate-700" },
-};
+import { dashboardPlanView } from "@/lib/dashboardPlan";
 
 export default function DashboardHome() {
     const { data, isLoading, isError } = useDashboard();
@@ -70,8 +63,13 @@ export default function DashboardHome() {
         );
     }
 
-    const { organizer, plan, stats, next_event, upcoming_events, microsite, funnel } = data;
-    const subMeta = SUB_STATUS_META[organizer.subscription_status] || SUB_STATUS_META.none;
+    const { organizer, plan, signup_plan, stats, next_event, upcoming_events, microsite, funnel } = data;
+    const planView = dashboardPlanView({
+        accountStatus: organizer.status,
+        subscriptionStatus: organizer.subscription_status,
+        assignedPlan: plan,
+        signupPlan: signup_plan,
+    });
     const publicUrl = publicMicrositeUrl(organizer.slug);
 
     return (
@@ -104,25 +102,45 @@ export default function DashboardHome() {
                                     className="text-2xl font-semibold"
                                     data-testid="plan-name"
                                 >
-                                    {plan?.name || "Sin plan"}
+                                    {planView.name}
                                 </h2>
-                                <Badge className={subMeta.className}>{subMeta.label}</Badge>
+                                <Badge
+                                    className={planView.badge.className}
+                                    data-testid="plan-status-badge"
+                                >
+                                    {planView.badge.label}
+                                </Badge>
                             </div>
-                            {plan && (
+                            {planView.showPrice && planView.plan && (
                                 <p className="text-sm text-muted-foreground mt-1">
-                                    {formatCents(plan.price_cents)}
-                                    {plan.billing_period === "monthly" && " / mes"}
+                                    {formatCents(planView.plan.price_cents)}
+                                    {planView.plan.billing_period === "monthly" && " / mes"}
+                                </p>
+                            )}
+                            {planView.subtitle && (
+                                <p
+                                    className="text-sm text-muted-foreground mt-1 max-w-xl"
+                                    data-testid="plan-status-copy"
+                                >
+                                    {planView.subtitle}
                                 </p>
                             )}
                         </div>
-                        <div className="flex gap-2">
+                        {planView.canManage ? (
                             <Button variant="outline" asChild data-testid="plan-portal">
                                 <Link to="/app/configuracion">
                                     <CreditCard className="h-4 w-4 mr-1.5" />
                                     Gestionar plan
                                 </Link>
                             </Button>
-                        </div>
+                        ) : planView.activateHref ? (
+                            <Button variant="outline" asChild data-testid="plan-activate">
+                                <Link to={planView.activateHref}>
+                                    <CreditCard className="h-4 w-4 mr-1.5" />
+                                    Activar plan
+                                </Link>
+                            </Button>
+                        ) : null}
                     </div>
                 </div>
             </Card>

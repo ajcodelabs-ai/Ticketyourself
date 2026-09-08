@@ -32,6 +32,18 @@ export function invoiceStatusMeta(estado) {
     return EINVOICE_STATUS[estado] || { label: estado || "—", className: "bg-slate-100 text-slate-700" };
 }
 
+const INVOICE_DONE = new Set(["AUTORIZADO", "NO AUTORIZADO", "DEVUELTO", "ERROR"]);
+
+/** Keep polling OrderSuccess until SRI finishes or the RIDE URL appears. */
+export function invoiceStillProcessing(invoice) {
+    if (!invoice) return false;
+    if (!INVOICE_DONE.has(invoice.estado)) return true;
+    if (invoice.estado === "AUTORIZADO" && !invoice.ride_url && !invoice.mock) {
+        return true;
+    }
+    return false;
+}
+
 export function formatEinvoiceError(raw) {
     if (!raw) return "";
     const text = String(raw);

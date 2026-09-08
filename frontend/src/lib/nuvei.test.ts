@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     isApprovedNuveiResult,
+    isBillingNuveiCheckout,
     nuveiCheckoutFromApi,
     nuveiPaymentUrl,
 } from "./nuvei";
@@ -31,8 +32,12 @@ describe("nuveiCheckoutFromApi", () => {
             checkout_mode: "linktopay",
             payment_url: "https://test.paymentez.link/checkout/abc",
             reference: "abc",
+            intent_id: "intent-1",
+            client_unique_id: "bill_abc",
         });
         expect(nuveiPaymentUrl(config)).toBe("https://test.paymentez.link/checkout/abc");
+        expect(config?.intent_id).toBe("intent-1");
+        expect(isBillingNuveiCheckout(config)).toBe(true);
     });
 
     it("rejects payloads without a gateway reference", () => {

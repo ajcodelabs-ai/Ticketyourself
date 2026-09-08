@@ -608,3 +608,13 @@ class TestActivationFunnel:
             json={"token": token, "event_name": "link_clicked"},
         )
         assert r.status_code == 200, r.text
+
+
+def test_integrations_status(admin_token):
+    r = requests.get(
+        f"{API}/admin/integrations/status", headers=bearer(admin_token), timeout=10
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "configured" in body["datil"]
+    assert "configured" in body["verificante"]

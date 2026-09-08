@@ -23,7 +23,7 @@ from db_helpers import (
 )
 from orm_models import Organizer
 from security import assert_purchase_on_organizer, require_purchase_account
-from services import discount_service, nuvei_service, order_service
+from services import datil_service, discount_service, nuvei_service, order_service
 from services.ec_id import law_document_error
 from services.event_venue import resolve_event_venue
 from services.pdf_service import render_ticket_pdf
@@ -751,6 +751,7 @@ async def create_order(
                 first_name=first_name,
                 last_name=last_name,
                 custom_data=f"ticket:{order['id']}",
+                tax_percentage=datil_service.iva_percent(event=event),
                 **nuvei_service.checkout_return_urls(
                     success_path=order_path,
                     failure_path=f"{order_path}/cancelado",
@@ -848,12 +849,9 @@ async def get_order(
     event = await get_event_by_id(order["event_id"])
     organizer = await get_organizer_by_id(order["organizer_id"])
     microsite = await get_microsite_by_organizer(order["organizer_id"])
-    from services.datil_service import public_invoice_view
-    from services.einvoice_service import get_invoice_for_order
+    from services.einvoice_service import public_invoice_for_order
 
-    invoice = None
-    async with AsyncSessionLocal() as _inv:
-        invoice = public_invoice_view(await get_invoice_for_order(_inv, order["id"]))
+    invoice = await public_invoice_for_order(order["id"])
     public_order, payment_receipt = _public_order_fields(order)
     return {
         "order": public_order,
@@ -934,12 +932,9 @@ async def get_order_by_token(order_token: str):
         )
     tickets = [row_to_dict(t) for t in _t_rows.all()]
 
-    from services.datil_service import public_invoice_view
-    from services.einvoice_service import get_invoice_for_order
+    from services.einvoice_service import public_invoice_for_order
 
-    invoice = None
-    async with AsyncSessionLocal() as _inv:
-        invoice = public_invoice_view(await get_invoice_for_order(_inv, order["id"]))
+    invoice = await public_invoice_for_order(order["id"])
 
     public_order, payment_receipt = _public_order_fields(order)
     return {

@@ -20,6 +20,21 @@ def test_cents_to_amount():
     assert cents_to_amount(20000) == 200.0
 
 
+def test_vat_included_breakdown():
+    from services.nuvei_service import vat_included_breakdown
+
+    vat, taxable, pct = vat_included_breakdown(5000, 15)
+    assert pct == 15.0
+    assert vat == 6.52
+    assert taxable == 43.48
+    assert round(vat + taxable, 2) == 50.0
+
+    vat0, taxable0, pct0 = vat_included_breakdown(5000, 0)
+    assert vat0 == 0.0
+    assert taxable0 == 50.0
+    assert pct0 == 0.0
+
+
 def test_build_auth_token_shape():
     import base64
     import hashlib
@@ -231,9 +246,9 @@ def test_init_linktopay_payload(monkeypatch):
     }
     assert body["order"]["dev_reference"] == "TYS-000001"
     assert body["order"]["amount"] == 115.0
-    assert body["order"]["vat"] == 0
-    assert body["order"]["tax_percentage"] == 0
-    assert body["order"]["taxable_amount"] == 115.0
+    assert body["order"]["vat"] == 15.0
+    assert body["order"]["tax_percentage"] == 15.0
+    assert body["order"]["taxable_amount"] == 100.0
     assert body["order"]["currency"] == "USD"
     assert body["order"]["installments_type"] == 0
     assert body["configuration"]["partial_payment"] is False
@@ -272,6 +287,9 @@ def test_prepare_checkout_client_uses_init_reference(monkeypatch):
         calls.append(path)
         assert json_body["order"]["amount"] == 10.0
         assert json_body["order"]["dev_reference"] == "TYS-1"
+        assert json_body["order"]["vat"] == 1.30
+        assert json_body["order"]["tax_percentage"] == 15.0
+        assert json_body["order"]["taxable_amount"] == 8.70
         return {
             "reference": "12438255612471559230",
             "checkout_url": (
@@ -298,6 +316,7 @@ def test_prepare_checkout_client_uses_init_reference(monkeypatch):
     assert "payment_checkout_3.0.0" in result["checkout_js_url"]
     assert result["user_email"] == "a@b.com"
     assert result["amount"] == "10.00"
+    assert result["order_vat"] == "1.30"
     assert not result.get("payment_url")
     assert not result.get("client_app_key")
 
@@ -413,7 +432,7 @@ def test_prepare_checkout_client_falls_back_to_linktopay(monkeypatch):
 
 
 def test_split_pairs_client_for_ccapi_server_for_linktopay(monkeypatch):
-    """Dedicated Link to Pay SERVER must not sign Checkout v3 init_reference."""
+    """LINKTOPAY-only SERVER skips Checkout v3; CLIENT is unused for noccapi."""
     monkeypatch.setenv("NUVEI_CLIENT_APP_CODE", "TESTNUVEISTG-EC-CLIENT")
     monkeypatch.setenv("NUVEI_CLIENT_APP_KEY", "client-key")
     monkeypatch.setenv("NUVEI_SERVER_APP_CODE", "LINKTOPAY01-EC-SERVER")
@@ -458,11 +477,49 @@ def test_split_pairs_client_for_ccapi_server_for_linktopay(monkeypatch):
         success_url="http://localhost:3000/ok",
         failure_url="http://localhost:3000/fail",
     )
-    assert pairs[0][0] == "v2/transaction/init_reference/"
-    assert pairs[0][1] == ("TESTNUVEISTG-EC-CLIENT", "client-key")
-    assert "linktopay" in pairs[1][0]
-    assert pairs[1][1] == ("LINKTOPAY01-EC-SERVER", "server-key")
+    assert len(pairs) == 1
+    assert "linktopay" in pairs[0][0]
+    assert pairs[0][1] == ("LINKTOPAY01-EC-SERVER", "server-key")
     assert result["checkout_mode"] == "linktopay"
+
+
+def test_server_pair_used_for_checkout_v3_and_linktopay(monkeypatch):
+    """…-EC-SERVER signs Checkout v3; CLIENT is the JS pair, not Auth-Token."""
+    monkeypatch.setenv("NUVEI_CLIENT_APP_CODE", "TICKETSTG-EC-CLIENT")
+    monkeypatch.setenv("NUVEI_CLIENT_APP_KEY", "client-key")
+    monkeypatch.setenv("NUVEI_SERVER_APP_CODE", "TICKETSTG-EC-SERVER")
+    monkeypatch.setenv("NUVEI_SERVER_APP_KEY", "server-key")
+    pairs: list[tuple[str, tuple[str, str] | None]] = []
+
+    def fake_request(_method, path, *, json_body=None, base=None, auth_pair=None):
+        pairs.append((path, auth_pair))
+        return {
+            "reference": "v3-ref",
+            "checkout_url": (
+                "https://ccapi-stg.paymentez.com/v2/transaction/checkout"
+                "?reference=v3-ref"
+            ),
+        }
+
+    monkeypatch.setattr("services.nuvei_service._request", fake_request)
+    from services.nuvei_service import _ccapi_pair, _linktopay_pair, prepare_checkout
+
+    assert _ccapi_pair() == ("TICKETSTG-EC-SERVER", "server-key")
+    assert _linktopay_pair() == ("TICKETSTG-EC-SERVER", "server-key")
+
+    result = prepare_checkout(
+        amount_cents=1000,
+        client_unique_id="TYS-1",
+        email="a@b.com",
+        first_name="A",
+        last_name="B",
+    )
+    assert pairs == [
+        ("v2/transaction/init_reference/", ("TICKETSTG-EC-SERVER", "server-key"))
+    ]
+    assert result["checkout_mode"] == "reference"
+    assert result["reference"] == "v3-ref"
+    assert "payment_checkout_3.0.0" in result["checkout_js_url"]
 
 
 def test_build_auth_token_defaults_to_client_env(monkeypatch):

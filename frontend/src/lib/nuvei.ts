@@ -30,6 +30,7 @@ export type NuveiCheckoutConfig = {
     client_app_code?: string;
     client_app_key?: string;
     client_unique_id?: string;
+    intent_id?: string;
     amount?: string | number;
     currency?: string;
     user_id?: string;
@@ -48,6 +49,14 @@ export const CHECKOUT_JS_REFERENCE =
 const JQUERY_JS = "https://code.jquery.com/jquery-3.5.0.min.js";
 
 const checkoutLoadingByUrl = new Map<string, Promise<void>>();
+
+export function isBillingNuveiCheckout(
+    config: NuveiCheckoutConfig | null | undefined,
+): boolean {
+    if (!config) return false;
+    if (config.intent_id) return true;
+    return String(config.client_unique_id || "").startsWith("bill_");
+}
 
 export function nuveiPaymentUrl(config: NuveiCheckoutConfig | null | undefined): string {
     if (!config) return "";
@@ -210,6 +219,7 @@ export function nuveiCheckoutFromApi(
         client_unique_id: String(
             data.client_unique_id || data.order_number || data.session_id || "",
         ),
+        intent_id: data.intent_id ? String(data.intent_id) : undefined,
         amount: data.amount as string | number | undefined,
         currency: data.currency as string | undefined,
         user_id: data.user_id as string | undefined,

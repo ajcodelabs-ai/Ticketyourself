@@ -347,6 +347,7 @@ async def organizers_rich(
     )
     plans = [{"id": r.id, "code": r.code, "name": r.name} for r in plans_result.all()]
     plan_by_id = {p["id"]: p for p in plans}
+    plan_by_code = {p["code"]: p for p in plans}
     plan_id_by_code = {p["code"]: p["id"] for p in plans}
 
     stmt = select(Organizer)
@@ -412,6 +413,8 @@ async def organizers_rich(
     for o in organizers:
         rev = rev_map.get(o["id"], {})
         plan = plan_by_id.get(o.get("plan_id"))
+        signup_code = o.get("signup_plan_code")
+        signup_plan = plan_by_code.get(signup_code)
         n_events = evt_map.get(o["id"], 0)
         if activity:
             if activity == "none" and n_events != 0:
@@ -432,6 +435,10 @@ async def organizers_rich(
                 "subscription_status": o.get("subscription_status"),
                 "plan_code": plan["code"] if plan else None,
                 "plan_name": plan["name"] if plan else None,
+                "signup_plan_code": signup_code,
+                "signup_plan_name": (
+                    signup_plan["name"] if signup_plan else signup_code
+                ),
                 "created_at": o.get("created_at"),
                 "revenue": rev.get("revenue", 0),
                 "tickets_emitted": rev.get("tickets", 0),

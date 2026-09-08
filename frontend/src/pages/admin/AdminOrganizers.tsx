@@ -22,6 +22,7 @@ import {
     CheckCircle2,
     XCircle,
 } from "lucide-react";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,6 +61,13 @@ import {
     needsApproveConfirm,
     verificanteRiskMeta,
 } from "@/lib/verificante";
+import {
+    ORG_STATUS_STYLE,
+    SUBSCRIPTION_STATUS_STYLE,
+    orgStatusLabel,
+    sortColumnLabel,
+    subscriptionStatusLabel,
+} from "@/lib/organizerAdminLabels";
 
 const STATUSES = [
     { value: "__all", label: "Todos los estados" },
@@ -72,9 +80,9 @@ const STATUSES = [
 const SUB_STATUSES = [
     { value: "__all", label: "Todas las suscripciones" },
     { value: "active", label: "Activa" },
-    { value: "trialing", label: "Trial" },
-    { value: "past_due", label: "Past due" },
-    { value: "canceled", label: "Canceled" },
+    { value: "trialing", label: "Periodo de prueba" },
+    { value: "past_due", label: "Pago atrasado" },
+    { value: "canceled", label: "Cancelada" },
     { value: "none", label: "Sin suscripción" },
 ];
 
@@ -86,19 +94,8 @@ const ACTIVITIES = [
     { value: "10+", label: "10+ eventos" },
 ];
 
-const STATUS_STYLE = {
-    pending: "bg-amber-100 text-amber-800",
-    approved: "bg-emerald-100 text-emerald-800",
-    rejected: "bg-red-100 text-red-800",
-    suspended: "bg-slate-200 text-slate-700",
-};
-const SUB_STATUS_STYLE = {
-    active: "bg-emerald-100 text-emerald-800",
-    trialing: "bg-sky-100 text-sky-800",
-    past_due: "bg-amber-100 text-amber-900",
-    canceled: "bg-slate-100 text-slate-700",
-    none: "bg-slate-100 text-slate-600",
-};
+const STATUS_STYLE = ORG_STATUS_STYLE;
+const SUB_STATUS_STYLE = SUBSCRIPTION_STATUS_STYLE;
 
 function formatDate(iso) {
     if (!iso) return "—";
@@ -313,7 +310,7 @@ export default function AdminOrganizers() {
             },
             {
                 id: "company_name",
-                header: "Empresa",
+                header: "Organizador",
                 cell: ({ row }) => {
                     const o = row.original;
                     return (
@@ -344,14 +341,38 @@ export default function AdminOrganizers() {
             {
                 id: "plan",
                 header: "Plan",
-                cell: ({ row }) =>
-                    row.original.plan_name ? (
-                        <Badge variant="outline" className="text-xs">
-                            {row.original.plan_name}
-                        </Badge>
-                    ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                    ),
+                cell: ({ row }) => {
+                    const o = row.original;
+                    const assigned = o.plan_name;
+                    const chosen = o.signup_plan_name;
+                    if (assigned) {
+                        return (
+                            <div>
+                                <Badge variant="outline" className="text-xs">
+                                    {assigned}
+                                </Badge>
+                                {chosen && chosen !== assigned ? (
+                                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                                        Eligió {chosen}
+                                    </div>
+                                ) : null}
+                            </div>
+                        );
+                    }
+                    if (chosen) {
+                        return (
+                            <div>
+                                <Badge variant="outline" className="text-xs">
+                                    {chosen}
+                                </Badge>
+                                <div className="text-[10px] text-muted-foreground mt-0.5">
+                                    Al registrarse
+                                </div>
+                            </div>
+                        );
+                    }
+                    return <span className="text-xs text-muted-foreground">—</span>;
+                },
             },
             {
                 id: "subscription",
@@ -364,7 +385,7 @@ export default function AdminOrganizers() {
                             className={`text-xs ${SUB_STATUS_STYLE[sub] || ""}`}
                             data-testid={`org-substatus-${o.slug}`}
                         >
-                            {sub}
+                            {subscriptionStatusLabel(sub)}
                         </Badge>
                     );
                 },
@@ -375,7 +396,7 @@ export default function AdminOrganizers() {
                 cell: ({ row }) => (
                     <div className="flex flex-wrap items-center gap-1">
                         <Badge className={STATUS_STYLE[row.original.status] || ""}>
-                            {row.original.status}
+                            {orgStatusLabel(row.original.status)}
                         </Badge>
                         {row.original.verificante_status &&
                             row.original.verificante_status !== "skipped" && (
@@ -424,7 +445,7 @@ export default function AdminOrganizers() {
             },
             {
                 id: "last_login",
-                header: "Último login",
+                header: "Última visita",
                 cell: ({ row }) => formatLastLogin(row.original.last_login),
             },
             {
@@ -504,75 +525,95 @@ export default function AdminOrganizers() {
     };
 
     const colSpan = 12;
+    const pendingCount = items.filter((o) => o.status === "pending").length;
+    const sortLabel = sortColumnLabel(sort);
+    const directionLabel = direction === "asc" ? "ascendente" : "descendente";
 
     return (
-        <div data-testid="admin-organizers-page" className="space-y-5">
-            <header className="space-y-1">
-                <div className="text-sm text-muted-foreground">Admin</div>
-                <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
-                    Organizadores
-                </h1>
-                <p className="text-sm text-muted-foreground">
-                    {total} organizador(es) · ordenado por {sort} ({direction})
+        <div data-testid="admin-organizers-page" className="space-y-8">
+            <header className="space-y-2 max-w-2xl">
+                <Badge variant="secondary" className="text-orange-700 bg-orange-50 border-orange-100">
+                    Super admin
+                </Badge>
+                <h1 className="text-3xl font-semibold tracking-tight">Organizadores</h1>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                    {total} cuenta{total === 1 ? "" : "s"}
+                    {status === "__all" && pendingCount > 0
+                        ? ` · ${pendingCount} pendiente${pendingCount === 1 ? "" : "s"} de revisión`
+                        : ""}
+                    . Ordenado por {sortLabel} ({directionLabel}).
                 </p>
             </header>
 
-            <Card>
-                <CardContent className="py-4 flex flex-wrap gap-2 items-end">
-                    <div className="flex-1 min-w-[220px]">
+            <Card className="border-border/70 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+                <CardContent className="py-4 flex flex-wrap gap-3 items-end">
+                    <div className="flex-1 min-w-[220px] space-y-1.5">
+                        <Label htmlFor="admin-orgs-search" className="text-xs text-muted-foreground">
+                            Buscar
+                        </Label>
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                             <Input
+                                id="admin-orgs-search"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                placeholder="Buscar por nombre, email o slug…"
+                                placeholder="Nombre, email o slug…"
                                 className="pl-9"
                                 data-testid="admin-orgs-search"
                             />
                         </div>
                     </div>
-                    <Select value={status} onValueChange={setStatus}>
-                        <SelectTrigger className="w-44" data-testid="admin-orgs-status-filter">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {STATUSES.map((s) => (
-                                <SelectItem key={s.value} value={s.value}>
-                                    {s.label}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                    <Select value={subStatus} onValueChange={setSubStatus}>
-                        <SelectTrigger
-                            className="w-48"
-                            data-testid="admin-orgs-substatus-filter"
-                        >
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {SUB_STATUSES.map((s) => (
-                                <SelectItem key={s.value} value={s.value}>
-                                    {s.label}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                    <Select value={activity} onValueChange={setActivity}>
-                        <SelectTrigger
-                            className="w-44"
-                            data-testid="admin-orgs-activity-filter"
-                        >
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {ACTIVITIES.map((s) => (
-                                <SelectItem key={s.value} value={s.value}>
-                                    {s.label}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
+                    <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Estado de la cuenta</Label>
+                        <Select value={status} onValueChange={setStatus}>
+                            <SelectTrigger className="w-44" data-testid="admin-orgs-status-filter">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {STATUSES.map((s) => (
+                                    <SelectItem key={s.value} value={s.value}>
+                                        {s.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Suscripción</Label>
+                        <Select value={subStatus} onValueChange={setSubStatus}>
+                            <SelectTrigger
+                                className="w-48"
+                                data-testid="admin-orgs-substatus-filter"
+                            >
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {SUB_STATUSES.map((s) => (
+                                    <SelectItem key={s.value} value={s.value}>
+                                        {s.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Actividad</Label>
+                        <Select value={activity} onValueChange={setActivity}>
+                            <SelectTrigger
+                                className="w-44"
+                                data-testid="admin-orgs-activity-filter"
+                            >
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {ACTIVITIES.map((s) => (
+                                    <SelectItem key={s.value} value={s.value}>
+                                        {s.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
                 </CardContent>
             </Card>
 
@@ -625,7 +666,7 @@ export default function AdminOrganizers() {
                 </div>
             )}
 
-            <Card>
+            <Card className="border-border/70 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
                 <CardContent className="pt-4">
                     <div className="overflow-x-auto">
                         <Table data-testid="admin-organizers-table">
@@ -639,7 +680,7 @@ export default function AdminOrganizers() {
                                         onClick={toggleSort}
                                         icon={sortIcon}
                                     >
-                                        Empresa
+                                        Organizador
                                     </SortHeader>
                                     <SortHeader
                                         col="email"
@@ -690,7 +731,7 @@ export default function AdminOrganizers() {
                                         onClick={toggleSort}
                                         icon={sortIcon}
                                     >
-                                        Último login
+                                        Última visita
                                     </SortHeader>
                                     <SortHeader
                                         col="created_at"

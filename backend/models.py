@@ -314,6 +314,7 @@ class OrganizerDocumentOut(TimestampedModel):
     status: str = "pending"
     review_comment: Optional[str] = None
     reviewed_at: Optional[datetime] = None
+    is_demo: bool = False
 
 
 class DocumentReviewIn(BaseModel):
@@ -489,6 +490,18 @@ class BillingIntentOut(TimestampedModel):
     status: str
     created_at: datetime
     completed_at: Optional[datetime] = None
+
+
+class BillingIntentStatusOut(BillingIntentOut):
+    """Billing intent plus the plan/org fields the processing page needs."""
+
+    plan_name: Optional[str] = None
+    price_cents: Optional[int] = None
+    billing_period: Optional[str] = None
+    currency: Optional[str] = "USD"
+    company_name: Optional[str] = None
+    email: Optional[str] = None
+    subscription_status: Optional[str] = None
 
 
 class ConfirmPlanPaymentBody(BaseModel):

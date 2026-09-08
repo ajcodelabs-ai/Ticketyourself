@@ -6,8 +6,10 @@ https://developers.paymentez.com/api/#webhook
 
 Onboarding may send one pair or two:
 
-- …-EC-CLIENT → ccapi Checkout v3 (`init_reference`) and the JS SDK.
-- …-EC-SERVER / LINKTOPAY… → noccapi Link to Pay (`init_order`).
+- …-EC-CLIENT → JS SDK (Checkout in the browser).
+- …-EC-SERVER → Auth-Token for Checkout v3 (`init_reference` on ccapi) **and**
+  Link to Pay (`init_order` on noccapi), plus refund / GET / webhook.
+- LINKTOPAY… → noccapi only; skip `init_reference` (that app is not Checkout v3).
 
 If only CLIENT exists, that pair signs both APIs. Refund, GET transaction and
 webhook stoken try every configured pair (the charge may belong to either app).
@@ -171,6 +173,11 @@ def _looks_like_server_app(code: str) -> bool:
     return "SERVER" in upper or "LINKTOPAY" in upper
 
 
+def _is_linktopay_only_app(code: str) -> bool:
+    """True for apps provisioned only for noccapi (name contains LINKTOPAY)."""
+    return "LINKTOPAY" in (code or "").upper()
+
+
 def _effective_client_code() -> str:
     explicit = _client_app_code()
     if explicit:
@@ -248,7 +255,15 @@ def _auth_pair() -> tuple[str, str]:
 
 
 def _ccapi_pair() -> tuple[str, str]:
-    """Auth-Token for ccapi (Checkout v3 init_reference). Prefer CLIENT."""
+    """Auth-Token for ccapi Checkout v3. Prefer …-EC-SERVER (not LINKTOPAY-only)."""
+    server_code, server_key = _server_app_code(), _server_app_key()
+    if (
+        server_code
+        and server_key
+        and _looks_like_server_app(server_code)
+        and not _is_linktopay_only_app(server_code)
+    ):
+        return server_code, server_key
     code, key = _effective_client_code(), _effective_client_key()
     if code and key:
         return code, key
@@ -268,6 +283,16 @@ def _linktopay_pair() -> tuple[str, str]:
     ):
         return server_code, server_key
     return _auth_pair()
+
+
+def _has_dedicated_linktopay() -> bool:
+    """True when NUVEI_SERVER_* is a Link-to-Pay-only app (name has LINKTOPAY).
+
+    Those apps are not Checkout v3. A generic …-EC-SERVER pair is used for
+    both init_reference and Link to Pay.
+    """
+    code, key = _server_app_code(), _server_app_key()
+    return bool(code and key and _is_linktopay_only_app(code))
 
 
 def build_auth_token(
@@ -300,6 +325,44 @@ def build_auth_token(
 def cents_to_amount(cents: int) -> float:
     """Paymentez amounts are decimal currency units (e.g. 1250 → 12.50)."""
     return round(int(cents) / 100, 2)
+
+
+def default_tax_percent() -> float:
+    """Ecuador IVA for Nuvei. Merchant apps reject vat=0 when tax_percentage > 0."""
+    raw = (
+        os.environ.get("NUVEI_TAX_PERCENT")
+        or os.environ.get("DATIL_IVA_PERCENT")
+        or "15"
+    ).strip()
+    try:
+        pct = float(raw)
+    except (TypeError, ValueError):
+        pct = 15.0
+    if pct < 0:
+        return 15.0
+    return pct
+
+
+def vat_included_breakdown(
+    amount_cents: int, tax_percent: float | int | None = None
+) -> tuple[float, float, float]:
+    """Split an IVA-included total into vat + taxable_amount.
+
+    TYS prices are tax-included. Nuvei Ecuador: if tax_percentage > 0, vat
+    must be > 0 (process_checkout OperationNotAllowedError otherwise).
+    Returns (vat, taxable_amount, tax_percent) in currency units.
+    """
+    amount = cents_to_amount(amount_cents)
+    pct = float(tax_percent) if tax_percent is not None else default_tax_percent()
+    if pct <= 0 or amount_cents <= 0:
+        return 0.0, amount, 0.0
+    vat_cents = int(round(int(amount_cents) * pct / (100.0 + pct)))
+    if vat_cents < 1:
+        vat_cents = 1
+    if vat_cents >= int(amount_cents) and amount_cents > 1:
+        vat_cents = int(amount_cents) - 1
+    taxable_cents = int(amount_cents) - vat_cents
+    return cents_to_amount(vat_cents), cents_to_amount(taxable_cents), pct
 
 
 def amount_matches(
@@ -510,8 +573,8 @@ def init_linktopay(
     failure_url: str,
     pending_url: Optional[str] = None,
     review_url: Optional[str] = None,
-    vat: float = 0,
-    tax_percentage: float = 0,
+    vat: Optional[float] = None,
+    tax_percentage: Optional[float] = None,
     taxable_amount: Optional[float] = None,
     installments_type: int = 0,
     expiration_time: int = LINKTOPAY_EXPIRATION_SECONDS,
@@ -524,7 +587,11 @@ def init_linktopay(
     """
     amount = cents_to_amount(amount_cents)
     currency = (currency or "USD").upper()
-    taxable = float(taxable_amount) if taxable_amount is not None else amount
+    vat_amt, taxable_default, pct = vat_included_breakdown(
+        amount_cents, tax_percentage
+    )
+    vat_amt = float(vat) if vat is not None else vat_amt
+    taxable = float(taxable_amount) if taxable_amount is not None else taxable_default
     success = _absolute_url(success_url)
     failure = _absolute_url(failure_url)
     pending = _absolute_url(pending_url or success_url)
@@ -545,8 +612,8 @@ def init_linktopay(
             "dev_reference": str(dev_reference)[:100],
             "description": (description or "Ticket Yourself")[:250],
             "amount": amount,
-            "vat": float(vat),
-            "tax_percentage": float(tax_percentage),
+            "vat": vat_amt,
+            "tax_percentage": pct,
             "taxable_amount": taxable,
             "installments_type": int(installments_type),
             "currency": currency,
@@ -600,6 +667,7 @@ def init_linktopay(
         "js_credentials": "none",
         "merchant_id": "",
         "merchant_site_id": "",
+        "order_vat": amount_to_str(vat_amt),
         "raw": data,
     }
 
@@ -612,7 +680,9 @@ def init_reference(
     description: str,
     user_id: str,
     email: str,
-    vat: float = 0,
+    vat: Optional[float] = None,
+    tax_percentage: Optional[float] = None,
+    taxable_amount: Optional[float] = None,
     locale: str = "es",
     installments_type: int = 0,
 ) -> dict[str, Any]:
@@ -622,13 +692,20 @@ def init_reference(
     """
     amount = cents_to_amount(amount_cents)
     currency = (currency or "USD").upper()
+    vat_amt, taxable_default, pct = vat_included_breakdown(
+        amount_cents, tax_percentage
+    )
+    vat_amt = float(vat) if vat is not None else vat_amt
+    taxable = float(taxable_amount) if taxable_amount is not None else taxable_default
     body: dict[str, Any] = {
         "locale": locale or "es",
         "origin": "CheckoutJs",
         "order": {
             "amount": amount,
             "description": (description or "Ticket Yourself")[:250],
-            "vat": float(vat),
+            "vat": vat_amt,
+            "tax_percentage": pct,
+            "taxable_amount": taxable,
             "dev_reference": str(dev_reference)[:100],
             "installments_type": int(installments_type),
         },
@@ -667,6 +744,8 @@ def init_reference(
         "js_credentials": "none",
         "merchant_id": "",
         "merchant_site_id": "",
+        "order_vat": amount_to_str(vat_amt),
+        "order_installments_type": int(installments_type),
         "raw": data,
     }
 
@@ -704,6 +783,7 @@ def prepare_js_checkout(
         )
     amount = cents_to_amount(amount_cents)
     currency = (currency or "USD").upper()
+    vat_amt, _taxable, _pct = vat_included_breakdown(amount_cents)
     desc = (description or f"{first_name} {last_name}")[:250]
     ref = str(client_unique_id)
     return {
@@ -724,7 +804,7 @@ def prepare_js_checkout(
         "js_credentials": "client",
         "merchant_id": "",
         "merchant_site_id": "",
-        "order_vat": "0.00",
+        "order_vat": amount_to_str(vat_amt),
         "order_installments_type": 0,
         "user_first_name": first_name,
         "user_last_name": last_name,
@@ -752,11 +832,12 @@ def prepare_checkout(
     pending_url: Optional[str] = None,
     review_url: Optional[str] = None,
     expiration_time: int = LINKTOPAY_EXPIRATION_SECONDS,
+    tax_percentage: Optional[float] = None,
 ) -> dict[str, Any]:
-    """Checkout v3 first (CLIENT / init_reference); Link to Pay if that fails.
+    """Checkout v3 (`init_reference`) first; Link to Pay if that call fails.
 
-    Link to Pay signs with NUVEI_SERVER_* when that app is …-EC-SERVER or
-    LINKTOPAY…; otherwise the same CLIENT pair is reused.
+    A LINKTOPAY… SERVER app skips v3 (noccapi only). A generic …-EC-SERVER
+    pair signs both Checkout v3 and Link to Pay.
     """
     if not email:
         raise NuveiError("email required for Nuvei Ecuador checkout")
@@ -775,48 +856,60 @@ def prepare_checkout(
             "or NUVEI_SERVER_APP_CODE + NUVEI_SERVER_APP_KEY)"
         )
 
-    try:
-        result = init_reference(
+    def _open_linktopay() -> dict[str, Any]:
+        return init_linktopay(
             amount_cents=amount_cents,
             currency=currency,
             dev_reference=str(client_unique_id),
             description=description,
-            user_id=user_id[:64],
+            user_id=user_id,
             email=email,
-            vat=0,
-            locale="es",
+            first_name=first,
+            last_name=last,
+            success_url=success,
+            failure_url=failure,
+            pending_url=pending_url or success,
+            review_url=review_url or success,
+            tax_percentage=tax_percentage,
             installments_type=0,
+            expiration_time=expiration_time,
         )
-    except NuveiError as e:
-        logger.warning(
-            "init_reference failed; trying Link to Pay | %s", describe_error(e)
+
+    if _has_dedicated_linktopay():
+        logger.info(
+            "Using Link to Pay with app_code=%s (skipping Checkout v3 init_reference)",
+            _server_app_code(),
         )
+        result = _open_linktopay()
+    else:
         try:
-            result = init_linktopay(
+            result = init_reference(
                 amount_cents=amount_cents,
                 currency=currency,
                 dev_reference=str(client_unique_id),
                 description=description,
-                user_id=user_id,
+                user_id=user_id[:64],
                 email=email,
-                first_name=first,
-                last_name=last,
-                success_url=success,
-                failure_url=failure,
-                pending_url=pending_url or success,
-                review_url=review_url or success,
-                vat=0,
-                tax_percentage=0,
+                tax_percentage=tax_percentage,
+                locale="es",
                 installments_type=0,
-                expiration_time=expiration_time,
             )
-        except NuveiError as ltp_err:
-            logger.warning("Link to Pay failed | %s", describe_error(ltp_err))
-            raise NuveiError(
-                f"Checkout init_reference: {e}; Link to Pay: {ltp_err}",
-                err_code=e.err_code,
-                payload={"init_reference": e.payload, "linktopay": ltp_err.payload},
-            ) from ltp_err
+        except NuveiError as e:
+            logger.warning(
+                "init_reference failed; trying Link to Pay | %s", describe_error(e)
+            )
+            try:
+                result = _open_linktopay()
+            except NuveiError as ltp_err:
+                logger.warning("Link to Pay failed | %s", describe_error(ltp_err))
+                raise NuveiError(
+                    f"Checkout init_reference: {e}; Link to Pay: {ltp_err}",
+                    err_code=e.err_code,
+                    payload={
+                        "init_reference": e.payload,
+                        "linktopay": ltp_err.payload,
+                    },
+                ) from ltp_err
 
     result["user_id"] = user_id
     result["user_email"] = email

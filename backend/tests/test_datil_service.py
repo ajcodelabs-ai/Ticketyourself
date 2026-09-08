@@ -15,12 +15,18 @@ from services.datil_service import (  # noqa: E402
     friendly_datil_error,
     infer_id_type,
     is_configured,
+    is_real_datil_id,
     iva_percent,
+    merge_invoice_status,
     mock_enabled,
     mock_issue_response,
     payment_medio,
+    pick_estado,
+    public_invoice_view,
     record_datil_exchange,
+    ride_url_for,
     split_iva_inclusive,
+    xml_url_for,
 )
 
 
@@ -322,3 +328,56 @@ def test_record_datil_exchange_redacts_secrets(tmp_path):
     assert "X-Password" in dumped
     assert dumped.count("abc-secret-key") == 1  # idempotency only, not as header secret
     assert path.name.endswith("_TYS-000499_400.json")
+
+
+def test_ride_urls_follow_datil_docs():
+    datil_id = "be69b7bc64b643718a643caa9a8c3569"
+    assert is_real_datil_id(datil_id) is True
+    assert is_real_datil_id("mock_abc") is False
+    assert ride_url_for(datil_id) == f"https://app.datil.co/ver/{datil_id}/pdf"
+    assert xml_url_for(datil_id) == f"https://app.datil.co/ver/{datil_id}/xml"
+
+
+def test_merge_invoice_status_prefers_autorizado_and_fills_ride():
+    merged = merge_invoice_status(
+        {"id": "abc123", "estado": "ENVIADO"},
+        {
+            "estado": "AUTORIZADO",
+            "url_formato_impresion": "https://app.datil.co/ver/abc123/pdf",
+        },
+    )
+    assert merged["estado"] == "AUTORIZADO"
+    assert merged["url_formato_impresion"].endswith("/ver/abc123/pdf")
+
+
+def test_pick_estado_ranks_sri_phases():
+    assert pick_estado("ENVIADO", "AUTORIZADO") == "AUTORIZADO"
+    assert pick_estado("RECIBIDO", "ENVIADO") == "RECIBIDO"
+    assert pick_estado(None, "ENVIADO") == "ENVIADO"
+
+
+def test_public_invoice_view_fills_missing_ride_from_datil_id():
+    view = public_invoice_view(
+        {
+            "id": "inv-1",
+            "datil_id": "deadbeefcafebabe",
+            "estado": "ENVIADO",
+            "ride_url": None,
+            "xml_url": None,
+        }
+    )
+    assert view["ride_url"] == "https://app.datil.co/ver/deadbeefcafebabe/pdf"
+    assert view["xml_url"] == "https://app.datil.co/ver/deadbeefcafebabe/xml"
+
+
+def test_public_invoice_view_skips_mock_ids():
+    view = public_invoice_view(
+        {
+            "id": "inv-2",
+            "datil_id": "mock_local",
+            "estado": "AUTORIZADO",
+            "ride_url": None,
+        }
+    )
+    assert view["ride_url"] is None
+    assert view["mock"] is True

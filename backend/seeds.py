@@ -261,6 +261,7 @@ DEMO_ORGANIZERS = [
         "country": "Ecuador",
         "status": "pending",
         "plan_code": None,
+        "signup_plan_code": "basico",
         "subscription_status": "none",
         "approval_comment": None,
         "documents": [
@@ -722,6 +723,7 @@ async def _seed_demo_organizers() -> None:
                 einvoice_config=_demo_einvoice_config(od),
                 plan_id=plan_id,
                 plan_code=od["plan_code"],
+                signup_plan_code=od.get("signup_plan_code"),
                 subscription_status=od["subscription_status"],
                 created_at=now,
                 approved_at=now if od["status"] == "approved" else None,
@@ -834,6 +836,7 @@ async def _reset_demo_organizers() -> None:
             org_row.status = od["status"]
             org_row.rejection_reason = od.get("rejection_reason")
             org_row.plan_id = plan_id
+            org_row.signup_plan_code = od.get("signup_plan_code")
             org_row.subscription_status = od["subscription_status"]
             org_row.approved_at = now if approved else None
             org_row.approved_by = "system" if approved else None
