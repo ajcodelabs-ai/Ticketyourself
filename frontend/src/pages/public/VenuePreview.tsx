@@ -11,6 +11,7 @@ import EditorCanvas from "@/components/venues/EditorCanvas";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { venuesApi, computeCapacity } from "@/lib/venues";
+import { assetUrl } from "@/lib/microsite";
 
 export default function VenuePreview() {
     const { venueSlug } = useParams();
@@ -93,6 +94,20 @@ export default function VenuePreview() {
                 </Card>
 
                 {/* Localidades/precios viven en el evento, no en el mapa maestro. */}
+
+                {venue.map_image_url && (
+                    <Card>
+                        <CardContent className="pt-4 space-y-2">
+                            <p className="text-sm font-medium">Mapa alternativo</p>
+                            <img
+                                src={assetUrl(venue.map_image_url)}
+                                alt={`Mapa alternativo de ${venue.name}`}
+                                className="w-full rounded-lg border object-contain max-h-[620px]"
+                                data-testid="venue-map-image-public"
+                            />
+                        </CardContent>
+                    </Card>
+                )}
 
                 {venue.description && (
                     <Card>

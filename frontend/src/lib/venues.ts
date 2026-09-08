@@ -285,6 +285,12 @@ export const venuesApi = {
     archive: (id) => api.post(`/venues/me/${id}/archive`).then((r) => r.data),
     lockStatus: (id) => api.get(`/venues/me/${id}/lock-status`).then((r) => r.data),
     listTemplates: () => api.get("/venues/me/templates").then((r) => r.data),
+    uploadMapImage: (id, file: File) => {
+        const fd = new FormData();
+        fd.append("file", file);
+        return api.post(`/venues/me/${id}/map-image`, fd).then((r) => r.data);
+    },
+    removeMapImage: (id) => api.delete(`/venues/me/${id}/map-image`),
     fromTemplate: (templateId, { name }: { name?: string } = {}) =>
         api
             .post(`/venues/me/from-template/${templateId}`, name ? { name } : {})

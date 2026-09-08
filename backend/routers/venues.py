@@ -12,11 +12,14 @@ Phase 6b will add: curved rows, tables, individual seats, advanced multi-select.
 """
 
 import logging
+import mimetypes
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,12 +29,19 @@ from database import get_db
 from db_helpers import get_organizer_by_id, get_organizer_by_slug, row_to_dict
 from orm_models import Event, Organizer, SubscriptionPlan, Venue
 from security import get_current_user, is_active_organizer
+from services.path_safety import resolve_path_under
 from services.plan_features import get_plan_features_async
 from slugs import normalize_slug
 
 logger = logging.getLogger("tys.venues")
 router = APIRouter(prefix="/api/venues/me", tags=["venues"])
 public_router = APIRouter(prefix="/api/public/venues", tags=["venues-public"])
+asset_router = APIRouter(prefix="/api/venues/assets", tags=["venues-assets"])
+
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "event_assets"
+ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+MAX_MAP_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
+ALLOWED_MAP_IMAGE_MIME = {"image/jpeg", "image/png"}
 
 
 def _now() -> datetime:
@@ -318,6 +328,16 @@ async def _get_active_events_using(venue_id: str) -> List[Dict[str, Any]]:
         ]
 
 
+def _venue_out(row: Venue) -> Dict[str, Any]:
+    v = row_to_dict(row)
+    has_image = bool(v.pop("map_image_path", None))
+    v.pop("map_image_mime", None)
+    v["map_image_url"] = (
+        f"/api/venues/assets/{v['id']}/map-image" if has_image else None
+    )
+    return v
+
+
 async def _ensure_organizer_owns(
     organizer_id: str, venue_id: str, session: AsyncSession
 ) -> dict:
@@ -325,7 +345,7 @@ async def _ensure_organizer_owns(
     row = result.scalar_one_or_none()
     if not row or row.organizer_id != organizer_id or row.is_template:
         raise HTTPException(404, "Venue not found")
-    return row_to_dict(row)
+    return _venue_out(row)
 
 
 async def _ensure_organizer_owns_row(
@@ -419,7 +439,7 @@ async def public_venue(
     row = result.scalar_one_or_none()
     if not row:
         raise HTTPException(404, "Venue not found")
-    v = row_to_dict(row)
+    v = _venue_out(row)
     v["organizer"] = {"slug": org["slug"], "company_name": org["company_name"]}
     return v
 
@@ -443,7 +463,7 @@ async def list_venues(
         stmt = stmt.where(or_(Venue.name.ilike(like), Venue.slug.ilike(like)))
     stmt = stmt.order_by(Venue.created_at.desc())
     result = await session.execute(stmt)
-    items = [row_to_dict(r) for r in result.scalars().all()]
+    items = [_venue_out(r) for r in result.scalars().all()]
 
     # Enrich: # of events using each venue (PG)
     venue_ids = [v["id"] for v in items]
@@ -506,7 +526,7 @@ async def create_venue(
     )
     session.add(row)
     await session.flush()
-    return row_to_dict(row)
+    return _venue_out(row)
 
 
 @router.get("/templates")
@@ -518,7 +538,7 @@ async def list_platform_templates(
     result = await session.execute(
         select(Venue).where(Venue.is_template.is_(True)).order_by(Venue.name.asc())
     )
-    items = [row_to_dict(r) for r in result.scalars().all()]
+    items = [_venue_out(r) for r in result.scalars().all()]
     return {"items": items, "total": len(items)}
 
 
@@ -571,7 +591,7 @@ async def create_from_template(
     )
     session.add(row)
     await session.flush()
-    return row_to_dict(row)
+    return _venue_out(row)
 
 
 @router.get("/{venue_id}")
@@ -663,9 +683,98 @@ async def update_venue(
     flag_modified(row, "localities")
     await session.flush()
 
-    v = row_to_dict(row)
+    v = _venue_out(row)
     v["lock_status"] = {"locked": locked, "active_events": active}
     return v
+
+
+@router.post("/{venue_id}/map-image")
+async def upload_map_image(
+    venue_id: str,
+    file: UploadFile = File(...),
+    org: Dict[str, Any] = Depends(require_organizer),
+):
+    from database import AsyncSessionLocal
+
+    if file.content_type not in ALLOWED_MAP_IMAGE_MIME:
+        raise HTTPException(
+            415,
+            f"Tipo de archivo no permitido: {file.content_type or 'desconocido'}. "
+            "Aceptados: JPEG, PNG.",
+        )
+    content = await file.read()
+    if len(content) > MAX_MAP_IMAGE_BYTES:
+        raise HTTPException(413, "Archivo supera los 5MB")
+
+    ext = mimetypes.guess_extension(file.content_type) or ".jpg"
+    rel_path = f"{org['id']}/venues/{venue_id}/map_image{ext}"
+    abs_path = resolve_path_under(ASSETS_DIR, rel_path)
+    if abs_path is None:
+        raise HTTPException(403, "Forbidden")
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+
+    async with AsyncSessionLocal() as session:
+        row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
+        # A previous image under a different extension (jpg <-> png) is left on
+        # disk — harmless (never referenced by row.map_image_path once this
+        # commits) and only cleaned up below once the swap is durable.
+        stale = [p for p in abs_path.parent.glob("map_image.*") if p != abs_path]
+
+        abs_path.write_bytes(content)
+        try:
+            row.map_image_path = rel_path
+            row.map_image_mime = file.content_type
+            row.updated_at = _now()
+            await session.commit()
+        except Exception:
+            abs_path.unlink(missing_ok=True)
+            raise
+
+    for p in stale:
+        p.unlink(missing_ok=True)
+    return {"map_image_url": f"/api/venues/assets/{venue_id}/map-image"}
+
+
+@router.delete("/{venue_id}/map-image", status_code=204)
+async def delete_map_image(
+    venue_id: str,
+    org: Dict[str, Any] = Depends(require_organizer),
+):
+    from database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
+        old_path = row.map_image_path
+        row.map_image_path = None
+        row.map_image_mime = None
+        row.updated_at = _now()
+        await session.commit()
+
+    if old_path:
+        abs_path = resolve_path_under(ASSETS_DIR, old_path)
+        if abs_path is not None:
+            abs_path.unlink(missing_ok=True)
+    return None
+
+
+@asset_router.get("/{venue_id}/map-image")
+async def serve_map_image(venue_id: str, session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(Venue).where(Venue.id == venue_id))
+    row = result.scalar_one_or_none()
+    if not row or not row.map_image_path:
+        raise HTTPException(404, "Image not found")
+    abs_path = resolve_path_under(ASSETS_DIR, row.map_image_path)
+    if abs_path is None or not abs_path.exists():
+        raise HTTPException(404, "Image not found")
+    return FileResponse(
+        abs_path,
+        media_type=row.map_image_mime or "application/octet-stream",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 def _structural_diff(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> bool:
@@ -728,7 +837,12 @@ async def delete_venue(
     )
     if bound > 0:
         raise HTTPException(409, f"No se puede eliminar: {bound} evento(s) lo usan.")
+    map_image_path = row.map_image_path
     await session.delete(row)
+    if map_image_path:
+        abs_path = resolve_path_under(ASSETS_DIR, map_image_path)
+        if abs_path is not None:
+            abs_path.unlink(missing_ok=True)
     return None
 
 
@@ -771,7 +885,7 @@ async def duplicate_venue(
     )
     session.add(row)
     await session.flush()
-    return row_to_dict(row)
+    return _venue_out(row)
 
 
 @router.post("/{venue_id}/publish")
