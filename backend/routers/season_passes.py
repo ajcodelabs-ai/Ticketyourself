@@ -41,7 +41,7 @@ from security import (
     require_purchase_account,
     require_role,
 )
-from services import nuvei_service, order_service, season_pass_service
+from services import datil_service, nuvei_service, order_service, season_pass_service
 
 logger = logging.getLogger("tys.season_passes")
 router = APIRouter(tags=["season-passes"])
@@ -329,6 +329,7 @@ async def purchase_season_pass(
             first_name=first_name,
             last_name=last_name,
             custom_data=f"season_pass:{purchase['id']}",
+            tax_percentage=datil_service.iva_percent(event=event),
             **nuvei_service.checkout_return_urls(
                 success_path=redeem_path,
                 failure_path=redeem_path,

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import {
     extractNuveiTransactionId,
     isApprovedNuveiResult,
+    isBillingNuveiCheckout,
     nuveiPaymentUrl,
     openNuveiReferenceCheckout,
     type NuveiCheckoutConfig,
@@ -20,42 +21,148 @@ const NUVEI_PAID_RESULTS = new Set([
     "season_pass_paid",
 ]);
 
+export function SimulateBillingWebhookButton({
+    config,
+    onPaid,
+}: {
+    config: NuveiCheckoutConfig;
+    onPaid?: () => void;
+}) {
+    const [devEnabled, setDevEnabled] = useState(false);
+    const [simulating, setSimulating] = useState(false);
+
+    useEffect(() => {
+        api
+            .get("/_dev/enabled")
+            .then((r) => setDevEnabled(!!r.data?.enabled))
+            .catch(() => setDevEnabled(false));
+    }, []);
+
+    if (!devEnabled || !isBillingNuveiCheckout(config)) return null;
+
+    const simulate = async () => {
+        setSimulating(true);
+        try {
+            const { data } = await api.post("/_dev/simulate-billing-paid", {
+                intent_id: config.intent_id || undefined,
+                session_id: config.client_unique_id || undefined,
+            });
+            if (data?.result === "billing_completed" || data?.already_paid) {
+                toast.success("Webhook simulado. Plan activado.");
+                onPaid?.();
+                return;
+            }
+            toast.error("No se pudo simular el webhook de Nuvei");
+        } catch (err: any) {
+            toast.error(
+                formatApiError(err?.response?.data?.detail) ||
+                    err?.message ||
+                    "No se pudo simular el webhook",
+            );
+        } finally {
+            setSimulating(false);
+        }
+    };
+
+    return (
+        <div
+            className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2"
+            data-testid="simulate-billing-webhook"
+        >
+            <p className="text-xs text-amber-950">
+                En local el webhook de Nuvei suele no llegar. Esto ejecuta la misma
+                confirmación que Paymentez enviaría a TYS.
+            </p>
+            <Button
+                type="button"
+                variant="outline"
+                className="w-full border-amber-300 bg-amber-100/80 text-amber-950 hover:bg-amber-200/70"
+                disabled={simulating}
+                onClick={simulate}
+                data-testid="simulate-billing-webhook-btn"
+            >
+                {simulating ? (
+                    <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        Simulando webhook…
+                    </>
+                ) : (
+                    "Simular respuesta del webhook"
+                )}
+            </Button>
+        </div>
+    );
+}
+
 type Props = {
     config: NuveiCheckoutConfig;
     onPaid?: () => void;
     onCancel?: () => void;
+    hideSimulate?: boolean;
 };
 
-export default function NuveiCheckoutPanel({ config, onPaid, onCancel }: Props) {
+export default function NuveiCheckoutPanel({
+    config,
+    onPaid,
+    onCancel,
+    hideSimulate = false,
+}: Props) {
     const paymentUrl = nuveiPaymentUrl(config);
     if (config.checkout_mode === "linktopay" && paymentUrl) {
         return (
             <LinkToPayCheckout
                 config={config}
                 paymentUrl={paymentUrl}
+                onPaid={onPaid}
                 onCancel={onCancel}
+                hideSimulate={hideSimulate}
             />
         );
     }
-    return <JsCheckout config={config} onPaid={onPaid} onCancel={onCancel} />;
+    return (
+        <JsCheckout
+            config={config}
+            onPaid={onPaid}
+            onCancel={onCancel}
+            hideSimulate={hideSimulate}
+        />
+    );
 }
 
 function LinkToPayCheckout({
     config,
     paymentUrl,
+    onPaid,
     onCancel,
+    hideSimulate = false,
 }: {
     config: NuveiCheckoutConfig;
     paymentUrl: string;
+    onPaid?: () => void;
     onCancel?: () => void;
+    hideSimulate?: boolean;
 }) {
     const [paying, setPaying] = useState(false);
+    const [holdRedirect, setHoldRedirect] = useState(
+        isBillingNuveiCheckout(config),
+    );
 
     useEffect(() => {
-        if (!paymentUrl) return;
+        if (!isBillingNuveiCheckout(config)) {
+            setHoldRedirect(false);
+            return;
+        }
+        api
+            .get("/_dev/enabled")
+            .then((r) => setHoldRedirect(!!r.data?.enabled))
+            .catch(() => setHoldRedirect(false));
+    }, [config.intent_id, config.client_unique_id]);
+
+    useEffect(() => {
+        if (!paymentUrl || holdRedirect) return;
         setPaying(true);
         window.location.assign(paymentUrl);
-    }, [paymentUrl]);
+    }, [paymentUrl, holdRedirect]);
     return (
         <div className="space-y-3" data-testid="nuvei-checkout-panel">
             <div className="rounded-xl border bg-card p-4 space-y-3">
@@ -97,6 +204,7 @@ function LinkToPayCheckout({
                     </>
                 )}
             </div>
+            {!hideSimulate && <SimulateBillingWebhookButton config={config} onPaid={onPaid} />}
             {onCancel && (
                 <button
                     type="button"
@@ -115,10 +223,12 @@ function JsCheckout({
     config,
     onPaid,
     onCancel,
+    hideSimulate = false,
 }: {
     config: NuveiCheckoutConfig;
     onPaid?: () => void;
     onCancel?: () => void;
+    hideSimulate?: boolean;
 }) {
     const referenceOpenRef = useRef<(() => void) | null>(null);
     const referenceCloseRef = useRef<(() => void) | null>(null);
@@ -235,9 +345,18 @@ function JsCheckout({
         const hidden = (
             <div data-testid="nuvei-checkout-panel" className="hidden" />
         );
-        return typeof document === "undefined"
-            ? hidden
-            : createPortal(hidden, document.body);
+        const simulate = hideSimulate ? null : (
+            <div className="fixed bottom-4 right-4 z-[2147483001] max-w-sm">
+                <SimulateBillingWebhookButton config={config} onPaid={onPaid} />
+            </div>
+        );
+        if (typeof document === "undefined") return hidden;
+        return (
+            <>
+                {createPortal(hidden, document.body)}
+                {simulate ? createPortal(simulate, document.body) : null}
+            </>
+        );
     }
 
     const fallback = (
@@ -278,6 +397,7 @@ function JsCheckout({
                         </p>
                     </>
                 )}
+                {!hideSimulate && <SimulateBillingWebhookButton config={config} onPaid={onPaid} />}
                 {onCancel && (
                     <button
                         type="button"

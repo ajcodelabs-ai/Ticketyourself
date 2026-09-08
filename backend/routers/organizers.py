@@ -285,6 +285,37 @@ async def delete_my_doc(
     return None
 
 
+def _document_file_response(doc: OrganizerDocument) -> FileResponse:
+    if doc.is_demo or not doc.file_path:
+        raise HTTPException(404, "Este documento de ejemplo no tiene archivo para ver.")
+    if not os.path.exists(doc.file_path):
+        raise HTTPException(410, "El archivo ya no está en el servidor.")
+    return FileResponse(
+        doc.file_path,
+        media_type=doc.mime_type or "application/octet-stream",
+        filename=doc.original_filename or "document",
+    )
+
+
+@router.get("/me/documents/{doc_id}/download")
+async def download_my_doc(
+    doc_id: str,
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await _get_my_organizer(user, session)
+    doc_result = await session.execute(
+        select(OrganizerDocument).where(
+            OrganizerDocument.id == doc_id,
+            OrganizerDocument.organizer_id == row.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    return _document_file_response(doc)
+
+
 # ────────────────────────────────────────────────────────────────────
 # Admin access to any organizer's docs
 # ────────────────────────────────────────────────────────────────────
@@ -325,15 +356,7 @@ async def admin_download_doc(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(404, "Document not found")
-    if doc.is_demo or not doc.file_path:
-        raise HTTPException(404, "Demo document — file not on disk")
-    if not os.path.exists(doc.file_path):
-        raise HTTPException(410, "File missing from disk")
-    return FileResponse(
-        doc.file_path,
-        media_type=doc.mime_type or "application/octet-stream",
-        filename=doc.original_filename or "document",
-    )
+    return _document_file_response(doc)
 
 
 @admin_router.patch(
@@ -355,6 +378,11 @@ async def admin_review_doc(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(404, "Document not found")
+    if (doc.status or "pending") != "pending":
+        raise HTTPException(
+            409,
+            "Este archivo ya fue revisado. Si el organizador subió una corrección, revisá el archivo nuevo.",
+        )
     if payload.status in ("rejected", "needs_correction") and not (
         payload.comment and payload.comment.strip()
     ):

@@ -3,15 +3,21 @@
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import log_audit
 from database import get_db
 from db_helpers import row_to_dict
-from models import CheckoutRequest, CheckoutResponse, PortalResponse
+from models import (
+    BillingIntentStatusOut,
+    CheckoutRequest,
+    CheckoutResponse,
+    PortalResponse,
+)
 from orm_models import BillingIntent, Organizer, SubscriptionPlan
 from security import is_active_organizer, require_role
 
@@ -123,8 +129,8 @@ async def create_checkout_session(
                 custom_data=f"billing:{intent_id}",
                 expiration_time=36000,
                 **nuvei_service.checkout_return_urls(
-                    success_path=f"/app/billing/success?session_id={client_unique_id}",
-                    failure_path="/app/onboarding",
+                    success_path=f"/billing/success?session_id={client_unique_id}",
+                    failure_path="/onboarding",
                     origin=origin,
                 ),
             )
@@ -194,6 +200,23 @@ async def create_checkout_session(
         )
 
 
+async def _intent_status_payload(
+    session: AsyncSession, row: BillingIntent, org: Organizer
+) -> dict:
+    plan_row = await session.scalar(
+        select(SubscriptionPlan).where(SubscriptionPlan.code == row.plan_code)
+    )
+    data = row_to_dict(row)
+    data["plan_name"] = plan_row.name if plan_row else row.plan_code
+    data["price_cents"] = plan_row.price_cents if plan_row else None
+    data["billing_period"] = plan_row.billing_period if plan_row else None
+    data["currency"] = ((plan_row.currency if plan_row else None) or "USD").upper()
+    data["company_name"] = org.company_name
+    data["email"] = org.email
+    data["subscription_status"] = org.subscription_status
+    return data
+
+
 @router.get("/me/pending-intent")
 async def get_my_pending_intent(
     user=Depends(require_role("organizer")),
@@ -213,7 +236,29 @@ async def get_my_pending_intent(
     row = result.scalar_one_or_none()
     if not row:
         return None
-    return row_to_dict(row)
+    return await _intent_status_payload(session, row, org)
+
+
+@router.get("/me/intent", response_model=BillingIntentStatusOut)
+async def get_my_intent(
+    session_id: Optional[str] = Query(None),
+    intent_id: Optional[str] = Query(None),
+    user=Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_db),
+):
+    """Look up this organizer's billing intent (pending or already completed)."""
+    org = await _get_organizer_or_403(user, session)
+    query = select(BillingIntent).where(BillingIntent.organizer_id == org.id)
+    if intent_id:
+        query = query.where(BillingIntent.id == intent_id)
+    elif session_id:
+        query = query.where(BillingIntent.session_id == session_id)
+    else:
+        query = query.order_by(BillingIntent.created_at.desc())
+    row = (await session.execute(query.limit(1))).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Intent no encontrado")
+    return await _intent_status_payload(session, row, org)
 
 
 @router.post("/portal-session", response_model=PortalResponse)

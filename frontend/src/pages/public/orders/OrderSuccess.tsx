@@ -32,7 +32,7 @@ import api, { formatApiError } from "@/lib/api";
 import { formatEventDate } from "@/lib/events";
 import { previewMicrositePath } from "@/lib/config";
 import { formatCents, ticketPdfUrl, ORDER_STATUS_META } from "@/lib/orders";
-import { invoiceStatusMeta, formatEinvoiceError } from "@/lib/einvoice";
+import { invoiceStatusMeta, formatEinvoiceError, invoiceStillProcessing } from "@/lib/einvoice";
 
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLLS = 30; // ~60s total
@@ -74,8 +74,7 @@ export default function OrderSuccess() {
                     timer = setTimeout(() => setPolls((p) => p + 1), POLL_INTERVAL_MS);
                 } else if (
                     d.order.status === "paid" &&
-                    d.invoice &&
-                    !["AUTORIZADO", "NO AUTORIZADO", "DEVUELTO", "ERROR"].includes(d.invoice.estado) &&
+                    invoiceStillProcessing(d.invoice) &&
                     polls < MAX_POLLS
                 ) {
                     timer = setTimeout(() => setPolls((p) => p + 1), POLL_INTERVAL_MS);
@@ -295,7 +294,12 @@ export default function OrderSuccess() {
                             <div className="flex flex-wrap gap-2 pt-1">
                                 {invoice.ride_url && (
                                     <Button asChild variant="outline" size="sm">
-                                        <a href={invoice.ride_url} target="_blank" rel="noreferrer">
+                                        <a
+                                            href={invoice.ride_url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            data-testid="einvoice-ride-btn"
+                                        >
                                             <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
                                             RIDE (PDF)
                                         </a>

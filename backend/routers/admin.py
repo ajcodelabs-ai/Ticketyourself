@@ -767,3 +767,23 @@ async def update_platform_settings_admin(
         payload.model_dump(),
     )
     return PlatformSettingsOut(**(await get_platform_settings(session)))
+
+
+@router.get("/integrations/status")
+async def get_integrations_status():
+    """Read-only health of Ecuador integrations (keys live in env, not here)."""
+    from services import datil_service
+    from services import verificante_service as verificante
+
+    return {
+        "datil": {
+            "configured": datil_service.is_configured(),
+            "ambiente": datil_service.ambiente(),
+            "iva_percent": datil_service.iva_percent(),
+            "mock": datil_service.mock_enabled(),
+        },
+        "verificante": {
+            "configured": verificante.is_configured(),
+            "mock": verificante.mock_enabled(),
+        },
+    }

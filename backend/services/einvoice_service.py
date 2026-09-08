@@ -19,6 +19,7 @@ logger = logging.getLogger("tys.einvoice")
 TERMINAL_OK = {"AUTORIZADO"}
 TERMINAL_FAIL = {"NO AUTORIZADO", "DEVUELTO", "ERROR"}
 SKIP_RETRY = TERMINAL_OK | {"ENVIADO", "RECIBIDO"}
+NEEDS_STATUS_REFRESH = {"PENDING", "ENVIADO", "RECIBIDO"}
 
 
 def _now() -> datetime:
@@ -62,14 +63,20 @@ async def _allocate_sequential(session: AsyncSession, issuer_key: str) -> int:
 
 
 def _apply_datil_response(row: ElectronicInvoice, data: dict[str, Any]) -> None:
+    data = datil_service.merge_invoice_status(
+        data, {"id": data.get("id") or row.datil_id}
+    )
     row.datil_id = str(data.get("id") or row.datil_id or "")
     row.clave_acceso = data.get("clave_acceso") or row.clave_acceso
-    estado = (
-        data.get("estado")
-        or (data.get("autorizacion") or {}).get("estado")
-        or "ENVIADO"
+    row.estado = datil_service.pick_estado(
+        data.get("estado"),
+        (
+            (data.get("autorizacion") or {}).get("estado")
+            if isinstance(data.get("autorizacion"), dict)
+            else None
+        ),
+        row.estado,
     )
-    row.estado = str(estado).upper()
     row.datil_response = data
     row.ride_url = (
         data.get("url_formato_impresion") or data.get("ride_url") or row.ride_url
@@ -77,6 +84,9 @@ def _apply_datil_response(row: ElectronicInvoice, data: dict[str, Any]) -> None:
     row.xml_url = (
         data.get("url_documento_electronico") or data.get("xml_url") or row.xml_url
     )
+    if datil_service.is_real_datil_id(row.datil_id):
+        row.ride_url = row.ride_url or datil_service.ride_url_for(row.datil_id)
+        row.xml_url = row.xml_url or datil_service.xml_url_for(row.datil_id)
     est = (data.get("emisor") or {}).get("establecimiento") or {}
     codigo = est.get("codigo")
     punto = est.get("punto_emision")
@@ -94,6 +104,17 @@ def _apply_datil_response(row: ElectronicInvoice, data: dict[str, Any]) -> None:
     row.updated_at = _now()
 
 
+def invoice_needs_refresh(row: ElectronicInvoice) -> bool:
+    if not datil_service.is_real_datil_id(row.datil_id):
+        return False
+    estado = str(row.estado or "").upper()
+    if estado in NEEDS_STATUS_REFRESH:
+        return True
+    if estado in TERMINAL_OK and not row.ride_url:
+        return True
+    return False
+
+
 async def get_invoice_for_order(
     session: AsyncSession, order_id: str
 ) -> Optional[dict[str, Any]]:
@@ -101,6 +122,36 @@ async def get_invoice_for_order(
         select(ElectronicInvoice).where(ElectronicInvoice.order_id == order_id)
     )
     return row_to_dict(row) if row else None
+
+
+async def public_invoice_for_order(order_id: str) -> Optional[dict[str, Any]]:
+    """DB snapshot plus a Datil re-query while the SRI is still authorizing."""
+    from database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        row = await session.scalar(
+            select(ElectronicInvoice).where(ElectronicInvoice.order_id == order_id)
+        )
+        if not row:
+            return None
+        if invoice_needs_refresh(row):
+            try:
+                organizer = await get_organizer_by_id(row.organizer_id)
+                data = await datil_service.fetch_invoice_status(
+                    row.datil_id, organizer_config=_org_config(organizer)
+                )
+                _apply_datil_response(row, data)
+                await session.commit()
+                await session.refresh(row)
+            except Exception:  # noqa: BLE001
+                logger.exception("Datil refresh skipped for order %s", order_id)
+                await session.rollback()
+                row = await session.scalar(
+                    select(ElectronicInvoice).where(
+                        ElectronicInvoice.order_id == order_id
+                    )
+                )
+        return datil_service.public_invoice_view(row_to_dict(row) if row else None)
 
 
 async def list_invoices_for_orders(
@@ -129,7 +180,7 @@ async def refresh_invoice(invoice_id: str) -> dict[str, Any]:
         if not row.datil_id:
             return row_to_dict(row)
         organizer = await get_organizer_by_id(row.organizer_id)
-        data = await datil_service.get_invoice(
+        data = await datil_service.fetch_invoice_status(
             row.datil_id, organizer_config=_org_config(organizer)
         )
         _apply_datil_response(row, data)
@@ -171,7 +222,7 @@ async def issue_for_order(order: dict) -> Optional[dict[str, Any]]:
             return row_to_dict(existing)
         if existing and existing.datil_id and existing.estado not in TERMINAL_FAIL:
             try:
-                data = await datil_service.get_invoice(
+                data = await datil_service.fetch_invoice_status(
                     existing.datil_id, organizer_config=cfg
                 )
                 _apply_datil_response(existing, data)

@@ -21,8 +21,21 @@ import httpx
 logger = logging.getLogger("tys.datil")
 
 DEFAULT_API_BASE = "https://link.datil.co"
+# Public RIDE/XML viewer (https://datil.dev/#consulta-de-ride)
+DATIL_VIEW_BASE = "https://app.datil.co"
 CONSUMIDOR_FINAL_ID = "9999999999999"
 DATIL_LOG_DIR = Path(__file__).resolve().parent.parent / "datil_log"
+
+# Later Datil phases outrank the early POST /invoices/issue snapshot.
+_STATUS_RANK = {
+    "PENDING": 0,
+    "ENVIADO": 1,
+    "RECIBIDO": 2,
+    "AUTORIZADO": 5,
+    "NO AUTORIZADO": 4,
+    "DEVUELTO": 4,
+    "ERROR": 4,
+}
 
 # SRI IVA percentage → (codigo_porcentaje, tarifa)
 IVA_PERCENT_CODES: dict[int, tuple[str, float]] = {
@@ -733,9 +746,112 @@ async def get_invoice(
     return resp.json()
 
 
+def is_real_datil_id(datil_id: str | None) -> bool:
+    raw = str(datil_id or "").strip()
+    return bool(raw) and not raw.startswith("mock_")
+
+
+def ride_url_for(datil_id: str) -> str:
+    """Documented RIDE download: GET app.datil.co/ver/<id-doc>/pdf."""
+    return f"{DATIL_VIEW_BASE}/ver/{datil_id}/pdf"
+
+
+def xml_url_for(datil_id: str) -> str:
+    """Documented XML download: GET app.datil.co/ver/<id-doc>/xml."""
+    return f"{DATIL_VIEW_BASE}/ver/{datil_id}/xml"
+
+
+def pick_estado(*values: Any) -> str:
+    best = None
+    best_rank = -1
+    for value in values:
+        if not value:
+            continue
+        status = str(value).upper().strip()
+        rank = _STATUS_RANK.get(status, 1)
+        if rank > best_rank:
+            best, best_rank = status, rank
+    return best or "ENVIADO"
+
+
+def merge_invoice_status(*parts: dict[str, Any] | None) -> dict[str, Any]:
+    """Overlay Datil payloads; keep the furthest emission estado and any RIDE URLs."""
+    merged: dict[str, Any] = {}
+    estados: list[Any] = []
+    for part in parts:
+        if not part:
+            continue
+        merged.update(part)
+        estados.append(part.get("estado"))
+        auth = part.get("autorizacion")
+        if isinstance(auth, dict):
+            estados.append(auth.get("estado"))
+    if estados:
+        merged["estado"] = pick_estado(*estados)
+    datil_id = str(merged.get("id") or merged.get("datil_id") or "")
+    if is_real_datil_id(datil_id):
+        merged["url_formato_impresion"] = (
+            merged.get("url_formato_impresion")
+            or merged.get("ride_url")
+            or ride_url_for(datil_id)
+        )
+        merged["url_documento_electronico"] = (
+            merged.get("url_documento_electronico")
+            or merged.get("xml_url")
+            or xml_url_for(datil_id)
+        )
+    return merged
+
+
+async def get_edoc(
+    datil_id: str, *, organizer_config: dict | None = None
+) -> dict[str, Any]:
+    """GET /edocs/<id> — authorization + RIDE/XML URLs (datil.dev#consulta-de-autorizacion)."""
+    if mock_enabled() or str(datil_id or "").startswith("mock_"):
+        return {
+            "id": datil_id,
+            "estado": "AUTORIZADO",
+            "mock": True,
+        }
+    creds = resolve_credentials(organizer_config)
+    if not creds["api_key"]:
+        raise DatilError("Dátil no está configurado")
+    headers = {"Content-Type": "application/json", "X-Key": creds["api_key"]}
+    url = f"{creds['api_base']}/edocs/{datil_id}"
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.get(url, headers=headers)
+    if resp.status_code >= 400:
+        logger.warning("Datil edoc failed: %s %s", resp.status_code, resp.text[:400])
+        raise DatilError(
+            f"Dátil error {resp.status_code}",
+            status_code=resp.status_code,
+            body=resp.text[:1000],
+        )
+    return resp.json()
+
+
+async def fetch_invoice_status(
+    datil_id: str, *, organizer_config: dict | None = None
+) -> dict[str, Any]:
+    """Issue is async (3–5s). Re-query invoice + edoc so we pick up AUTORIZADO and RIDE."""
+    invoice = await get_invoice(datil_id, organizer_config=organizer_config)
+    edoc: dict[str, Any] = {}
+    try:
+        edoc = await get_edoc(datil_id, organizer_config=organizer_config)
+    except DatilError:
+        logger.info("Datil edoc not ready yet for %s", datil_id)
+    return merge_invoice_status(invoice, edoc, {"id": datil_id})
+
+
 def public_invoice_view(row: dict[str, Any] | None) -> Optional[dict[str, Any]]:
     if not row:
         return None
+    datil_id = row.get("datil_id")
+    ride = row.get("ride_url")
+    xml = row.get("xml_url")
+    if is_real_datil_id(datil_id):
+        ride = ride or ride_url_for(str(datil_id))
+        xml = xml or xml_url_for(str(datil_id))
     return {
         "id": row.get("id"),
         "order_id": row.get("order_id"),
@@ -744,8 +860,8 @@ def public_invoice_view(row: dict[str, Any] | None) -> Optional[dict[str, Any]]:
         "secuencial": row.get("secuencial"),
         "numero": row.get("numero"),
         "clave_acceso": row.get("clave_acceso"),
-        "ride_url": row.get("ride_url"),
-        "xml_url": row.get("xml_url"),
+        "ride_url": ride,
+        "xml_url": xml,
         "error_message": friendly_datil_error(row.get("error_message")),
         "issued_at": row.get("issued_at"),
         "authorized_at": row.get("authorized_at"),

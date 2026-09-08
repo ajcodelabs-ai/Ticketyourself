@@ -5,6 +5,7 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,6 +17,7 @@ from sqlalchemy.orm import selectinload
 from database import AsyncSessionLocal
 from db_helpers import get_organizer_by_id, organizer_row_to_dict, row_to_dict
 from orm_models import (
+    BillingIntent,
     Organizer,
     OrganizerAdminComment,
     SubscriptionPlan,
@@ -315,3 +317,73 @@ async def simulate_season_pass_paid(payload: SimulatePassPurchasePaidBody):
     finalized = await season_pass_service.finalize_paid_purchase(purchase=purchase)
     logger.info("Demo simulate-season-pass-paid order=%s", finalized["order_number"])
     return {"ok": True, "purchase": finalized}
+
+
+# ── Demo shortcut — simulate Nuvei webhook for organizer plan payment ────────
+class SimulateBillingPaidBody(BaseModel):
+    intent_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+@router.post("/simulate-billing-paid")
+async def simulate_billing_paid(
+    payload: SimulateBillingPaidBody,
+    user: dict = Depends(get_current_user),
+):
+    """Same completion path as the Nuvei webhook, without waiting for Paymentez.
+
+    Local/stg often never receive ``POST /api/nuvei/webhook``. This replays
+    ``finalize_billing_intent_from_nuvei`` for the organizer's own intent.
+    """
+    _dev_only()
+    if not (payload.intent_id or payload.session_id):
+        raise HTTPException(status_code=422, detail="intent_id o session_id requerido")
+
+    async with AsyncSessionLocal() as session:
+        query = select(BillingIntent)
+        if payload.intent_id:
+            query = query.where(BillingIntent.id == payload.intent_id)
+        else:
+            query = query.where(BillingIntent.session_id == payload.session_id)
+        intent_row = await session.scalar(query)
+        if not intent_row:
+            raise HTTPException(status_code=404, detail="Intent de pago no encontrado")
+        if user.get("role") != "super_admin" and not is_organizer_owner(
+            user, intent_row.organizer_id
+        ):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        intent_id = intent_row.id
+        plan_code = intent_row.plan_code
+        already = intent_row.status == "completed"
+        snapshot = SimpleNamespace(
+            id=intent_row.id,
+            organizer_id=intent_row.organizer_id,
+            plan_id=intent_row.plan_id,
+            plan_code=intent_row.plan_code,
+            session_id=intent_row.session_id,
+            status=intent_row.status,
+        )
+
+    if already:
+        return {
+            "ok": True,
+            "already_paid": True,
+            "result": "already_paid",
+            "plan_code": plan_code,
+        }
+
+    from routers.nuvei_webhook import finalize_billing_intent_from_nuvei
+
+    await finalize_billing_intent_from_nuvei(
+        intent=snapshot,
+        transaction_id="demo_sim",
+        authorization_code="SIMULATE",
+        source="simulate",
+    )
+    logger.info("Demo simulate-billing-paid intent=%s plan=%s", intent_id, plan_code)
+    return {
+        "ok": True,
+        "already_paid": False,
+        "result": "billing_completed",
+        "plan_code": plan_code,
+    }

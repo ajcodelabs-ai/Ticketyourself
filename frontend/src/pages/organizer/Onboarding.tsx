@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
     Select,
@@ -16,10 +22,17 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { PlanCard } from "@/components/PlansShowcase";
 import { SIGNUP_PLAN_KEY } from "@/pages/marketing/Register";
-import api, { formatApiError } from "@/lib/api";
+import api, { formatApiError, formatBlobApiError } from "@/lib/api";
 import { PAYMENT_METHOD_META } from "@/lib/orders";
-import NuveiCheckoutPanel from "@/components/orders/NuveiCheckoutPanel";
-import { nuveiCheckoutFromApi, type NuveiCheckoutConfig } from "@/lib/nuvei";
+import {
+    onboardingPayCta,
+    planChargeLabel,
+    resolveOnboardingPlan,
+} from "@/lib/onboardingPlan";
+import {
+    billingSuccessPath,
+    saveBillingCheckout,
+} from "@/lib/billingCheckout";
 import {
     Upload,
     CheckCircle2,
@@ -30,6 +43,8 @@ import {
     XCircle,
     ShieldAlert,
     RotateCcw,
+    Eye,
+    Download,
 } from "lucide-react";
 
 const DOC_STATE = {
@@ -44,6 +59,11 @@ const DOC_STATE = {
         label: "Requiere corrección",
     },
 };
+
+function isPreviewableMime(mime) {
+    if (!mime) return false;
+    return mime === "application/pdf" || mime.startsWith("image/");
+}
 
 export default function Onboarding() {
     const { organizer, refreshOrganizer } = useAuth();
@@ -65,10 +85,11 @@ export default function Onboarding() {
     const [pendingFile, setPendingFile] = useState(null);
     const [resubmitting, setResubmitting] = useState(false);
     const [signupPlanCode, setSignupPlanCode] = useState(null);
+    const [showAllPlans, setShowAllPlans] = useState(false);
     const [planPaymentMethod] = useState("nuvei");
     const [payingPlan, setPayingPlan] = useState(false);
-    const [gatewayPending, setGatewayPending] = useState(null);
-    const [nuveiCheckout, setNuveiCheckout] = useState<NuveiCheckoutConfig | null>(null);
+    const [pendingIntent, setPendingIntent] = useState(null);
+    const [preview, setPreview] = useState(null);
 
     useEffect(() => {
         const saved = localStorage.getItem(SIGNUP_PLAN_KEY);
@@ -82,8 +103,8 @@ export default function Onboarding() {
         (async () => {
             try {
                 const { data } = await api.get("/billing/me/pending-intent");
-                if (data?.status === "pending_gateway") {
-                    setGatewayPending(data);
+                if (data?.id) {
+                    setPendingIntent(data);
                 }
             } catch {
                 /* ignore */
@@ -131,6 +152,12 @@ export default function Onboarding() {
     useEffect(() => {
         fetchAll();
     }, [fetchAll]);
+
+    useEffect(() => {
+        return () => {
+            if (preview?.url) URL.revokeObjectURL(preview.url);
+        };
+    }, [preview?.url]);
 
     const requiredDocTypes = organizer ? requiredDocs[organizer.org_type] || [] : [];
     const requiredDocsSatisfied = useMemo(() => {
@@ -223,6 +250,47 @@ export default function Onboarding() {
         }
     };
 
+    const openPreview = async (doc) => {
+        if (preview?.url) URL.revokeObjectURL(preview.url);
+        setPreview({ doc, url: null, loading: true, error: null });
+        try {
+            const { data } = await api.get(`/organizers/me/documents/${doc.id}/download`, {
+                responseType: "blob",
+            });
+            const blob = data instanceof Blob ? data : new Blob([data], { type: doc.mime_type });
+            setPreview({ doc, url: URL.createObjectURL(blob), loading: false, error: null });
+        } catch (err) {
+            setPreview({
+                doc,
+                url: null,
+                loading: false,
+                error: await formatBlobApiError(err, "No se pudo cargar la vista previa"),
+            });
+        }
+    };
+
+    const closePreview = () => {
+        if (preview?.url) URL.revokeObjectURL(preview.url);
+        setPreview(null);
+    };
+
+    const downloadDoc = async (doc) => {
+        try {
+            const { data } = await api.get(`/organizers/me/documents/${doc.id}/download`, {
+                responseType: "blob",
+            });
+            const blob = data instanceof Blob ? data : new Blob([data]);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = doc.original_filename || "documento";
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            toast.error(await formatBlobApiError(err, "No se pudo descargar"));
+        }
+    };
+
     const resubmit = async () => {
         setResubmitting(true);
         try {
@@ -245,21 +313,14 @@ export default function Onboarding() {
                 payment_method: planPaymentMethod,
             });
             localStorage.removeItem(SIGNUP_PLAN_KEY);
-            if (data?.status === "pending_gateway") {
-                setGatewayPending({
-                    ...data,
-                    plan_code: data.plan_code || plan_code,
-                    payment_method: data.payment_method || planPaymentMethod,
-                });
-                toast.success(data.message || "Solicitud de pago registrada");
+            const sessionId = data?.session_id;
+            const nextIntentId = data?.intent_id;
+            if (!sessionId && !nextIntentId) {
+                toast.error("No se pudo iniciar el checkout");
                 return;
             }
-            const nuvei = nuveiCheckoutFromApi(data);
-            if (nuvei) {
-                setNuveiCheckout(nuvei);
-                return;
-            }
-            toast.error("No se pudo iniciar el checkout");
+            if (sessionId) saveBillingCheckout(sessionId, data);
+            navigate(billingSuccessPath({ sessionId, intentId: nextIntentId }));
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
         } finally {
@@ -267,6 +328,15 @@ export default function Onboarding() {
         }
     };
 
+    const { code: chosenPlanCode, plan: chosenPlan } = useMemo(
+        () =>
+            resolveOnboardingPlan({
+                signupPlanCode: organizer?.signup_plan_code,
+                localPlanCode: signupPlanCode,
+                plans,
+            }),
+        [organizer?.signup_plan_code, signupPlanCode, plans],
+    );
     const status = organizer?.status;
     const phase =
         status === "rejected"
@@ -329,6 +399,8 @@ export default function Onboarding() {
                             onCancel={cancelPendingFile}
                             docs={docs}
                             onDelete={deleteDoc}
+                            onPreview={openPreview}
+                            onDownload={downloadDoc}
                         />
                     </CardContent>
                 </Card>
@@ -376,6 +448,8 @@ export default function Onboarding() {
                             onCancel={cancelPendingFile}
                             docs={docs}
                             onDelete={deleteDoc}
+                            onPreview={openPreview}
+                            onDownload={downloadDoc}
                         />
                     </CardContent>
                 </Card>
@@ -407,6 +481,8 @@ export default function Onboarding() {
                             onCancel={cancelPendingFile}
                             docs={docs}
                             onDelete={deleteDoc}
+                            onPreview={openPreview}
+                            onDownload={downloadDoc}
                         />
                         <div className="flex justify-end">
                             <Button
@@ -443,13 +519,13 @@ export default function Onboarding() {
                             <CheckCircle2 className="h-5 w-5" /> ¡Tu cuenta fue aprobada!
                         </CardTitle>
                         <CardDescription>
-                            {gatewayPending ? (
-                                <>Tu pago está pendiente de confirmación. Cuando TYS lo valide, tu plan se activa solo.</>
-                            ) : signupPlanCode ? (
+                            {pendingIntent ? (
+                                <>Hay un pago de plan en proceso. Podés ver el estado o iniciar uno nuevo.</>
+                            ) : chosenPlan ? (
                                 <>
                                     Al registrarte elegiste el plan{" "}
-                                    <strong>{plans.find((p) => p.code === signupPlanCode)?.name || signupPlanCode}</strong>.
-                                    Elegí cómo pagar para activar tu cuenta.
+                                    <strong>{chosenPlan.name}</strong>. Confirmá el pago
+                                    para activarlo.
                                 </>
                             ) : (
                                 <>Elegí un plan y la forma de pago para activar tu cuenta.</>
@@ -457,45 +533,60 @@ export default function Onboarding() {
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                        {nuveiCheckout ? (
-                            <div data-testid="onboarding-nuvei-checkout">
-                                <NuveiCheckoutPanel
-                                    config={nuveiCheckout}
-                                    onPaid={async () => {
-                                        setNuveiCheckout(null);
-                                        toast.success("Pago confirmado. Activando tu plan…");
-                                        await refreshOrganizer();
-                                        navigate("/app");
-                                    }}
-                                    onCancel={() => setNuveiCheckout(null)}
-                                />
-                            </div>
-                        ) : gatewayPending ? (
+                        {pendingIntent && (
                             <div
-                                className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 space-y-2"
-                                data-testid="onboarding-gateway-pending"
+                                className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-2"
+                                data-testid="onboarding-pending-payment"
                             >
-                                <p className="text-sm font-medium text-sky-900">
-                                    Pago con{" "}
-                                    {PAYMENT_METHOD_META[gatewayPending.payment_method]?.label ||
-                                        gatewayPending.payment_method}{" "}
-                                    en revisión
+                                <p className="text-sm font-medium text-amber-950">
+                                    Tenés un pago de{" "}
+                                    {pendingIntent.plan_name || pendingIntent.plan_code} en
+                                    proceso.
                                 </p>
-                                <p className="text-sm text-sky-900/80">
-                                    Plan:{" "}
-                                    <strong>
-                                        {plans.find((p) => p.code === gatewayPending.plan_code)?.name ||
-                                            gatewayPending.plan_code}
-                                    </strong>
-                                    . El equipo TYS confirmará el cobro y activará tu suscripción.
-                                </p>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setGatewayPending(null)}
-                                >
-                                    Elegir otro método / plan
+                                <Button asChild size="sm" data-testid="onboarding-view-pending-payment">
+                                    <Link
+                                        to={billingSuccessPath({
+                                            sessionId: pendingIntent.session_id,
+                                            intentId: pendingIntent.id,
+                                        })}
+                                    >
+                                        Ver estado del pago
+                                    </Link>
                                 </Button>
+                            </div>
+                        )}
+                        {chosenPlan && !showAllPlans ? (
+                            <div
+                                className="space-y-4"
+                                data-testid="onboarding-chosen-plan"
+                            >
+                                <div className="max-w-md">
+                                    <PlanCard
+                                        plan={chosenPlan}
+                                        selected
+                                        onSelect={() => !payingPlan && choosePlan(chosenPlan.code)}
+                                        ctaLabel={onboardingPayCta(chosenPlan, payingPlan)}
+                                    />
+                                </div>
+                                <p
+                                    className="text-sm text-muted-foreground"
+                                    data-testid="onboarding-pay-amount"
+                                >
+                                    Vas a pagar{" "}
+                                    <strong className="text-foreground">
+                                        {planChargeLabel(chosenPlan)}
+                                    </strong>{" "}
+                                    con {PAYMENT_METHOD_META[planPaymentMethod]?.label || "Nuvei"}{" "}
+                                    (Paymentez Checkout).
+                                </p>
+                                <button
+                                    type="button"
+                                    className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+                                    data-testid="onboarding-change-plan"
+                                    onClick={() => setShowAllPlans(true)}
+                                >
+                                    ¿No es este plan? Elegir otro
+                                </button>
                             </div>
                         ) : (
                             <>
@@ -508,25 +599,77 @@ export default function Onboarding() {
                                         <PlanCard
                                             key={p.id}
                                             plan={p}
-                                            selected={p.code === signupPlanCode}
+                                            selected={p.code === chosenPlanCode}
                                             onSelect={() => !payingPlan && choosePlan(p.code)}
                                             ctaLabel={
                                                 payingPlan
                                                     ? "Procesando…"
-                                                    : p.code === signupPlanCode
-                                                      ? `Pagar con ${PAYMENT_METHOD_META[planPaymentMethod]?.label || planPaymentMethod}`
+                                                    : p.code === chosenPlanCode
+                                                      ? onboardingPayCta(p, false)
                                                       : `Pagar · ${PAYMENT_METHOD_META[planPaymentMethod]?.label || planPaymentMethod}`
                                             }
                                         />
                                     ))}
                                 </div>
+                                {chosenPlan && (
+                                    <button
+                                        type="button"
+                                        className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+                                        onClick={() => setShowAllPlans(false)}
+                                    >
+                                        Volver al plan que elegiste
+                                    </button>
+                                )}
                             </>
                         )}
 
-                        <DemoShortcut onActivated={() => navigate("/app/dashboard")} />
+                        <DemoShortcut
+                            planCode={chosenPlanCode}
+                            onActivated={() => navigate("/app/dashboard")}
+                        />
                     </CardContent>
                 </Card>
             )}
+
+            <Dialog open={!!preview} onOpenChange={(open) => !open && closePreview()}>
+                <DialogContent
+                    className="max-w-4xl w-[95vw] h-[85vh] flex flex-col"
+                    data-testid="doc-preview-dialog"
+                >
+                    <DialogHeader>
+                        <DialogTitle className="truncate pr-8">
+                            {preview?.doc?.original_filename || "Documento"}
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 min-h-0 rounded-md border bg-muted/30 overflow-hidden">
+                        {preview?.loading && (
+                            <div className="h-full grid place-items-center text-sm text-muted-foreground gap-2">
+                                <Loader2 className="h-6 w-6 animate-spin" />
+                                Cargando vista previa…
+                            </div>
+                        )}
+                        {preview?.error && (
+                            <div className="h-full grid place-items-center text-sm text-destructive p-6 text-center">
+                                {preview.error}
+                            </div>
+                        )}
+                        {preview?.url && preview?.doc?.mime_type?.startsWith("image/") && (
+                            <img
+                                src={preview.url}
+                                alt={preview.doc.original_filename || "Documento"}
+                                className="max-h-full max-w-full mx-auto object-contain p-2"
+                            />
+                        )}
+                        {preview?.url && preview?.doc?.mime_type === "application/pdf" && (
+                            <iframe
+                                title={preview.doc.original_filename || "PDF"}
+                                src={preview.url}
+                                className="w-full h-full border-0"
+                            />
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
@@ -543,6 +686,8 @@ function DocumentsUploader({
     onCancel,
     docs,
     onDelete,
+    onPreview,
+    onDownload,
 }) {
     return (
         <div className="space-y-5">
@@ -681,39 +826,84 @@ function DocumentsUploader({
                         Todavía no subiste documentos.
                     </p>
                 )}
-                {docs.map((d) => (
+                {docs.map((d) => {
+                    const canView = !d.is_demo && isPreviewableMime(d.mime_type);
+                    const canDownload = !d.is_demo;
+                    return (
                     <div
                         key={d.id}
                         data-testid={`doc-row-${d.id}`}
-                        className="flex items-center justify-between p-3 rounded-lg border border-border/70 bg-card"
+                        className="flex items-center justify-between gap-2 p-3 rounded-lg border border-border/70 bg-card"
                     >
-                        <div className="flex items-center gap-3">
-                            <div className="h-9 w-9 rounded-md bg-secondary grid place-items-center text-primary">
+                        <div className="flex items-center gap-3 min-w-0">
+                            <div className="h-9 w-9 rounded-md bg-secondary grid place-items-center text-primary shrink-0">
                                 <FileText className="h-4 w-4" />
                             </div>
-                            <div>
-                                <div className="text-sm font-medium">{d.original_filename}</div>
+                            <div className="min-w-0">
+                                {canView ? (
+                                    <button
+                                        type="button"
+                                        className="text-sm font-medium truncate max-w-full text-left hover:underline"
+                                        onClick={() => onPreview(d)}
+                                    >
+                                        {d.original_filename}
+                                    </button>
+                                ) : (
+                                    <div className="text-sm font-medium truncate">
+                                        {d.original_filename}
+                                    </div>
+                                )}
                                 <div className="text-xs text-muted-foreground">
                                     {d.doc_type} · {(d.size_bytes / 1024).toFixed(1)} KB
+                                    {d.is_demo ? " · ejemplo" : ""}
                                 </div>
                             </div>
                         </div>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            data-testid={`delete-doc-${d.id}`}
-                            onClick={() => onDelete(d.id)}
-                        >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                        <div className="flex items-center shrink-0">
+                            {canView && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    title="Ver"
+                                    data-testid={`preview-doc-${d.id}`}
+                                    onClick={() => onPreview(d)}
+                                >
+                                    <Eye className="h-4 w-4" />
+                                </Button>
+                            )}
+                            {canDownload && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    title="Descargar"
+                                    data-testid={`download-doc-${d.id}`}
+                                    onClick={() => onDownload(d)}
+                                >
+                                    <Download className="h-4 w-4" />
+                                </Button>
+                            )}
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                title="Eliminar"
+                                data-testid={`delete-doc-${d.id}`}
+                                onClick={() => onDelete(d.id)}
+                            >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                        </div>
                     </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );
 }
 
-function DemoShortcut({ onActivated }) {
+function DemoShortcut({ onActivated, planCode }) {
     const { refreshOrganizer } = useAuth();
     const [enabled, setEnabled] = useState(false);
     const [busy, setBusy] = useState(false);
@@ -733,7 +923,9 @@ function DemoShortcut({ onActivated }) {
     const activate = async () => {
         setBusy(true);
         try {
-            await api.post("/_dev/demo-activate", { plan_code: "profesional" });
+            await api.post("/_dev/demo-activate", {
+                plan_code: planCode || "profesional",
+            });
             // Must await, and must throw on failure: RequireActiveOrganizer
             // (routes/layouts.tsx) reads organizer.subscription_status
             // straight from AuthContext on the very next render. If this

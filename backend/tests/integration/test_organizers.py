@@ -173,6 +173,12 @@ class TestOrganizerSelf:
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
+    def test_download_missing_doc_404(self, prueba_client):
+        r = prueba_client.get(
+            f"{API}/organizers/me/documents/{uuid.uuid4()}/download"
+        )
+        assert r.status_code == 404
+
 
 STRIPE_SKIP = pytest.mark.skipif(
     not os.environ.get("STRIPE_SECRET_KEY"),

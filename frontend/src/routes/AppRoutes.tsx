@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Navigate, Route, Routes, useParams } from "react-router-dom";
+import { Navigate, Route, Routes, useParams, useSearchParams } from "react-router-dom";
 import { LazyPage } from "@/routes/LazyPage";
 import { AdminArea, BuyerArea, Dashboard, OrgArea, OrganizerPublicLayout, Public } from "@/routes/layouts";
 import * as Pages from "@/routes/lazyPages";
@@ -13,6 +13,12 @@ function RedirectEvent() {
 function RedirectEventEdit() {
     const { event_id } = useParams();
     return <Navigate to={`/app/eventos/${event_id}/editar`} replace />;
+}
+
+function RedirectBillingSuccess() {
+    const [params] = useSearchParams();
+    const query = params.toString();
+    return <Navigate to={query ? `/billing/success?${query}` : "/billing/success"} replace />;
 }
 
 export default function AppRoutes() {
@@ -92,6 +98,7 @@ export default function AppRoutes() {
 
             <Route path="/onboarding" element={<OrgArea><LazyPage page={Pages.Onboarding} /></OrgArea>} />
             <Route path="/billing/success" element={<OrgArea><LazyPage page={Pages.BillingSuccess} /></OrgArea>} />
+            <Route path="/app/billing/success" element={<RedirectBillingSuccess />} />
             <Route path="/billing/cancel" element={<OrgArea><LazyPage page={Pages.BillingCancel} /></OrgArea>} />
 
             {/* ── Redirects legacy ──────────────────────────────────────── */}
