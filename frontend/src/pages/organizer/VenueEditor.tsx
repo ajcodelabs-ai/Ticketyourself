@@ -12,7 +12,7 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useNavigate, useSearchParams, Link, useLocation } from "react-router-dom";
 import {
-    ArrowLeft, Save, Send, AlertCircle, Lock, ExternalLink, Loader2,
+    ArrowLeft, Save, Send, AlertCircle, Lock, ExternalLink, Loader2, Image, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,7 @@ import PublishPendingDialog from "@/components/PublishPendingDialog";
 import VenueEmptyCanvasOverlay from "@/components/venues/VenueEmptyCanvasOverlay";
 import { useAuth } from "@/contexts/AuthContext";
 import api from "@/lib/api";
+import { assetUrl } from "@/lib/microsite";
 import {
     venuesApi, adminVenueTemplatesApi, eventVenueLayoutApi, makeStage, makeZone, makeRow, makeCurvedRow, makeSeat,
     makeTableRound, makeTableRect, computeCapacity, newId, bumpLabel,
@@ -74,6 +75,7 @@ export default function VenueEditor() {
     const [selection, setSelection] = useState([]);
     const [dirty, setDirty] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [mapImageBusy, setMapImageBusy] = useState(false);
     const [history, setHistory] = useState([]);
     const [future, setFuture] = useState([]);
     const [pendingZone, setPendingZone] = useState(null);
@@ -596,6 +598,33 @@ export default function VenueEditor() {
         }
     };
 
+    const onMapImageChange = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+        if (!file) return;
+        setMapImageBusy(true);
+        try {
+            const { map_image_url } = await venuesApi.uploadMapImage(id, file);
+            setVenue((v) => ({ ...v, map_image_url }));
+        } catch (err) {
+            toast.error(err?.response?.data?.detail || "No se pudo subir la imagen.");
+        } finally {
+            setMapImageBusy(false);
+        }
+    };
+
+    const onRemoveMapImage = async () => {
+        setMapImageBusy(true);
+        try {
+            await venuesApi.removeMapImage(id);
+            setVenue((v) => ({ ...v, map_image_url: null }));
+        } catch (err) {
+            toast.error(err?.response?.data?.detail || "No se pudo quitar la imagen.");
+        } finally {
+            setMapImageBusy(false);
+        }
+    };
+
     const publish = async () => {
         if (dirty) await persist({ silent: true });
         if (organizer?.status === "pending") {
@@ -883,6 +912,62 @@ export default function VenueEditor() {
                     </div>
                 </div>
             </header>
+
+            {!isEventScope && !isAdminTemplate && (
+                <div className="rounded-xl border bg-card p-3 flex items-center gap-3 flex-wrap">
+                    {venue.map_image_url ? (
+                        <img
+                            src={assetUrl(venue.map_image_url)}
+                            alt="Mapa alternativo"
+                            className="h-16 w-16 rounded-lg object-cover border shrink-0"
+                            data-testid="venue-map-image-preview"
+                        />
+                    ) : (
+                        <div className="h-16 w-16 rounded-lg border border-dashed grid place-items-center text-muted-foreground shrink-0">
+                            <Image className="h-5 w-5" />
+                        </div>
+                    )}
+                    <div className="min-w-0">
+                        <p className="text-sm font-medium">Imagen alternativa del mapa</p>
+                        <p className="text-xs text-muted-foreground">
+                            Foto o diagrama (JPG/PNG, máx 5MB) para mostrar en vez del mapa interactivo.
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2 ml-auto">
+                        {venue.map_image_url && (
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={onRemoveMapImage}
+                                disabled={mapImageBusy}
+                                data-testid="venue-map-image-remove"
+                            >
+                                <Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" /> Quitar
+                            </Button>
+                        )}
+                        <Button asChild type="button" size="sm" variant="outline" disabled={mapImageBusy}>
+                            <label
+                                htmlFor="venue-map-image-input"
+                                className="cursor-pointer"
+                                data-testid="venue-map-image-upload"
+                            >
+                                {mapImageBusy && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
+                                {venue.map_image_url ? "Reemplazar" : "Subir imagen"}
+                                <input
+                                    id="venue-map-image-input"
+                                    type="file"
+                                    accept="image/jpeg,image/png"
+                                    aria-label="Subir imagen alternativa del mapa"
+                                    className="sr-only"
+                                    onChange={onMapImageChange}
+                                    disabled={mapImageBusy}
+                                />
+                            </label>
+                        </Button>
+                    </div>
+                </div>
+            )}
 
             {!isEventScope && !isAdminTemplate && returnTo && elements.length > 0 && venue.status !== "published" && (
                 <div className="rounded-xl border bg-card p-3 text-sm text-muted-foreground flex items-start gap-2">

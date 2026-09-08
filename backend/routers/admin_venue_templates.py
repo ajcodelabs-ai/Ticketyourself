@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from database import get_db
-from db_helpers import get_organizer_by_slug, row_to_dict
+from db_helpers import get_organizer_by_slug
 from orm_models import Venue
 from routers.venues import (
     CanvasCfg,
@@ -25,6 +25,7 @@ from routers.venues import (
     _compute_capacity,
     _unique_slug,
     _validate_elements,
+    _venue_out,
 )
 from security import require_role
 from slugs import normalize_slug
@@ -75,7 +76,7 @@ async def list_templates(session: AsyncSession = Depends(get_db)) -> Dict[str, A
         .where(Venue.organizer_id == org["id"], Venue.is_template.is_(True))
         .order_by(Venue.name.asc())
     )
-    items = [row_to_dict(r) for r in result.scalars().all()]
+    items = [_venue_out(r) for r in result.scalars().all()]
     return {"items": items, "total": len(items)}
 
 
@@ -108,7 +109,7 @@ async def create_template(
     )
     session.add(row)
     await session.flush()
-    return row_to_dict(row)
+    return _venue_out(row)
 
 
 @router.get("/{venue_id}")
@@ -117,7 +118,7 @@ async def get_template(
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     row = await _get_template_row(venue_id, session)
-    v = row_to_dict(row)
+    v = _venue_out(row)
     v["lock_status"] = {"locked": False, "active_events": []}
     return v
 
@@ -165,7 +166,7 @@ async def update_template(
     flag_modified(row, "localities")
     await session.flush()
 
-    v = row_to_dict(row)
+    v = _venue_out(row)
     v["lock_status"] = {"locked": False, "active_events": []}
     return v
 

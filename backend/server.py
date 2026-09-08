@@ -115,6 +115,7 @@ app.include_router(admin_payments_router.router)
 app.include_router(admin_exports_router.router)
 app.include_router(venues_router.router)
 app.include_router(venues_router.public_router)
+app.include_router(venues_router.asset_router)
 app.include_router(admin_venue_templates_router.router)
 from routers import guest_lists as guest_lists_router  # noqa: E402
 from routers import staff as staff_router  # noqa: E402

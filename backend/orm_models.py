@@ -390,6 +390,9 @@ class Venue(Base):
     # [{id, name, color, description, default_price_cents}]
     localities = Column(JSONB, nullable=False, default=list)
     capacity_calculated = Column(Integer, nullable=True)
+    # Static JPG/PNG shown instead of/alongside the interactive canvas (TI-118)
+    map_image_path = Column(Text, nullable=True)
+    map_image_mime = Column(String(100), nullable=True)
     status = Column(String(20), nullable=False, default="draft")
     is_template = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
