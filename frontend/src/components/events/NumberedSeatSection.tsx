@@ -2,13 +2,14 @@
  * Numbered-event seat selection section (Phase 7).
  * Used inside EventPublic when `event.venue_id` is set.
  */
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Loader2, Ticket, Trash2, Clock, AlertTriangle, LayoutList, CheckSquare2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import SeatPickerCanvas from "@/components/venues/SeatPickerCanvas";
+import { useHoldCountdown, HOLD_WARNING_SECONDS } from "@/components/HoldCountdown";
 import {
     getOrCreateSessionToken, selectedSeatBreakdown,
 } from "@/lib/seats";
@@ -24,33 +25,33 @@ interface SeatGroup {
 
 const REFRESH_MS = 15_000;
 
-// ── Hold countdown ───────────────────────────────────────────────────────────
-function HoldCountdown({ expiresAt, onExpire }: { expiresAt: string; onExpire: () => void }) {
-    const [secondsLeft, setSecondsLeft] = useState(() =>
-        Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
-    );
-    const onExpireRef = useRef(onExpire);
-    onExpireRef.current = onExpire;
-
-    useEffect(() => {
-        if (secondsLeft <= 0) { onExpireRef.current(); return; }
-        const t = setInterval(() => {
-            setSecondsLeft((s) => {
-                if (s <= 1) { clearInterval(t); onExpireRef.current(); return 0; }
-                return s - 1;
-            });
-        }, 1000);
-        return () => clearInterval(t);
-    }, [expiresAt]); // re-run only if expiresAt changes (new hold)
-
+// ── Reservation timer banner — top of the seat-selection screen, colors
+// itself to match the countdown's own urgency (green → amber under 2min).
+function ReservationTimerBanner({
+    expiresAt, onExpire,
+}: { expiresAt: string; onExpire: () => void }) {
+    const secondsLeft = useHoldCountdown(expiresAt, onExpire);
     const min = Math.floor(secondsLeft / 60);
     const sec = secondsLeft % 60;
-    const warning = secondsLeft < 120;
+    const warning = secondsLeft < HOLD_WARNING_SECONDS;
     return (
-        <span className={`inline-flex items-center gap-1 font-mono font-semibold ${warning ? "text-amber-600" : "text-emerald-600"}`}>
-            {warning ? <AlertTriangle className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
-            {min}:{sec.toString().padStart(2, "0")}
-        </span>
+        <div
+            className={`mb-4 rounded-xl border-2 px-4 py-3 flex items-center justify-between gap-3 transition-colors ${
+                warning ? "border-amber-300 bg-amber-50" : "border-emerald-300 bg-emerald-50"
+            }`}
+            data-testid="reservation-timer-banner"
+        >
+            <span className={`text-sm font-medium ${warning ? "text-amber-900" : "text-emerald-900"}`}>
+                Tiempo restante de la reserva
+            </span>
+            <span
+                className={`inline-flex items-center gap-1 font-mono font-semibold text-lg ${warning ? "text-amber-600 animate-pulse" : "text-emerald-600"}`}
+                data-testid="hold-countdown"
+            >
+                {warning ? <AlertTriangle className="h-5 w-5" /> : <Clock className="h-5 w-5" />}
+                {min}:{sec.toString().padStart(2, "0")}
+            </span>
+        </div>
     );
 }
 
@@ -284,6 +285,17 @@ export default function NumberedSeatSection({
                     <span className="text-base font-normal text-muted-foreground"> — {functionName}</span>
                 )}
             </h2>
+            {activeHoldExpiresAt && (
+                <ReservationTimerBanner
+                    expiresAt={activeHoldExpiresAt}
+                    onExpire={() => {
+                        setActiveHoldExpiresAt(null);
+                        setSelected([]);
+                        refreshSeats();
+                        toast.warning("Tu reserva de asientos venció. Elegí nuevamente.");
+                    }}
+                />
+            )}
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
                 <div className="min-w-0">
                     <SeatPickerCanvas
@@ -471,24 +483,11 @@ export default function NumberedSeatSection({
                             )}
                             Reservar y continuar
                         </Button>
-                        <p className="text-[10px] text-center text-muted-foreground">
-                            {activeHoldExpiresAt ? (
-                                <>
-                                    Reserva activa — tiempo restante:{" "}
-                                    <HoldCountdown
-                                        expiresAt={activeHoldExpiresAt}
-                                        onExpire={() => {
-                                            setActiveHoldExpiresAt(null);
-                                            setSelected([]);
-                                            refreshSeats();
-                                            toast.warning("Tu reserva de asientos venció. Elegí nuevamente.");
-                                        }}
-                                    />
-                                </>
-                            ) : (
-                                "Te reservamos los asientos por 10 minutos."
-                            )}
-                        </p>
+                        {!activeHoldExpiresAt && (
+                            <p className="text-[10px] text-center text-muted-foreground">
+                                Te reservamos los asientos por 10 minutos.
+                            </p>
+                        )}
                     </div>
                 </aside>
             </div>
