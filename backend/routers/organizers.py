@@ -17,6 +17,7 @@ from audit import log_audit
 from database import get_db
 from db_helpers import organizer_row_to_dict, row_to_dict
 from models import (
+    DocumentReviewIn,
     DocumentTypeOut,
     OrganizerDocumentOut,
     OrganizerOut,
@@ -131,9 +132,21 @@ async def resubmit_me(
         raise HTTPException(400, "Only rejected organizers can resubmit for review")
 
     docs_result = await session.execute(
-        select(OrganizerDocument).where(OrganizerDocument.organizer_id == row.id)
+        select(OrganizerDocument)
+        .where(OrganizerDocument.organizer_id == row.id)
+        .order_by(OrganizerDocument.uploaded_at.desc())
     )
-    present = {d.doc_type for d in docs_result.scalars().all()}
+    # Multiple uploads can share a doc_type — only the newest one's status
+    # counts, so a rejected/needs_correction doc doesn't count as "present"
+    # unless a fresher upload superseded it.
+    latest_status_by_type: dict = {}
+    for d in docs_result.scalars().all():
+        latest_status_by_type.setdefault(d.doc_type, d.status)
+    present = {
+        doc_type
+        for doc_type, status in latest_status_by_type.items()
+        if status not in ("rejected", "needs_correction")
+    }
     if not await is_satisfied(
         session, row.org_type, present, country_code=row.country_code
     ):
@@ -321,3 +334,44 @@ async def admin_download_doc(
         media_type=doc.mime_type or "application/octet-stream",
         filename=doc.original_filename or "document",
     )
+
+
+@admin_router.patch(
+    "/{organizer_id}/documents/{doc_id}/review", response_model=OrganizerDocumentOut
+)
+async def admin_review_doc(
+    organizer_id: str,
+    doc_id: str,
+    payload: DocumentReviewIn,
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_role("super_admin")),
+):
+    result = await session.execute(
+        select(OrganizerDocument).where(
+            OrganizerDocument.id == doc_id,
+            OrganizerDocument.organizer_id == organizer_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    if payload.status in ("rejected", "needs_correction") and not (
+        payload.comment and payload.comment.strip()
+    ):
+        raise HTTPException(422, "Se requiere un motivo para rechazar o pedir corrección.")
+
+    doc.status = payload.status
+    doc.review_comment = payload.comment
+    doc.reviewed_at = datetime.now(timezone.utc)
+    doc.reviewed_by = user["id"]
+    await session.commit()
+    await session.refresh(doc)
+
+    await log_audit(
+        user["id"],
+        "document.reviewed",
+        "document",
+        doc_id,
+        {"status": payload.status, "organizer_id": organizer_id},
+    )
+    return _doc_row_to_out(doc)

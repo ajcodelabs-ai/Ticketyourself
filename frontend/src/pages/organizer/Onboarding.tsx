@@ -29,7 +29,21 @@ import {
     Clock,
     XCircle,
     ShieldAlert,
+    RotateCcw,
 } from "lucide-react";
+
+const DOC_STATE = {
+    missing: { icon: Clock, iconClass: "text-muted-foreground", badgeVariant: "outline", label: "Pendiente" },
+    pending: { icon: Clock, iconClass: "text-muted-foreground", badgeVariant: "outline", label: "En revisión" },
+    approved: { icon: CheckCircle2, iconClass: "text-emerald-600", badgeVariant: "default", label: "Aprobado" },
+    rejected: { icon: XCircle, iconClass: "text-destructive", badgeVariant: "destructive", label: "Rechazado" },
+    needs_correction: {
+        icon: RotateCcw,
+        iconClass: "text-amber-600",
+        badgeVariant: "outline",
+        label: "Requiere corrección",
+    },
+};
 
 export default function Onboarding() {
     const { organizer, refreshOrganizer } = useAuth();
@@ -121,7 +135,13 @@ export default function Onboarding() {
     const requiredDocTypes = organizer ? requiredDocs[organizer.org_type] || [] : [];
     const requiredDocsSatisfied = useMemo(() => {
         if (!organizer) return false;
-        return requiredDocTypes.every((rt) => docs.some((d) => d.doc_type === rt));
+        // docs is sorted newest-first, so the first match per doc_type is
+        // the current one — a rejected/needs_correction doc doesn't satisfy
+        // the requirement unless a fresher upload superseded it.
+        return requiredDocTypes.every((rt) => {
+            const latest = docs.find((d) => d.doc_type === rt);
+            return !!latest && latest.status !== "rejected" && latest.status !== "needs_correction";
+        });
     }, [docs, organizer, requiredDocTypes]);
 
     // Onboarding is fully done only once approved AND paid — everything else
@@ -299,6 +319,7 @@ export default function Onboarding() {
                     <CardContent>
                         <DocumentsUploader
                             docTypes={docTypes}
+                            requiredDocTypes={requiredDocTypes}
                             docType={docType}
                             setDocType={setDocType}
                             uploading={uploading}
@@ -345,6 +366,7 @@ export default function Onboarding() {
                         </div>
                         <DocumentsUploader
                             docTypes={docTypes}
+                            requiredDocTypes={requiredDocTypes}
                             docType={docType}
                             setDocType={setDocType}
                             uploading={uploading}
@@ -375,6 +397,7 @@ export default function Onboarding() {
                         </p>
                         <DocumentsUploader
                             docTypes={docTypes}
+                            requiredDocTypes={requiredDocTypes}
                             docType={docType}
                             setDocType={setDocType}
                             uploading={uploading}
@@ -510,6 +533,7 @@ export default function Onboarding() {
 
 function DocumentsUploader({
     docTypes,
+    requiredDocTypes = [],
     docType,
     setDocType,
     uploading,
@@ -522,6 +546,49 @@ function DocumentsUploader({
 }) {
     return (
         <div className="space-y-5">
+            {requiredDocTypes.length > 0 && (
+                <div className="space-y-1.5" data-testid="required-docs-checklist">
+                    <Label className="text-xs text-muted-foreground">
+                        Documentos requeridos
+                    </Label>
+                    <div className="space-y-1.5">
+                        {requiredDocTypes.map((rt) => {
+                            // docs is sorted newest-first, so the first match is the
+                            // current one for this doc_type.
+                            const latest = docs.find((d) => d.doc_type === rt);
+                            const label = docTypes.find((t) => t.code === rt)?.label || rt;
+                            const state = DOC_STATE[latest?.status] || DOC_STATE.missing;
+                            const Icon = state.icon;
+                            return (
+                                <div key={rt} data-testid={`required-doc-${rt}`} className="space-y-1">
+                                    <div className="flex items-center gap-2 text-sm">
+                                        <Icon className={`h-4 w-4 shrink-0 ${state.iconClass}`} />
+                                        <span className={latest ? "" : "text-muted-foreground"}>
+                                            {label}
+                                        </span>
+                                        <Badge
+                                            variant={state.badgeVariant}
+                                            className="ml-auto text-[10px] font-normal"
+                                        >
+                                            {state.label}
+                                        </Badge>
+                                    </div>
+                                    {latest?.review_comment &&
+                                        (latest.status === "rejected" ||
+                                            latest.status === "needs_correction") && (
+                                            <p
+                                                data-testid={`required-doc-${rt}-comment`}
+                                                className="text-xs text-destructive pl-6"
+                                            >
+                                                {latest.review_comment}
+                                            </p>
+                                        )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
             <div className="grid sm:grid-cols-[1fr_2fr] gap-3 items-end">
                 <div className="space-y-1">
                     <Label htmlFor="doc-type">Tipo de documento</Label>

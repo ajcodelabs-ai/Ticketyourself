@@ -308,6 +308,11 @@ class OrganizerDocument(Base):
     file_path = Column(Text, nullable=True)
     is_demo = Column(Boolean, nullable=False, default=False)
     uploaded_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    # pending | approved | rejected | needs_correction (TI-78)
+    status = Column(String(20), nullable=False, default="pending")
+    review_comment = Column(Text, nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    reviewed_by = Column(String(36), nullable=True)
 
     organizer = relationship("Organizer", back_populates="documents")
 
