@@ -21,7 +21,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import api, { formatApiError } from "@/lib/api";
+import api, { formatApiError, formatBlobApiError } from "@/lib/api";
 import {
     approveConfirmMessage,
     needsApproveConfirm,
@@ -198,9 +198,7 @@ export default function AdminOrganizerDetail() {
                 doc,
                 url: null,
                 loading: false,
-                error:
-                    formatApiError(err?.response?.data?.detail) ||
-                    "No se pudo cargar la vista previa",
+                error: await formatBlobApiError(err, "No se pudo cargar la vista previa"),
             });
         }
     };
@@ -224,9 +222,7 @@ export default function AdminOrganizerDetail() {
             a.click();
             URL.revokeObjectURL(url);
         } catch (err) {
-            toast.error(
-                formatApiError(err?.response?.data?.detail) || "No se pudo descargar",
-            );
+            toast.error(await formatBlobApiError(err, "No se pudo descargar"));
         }
     };
 
