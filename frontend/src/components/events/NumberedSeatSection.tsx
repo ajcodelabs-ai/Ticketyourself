@@ -2,7 +2,7 @@
  * Numbered-event seat selection section (Phase 7).
  * Used inside EventPublic when `event.venue_id` is set.
  */
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Loader2, Ticket, Trash2, Clock, AlertTriangle, LayoutList, CheckSquare2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,15 +28,15 @@ const REFRESH_MS = 15_000;
 // ── Reservation timer banner — top of the seat-selection screen, colors
 // itself to match the countdown's own urgency (green → amber under 2min).
 function ReservationTimerBanner({
-    expiresAt, onExpire,
-}: { expiresAt: string; onExpire: () => void }) {
+    expiresAt, onExpire, onCancel, canceling,
+}: { expiresAt: string; onExpire: () => void; onCancel: () => void; canceling: boolean }) {
     const secondsLeft = useHoldCountdown(expiresAt, onExpire);
     const min = Math.floor(secondsLeft / 60);
     const sec = secondsLeft % 60;
     const warning = secondsLeft < HOLD_WARNING_SECONDS;
     return (
         <div
-            className={`mb-4 rounded-xl border-2 px-4 py-3 flex items-center justify-between gap-3 transition-colors ${
+            className={`mb-4 rounded-xl border-2 px-4 py-3 flex items-center justify-between gap-3 flex-wrap transition-colors ${
                 warning ? "border-amber-300 bg-amber-50" : "border-emerald-300 bg-emerald-50"
             }`}
             data-testid="reservation-timer-banner"
@@ -44,13 +44,26 @@ function ReservationTimerBanner({
             <span className={`text-sm font-medium ${warning ? "text-amber-900" : "text-emerald-900"}`}>
                 Tiempo restante de la reserva
             </span>
-            <span
-                className={`inline-flex items-center gap-1 font-mono font-semibold text-lg ${warning ? "text-amber-600 animate-pulse" : "text-emerald-600"}`}
-                data-testid="hold-countdown"
-            >
-                {warning ? <AlertTriangle className="h-5 w-5" /> : <Clock className="h-5 w-5" />}
-                {min}:{sec.toString().padStart(2, "0")}
-            </span>
+            <div className="flex items-center gap-3 ml-auto">
+                <span
+                    className={`inline-flex items-center gap-1 font-mono font-semibold text-lg ${warning ? "text-amber-600 animate-pulse" : "text-emerald-600"}`}
+                    data-testid="hold-countdown"
+                >
+                    {warning ? <AlertTriangle className="h-5 w-5" /> : <Clock className="h-5 w-5" />}
+                    {min}:{sec.toString().padStart(2, "0")}
+                </span>
+                <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={onCancel}
+                    disabled={canceling}
+                    data-testid="cancel-reservation-btn"
+                >
+                    {canceling ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Trash2 className="h-3.5 w-3.5 mr-1" />}
+                    Cancelar reserva
+                </Button>
+            </div>
         </div>
     );
 }
@@ -62,9 +75,14 @@ export default function NumberedSeatSection({
     const [seatsStatus, setSeatsStatus] = useState(event.seats_status || []);
     const [selected, setSelected] = useState([]); // array of seat objects we picked
     const [holdsLoading, setHoldsLoading] = useState(false);
+    const [cancelingHold, setCancelingHold] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [sessionToken] = useState(() => getOrCreateSessionToken());
     const [activeHoldExpiresAt, setActiveHoldExpiresAt] = useState<string | null>(null);
+    // Guards against a double resolution when the countdown expires while a
+    // user-initiated cancel is still in flight (or vice versa) — whichever
+    // resolves first "wins" and the other is a no-op.
+    const holdResolvedRef = useRef(false);
     const [seatGroups, setSeatGroups] = useState<SeatGroup[]>([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
 
@@ -221,6 +239,7 @@ export default function NumberedSeatSection({
             // Refresh seat status with response payload
             if (res.data?.seats_status) setSeatsStatus(res.data.seats_status);
             const expiresAt = res.data?.expires_at;
+            holdResolvedRef.current = false;
             setActiveHoldExpiresAt(expiresAt || null);
             onLaunchPurchase({
                 seat_ids: selected.map((s) => s.seat_id),
@@ -253,6 +272,28 @@ export default function NumberedSeatSection({
             }
         } finally {
             setHoldsLoading(false);
+        }
+    };
+
+    const cancelReservation = async () => {
+        if (!window.confirm("¿Cancelar la reserva? Los asientos elegidos quedarán liberados.")) {
+            return;
+        }
+        setCancelingHold(true);
+        try {
+            await api.delete(`/public/events/${tenantSlug}/${event.slug}/seat-holds`, {
+                data: { session_token: sessionToken, function_id: functionId || undefined },
+            });
+            if (holdResolvedRef.current) return; // countdown already expired it first
+            holdResolvedRef.current = true;
+            setActiveHoldExpiresAt(null);
+            setSelected([]);
+            refreshSeats();
+            toast.success("Reserva cancelada — los asientos quedaron liberados.");
+        } catch {
+            toast.error("No pudimos cancelar la reserva. Probá de nuevo.");
+        } finally {
+            setCancelingHold(false);
         }
     };
 
@@ -289,11 +330,15 @@ export default function NumberedSeatSection({
                 <ReservationTimerBanner
                     expiresAt={activeHoldExpiresAt}
                     onExpire={() => {
+                        if (holdResolvedRef.current) return; // already canceled by the user
+                        holdResolvedRef.current = true;
                         setActiveHoldExpiresAt(null);
                         setSelected([]);
                         refreshSeats();
                         toast.warning("Tu reserva de asientos venció. Elegí nuevamente.");
                     }}
+                    onCancel={cancelReservation}
+                    canceling={cancelingHold}
                 />
             )}
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
