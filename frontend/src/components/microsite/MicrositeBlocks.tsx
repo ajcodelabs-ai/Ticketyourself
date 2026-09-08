@@ -13,7 +13,9 @@ import {
     Mail,
     Phone,
     MapPin,
+    Search,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { sanitizeHtml, isSafeHref } from "@/lib/sanitizeHtml";
 import api from "@/lib/api";
 import { assetUrl } from "@/lib/microsite";
@@ -248,6 +250,7 @@ export function EventsBlockView({
 }) {
     const layout = block.props.layout as string;
     const [events, setEvents] = useState(null);
+    const [search, setSearch] = useState("");
 
     useEffect(() => {
         if (!tenantSlug) return;
@@ -294,20 +297,28 @@ export function EventsBlockView({
         const tb = eventStartMs(b) ?? Number.MAX_SAFE_INTEGER;
         return ta - tb;
     };
+    const normalize = (s: string) =>
+        s
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[̀-ͯ]/g, "");
+    const query = normalize(search.trim());
+    const matchesSearch = (e) => !query || normalize(e.title || "").includes(query);
     const upcoming = events
         .filter((e) => {
             const t = eventStartMs(e);
-            return t === null || t > now;
+            return (t === null || t > now) && matchesSearch(e);
         })
         .sort(byPriorityThenDate);
     const past = events
         .filter((e) => {
             const t = eventStartMs(e);
-            return t !== null && t <= now;
+            return t !== null && t <= now && matchesSearch(e);
         })
         .sort(byPriorityThenDate);
     const isList = layout === "list";
     const cols = isList ? "grid-cols-1 max-w-2xl mx-auto" : "sm:grid-cols-2 lg:grid-cols-3";
+    const showSearch = events.length > 7;
 
     return (
         <section
@@ -315,6 +326,24 @@ export function EventsBlockView({
             className="py-[var(--ms-space-section)] scroll-mt-6"
         >
             <div className="max-w-6xl mx-auto px-6 sm:px-10 space-y-12">
+                {showSearch && (
+                    <div className="relative max-w-sm">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            placeholder="Buscar evento…"
+                            aria-label="Buscar evento"
+                            className="pl-9"
+                            data-testid="ms-events-search-input"
+                        />
+                    </div>
+                )}
+                {showSearch && query && upcoming.length === 0 && past.length === 0 && (
+                    <p className="text-muted-foreground" data-testid="ms-events-search-empty">
+                        No se encontraron eventos con ese término.
+                    </p>
+                )}
                 {upcoming.length > 0 && (
                     <div>
                         <h2 className="text-3xl md:text-4xl font-semibold mb-6">
