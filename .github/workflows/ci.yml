@@ -190,31 +190,6 @@ jobs:
       - name: tsc --noEmit
         run: yarn typecheck
 
-  mobile-ci:
-    name: Mobile lint & typecheck
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mobile
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "yarn"
-          cache-dependency-path: mobile/yarn.lock
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: eslint
-        run: yarn lint
-
-      - name: tsc --noEmit
-        run: yarn typecheck
-
   docker-build:
     name: Docker build validation
     runs-on: ubuntu-latest

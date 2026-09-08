@@ -124,6 +124,13 @@ class SlugCheckResponse(BaseModel):
     reason: Optional[Literal["taken", "too_short", "empty", "invalid"]] = None
 
 
+class EmailCheckResponse(BaseModel):
+    email: str
+    available: bool
+    # When `available=false`: taken | invalid | empty. Null when available.
+    reason: Optional[Literal["taken", "invalid", "empty"]] = None
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Plans
 # ──────────────────────────────────────────────────────────────────────────────

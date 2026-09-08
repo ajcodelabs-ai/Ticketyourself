@@ -18,12 +18,20 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import PasswordInput from "@/components/ui/password-input";
 import PhoneInput from "@/components/ui/phone-input";
-import { isValidPhoneNumber } from "react-phone-number-input";
 import PlansShowcase, { PlanCard } from "@/components/PlansShowcase";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { formatApiError } from "@/lib/api";
 import { PUBLIC_DOMAIN } from "@/lib/config";
-import { isValidEcCedula } from "@/lib/ecId";
+import { cn } from "@/lib/utils";
+import {
+    collectRegisterFieldErrors,
+    EMAIL_TAKEN_MSG,
+    fieldErrorsFromApi,
+    fieldInputId,
+    firstErrorField,
+    legalIdFieldLabel,
+    looksLikeEmail,
+} from "@/lib/registerValidation";
 import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
 
 const SIGNUP_PLAN_KEY = "tys_signup_plan";
@@ -45,6 +53,17 @@ function normalizeSlug(value) {
         .replace(/^-|-$/g, "")
         .replace(/-{2,}/g, "-")
         .slice(0, 60);
+}
+
+const INVALID_INPUT = "border-red-500 focus-visible:ring-red-500";
+
+function FieldError({ id, children }) {
+    if (!children) return null;
+    return (
+        <p id={id} className="text-xs text-destructive" role="alert" data-testid={id}>
+            {children}
+        </p>
+    );
 }
 
 function formatPlanPrice(plan) {
@@ -100,6 +119,12 @@ export default function Register() {
         checking: false,
         reason: null,
     });
+    const [emailCheck, setEmailCheck] = useState({
+        available: null,
+        checking: false,
+        reason: null,
+    });
+    const [errors, setErrors] = useState<Record<string, string>>({});
 
     const selectedPlan = useMemo(
         () => plans.find((p) => p.code === planCode) || null,
@@ -114,9 +139,7 @@ export default function Register() {
     const requiresCompliance = Boolean(selectedCountry?.requires_compliance);
     const socialFields =
         selectedCountry?.form_schema?.social_fields || Object.keys(EMPTY_SOCIAL);
-    const legalLabel =
-        selectedCountry?.legal_id_label ||
-        (form.org_type === "company" ? "RUC" : "Cédula");
+    const legalLabel = legalIdFieldLabel(form.org_type, selectedCountry);
 
     useEffect(() => {
         (async () => {
@@ -175,6 +198,28 @@ export default function Register() {
         return () => clearTimeout(t);
     }, [form.slug, slugEdited]);
 
+    useEffect(() => {
+        const email = form.email.trim().toLowerCase();
+        if (!email || !looksLikeEmail(email)) {
+            setEmailCheck({ available: null, checking: false, reason: null });
+            return;
+        }
+        setEmailCheck((prev) => ({ ...prev, available: null, checking: true }));
+        const t = setTimeout(async () => {
+            try {
+                const { data } = await api.post("/auth/check-email", { email });
+                setEmailCheck({
+                    available: data.available,
+                    checking: false,
+                    reason: data.reason || null,
+                });
+            } catch {
+                setEmailCheck({ available: null, checking: false, reason: null });
+            }
+        }, 300);
+        return () => clearTimeout(t);
+    }, [form.email]);
+
     const pickPlan = (plan) => {
         setSearchParams({ plan: plan.code }, { replace: true });
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -187,6 +232,12 @@ export default function Register() {
     const update = (key) => (e) => {
         const val = e?.target?.value ?? e;
         setForm((f) => ({ ...f, [key]: val ?? "" }));
+        setErrors((prev) => {
+            if (!prev[key]) return prev;
+            const next = { ...prev };
+            delete next[key];
+            return next;
+        });
     };
 
     const updateSocial = (key) => (e) => {
@@ -202,6 +253,12 @@ export default function Register() {
             ...f,
             uafe_declaration: { ...f.uafe_declaration, [key]: value },
         }));
+        setErrors((prev) => {
+            if (!prev[key]) return prev;
+            const next = { ...prev };
+            delete next[key];
+            return next;
+        });
     };
 
     const updateReference = (index, key, value) => {
@@ -232,86 +289,48 @@ export default function Register() {
             toast.error("Elige un plan antes de crear tu cuenta");
             return;
         }
-        if (!form.email.trim()) {
-            toast.error("Ingresa tu email");
-            return;
-        }
-        const phone = (form.phone ?? "").trim();
-        if (!phone) {
-            toast.error("Ingresa tu número de teléfono");
-            return;
-        }
-        if (!isValidPhoneNumber(phone)) {
-            toast.error("El número de teléfono no es válido. Revisa el código de país y los dígitos.");
-            return;
-        }
-        if (form.password.length < 8) {
-            toast.error("La contraseña debe tener al menos 8 caracteres");
-            return;
-        }
-        if (form.password !== form.confirmPassword) {
-            toast.error("Las contraseñas no coinciden");
-            return;
-        }
-        if (!form.company_name.trim()) {
-            toast.error(form.org_type === "company" ? "Ingresa el nombre comercial" : "Ingresa tu nombre completo");
-            return;
-        }
-        if (!form.legal_id.trim()) {
-            toast.error(`Ingresa tu ${legalLabel}`);
-            return;
-        }
-        if (form.country_code === "EC" && form.org_type === "individual") {
-            if (!isValidEcCedula(form.legal_id)) {
-                toast.error("La cédula ecuatoriana no es válida");
-                return;
-            }
-        }
-        if (form.country_code === "EC") {
-            if (!form.legal_address.trim() || form.legal_address.trim().length < 8) {
-                toast.error("Ingresa la dirección fiscal del establecimiento (SRI)");
-                return;
-            }
-        }
-        if (selectedCountry?.legal_id_pattern) {
+
+        let liveEmailCheck = emailCheck;
+        const emailValue = form.email.trim().toLowerCase();
+        if (looksLikeEmail(emailValue) && (emailCheck.checking || emailCheck.available == null)) {
             try {
-                const re = new RegExp(selectedCountry.legal_id_pattern);
-                if (!re.test(form.legal_id.trim())) {
-                    toast.error(`${legalLabel} no tiene un formato válido para ${selectedCountry.name}`);
-                    return;
-                }
+                const { data } = await api.post("/auth/check-email", { email: emailValue });
+                liveEmailCheck = {
+                    available: data.available,
+                    checking: false,
+                    reason: data.reason || null,
+                };
+                setEmailCheck(liveEmailCheck);
             } catch {
-                /* ignore bad pattern from admin */
-            }
-        }
-        if (!form.slug || !slugCheck.available) {
-            toast.error("El slug elegido no está disponible");
-            return;
-        }
-        if (requiresCompliance) {
-            if (form.is_pep && !form.pep_details.trim()) {
-                toast.error("Describe tu condición PEP");
-                return;
-            }
-            if (!form.uafe_declaration.funds_origin_declared) {
-                toast.error("Debes declarar el origen lícito de los fondos");
-                return;
-            }
-            if (!form.uafe_declaration.funds_origin_detail.trim()) {
-                toast.error("Describe el origen de los fondos");
-                return;
-            }
-            if (!form.uafe_declaration.accepts_uafe_obligations) {
-                toast.error("Debes aceptar las obligaciones UAFE");
-                return;
-            }
-            const validRefs = form.org_references.filter((r) => r.name.trim() && r.phone.trim());
-            if (validRefs.length < 1) {
-                toast.error("Agrega al menos una referencia con nombre y teléfono");
-                return;
+                /* uniqueness is re-checked by POST /register */
             }
         }
 
+        const nextErrors = collectRegisterFieldErrors({
+            form,
+            country: selectedCountry
+                ? { ...selectedCountry, code: selectedCountry.code || form.country_code }
+                : { code: form.country_code, name: form.country_code },
+            slugCheck,
+            emailCheck: liveEmailCheck,
+            requiresCompliance,
+        });
+        if (Object.keys(nextErrors).length) {
+            setErrors(nextErrors);
+            const first = firstErrorField(nextErrors);
+            toast.error(
+                Object.keys(nextErrors).length === 1 && first
+                    ? nextErrors[first]
+                    : "Revisa los campos marcados",
+            );
+            const el = document.getElementById(fieldInputId(first));
+            el?.focus();
+            el?.scrollIntoView({ behavior: "smooth", block: "center" });
+            return;
+        }
+        setErrors({});
+
+        const phone = (form.phone ?? "").trim();
         const social_links = Object.fromEntries(
             Object.entries(form.social_links).filter(([, v]) => (v || "").trim()),
         );
@@ -345,11 +364,30 @@ export default function Register() {
             toast.success("Cuenta creada — ¡bienvenido a TYS!");
             navigate("/onboarding", { replace: true });
         } catch (err) {
-            toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+            const mapped = fieldErrorsFromApi(err?.response?.data?.detail);
+            if (Object.keys(mapped).length) {
+                setErrors(mapped);
+                const first = firstErrorField(mapped);
+                const el = document.getElementById(fieldInputId(first));
+                el?.focus();
+                el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                toast.error(
+                    mapped._form ||
+                        (Object.keys(mapped).length === 1 && first
+                            ? mapped[first]
+                            : "Revisa los campos marcados"),
+                );
+            } else {
+                toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+            }
         } finally {
             setSubmitting(false);
         }
     };
+
+    const emailError =
+        errors.email ||
+        (emailCheck.available === false && emailCheck.reason === "taken" ? EMAIL_TAKEN_MSG : null);
 
     if (!planCode || loadingPlans) {
         return (
@@ -416,7 +454,7 @@ export default function Register() {
                     <div className="mb-6 max-w-xs">
                         <PlanCard plan={selectedPlan} compact selected />
                     </div>
-                    <form onSubmit={submit} className="space-y-5">
+                    <form onSubmit={submit} className="space-y-5" noValidate>
                         <div className="space-y-2">
                             <Label>País</Label>
                             <Select
@@ -448,7 +486,14 @@ export default function Register() {
                                     value={form.email}
                                     onChange={update("email")}
                                     required
+                                    aria-invalid={Boolean(emailError)}
+                                    aria-describedby={emailError ? "register-email-error" : undefined}
+                                    className={cn(emailError && INVALID_INPUT)}
                                 />
+                                {form.email && !emailCheck.checking && emailCheck.available === true && !errors.email && (
+                                    <p className="text-xs text-emerald-600">✓ disponible</p>
+                                )}
+                                <FieldError id="register-email-error">{emailError}</FieldError>
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="phone-input">Teléfono</Label>
@@ -459,7 +504,10 @@ export default function Register() {
                                     onChange={update("phone")}
                                     placeholder="99 123 4567"
                                     required
+                                    aria-invalid={Boolean(errors.phone)}
+                                    className={cn(errors.phone && INVALID_INPUT)}
                                 />
+                                <FieldError id="register-phone-error">{errors.phone}</FieldError>
                             </div>
                         </div>
 
@@ -473,7 +521,10 @@ export default function Register() {
                                     onChange={update("password")}
                                     minLength={8}
                                     required
+                                    aria-invalid={Boolean(errors.password)}
+                                    className={cn(errors.password && INVALID_INPUT)}
                                 />
+                                <FieldError id="register-password-error">{errors.password}</FieldError>
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="confirm-input">Confirmar contraseña</Label>
@@ -484,7 +535,10 @@ export default function Register() {
                                     onChange={update("confirmPassword")}
                                     minLength={8}
                                     required
+                                    aria-invalid={Boolean(errors.confirmPassword)}
+                                    className={cn(errors.confirmPassword && INVALID_INPUT)}
                                 />
+                                <FieldError id="register-confirm-error">{errors.confirmPassword}</FieldError>
                             </div>
                         </div>
 
@@ -492,7 +546,15 @@ export default function Register() {
                             <Label>Tipo</Label>
                             <RadioGroup
                                 value={form.org_type}
-                                onValueChange={update("org_type")}
+                                onValueChange={(v) => {
+                                    update("org_type")(v);
+                                    setErrors((prev) => {
+                                        if (!prev.legal_id) return prev;
+                                        const next = { ...prev };
+                                        delete next.legal_id;
+                                        return next;
+                                    });
+                                }}
                                 className="flex gap-6"
                                 data-testid="register-orgtype"
                             >
@@ -520,7 +582,10 @@ export default function Register() {
                                     value={form.company_name}
                                     onChange={update("company_name")}
                                     required
+                                    aria-invalid={Boolean(errors.company_name)}
+                                    className={cn(errors.company_name && INVALID_INPUT)}
                                 />
+                                <FieldError id="register-company-error">{errors.company_name}</FieldError>
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="legal-input">{legalLabel}</Label>
@@ -530,7 +595,19 @@ export default function Register() {
                                     value={form.legal_id}
                                     onChange={update("legal_id")}
                                     required
+                                    inputMode="numeric"
+                                    aria-invalid={Boolean(errors.legal_id)}
+                                    aria-describedby={errors.legal_id ? "register-legal-error" : undefined}
+                                    className={cn(errors.legal_id && INVALID_INPUT)}
                                 />
+                                {form.country_code === "EC" && !errors.legal_id && (
+                                    <p className="text-xs text-muted-foreground">
+                                        {form.org_type === "company"
+                                            ? "RUC de 13 dígitos."
+                                            : "Cédula de 10 dígitos."}
+                                    </p>
+                                )}
+                                <FieldError id="register-legal-error">{errors.legal_id}</FieldError>
                             </div>
                         </div>
 
@@ -584,7 +661,12 @@ export default function Register() {
                                         onChange={update("legal_address")}
                                         placeholder="Calle, número, ciudad"
                                         required
+                                        aria-invalid={Boolean(errors.legal_address)}
+                                        className={cn(errors.legal_address && INVALID_INPUT)}
                                     />
+                                    <FieldError id="register-legal-address-error">
+                                        {errors.legal_address}
+                                    </FieldError>
                                 </div>
                                 <div className="grid sm:grid-cols-2 gap-4">
                                     <div className="space-y-2">
@@ -630,14 +712,19 @@ export default function Register() {
                                             ...f,
                                             slug: normalizeSlug(e.target.value),
                                         }));
+                                        setErrors((prev) => {
+                                            if (!prev.slug) return prev;
+                                            const next = { ...prev };
+                                            delete next.slug;
+                                            return next;
+                                        });
                                     }}
                                     placeholder="ej. eventos-quito"
-                                    aria-invalid={slugCheck.available === false}
-                                    className={`flex-1 min-w-[200px] ${
-                                        slugCheck.available === false
-                                            ? "border-red-500 focus-visible:ring-red-500"
-                                            : ""
-                                    }`}
+                                    aria-invalid={slugCheck.available === false || Boolean(errors.slug)}
+                                    className={cn(
+                                        "flex-1 min-w-[200px]",
+                                        (slugCheck.available === false || errors.slug) && INVALID_INPUT,
+                                    )}
                                 />
                                 <span className="text-sm text-muted-foreground whitespace-nowrap">
                                     .{PUBLIC_DOMAIN}
@@ -662,6 +749,7 @@ export default function Register() {
                                     <span className="text-red-600">✗ Este slug no está disponible.</span>
                                 )}
                             </p>
+                            <FieldError id="register-slug-error">{errors.slug}</FieldError>
                         </div>
 
                         <div className="space-y-3 border-t border-border/60 pt-4">
@@ -715,9 +803,10 @@ export default function Register() {
                                                 value={form.pep_details}
                                                 onChange={update("pep_details")}
                                                 placeholder="Cargo, institución y periodo"
-                                                className="mt-2"
+                                                className={cn("mt-2", errors.pep_details && INVALID_INPUT)}
                                             />
                                         )}
+                                        <FieldError id="register-pep-error">{errors.pep_details}</FieldError>
                                     </div>
                                 </div>
 
@@ -735,6 +824,9 @@ export default function Register() {
                                             Declaro que los fondos provienen de actividades lícitas
                                         </Label>
                                     </div>
+                                    <FieldError id="register-funds-declared-error">
+                                        {errors.funds_origin_declared}
+                                    </FieldError>
                                     <Textarea
                                         data-testid="register-funds-detail"
                                         value={form.uafe_declaration.funds_origin_detail}
@@ -742,7 +834,11 @@ export default function Register() {
                                             updateUafe("funds_origin_detail", e.target.value)
                                         }
                                         placeholder="Describe el origen de los fondos"
+                                        className={cn(errors.funds_origin_detail && INVALID_INPUT)}
                                     />
+                                    <FieldError id="register-funds-detail-error">
+                                        {errors.funds_origin_detail}
+                                    </FieldError>
                                     <div className="flex items-start gap-2">
                                         <Checkbox
                                             id="uafe-accept"
@@ -755,6 +851,9 @@ export default function Register() {
                                             Acepto las obligaciones de prevención de lavado de activos
                                         </Label>
                                     </div>
+                                    <FieldError id="register-uafe-accept-error">
+                                        {errors.accepts_uafe_obligations}
+                                    </FieldError>
                                 </div>
 
                                 <div className="space-y-3">
@@ -809,6 +908,7 @@ export default function Register() {
                                             </Button>
                                         </div>
                                     ))}
+                                    <FieldError id="register-refs-error">{errors.org_references}</FieldError>
                                 </div>
                             </div>
                         )}

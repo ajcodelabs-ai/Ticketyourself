@@ -59,6 +59,26 @@ class TestAuth:
         assert r.status_code == 200
         assert r.json()["available"] is True
 
+    def test_check_email_taken(self):
+        r = requests.post(f"{API}/auth/check-email", json={"email": ADMIN_EMAIL})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["available"] is False
+        assert body["reason"] == "taken"
+
+    def test_check_email_free(self):
+        email = f"libre_{uuid.uuid4().hex[:8]}@example.com"
+        r = requests.post(f"{API}/auth/check-email", json={"email": email})
+        assert r.status_code == 200
+        assert r.json()["available"] is True
+
+    def test_check_email_invalid(self):
+        r = requests.post(f"{API}/auth/check-email", json={"email": "not-an-email"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["available"] is False
+        assert body["reason"] == "invalid"
+
     def test_login_admin(self):
         s = new_session()
         r = s.post(
@@ -184,6 +204,41 @@ class TestRegister:
         }
         r = requests.post(f"{API}/auth/register", json=payload)
         assert r.status_code == 409
+        detail = r.json().get("detail")
+        blob = r.text.lower()
+        assert "correo" in blob or "email" in blob
+        if isinstance(detail, list):
+            fields = {e.get("loc", [None])[-1] for e in detail if isinstance(e, dict)}
+            assert "email" in fields
+
+    def test_register_reports_email_and_legal_id_together(self):
+        payload = {
+            "email": ADMIN_EMAIL,
+            "password": "Password123!",
+            "company_name": "Dup",
+            "legal_id": "123",
+            "org_type": "company",
+            "phone": "+593999999999",
+            "country": "Ecuador",
+            "is_pep": False,
+            "uafe_declaration": {
+                "funds_origin_declared": True,
+                "funds_origin_detail": "Ingresos por eventos",
+                "accepts_uafe_obligations": True,
+            },
+            "org_references": [
+                {"name": "Ref Uno", "phone": "+593988888888", "relation": "Cliente"}
+            ],
+            "country_code": "EC",
+            "legal_address": "Av. Amazonas N34-123, Quito",
+        }
+        r = requests.post(f"{API}/auth/register", json=payload)
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert isinstance(detail, list)
+        fields = {e["loc"][-1] for e in detail}
+        assert "email" in fields
+        assert "legal_id" in fields
 
     def test_register_slug_taken_409(self):
         rand = uuid.uuid4().hex[:6]

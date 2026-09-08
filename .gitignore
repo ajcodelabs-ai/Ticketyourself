@@ -93,9 +93,6 @@ docs/test_credentials.md
 # Mobile development
 android-sdk/
 
-# Expo
-mobile/.expo/
-mobile/.metro-cache/
 frontend/node_modules/.cache/default-development/17.pack
 frontend/node_modules/.cache/default-development/10.pack
 frontend/node_modules/.cache/default-development/14.pack
@@ -115,7 +112,6 @@ backend/.env
 !backend/.env.example
 !backend/.env.example.*
 frontend/.env
-mobile/.env
 *.env
 !*.env.example
 credentials.json

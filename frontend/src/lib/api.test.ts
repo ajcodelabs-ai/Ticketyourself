@@ -23,6 +23,18 @@ describe("formatApiError", () => {
     it("returns the string detail as-is", () => {
         expect(formatApiError("Custom error")).toBe("Custom error");
     });
+
+    it("keeps a custom Spanish value_error instead of replacing it", () => {
+        expect(
+            formatApiError([
+                {
+                    loc: ["body", "email"],
+                    msg: "Este correo ya está registrado",
+                    type: "value_error",
+                },
+            ]),
+        ).toContain("Este correo ya está registrado");
+    });
 });
 
 describe("formatBlobApiError", () => {
