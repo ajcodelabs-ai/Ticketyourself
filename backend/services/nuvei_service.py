@@ -258,8 +258,13 @@ def _ccapi_pair() -> tuple[str, str]:
 def _linktopay_pair() -> tuple[str, str]:
     """Auth-Token for noccapi Link to Pay. Prefer a dedicated SERVER app."""
     server_code, server_key = _server_app_code(), _server_app_key()
-    if server_code and server_key and (
-        _looks_like_server_app(server_code) or not _looks_like_client_app(server_code)
+    if (
+        server_code
+        and server_key
+        and (
+            _looks_like_server_app(server_code)
+            or not _looks_like_client_app(server_code)
+        )
     ):
         return server_code, server_key
     return _auth_pair()

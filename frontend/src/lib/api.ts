@@ -248,6 +248,28 @@ function translateValidationError(entry) {
     return label ? `${label}: ${msg}` : msg;
 }
 
+/** For requests made with `responseType: "blob"`: on error, axios still hands
+ * back the response body as a Blob (not JSON) even though the server sent a
+ * normal JSON error — `err.response.data.detail` is always undefined there,
+ * so formatApiError silently falls back to the generic message and the real
+ * reason (e.g. "File missing from disk") never reaches the user. Read the
+ * blob back as text first, then format it the normal way. */
+export async function formatBlobApiError(err, fallback?: string) {
+    const data = err?.response?.data;
+    if (data instanceof Blob) {
+        try {
+            const text = await data.text();
+            const parsed = JSON.parse(text);
+            const detail = parsed?.detail ?? parsed;
+            return detail != null ? formatApiError(detail) : fallback;
+        } catch {
+            // Not JSON (e.g. an actual file blob) — nothing to extract.
+        }
+    }
+    const detail = err?.response?.data?.detail;
+    return detail != null ? formatApiError(detail) : fallback;
+}
+
 export function formatApiError(detail) {
     if (detail == null) return "Algo salió mal. Inténtalo de nuevo.";
     if (typeof detail === "string") return detail;

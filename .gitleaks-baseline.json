@@ -121,8 +121,8 @@
  },
  {
   "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
-  "StartLine": 45,
-  "EndLine": 45,
+  "StartLine": 48,
+  "EndLine": 48,
   "StartColumn": 10,
   "EndColumn": 49,
   "Match": "app_key=\"2GYx7SdjmbucLKE924JVFcmCl8t6nB\"",
@@ -137,12 +137,12 @@
   "Message": "",
   "Tags": [],
   "RuleID": "generic-api-key",
-  "Fingerprint": "backend/tests/test_nuvei_service.py:generic-api-key:45"
+  "Fingerprint": "backend/tests/test_nuvei_service.py:generic-api-key:48"
  },
  {
   "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
-  "StartLine": 47,
-  "EndLine": 47,
+  "StartLine": 50,
+  "EndLine": 50,
   "StartColumn": 13,
   "EndColumn": 56,
   "Match": "stoken == \"e242e78ae5f1ed162966f0eacaa0af01\"",
@@ -157,6 +157,6 @@
   "Message": "",
   "Tags": [],
   "RuleID": "generic-api-key",
-  "Fingerprint": "backend/tests/test_nuvei_service.py:generic-api-key:47"
+  "Fingerprint": "backend/tests/test_nuvei_service.py:generic-api-key:50"
  }
 ]

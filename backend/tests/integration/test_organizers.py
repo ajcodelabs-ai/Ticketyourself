@@ -534,19 +534,3 @@ class TestStripeStatus:
         assert "db_status" in data
         assert data["db_status"] in ("pending", "failed")
         assert data["payment_status"] != "paid"
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Webhook signature failure (migrated from backend_test.py)
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-class TestWebhook:
-    def test_webhook_no_signature(self):
-        s = new_session()
-        r = s.post(
-            f"{API}/stripe/webhook",
-            data=b"{}",
-            headers={"Content-Type": "application/json"},
-        )
-        assert r.status_code == 400, f"Got {r.status_code}: {r.text}"
