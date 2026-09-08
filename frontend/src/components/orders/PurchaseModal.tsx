@@ -20,11 +20,10 @@ import {
     CalendarRange,
     Plus,
     Minus,
-    Clock,
-    AlertTriangle,
     KeyRound,
     Users,
 } from "lucide-react";
+import HoldCountdown from "@/components/HoldCountdown";
 import { toast } from "sonner";
 import {
     Dialog,
@@ -103,35 +102,6 @@ function fmtDate(iso?: string): string {
     } catch {
         return iso;
     }
-}
-
-function HoldCountdown({ expiresAt, onExpire }: { expiresAt: string; onExpire: () => void }) {
-    const [secondsLeft, setSecondsLeft] = useState(() =>
-        Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
-    );
-    const onExpireRef = useRef(onExpire);
-    onExpireRef.current = onExpire;
-
-    useEffect(() => {
-        if (secondsLeft <= 0) { onExpireRef.current(); return; }
-        const t = setInterval(() => {
-            setSecondsLeft((s) => {
-                if (s <= 1) { clearInterval(t); onExpireRef.current(); return 0; }
-                return s - 1;
-            });
-        }, 1000);
-        return () => clearInterval(t);
-    }, [expiresAt]);
-
-    const min = Math.floor(secondsLeft / 60);
-    const sec = secondsLeft % 60;
-    const warning = secondsLeft < 120;
-    return (
-        <span className={`inline-flex items-center gap-1 font-mono text-sm font-semibold ${warning ? "text-amber-600 animate-pulse" : "text-emerald-600"}`}>
-            {warning ? <AlertTriangle className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
-            {min}:{sec.toString().padStart(2, "0")}
-        </span>
-    );
 }
 
 export default function PurchaseModal({
