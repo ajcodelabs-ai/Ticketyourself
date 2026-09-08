@@ -358,7 +358,9 @@ async def admin_review_doc(
     if payload.status in ("rejected", "needs_correction") and not (
         payload.comment and payload.comment.strip()
     ):
-        raise HTTPException(422, "Se requiere un motivo para rechazar o pedir corrección.")
+        raise HTTPException(
+            422, "Se requiere un motivo para rechazar o pedir corrección."
+        )
 
     doc.status = payload.status
     doc.review_comment = payload.comment
