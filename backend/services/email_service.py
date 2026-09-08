@@ -26,10 +26,30 @@ logger = logging.getLogger("tys.email")
 EMAIL_LOG_DIR = Path(__file__).resolve().parent.parent / "email_log"
 EMAIL_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_SENDER = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
-_API_KEY = os.environ.get("RESEND_API_KEY", "").strip()
-if _API_KEY:
-    resend.api_key = _API_KEY
+# onboarding@resend.dev only delivers to the Resend account owner. Production
+# sending requires EMAIL_FROM on a domain verified at resend.com/domains.
+_FALLBACK_SENDER = "onboarding@resend.dev"
+
+
+def _api_key() -> str:
+    return os.environ.get("RESEND_API_KEY", "").strip()
+
+
+def _sender() -> str:
+    """Resend `from` address. Must match a verified domain (or resend.dev for tests)."""
+    raw = (
+        os.environ.get("EMAIL_FROM")
+        or os.environ.get("SENDER_EMAIL")
+        or _FALLBACK_SENDER
+    ).strip()
+    if not raw:
+        return _FALLBACK_SENDER
+    if "<" in raw:
+        return raw
+    name = os.environ.get("EMAIL_FROM_NAME", "Ticket Yourself").strip()
+    if name and "@" in raw and not raw.lower().endswith("@resend.dev"):
+        return f"{name} <{raw}>"
+    return raw
 
 
 def _sanitize_filename(value: str) -> str:
@@ -75,14 +95,23 @@ def _nuvei_receipt_html(record: dict) -> str:
 
 
 def _is_real_resend() -> bool:
-    return bool(_API_KEY)
+    return bool(_api_key())
+
+
+def _email_id(result) -> str:
+    if isinstance(result, dict):
+        return str(result.get("id") or "")
+    return str(getattr(result, "id", "") or "")
 
 
 async def _send_resend(
     to: str, subject: str, html: str, text: Optional[str] = None
 ) -> dict:
+    key = _api_key()
+    if key:
+        resend.api_key = key
     params = {
-        "from": DEFAULT_SENDER,
+        "from": _sender(),
         "to": [to],
         "subject": subject,
         "html": html,
@@ -107,7 +136,7 @@ async def _send_mock(to: str, subject: str, html: str) -> dict:
         f"<div class='meta'><strong>MOCK EMAIL</strong> · "
         f"to: {to} · subject: {subject} · ts: {ts}<br>"
         f"<em>This file exists because RESEND_API_KEY is not configured. "
-        f"Set it in /app/backend/.env to send real emails.</em></div>"
+        f"Set it in the root .env (Docker) or backend/.env (local).</em></div>"
         f"<div class='email'>{html}</div>"
         f"</body></html>"
     )
@@ -169,11 +198,24 @@ async def send_email(
     try:
         if _is_real_resend():
             result = await _send_resend(to, subject, html, text)
-            logger.info("Resend → %s subject=%r id=%s", to, subject, result.get("id"))
-            return {"id": result.get("id", "")}
+            email_id = _email_id(result)
+            logger.info(
+                "Resend → %s from=%s subject=%r id=%s",
+                to,
+                _sender(),
+                subject,
+                email_id,
+            )
+            return {"id": email_id}
         return await _send_mock(to, subject, html)
     except Exception as exc:  # noqa: BLE001
-        logger.error("Email send failed to=%s subject=%r err=%s", to, subject, exc)
+        logger.error(
+            "Email send failed to=%s from=%s subject=%r err=%s",
+            to,
+            _sender(),
+            subject,
+            exc,
+        )
         return {"id": "", "error": str(exc)}
 
 

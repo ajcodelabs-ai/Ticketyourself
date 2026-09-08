@@ -263,12 +263,14 @@ export function plainTextFromHtml(value) {
             return "";
         }
     }
+    // Decode &amp; last so a double-encoded sequence like &amp;lt; becomes
+    // "&lt;" (one level), not "<". CodeQL js/double-escaping.
     return value
         .replace(/<[^>]+>/g, " ")
         .replace(/&nbsp;/gi, " ")
-        .replace(/&amp;/gi, "&")
         .replace(/&lt;/gi, "<")
         .replace(/&gt;/gi, ">")
+        .replace(/&amp;/gi, "&")
         .replace(/\s+/g, " ")
         .trim();
 }

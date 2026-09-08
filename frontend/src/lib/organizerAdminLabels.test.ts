@@ -128,4 +128,10 @@ describe("plainTextFromHtml", () => {
             "Riesgo bajo OK",
         );
     });
+
+    it("unescapes entities once so &amp;lt; does not become <", () => {
+        expect(plainTextFromHtml("A &amp; B")).toBe("A & B");
+        expect(plainTextFromHtml("&lt;script&gt;")).toBe("<script>");
+        expect(plainTextFromHtml("&amp;lt;script&amp;gt;")).toBe("&lt;script&gt;");
+    });
 });
