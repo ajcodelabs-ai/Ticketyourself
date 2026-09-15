@@ -9,8 +9,9 @@
  *  - Alignment guides during drag (snap to neighboring centers/edges).
  *  - Right-click → onContextMenu callback (with element id + screen pos).
  *  - Grid lines moved to its own Layer for performance (listening=false).
- *  - Pan: Space+drag (hand cursor) or middle-mouse drag. Empty drag does not pan
- *    so clicks can select / assign localities.
+ *  - Pan: Space+drag (hand cursor), middle-mouse drag, or the "pan" tool
+ *    (TI-92 — a visible hand-tool button for the same mechanism). Empty
+ *    drag otherwise does not pan so clicks can select / assign localities.
  */
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Stage, Layer, Rect, Line, Group, Transformer } from "react-konva";
@@ -153,6 +154,12 @@ export default function EditorCanvas({
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const panRef = useRef({ x: 0, y: 0 });
     useEffect(() => { panRef.current = pan; }, [pan]);
+    // TI-92: read inside the cached per-element onClick below (elementHandlersRef
+    // is built once per id, not per render — same reason spaceHeldRef/panDragRef
+    // are refs there instead of plain closed-over values). Set during render
+    // (not a useEffect) so it's never a tick stale by the time a click lands.
+    const toolRef = useRef(tool);
+    toolRef.current = tool;
     const [spaceHeld, setSpaceHeld] = useState(false);
     const [panning, setPanning] = useState(false);
     const spaceHeldRef = useRef(false);
@@ -167,6 +174,13 @@ export default function EditorCanvas({
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [guides, setGuides] = useState<GuideLine[]>([]);
     const dragSnapshot = useRef<DragSnapshot | null>(null);
+
+    // Single source of truth for "pan is/should be taking over this
+    // pointer interaction" — Space held, mid pan-drag, or the "pan" tool
+    // (TI-92) active. All refs, safe to call from the cached per-element
+    // handlers below as well as the ones recreated every render.
+    const isPanActive = () =>
+        spaceHeldRef.current || panDragRef.current || toolRef.current === "pan";
 
     // Per-element event handlers, cached by id so their identity stays
     // stable across renders (see getElementHandlers below + memo on
@@ -230,11 +244,15 @@ export default function EditorCanvas({
         };
     }, []);
 
-    // Sync Transformer — only on single selection (multi-select uses group drag).
+    // Sync Transformer — only on single selection (multi-select uses group
+    // drag), and only in the select tool: its resize/rotate anchors drag
+    // independently of ElementShape's own `draggable` gating below, so a
+    // leftover selection from before a tool switch (e.g. into "pan") would
+    // otherwise leave live, undocumented drag handles sitting on the canvas.
     useEffect(() => {
         const tr = transformerRef.current;
         if (!tr) return;
-        if (selection.length !== 1) {
+        if (selection.length !== 1 || (tool && tool !== "select")) {
             tr.nodes([]);
             tr.getLayer()?.batchDraw();
             return;
@@ -242,7 +260,7 @@ export default function EditorCanvas({
         const node = elementRefs.current[selection[0]];
         tr.nodes(node ? [node] : []);
         tr.getLayer()?.batchDraw();
-    }, [selection, elements]);
+    }, [selection, elements, tool]);
 
     const handleWheel = useCallback((e) => {
         e.evt.preventDefault();
@@ -429,7 +447,10 @@ export default function EditorCanvas({
         return target === stage || target.attrs?.id === "bg-rect";
     };
 
-    // Pan only with Space or middle-click. Empty click stays select / assign / marquee.
+    // Pan with Space, middle-click, or the "pan" tool (TI-92 — a visible
+    // hand-tool button for the same mechanism, for organizers who never
+    // discover Space/middle-click). Empty click otherwise stays select /
+    // assign / marquee.
     const handleStageMouseDown = (e) => {
         const evt = e.evt as MouseEvent & TouchEvent;
         const button = evt.button ?? 0;
@@ -439,7 +460,7 @@ export default function EditorCanvas({
         const clientX = touch?.clientX ?? evt.clientX;
         const clientY = touch?.clientY ?? evt.clientY;
 
-        if (button === 1 || spaceHeldRef.current) {
+        if (button === 1 || spaceHeldRef.current || tool === "pan") {
             evt.preventDefault?.();
             startPan(clientX, clientY);
             return;
@@ -494,7 +515,7 @@ export default function EditorCanvas({
 
     // ── Group drag handling ──────────────────────────────────────────────
     const handleElementDragStart = (el: VenueCanvasElement, node: Konva.Node) => {
-        if (spaceHeldRef.current || panDragRef.current) {
+        if (isPanActive()) {
             node.stopDrag?.();
             return;
         }
@@ -520,7 +541,7 @@ export default function EditorCanvas({
     };
 
     const handleElementDragMove = (el: VenueCanvasElement, node: Konva.Node) => {
-        if (spaceHeldRef.current || panDragRef.current) {
+        if (isPanActive()) {
             node.stopDrag?.();
             return;
         }
@@ -730,7 +751,7 @@ export default function EditorCanvas({
                     else delete elementRefs.current[id];
                 },
                 onClick: (e) => {
-                    if (spaceHeldRef.current || panDragRef.current) return;
+                    if (isPanActive()) return;
                     e.cancelBubble = true;
                     const additive = e.evt?.ctrlKey || e.evt?.metaKey || e.evt?.shiftKey;
                     latestHandlersRef.current.onSelect([id], { additive });
@@ -808,7 +829,7 @@ export default function EditorCanvas({
             }}
             onWheel={(e) => e.stopPropagation()}
             tabIndex={0}
-            title="Espacio + arrastrar para mover el mapa"
+            title="Herramienta Mover, Espacio, o click central + arrastrar para mover el mapa"
         >
             <Stage
                 ref={stageRef}
@@ -824,7 +845,7 @@ export default function EditorCanvas({
                 onMouseUp={handleStageMouseUp}
                 onTouchStart={handleStageMouseDown}
                 style={{
-                    cursor: spaceHeld
+                    cursor: spaceHeld || tool === "pan"
                         ? (panning ? "grabbing" : "grab")
                         : tool && tool !== "select" && !readOnly
                           ? "crosshair"
@@ -928,7 +949,7 @@ export default function EditorCanvas({
                         className="px-2 hover:bg-slate-100 rounded"
                         data-testid="zoom-reset"
                         title="Volver a zoom 1:1 (0)">Reset</button>
-                <span className="hidden sm:inline text-muted-foreground pl-1" title="Espacio = mano">
+                <span className="hidden sm:inline text-muted-foreground pl-1" title="Espacio, o la herramienta Mover, = mano">
                     Espacio
                 </span>
             </div>
