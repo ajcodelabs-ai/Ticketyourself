@@ -2548,7 +2548,7 @@ function SalesConfigBlock({ form, update, disabled }) {
                             onChange={(e) =>
                                 update(
                                     "access_params.max_per_purchase",
-                                    parseInt(e.target.value || "1", 10),
+                                    Math.max(1, parseInt(e.target.value, 10) || 1),
                                 )
                             }
                             disabled={disabled}
@@ -2571,7 +2571,7 @@ function SalesConfigBlock({ form, update, disabled }) {
                             onChange={(e) =>
                                 update(
                                     "access_params.min_per_purchase",
-                                    parseInt(e.target.value || "1", 10),
+                                    Math.max(1, parseInt(e.target.value, 10) || 1),
                                 )
                             }
                             disabled={disabled}
