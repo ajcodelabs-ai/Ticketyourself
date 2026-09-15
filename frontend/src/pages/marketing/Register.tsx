@@ -454,6 +454,9 @@ export default function Register() {
                     <div className="mb-6 max-w-xs">
                         <PlanCard plan={selectedPlan} compact selected />
                     </div>
+                    <p className="text-xs text-muted-foreground mb-4" data-testid="register-required-legend">
+                        Los campos marcados con * son obligatorios.
+                    </p>
                     <form onSubmit={submit} className="space-y-5" noValidate>
                         <div className="space-y-2">
                             <Label>País</Label>
@@ -478,7 +481,9 @@ export default function Register() {
 
                         <div className="grid sm:grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label htmlFor="email-input">Email</Label>
+                                <Label htmlFor="email-input">
+                                    Email <span className="text-destructive">*</span>
+                                </Label>
                                 <Input
                                     id="email-input"
                                     data-testid="register-email-input"
@@ -496,7 +501,9 @@ export default function Register() {
                                 <FieldError id="register-email-error">{emailError}</FieldError>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="phone-input">Teléfono</Label>
+                                <Label htmlFor="phone-input">
+                                    Teléfono <span className="text-destructive">*</span>
+                                </Label>
                                 <PhoneInput
                                     id="phone-input"
                                     data-testid="register-phone-input"
@@ -513,7 +520,9 @@ export default function Register() {
 
                         <div className="grid sm:grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label htmlFor="password-input">Contraseña</Label>
+                                <Label htmlFor="password-input">
+                                    Contraseña <span className="text-destructive">*</span>
+                                </Label>
                                 <PasswordInput
                                     id="password-input"
                                     data-testid="register-password-input"
@@ -527,7 +536,9 @@ export default function Register() {
                                 <FieldError id="register-password-error">{errors.password}</FieldError>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="confirm-input">Confirmar contraseña</Label>
+                                <Label htmlFor="confirm-input">
+                                    Confirmar contraseña <span className="text-destructive">*</span>
+                                </Label>
                                 <PasswordInput
                                     id="confirm-input"
                                     data-testid="register-confirm-input"
@@ -574,7 +585,8 @@ export default function Register() {
                                 <Label htmlFor="company-input">
                                     {form.org_type === "company"
                                         ? "Nombre comercial"
-                                        : "Nombre completo"}
+                                        : "Nombre completo"}{" "}
+                                    <span className="text-destructive">*</span>
                                 </Label>
                                 <Input
                                     id="company-input"
@@ -588,7 +600,9 @@ export default function Register() {
                                 <FieldError id="register-company-error">{errors.company_name}</FieldError>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="legal-input">{legalLabel}</Label>
+                                <Label htmlFor="legal-input">
+                                    {legalLabel} <span className="text-destructive">*</span>
+                                </Label>
                                 <Input
                                     id="legal-input"
                                     data-testid="register-legal-input"
@@ -652,7 +666,8 @@ export default function Register() {
                                 </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="legal-address-input">
-                                        Dirección del establecimiento *
+                                        Dirección del establecimiento{" "}
+                                        <span className="text-destructive">*</span>
                                     </Label>
                                     <Input
                                         id="legal-address-input"
@@ -700,7 +715,9 @@ export default function Register() {
                         )}
 
                         <div className="space-y-2">
-                            <Label htmlFor="slug-input">URL de tu página</Label>
+                            <Label htmlFor="slug-input">
+                                URL de tu página <span className="text-destructive">*</span>
+                            </Label>
                             <div className="flex flex-wrap gap-1 items-center">
                                 <Input
                                     id="slug-input"
@@ -821,7 +838,8 @@ export default function Register() {
                                             }
                                         />
                                         <Label htmlFor="funds-origin" className="cursor-pointer font-normal">
-                                            Declaro que los fondos provienen de actividades lícitas
+                                            Declaro que los fondos provienen de actividades lícitas{" "}
+                                            <span className="text-destructive">*</span>
                                         </Label>
                                     </div>
                                     <FieldError id="register-funds-declared-error">
@@ -848,7 +866,8 @@ export default function Register() {
                                             }
                                         />
                                         <Label htmlFor="uafe-accept" className="cursor-pointer font-normal">
-                                            Acepto las obligaciones de prevención de lavado de activos
+                                            Acepto las obligaciones de prevención de lavado de activos{" "}
+                                            <span className="text-destructive">*</span>
                                         </Label>
                                     </div>
                                     <FieldError id="register-uafe-accept-error">
@@ -858,7 +877,9 @@ export default function Register() {
 
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
-                                        <Label>Referencias</Label>
+                                        <Label>
+                                            Referencias <span className="text-destructive">*</span>
+                                        </Label>
                                         <Button
                                             type="button"
                                             variant="outline"
