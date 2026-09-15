@@ -186,4 +186,52 @@ test.describe("Venue editor", () => {
     await expect(page).toHaveURL(new RegExp(`/app/eventos/${event.id}/mapa`));
     await expect(page.getByTestId("venue-editor-page")).toBeVisible();
   });
+
+  // TI-152: "Guardar" in the locality pricing dialog used to be active the
+  // moment the dialog opened, with no way to tell whether there was
+  // actually anything to save. It should read as disabled/gray until the
+  // organizer changes something, and go back to disabled once the change is
+  // undone.
+  test("Guardar in the locality pricing dialog reflects pending changes, not just saving state", async ({ page }) => {
+    const token = await page.evaluate(() => localStorage.getItem("tys_access_token"));
+    const created = await page.request.post(`${BACKEND_URL}/api/events/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title: `TI-152 E2E ${Date.now()}` },
+    });
+    const event = await created.json();
+
+    await page.goto(`/app/eventos/${event.id}/editar?tab=localidades`);
+    await expect(page.getByTestId("escenario-panel")).toBeVisible({ timeout: 15_000 });
+
+    await page.getByTestId("wiz-venue-select").click();
+    await page.getByRole("option", { name: "Teatro Demo" }).click();
+    await expect(page.getByTestId("venue-selected-badge")).toBeVisible({ timeout: 10_000 });
+
+    await page.getByTestId("localidades-goto-localidades").click();
+    await page.getByTestId("locality-add").click();
+    await expect(page.getByTestId("locality-form-dialog")).toBeVisible();
+    await page.getByTestId("locality-form-name").fill("General");
+    await page.getByTestId("locality-form-submit").click();
+    await expect(page.getByTestId("locality-form-dialog")).not.toBeVisible({ timeout: 10_000 });
+
+    const editBtn = page.locator('[data-testid^="loc-edit-"]').first();
+    await expect(editBtn).toBeEnabled({ timeout: 10_000 });
+    await editBtn.click();
+    await expect(page.getByTestId("locality-form-dialog")).toBeVisible();
+
+    const submit = page.getByTestId("locality-form-submit");
+    await expect(submit).toBeDisabled();
+
+    await page.getByTestId("locality-form-name").fill("Localidad editada");
+    await expect(submit).toBeEnabled();
+
+    await page.getByTestId("locality-form-name").fill("General");
+    await expect(submit).toBeDisabled();
+
+    // A saved reserved_quota of 0 renders the field as "" (not "0") — typing
+    // "0" back in must not read as a change, or Guardar would stay
+    // permanently enabled for every locality with no reserved quota.
+    await page.getByTestId("locality-form-reserved-quota").fill("0");
+    await expect(submit).toBeDisabled();
+  });
 });
