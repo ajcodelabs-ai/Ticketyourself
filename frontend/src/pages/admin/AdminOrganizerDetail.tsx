@@ -94,7 +94,7 @@ function uploadedLabel(iso) {
 
 function DocFileRow({
     d,
-    typeLabel = null,
+    docTypes = [],
     showActions,
     canReview,
     reviewing,
@@ -105,6 +105,10 @@ function DocFileRow({
     onRequestCorrection = undefined,
     onReject = undefined,
 }) {
+    // Derived here (not threaded in per call site) so every row — current,
+    // previous, or any future caller — is labeled the same way; that's the
+    // exact prop-forwarding gap TI-79 fixed for the previous-version rows.
+    const typeLabel = docTypes.find((t) => t.code === d.doc_type)?.label || d.doc_type;
     const canView = !d.is_demo && isPreviewableMime(d.mime_type);
     const canDownload = !d.is_demo;
     const size = fileSizeLabel(d.size_bytes);
@@ -418,8 +422,6 @@ export default function AdminOrganizerDetail() {
     const uafe = useMemo(() => uafeRows(org?.uafe_declaration), [org?.uafe_declaration]);
     const refs = useMemo(() => referenceRows(org?.org_references), [org?.org_references]);
     const socials = useMemo(() => socialLinkRows(org?.social_links), [org?.social_links]);
-    const docTypeLabel = (code) =>
-        docTypes.find((t) => t.code === code)?.label || code;
     const docGroups = useMemo(() => groupDocumentsByType(docs), [docs]);
     const pendingDocs = docGroups.filter((g) => g.current?.status === "pending").length;
 
@@ -1233,7 +1235,7 @@ export default function AdminOrganizerDetail() {
                                     )}
                                     <DocFileRow
                                         d={current}
-                                        typeLabel={docTypeLabel(current.doc_type)}
+                                        docTypes={docTypes}
                                         showActions
                                         canReview={canReview}
                                         reviewing={reviewing}
@@ -1263,6 +1265,7 @@ export default function AdminOrganizerDetail() {
                                                     </p>
                                                     <DocFileRow
                                                         d={prev}
+                                                        docTypes={docTypes}
                                                         compact
                                                         showActions={false}
                                                         canReview={false}
