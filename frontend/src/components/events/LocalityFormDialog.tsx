@@ -5,7 +5,7 @@
  * both types exist. Clicking map elements (filtered by that type) assigns
  * them in the same save as name and prices.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { HexColorPicker } from "react-colorful";
 import { Info, MapPinned, Users, Loader2, Plus, X } from "lucide-react";
@@ -89,6 +89,26 @@ const OPTIONAL_SERVICES = [
 export function servicesWithAmount(initial) {
     if (!initial) return [];
     return OPTIONAL_SERVICES.filter((s) => (Number(initial[s.centsKey]) || 0) > 0).map((s) => s.key);
+}
+
+// Comparable snapshot of the editable fields, for dirty-checking against the
+// last-saved values (TI-152). assignedIds/addedServices are sorted so
+// toggling an item off and back on doesn't read as "changed" just because
+// the array order shifted.
+function snapshotOf({ name, color, description, seatingType, assignedIds, money, addedServices, reservedQuota }) {
+    return JSON.stringify({
+        name,
+        color,
+        description,
+        seatingType,
+        assignedIds: [...assignedIds].sort(),
+        money,
+        addedServices: [...addedServices].sort(),
+        // Numeric compare, not string: the field itself renders "" for a
+        // saved value of 0 (see setReservedQuota above), so typing "0" back
+        // in must read as "unchanged", not as a pending edit.
+        reservedQuota: Number(reservedQuota) || 0,
+    });
 }
 
 /** A Gratuito event can't charge anything (TI-121) — zero every money field
@@ -218,8 +238,13 @@ export default function LocalityFormDialog({
     const [draftId, setDraftId] = useState("");
     const [assignedIds, setAssignedIds] = useState([]);
     const [feeQuote, setFeeQuote] = useState(null);
+    const [savedSnapshot, setSavedSnapshot] = useState(null);
 
-    useEffect(() => {
+    // Layout effect, not a passive one: the dialog stays mounted between
+    // opens, so savedSnapshot would otherwise still hold the previous
+    // session's value for one paint — a real flash of the wrong Guardar
+    // disabled-state right when the dialog opens.
+    useLayoutEffect(() => {
         if (!open) return;
         const id = initial?.id || newId();
         setDraftId(id);
@@ -247,16 +272,31 @@ export default function LocalityFormDialog({
                 );
             }
             setSeatingType(nextType);
-            setMoney({
+            const nextMoney = {
                 price: centsToInput(initial.price_cents) || "",
                 vxs: centsToInput(initial.vxs_cents) || "",
                 service: centsToInput(initial.service_fee_cents) || "",
                 admin: centsToInput(initial.admin_fee_cents) || "",
                 wallet: centsToInput(initial.wallet_fee_cents) || "",
-            });
-            setAddedServices(servicesWithAmount(initial));
+            };
+            const nextServices = servicesWithAmount(initial);
+            const nextQuota = initial.reserved_quota ? String(initial.reserved_quota) : "";
+            setMoney(nextMoney);
+            setAddedServices(nextServices);
             setAssignedIds(nextAssigned);
-            setReservedQuota(initial.reserved_quota ? String(initial.reserved_quota) : "");
+            setReservedQuota(nextQuota);
+            setSavedSnapshot(
+                snapshotOf({
+                    name: initial.name || "",
+                    color: initial.color || LOCALITY_PALETTE[0],
+                    description: initial.description || "",
+                    seatingType: nextType,
+                    assignedIds: nextAssigned,
+                    money: nextMoney,
+                    addedServices: nextServices,
+                    reservedQuota: nextQuota,
+                }),
+            );
         } else {
             setName("");
             setColor(LOCALITY_PALETTE[0]);
@@ -266,6 +306,9 @@ export default function LocalityFormDialog({
             setAddedServices([]);
             setAssignedIds([]);
             setReservedQuota("");
+            // No "saved" state to diff against when creating — Guardar/Crear
+            // should stay enabled the whole time, same as before this change.
+            setSavedSnapshot(null);
         }
     }, [open, initial, elements, allowNumbered]);
 
@@ -300,6 +343,18 @@ export default function LocalityFormDialog({
         }
         setAssignedIds(kept);
     };
+
+    // Only meaningful in edit mode (savedSnapshot is null while creating) —
+    // Guardar stays disabled until something actually differs from what was
+    // last persisted, so its state tells the organizer whether there's
+    // anything to save (TI-152).
+    const isDirty = useMemo(
+        () =>
+            savedSnapshot == null ||
+            snapshotOf({ name, color, description, seatingType, assignedIds, money, addedServices, reservedQuota }) !==
+                savedSnapshot,
+        [savedSnapshot, name, color, description, seatingType, assignedIds, money, addedServices, reservedQuota],
+    );
 
     const previewLocalitiesById = useMemo(
         () => ({
@@ -653,7 +708,11 @@ export default function LocalityFormDialog({
                     <Button variant="ghost" onClick={onClose} disabled={saving}>
                         Cancelar
                     </Button>
-                    <Button onClick={handleSubmit} disabled={saving} data-testid="locality-form-submit">
+                    <Button
+                        onClick={handleSubmit}
+                        disabled={saving || !isDirty}
+                        data-testid="locality-form-submit"
+                    >
                         {saving ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
                         {initial ? "Guardar" : "Crear localidad"}
                     </Button>
