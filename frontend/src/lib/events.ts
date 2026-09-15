@@ -2,6 +2,8 @@
  * Event helpers — categories, status meta, formatting, public URL builder.
  * Single source of truth so the editor + listing + microsite renderer stay in sync.
  */
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 import { previewMicrositePath, previewMicrositeSubpath, publicMicrositeUrl } from "@/lib/config";
 
 const DEFAULT_TZ = import.meta.env.VITE_DEFAULT_TIMEZONE || "America/Guayaquil";
@@ -98,6 +100,33 @@ export function googleMapsUrl(event) {
         Boolean,
     );
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(parts.join(", "))}`;
+}
+
+// Parse "YYYY-MM-DDTHH:mm" (from datetime-local / DateTimePicker) into a Date
+// whose getters (getFullYear, getHours, …) read back the same wall-clock
+// numbers — no timezone conversion, since the string is already the correct
+// wall-clock value for whatever timezone it represents.
+export function parseLocalInput(value) {
+    if (!value || typeof value !== "string") return null;
+    const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (!m) return null;
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const hh = Number(m[4]);
+    const mm = Number(m[5]);
+    const date = new Date(y, mo - 1, d, hh, mm);
+    if (Number.isNaN(date.getTime())) return null;
+    return date;
+}
+
+// Format a "YYYY-MM-DDTHH:mm" local-input string for display, without any
+// timezone math (see parseLocalInput) — cheaper and DST-safe compared to a
+// local→ISO→local round trip through formatEventDate.
+export function formatLocalDateTime(local) {
+    const parsed = parseLocalInput(local);
+    if (!parsed) return "—";
+    return format(parsed, "d 'de' MMMM 'de' yyyy · HH:mm", { locale: es });
 }
 
 // Convert ISO datetime → "YYYY-MM-DDTHH:mm" for <input type="datetime-local">.

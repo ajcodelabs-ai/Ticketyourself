@@ -23,6 +23,7 @@ import {
     DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import DateTimePicker from "@/components/ui/DateTimePicker";
 import api from "@/lib/api";
 import { isoToLocalInput, localInputToIso } from "@/lib/events";
 
@@ -317,6 +318,13 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
 
         const starts_at = form.starts_at ? localInputToIso(form.starts_at as string, timezone) : null;
         const ends_at = form.ends_at ? localInputToIso(form.ends_at as string, timezone) : null;
+        if (starts_at && ends_at && ends_at <= starts_at) {
+            // Same wording as the backend's own guard (functions.py
+            // _assert_valid_date_range) — this is a fast client-side echo
+            // of that rule, not a second source of truth for it.
+            toast.error("La fecha fin debe ser posterior a la fecha de inicio.");
+            return;
+        }
         const conflict = findScheduleConflict(starts_at, ends_at, rowKind);
         if (conflict) {
             toast.error(
@@ -505,19 +513,19 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                         <div className="grid sm:grid-cols-2 gap-3">
                             <div className="space-y-1.5">
                                 <Label>Inicio</Label>
-                                <Input
-                                    type="datetime-local"
+                                <DateTimePicker
                                     value={form.starts_at as string}
-                                    onChange={(e) => upd("starts_at", e.target.value)}
+                                    onChange={(v) => upd("starts_at", v)}
+                                    allowClear
                                     data-testid="fn-starts"
                                 />
                             </div>
                             <div className="space-y-1.5">
                                 <Label>Fin</Label>
-                                <Input
-                                    type="datetime-local"
+                                <DateTimePicker
                                     value={form.ends_at as string}
-                                    onChange={(e) => upd("ends_at", e.target.value)}
+                                    onChange={(v) => upd("ends_at", v)}
+                                    allowClear
                                     data-testid="fn-ends"
                                 />
                             </div>

@@ -1,4 +1,20 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, Page } from "@playwright/test";
+
+// Shared by every DateTimePicker instance (main event date, función Inicio/
+// Fin — TI-155 made them consistent). Sets today's date via the calendar's
+// "today" modifier classes (see components/ui/calendar.tsx day_today
+// override), unambiguous regardless of which days the current month view
+// shows as outside-month, plus an explicit hour/minute.
+async function pickTodayDateTime(page: Page, testid: string, hour: string, minute: string) {
+  await page.getByTestId(testid).click();
+  const popover = page.getByTestId(`${testid}-popover`);
+  await popover.locator("button.bg-accent.text-accent-foreground").click();
+  await popover.getByTestId(`${testid}-hour`).click();
+  await page.getByRole("option", { name: hour, exact: true }).click();
+  await popover.getByTestId(`${testid}-minute`).click();
+  await page.getByRole("option", { name: minute, exact: true }).click();
+  await popover.getByTestId(`${testid}-done`).click();
+}
 
 test.describe("Event wizard", () => {
   test.beforeEach(async ({ page }) => {
@@ -209,8 +225,8 @@ test.describe("Event wizard", () => {
 
     await page.getByTestId("add-function").click();
     await page.getByTestId("fn-name").fill("Función E2E");
-    await page.getByTestId("fn-starts").fill("2027-01-10T20:00");
-    await page.getByTestId("fn-ends").fill("2027-01-10T23:00");
+    await pickTodayDateTime(page, "fn-starts", "20", "00");
+    await pickTodayDateTime(page, "fn-ends", "23", "00");
     await page.getByTestId("fn-save").click();
     await expect(page.getByTestId("fn-save")).toHaveCount(0);
 
@@ -231,6 +247,82 @@ test.describe("Event wizard", () => {
     await expect(
       page.getByTestId("event-structure-single").getByText("Activo"),
     ).toBeVisible();
+  });
+
+  test("Fechas y ventas header shows a formatted date, not raw ISO text (TI-155)", async ({ page }) => {
+    await page.goto("/app/eventos/nuevo");
+    await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("tab-fechas").click();
+
+    await pickTodayDateTime(page, "wiz-starts", "20", "00");
+
+    // Was `form.starts_at.replace("T", " ")` — a raw "YYYY-MM-DD HH:mm" string,
+    // e.g. "2026-09-15 20:00". Now formatted via date-fns, which never
+    // renders the raw "YYYY-MM-DD" date part.
+    const summary = page.getByTestId("section-fechas");
+    await expect(summary).not.toContainText(/\d{4}-\d{2}-\d{2}/);
+    await expect(summary).toContainText("20:00");
+  });
+
+  test("Clearing a custom sales-window date falls back to a real preset (TI-155)", async ({ page }) => {
+    // Regression guard: preset="custom" + an empty custom date used to save
+    // fine (computeSalesStart/computeSalesEnd silently return null = "sin
+    // restricción") and only got caught by validation at publish time, not
+    // draft-save. The "Quitar" button on DateTimePicker made this easier to
+    // reach, so clearing now resets the preset instead of leaving it dangling.
+    await page.goto("/app/eventos/nuevo");
+    await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("tab-fechas").click();
+    await pickTodayDateTime(page, "wiz-starts", "20", "00");
+
+    await page.getByTestId("wiz-sales-start-preset").click();
+    await page.getByRole("option", { name: "Fecha y hora personalizada" }).first().click();
+    await expect(page.getByTestId("wiz-sales-start-custom")).toBeVisible();
+
+    await pickTodayDateTime(page, "wiz-sales-start-custom", "10", "00");
+    await page.getByTestId("wiz-sales-start-custom").click();
+    await page.getByTestId("wiz-sales-start-custom-popover").getByTestId("wiz-sales-start-custom-clear").click();
+
+    // The custom field disappears — the preset fell back to a real value,
+    // not left as "custom" with nothing in it.
+    await expect(page.getByTestId("wiz-sales-start-custom")).toHaveCount(0);
+  });
+
+  test("Función end date before start date is rejected (TI-155)", async ({ page }) => {
+    await page.route("**/api/plans/me/features", async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      await route.fulfill({
+        status: response.status(),
+        json: { ...json, multi_function_events: true },
+      });
+    });
+
+    await page.goto("/app/eventos");
+    await page.getByTestId("event-detail-link-concierto-acustico-demo").click();
+    await page.getByTestId("event-edit-btn").click();
+    await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
+
+    await page.getByTestId("tab-fechas").click();
+    await page.getByTestId("event-structure-multi").click();
+    await page.getByTestId("add-function").click();
+
+    await page.getByTestId("fn-name").fill("Función con horario inválido");
+    await pickTodayDateTime(page, "fn-starts", "23", "00");
+    await pickTodayDateTime(page, "fn-ends", "20", "00");
+    await page.getByTestId("fn-save").click();
+
+    await expect(page.getByText("La fecha fin debe ser posterior a la fecha de inicio.")).toBeVisible();
+    // Dialog stays open — nothing was saved.
+    await expect(page.getByTestId("fn-save")).toBeVisible();
+
+    // The old native <input type="datetime-local"> could be cleared back to
+    // "" (no end date — falls back to the default 1h duration for overlap
+    // checks). DateTimePicker's calendar has no such affordance by default,
+    // so it needs an explicit "Quitar" action once a date is picked (TI-155).
+    await page.getByTestId("fn-ends").click();
+    await page.getByTestId("fn-ends-popover").getByTestId("fn-ends-clear").click();
+    await expect(page.getByTestId("fn-ends")).toContainText("Elegí fecha y hora");
   });
 
   test("Ticket design templates are A4 for email PDF", async ({ page }) => {
