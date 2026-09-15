@@ -691,6 +691,10 @@ function DocumentsUploader({
     onDownload,
 }) {
     const docGroups = useMemo(() => groupDocumentsByType(docs), [docs]);
+    const optionalDocTypes = useMemo(
+        () => docTypes.filter((t) => !requiredDocTypes.includes(t.code)),
+        [docTypes, requiredDocTypes],
+    );
     return (
         <div className="space-y-5">
             {requiredDocTypes.length > 0 && (
@@ -730,6 +734,32 @@ function DocumentsUploader({
                                                 {latest.review_comment}
                                             </p>
                                         )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+            {optionalDocTypes.length > 0 && (
+                <div className="space-y-1.5" data-testid="optional-docs-checklist">
+                    <Label className="text-xs text-muted-foreground">
+                        Documentos opcionales / adicionales
+                    </Label>
+                    <div className="space-y-1.5">
+                        {optionalDocTypes.map((t) => {
+                            const uploaded = docs.some((d) => d.doc_type === t.code);
+                            return (
+                                <div
+                                    key={t.code}
+                                    data-testid={`optional-doc-${t.code}`}
+                                    className="flex items-center gap-2 text-sm"
+                                >
+                                    <span className={uploaded ? "" : "text-muted-foreground"}>
+                                        {t.label}
+                                    </span>
+                                    <Badge variant="outline" className="ml-auto text-[10px] font-normal">
+                                        {uploaded ? "Cargado" : "Opcional"}
+                                    </Badge>
                                 </div>
                             );
                         })}
