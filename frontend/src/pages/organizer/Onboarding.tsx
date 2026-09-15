@@ -33,6 +33,7 @@ import {
     billingSuccessPath,
     saveBillingCheckout,
 } from "@/lib/billingCheckout";
+import { groupDocumentsByType, previousVersionLabel } from "@/lib/organizerDocuments";
 import {
     Upload,
     CheckCircle2,
@@ -689,6 +690,7 @@ function DocumentsUploader({
     onPreview,
     onDownload,
 }) {
+    const docGroups = useMemo(() => groupDocumentsByType(docs), [docs]);
     return (
         <div className="space-y-5">
             {requiredDocTypes.length > 0 && (
@@ -826,78 +828,101 @@ function DocumentsUploader({
                         Todavía no subiste documentos.
                     </p>
                 )}
-                {docs.map((d) => {
-                    const canView = !d.is_demo && isPreviewableMime(d.mime_type);
-                    const canDownload = !d.is_demo;
-                    return (
-                    <div
-                        key={d.id}
-                        data-testid={`doc-row-${d.id}`}
-                        className="flex items-center justify-between gap-2 p-3 rounded-lg border border-border/70 bg-card"
-                    >
-                        <div className="flex items-center gap-3 min-w-0">
-                            <div className="h-9 w-9 rounded-md bg-secondary grid place-items-center text-primary shrink-0">
-                                <FileText className="h-4 w-4" />
-                            </div>
-                            <div className="min-w-0">
-                                {canView ? (
-                                    <button
-                                        type="button"
-                                        className="text-sm font-medium truncate max-w-full text-left hover:underline"
-                                        onClick={() => onPreview(d)}
-                                    >
-                                        {d.original_filename}
-                                    </button>
-                                ) : (
-                                    <div className="text-sm font-medium truncate">
-                                        {d.original_filename}
+                {docGroups.map((group) => (
+                    <div key={group.docType} data-testid={`doc-group-${group.docType}`} className="space-y-2">
+                        <DocRow d={group.current} onPreview={onPreview} onDownload={onDownload} onDelete={onDelete} />
+                        {group.previous.length > 0 && (
+                            <div className="space-y-2 border-l-2 border-amber-300 pl-3 ml-1">
+                                {group.previous.map((prev) => (
+                                    <div key={prev.id} className="space-y-1">
+                                        <p className="text-xs font-medium text-muted-foreground">
+                                            {previousVersionLabel(prev.status)}
+                                        </p>
+                                        <DocRow
+                                            d={prev}
+                                            compact
+                                            onPreview={onPreview}
+                                            onDownload={onDownload}
+                                            onDelete={onDelete}
+                                        />
                                     </div>
-                                )}
-                                <div className="text-xs text-muted-foreground">
-                                    {d.doc_type} · {(d.size_bytes / 1024).toFixed(1)} KB
-                                    {d.is_demo ? " · ejemplo" : ""}
-                                </div>
+                                ))}
                             </div>
-                        </div>
-                        <div className="flex items-center shrink-0">
-                            {canView && (
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    title="Ver"
-                                    data-testid={`preview-doc-${d.id}`}
-                                    onClick={() => onPreview(d)}
-                                >
-                                    <Eye className="h-4 w-4" />
-                                </Button>
-                            )}
-                            {canDownload && (
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    title="Descargar"
-                                    data-testid={`download-doc-${d.id}`}
-                                    onClick={() => onDownload(d)}
-                                >
-                                    <Download className="h-4 w-4" />
-                                </Button>
-                            )}
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                title="Eliminar"
-                                data-testid={`delete-doc-${d.id}`}
-                                onClick={() => onDelete(d.id)}
-                            >
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                        </div>
+                        )}
                     </div>
-                    );
-                })}
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function DocRow({ d, compact = false, onPreview, onDownload, onDelete }) {
+    const canView = !d.is_demo && isPreviewableMime(d.mime_type);
+    const canDownload = !d.is_demo;
+    return (
+        <div
+            data-testid={`doc-row-${d.id}`}
+            className={`flex items-center justify-between gap-2 rounded-lg border bg-card ${
+                compact ? "p-2 border-border/50" : "p-3 border-border/70"
+            }`}
+        >
+            <div className="flex items-center gap-3 min-w-0">
+                <div className="h-9 w-9 rounded-md bg-secondary grid place-items-center text-primary shrink-0">
+                    <FileText className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                    {canView ? (
+                        <button
+                            type="button"
+                            className="text-sm font-medium truncate max-w-full text-left hover:underline"
+                            onClick={() => onPreview(d)}
+                        >
+                            {d.original_filename}
+                        </button>
+                    ) : (
+                        <div className="text-sm font-medium truncate">{d.original_filename}</div>
+                    )}
+                    <div className="text-xs text-muted-foreground">
+                        {d.doc_type} · {(d.size_bytes / 1024).toFixed(1)} KB
+                        {d.is_demo ? " · ejemplo" : ""}
+                    </div>
+                </div>
+            </div>
+            <div className="flex items-center shrink-0">
+                {canView && (
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title="Ver"
+                        data-testid={`preview-doc-${d.id}`}
+                        onClick={() => onPreview(d)}
+                    >
+                        <Eye className="h-4 w-4" />
+                    </Button>
+                )}
+                {canDownload && (
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title="Descargar"
+                        data-testid={`download-doc-${d.id}`}
+                        onClick={() => onDownload(d)}
+                    >
+                        <Download className="h-4 w-4" />
+                    </Button>
+                )}
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    title="Eliminar"
+                    data-testid={`delete-doc-${d.id}`}
+                    onClick={() => onDelete(d.id)}
+                >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
             </div>
         </div>
     );
