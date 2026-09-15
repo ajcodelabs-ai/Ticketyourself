@@ -3,7 +3,7 @@
  * Tools grouped: select | stage/zone | rows/seat | tables | undo/redo.
  */
 import {
-    MousePointer, Theater, Square, Armchair, UtensilsCrossed,
+    MousePointer, Hand, Theater, Square, Armchair, UtensilsCrossed,
     Spline, CircleDot, Undo2, Redo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,12 @@ const TOOL_GROUPS = [
         id: "select",
         tools: [
             { id: "select", label: "Seleccionar (V)", short: "Sel", icon: MousePointer },
+            {
+                id: "pan",
+                label: "Mover mapa — arrastrá para desplazarte sin modificar elementos",
+                short: "Mover",
+                icon: Hand,
+            },
         ],
     },
     {

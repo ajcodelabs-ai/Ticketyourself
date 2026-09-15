@@ -234,4 +234,112 @@ test.describe("Venue editor", () => {
     await page.getByTestId("locality-form-reserved-quota").fill("0");
     await expect(submit).toBeDisabled();
   });
+
+  // TI-92: pan was previously only reachable via Space+drag or middle-click,
+  // both undiscoverable. Now there's a visible "Mover mapa" toolbar tool
+  // (data-testid="tool-pan") that does the same thing. Verify it pans the
+  // whole canvas (both elements shift by the same delta) rather than
+  // accidentally selecting or dragging the element the drag started on top of.
+  test("Pan tool moves the whole map without selecting or dragging elements", async ({ page }) => {
+    page.on("pageerror", (err) => {
+      throw new Error(`Uncaught page exception: ${err.message}`);
+    });
+
+    await page.goto("/app/venues");
+    await expect(page.getByTestId("venues-list-page")).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId("venues-create-btn").click();
+    await page.getByTestId("venue-start-blank").click();
+    await page.getByTestId("venue-new-name").fill(`E2E Pan ${Date.now()}`);
+    await page.getByTestId("venue-new-submit").click();
+    await expect(page.getByTestId("venue-editor-page")).toBeVisible({ timeout: 10_000 });
+
+    // ?blank=1 skips the overlay on first landing; revisit without it (like
+    // the Venues list "Editor" link would) so it shows and can be dismissed.
+    const venueIdEarly = page.url().match(/\/app\/venues\/([^/]+)\/editor/)?.[1];
+    await page.goto(`/app/venues/${venueIdEarly}/editor`);
+    await expect(page.getByTestId("venue-empty-canvas-overlay")).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId("venue-empty-canvas-dismiss").click();
+    await expect(page.getByTestId("venue-empty-canvas-overlay")).not.toBeVisible();
+
+    const canvas = page.locator("canvas").first();
+    const box = (await canvas.boundingBox())!;
+
+    const drawZone = async (cx: number, cy: number) => {
+      await page.getByTestId("tool-zone").click();
+      await page.mouse.click(box.x + cx, box.y + cy);
+      await page.getByRole("button", { name: "Crear zona" }).click();
+    };
+    // Two zones, far apart — if both shift by the same amount after the
+    // drag below, that proves the whole map panned, not just one element.
+    // Reset zoom/pan to 1:1 before each draw: adding the first element
+    // triggers a one-time auto-fit that rescales the view, which would
+    // throw off the fixed pixel math below.
+    await drawZone(100, 100); // spans (100,100)-(300,200), center (200,150)
+    await page.getByTestId("zoom-reset").click();
+    await drawZone(380, 300); // spans (380,300)-(580,400), center (480,350)
+    await page.getByTestId("zoom-reset").click();
+    await expect(page.getByText("2 elementos")).toBeVisible({ timeout: 5_000 });
+
+    await page.mouse.click(box.x + 20, box.y + 20);
+    await expect(page.getByTestId("properties-panel-empty")).toBeVisible();
+
+    await page.getByTestId("tool-pan").click();
+    await expect(canvas).toHaveCSS("cursor", "grab");
+
+    // Drag starting ON TOP of the first zone — exercises both the pan
+    // trigger and the element-drag-start guard that must yield to it.
+    const dx = 80;
+    const dy = 60;
+    await page.mouse.move(box.x + 200, box.y + 150);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 200 + dx, box.y + 150 + dy, { steps: 5 });
+    await page.mouse.up();
+
+    // Panning must not select or drag the element it started on top of.
+    await expect(page.getByTestId("properties-panel-empty")).toBeVisible();
+
+    await page.getByTestId("tool-select").click();
+
+    // First zone's center moved by the pan delta.
+    await page.mouse.click(box.x + 200 + dx, box.y + 150 + dy);
+    await expect(page.getByTestId("properties-panel")).toBeVisible({ timeout: 5_000 });
+    await page.mouse.click(box.x + 20, box.y + 20);
+    await expect(page.getByTestId("properties-panel-empty")).toBeVisible();
+
+    // Second, untouched zone moved by the same delta too.
+    await page.mouse.click(box.x + 480 + dx, box.y + 350 + dy);
+    await expect(page.getByTestId("properties-panel")).toBeVisible({ timeout: 5_000 });
+
+    // That click also selected the second zone — its resize/rotate
+    // Transformer anchors are now live at its corners. Switching to the
+    // pan tool with a selection still active must detach them (they drag
+    // independently of the element's own `draggable` gating), or a drag
+    // starting on a corner resizes the zone instead of panning the map.
+    // Ancho/Alto are the 4th/5th number inputs in the panel (X, Y,
+    // Rotación, Ancho, Alto) — no dedicated testid on them.
+    const numberInputs = page.getByTestId("properties-panel").locator('input[type="number"]');
+    await expect(numberInputs.nth(3)).toHaveValue("200");
+    await expect(numberInputs.nth(4)).toHaveValue("100");
+
+    await page.getByTestId("tool-pan").click();
+    await expect(canvas).toHaveCSS("cursor", "grab");
+    const cornerX = box.x + 460; // zone2's shifted top-left corner
+    const cornerY = box.y + 360;
+    await page.mouse.move(cornerX, cornerY);
+    await page.mouse.down();
+    await page.mouse.move(cornerX + 40, cornerY + 30, { steps: 5 });
+    await page.mouse.up();
+
+    // Its stored dimensions must be untouched — a pan never mutates
+    // element data, only the view.
+    await expect(numberInputs.nth(3)).toHaveValue("200");
+    await expect(numberInputs.nth(4)).toHaveValue("100");
+
+    await page.getByTestId("tool-select").click();
+    await page.mouse.click(box.x + 480 + dx + 40, box.y + 350 + dy + 30);
+    await expect(page.getByTestId("properties-panel")).toBeVisible({ timeout: 5_000 });
+
+    const venueId = page.url().match(/\/app\/venues\/([^/]+)\/editor/)?.[1];
+    if (venueId) await archiveVenue(page, venueId);
+  });
 });
