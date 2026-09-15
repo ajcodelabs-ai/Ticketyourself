@@ -26,6 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
     Select,
     SelectContent,
@@ -311,6 +312,10 @@ export default function EventVenueSection({
     }, [pricing, pricingType, panel]);
 
     const allLocalities = useMemo(() => linkedVenue?.localities || [], [linkedVenue]);
+    const hasNumbered = useMemo(
+        () => allLocalities.some((loc) => normalizeLocalitySeatingType(loc.seating_type) !== "unnumbered"),
+        [allLocalities],
+    );
 
     const assignedCountByLocality = useMemo(() => {
         const counts = {};
@@ -484,6 +489,28 @@ export default function EventVenueSection({
             );
         } catch (e) {
             toast.error(formatApiError(e?.response?.data?.detail) || "No se pudo guardar quién paga el fee.");
+        }
+    };
+
+    // TI-91: moved from the General tab's content panel — this only applies
+    // to numbered maps, so it belongs where localities/seating are
+    // configured. `content` is a full JSONB blob on the event (the backend
+    // replaces it wholesale on PUT), so every existing field must be spread
+    // back in, not just the one being toggled.
+    const saveGroupPurchase = async (next) => {
+        if (!event?.id) return;
+        try {
+            const r = await api.put(`/events/me/${event.id}`, {
+                content: { ...(event.content || {}), allow_full_group_purchase: next },
+            });
+            onUpdated?.(r.data);
+            toast.success(
+                next
+                    ? "Activado — el comprador puede comprar filas/mesas completas"
+                    : "Desactivado — selección individual de asientos",
+            );
+        } catch (e) {
+            toast.error(formatApiError(e?.response?.data?.detail) || "No se pudo guardar la opción.");
         }
     };
 
@@ -1033,6 +1060,35 @@ export default function EventVenueSection({
                                 </RadioGroup>
                             </div>
                         ) : null}
+
+                        {eventSaved && hasNumbered && (
+                            <div
+                                className="rounded-xl border bg-card p-4 space-y-3"
+                                data-testid="section-group-purchase"
+                            >
+                                <div>
+                                    <h4 className="text-sm font-semibold">Compra de fila / mesa completa</h4>
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                        Permite al comprador seleccionar una fila o mesa entera desde la
+                                        página del evento (sólo para eventos con mapa de asientos numerados).
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <Switch
+                                        id="allow-group-purchase"
+                                        checked={!!event?.content?.allow_full_group_purchase}
+                                        disabled={disabled}
+                                        onCheckedChange={saveGroupPurchase}
+                                        data-testid="content-allow-group-purchase"
+                                    />
+                                    <Label htmlFor="allow-group-purchase" className="cursor-pointer">
+                                        {event?.content?.allow_full_group_purchase
+                                            ? "Activo — el comprador puede comprar filas/mesas completas"
+                                            : "Inactivo — selección individual de asientos"}
+                                    </Label>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </>
             )}
