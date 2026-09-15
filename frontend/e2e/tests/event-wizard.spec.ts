@@ -145,6 +145,23 @@ test.describe("Event wizard", () => {
     await expect(page.getByTestId("ticket-validation-none")).toBeVisible();
   });
 
+  test("Mín./Máx. por orden can't be typed down to 0 (TI-150)", async ({ page }) => {
+    await page.goto("/app/eventos/nuevo");
+    await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("tab-fechas").click();
+    await expect(page.getByTestId("sales-config-block")).toBeVisible();
+
+    const min = page.getByTestId("access-min-purchase");
+    await min.fill("0");
+    await min.blur();
+    await expect(min).toHaveValue("1");
+
+    const max = page.getByTestId("access-max-purchase");
+    await max.fill("0");
+    await max.blur();
+    await expect(max).toHaveValue("1");
+  });
+
   test("Multifunción modal only asks for name, description and schedule", async ({ page }) => {
     await page.route("**/api/plans/me/features", async (route) => {
       const response = await route.fetch();
