@@ -478,6 +478,19 @@ export default function EventWizard({ initial = null, mode = "create" }) {
         update("unlimited_capacity", currentEvent.capacity == null);
     }, [currentEvent?.capacity, currentEvent?.venue_id]);
 
+    // Same staleness class as venue_name/capacity above: TI-91 moved
+    // "Compra de fila/mesa completa" into Localidades, where it now saves
+    // immediately (EventVenueSection.saveGroupPurchase) instead of waiting
+    // for "Guardar". Resync so a later save from an unrelated tab doesn't
+    // send the stale form.content snapshot and silently revert the toggle.
+    useEffect(() => {
+        if (currentEvent?.content?.allow_full_group_purchase === undefined) return;
+        update(
+            "content.allow_full_group_purchase",
+            currentEvent.content.allow_full_group_purchase,
+        );
+    }, [currentEvent?.content?.allow_full_group_purchase]);
+
     // When building payload, use the latest form state via ref to avoid stale
     // closures in callbacks passed to child components (ensureEventId, etc.).
     const ensureEventId = async ({ silent = false } = {}) => {
