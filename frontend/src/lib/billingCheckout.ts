@@ -22,7 +22,10 @@ export function billingPeriodLabel(period) {
     return period || "—";
 }
 
-export function billingSuccessPath({ sessionId, intentId } = {}) {
+export function billingSuccessPath({
+    sessionId,
+    intentId,
+}: { sessionId?: string; intentId?: string } = {}) {
     const qs = new URLSearchParams();
     if (sessionId) qs.set("session_id", sessionId);
     if (intentId) qs.set("intent_id", intentId);
