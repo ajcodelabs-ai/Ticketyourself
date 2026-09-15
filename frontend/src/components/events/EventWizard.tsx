@@ -2240,7 +2240,7 @@ function SectionFechas({ form, update, disabled, eventId, localities, hasPersist
                     <ChoiceCard
                         icon={CalendarClock}
                         title="Evento único"
-                        description="Una sola función en fecha y lugar. Caso base."
+                        description="Una sola función en fecha y lugar."
                         selected={structure === "single"}
                         onSelect={() => setStructure("single")}
                         testid="event-structure-single"
