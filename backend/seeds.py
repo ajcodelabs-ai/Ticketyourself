@@ -53,7 +53,10 @@ from services.required_documents import GLOBAL_COUNTRY
 from slugs import normalize_slug
 
 DEFAULT_DOCUMENT_TYPES = {
-    "ruc": "RUC",
+    # Doc type codes are shared across countries — "ruc" doubles as Colombia's
+    # NIT (TI-82), same way legal_id_label already reads "NIT / Cédula" for
+    # CO vs "RUC / Cédula" for EC in registration_countries.py.
+    "ruc": "RUC / NIT",
     "id_card": "Cédula",
     "legal_rep_appointment": "Nombramiento de representante legal",
     "operating_permit": "Permiso de funcionamiento",
@@ -585,15 +588,27 @@ async def _seed_document_types() -> None:
 
 
 async def _seed_required_documents() -> None:
-    """Default mandatory docs: global (*) + Ecuador-specific matrix."""
-    ec_defaults = {
-        "individual": ["id_card", "bank_certificate"],
-        "company": [
-            "ruc",
-            "legal_rep_appointment",
-            "bank_certificate",
-            "enabling_docs",
-        ],
+    """Default mandatory docs: global (*) + per-country matrices (TI-82).
+
+    PE/MX/US still fall through to the global (*) default — no confirmed
+    requirements for those yet; only EC and CO have been specified.
+    """
+    # "ruc" doubles as the generic legal-entity-id doc_type across countries
+    # (NIT for Colombia), same as "id_card" doubles as cédula.
+    country_defaults = {
+        "EC": {
+            "individual": ["id_card", "bank_certificate"],
+            "company": [
+                "ruc",
+                "legal_rep_appointment",
+                "bank_certificate",
+                "enabling_docs",
+            ],
+        },
+        "CO": {
+            "individual": ["id_card", "bank_certificate"],
+            "company": ["ruc", "bank_certificate", "legal_rep_appointment"],
+        },
     }
     async with AsyncSessionLocal() as session:
         now = datetime.now(timezone.utc)
@@ -613,8 +628,9 @@ async def _seed_required_documents() -> None:
 
         for org_type, doc_types in REQUIRED_DOC_DEFAULTS.items():
             await ensure(GLOBAL_COUNTRY, org_type, doc_types)
-        for org_type, doc_types in ec_defaults.items():
-            await ensure("EC", org_type, doc_types)
+        for country_code, defaults in country_defaults.items():
+            for org_type, doc_types in defaults.items():
+                await ensure(country_code, org_type, doc_types)
         await session.commit()
     logger.info("Seeded default required-document rules")
 
