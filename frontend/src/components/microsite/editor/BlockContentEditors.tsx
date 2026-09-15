@@ -12,7 +12,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import RichTextEditor from "@/components/editor/RichTextEditor";
+import RichTextEditor, { FAQ_ANSWER_MAX_LENGTH } from "@/components/editor/RichTextEditor";
 import { assetUrl } from "@/lib/microsite";
 import {
     defaultFaqItem,
@@ -283,6 +283,7 @@ export function FaqBlockEditor({
                             onChange={(html) => updateItem(item.id, { answer_html: html })}
                             placeholder="Respuesta…"
                             testid={`prop-faq-answer-${idx}`}
+                            maxLength={FAQ_ANSWER_MAX_LENGTH}
                         />
                     </div>
                 ))}
