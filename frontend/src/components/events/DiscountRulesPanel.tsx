@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import DateTimePicker from "@/components/ui/DateTimePicker";
 import { Badge } from "@/components/ui/badge";
 import {
     Select,
@@ -668,26 +669,26 @@ function InlineDiscountForm({
                     </h5>
                     <div className="grid sm:grid-cols-2 gap-3">
                         <Field label="Fecha inicio">
-                            <Input
-                                type="datetime-local"
+                            <DateTimePicker
                                 value={isoToInput(draft.conditions.valid_from)}
-                                onChange={(e) =>
+                                onChange={(v) =>
                                     updCond({
-                                        valid_from: inputToISO(e.target.value),
+                                        valid_from: inputToISO(v),
                                     })
                                 }
+                                allowClear
                                 data-testid="rule-valid-from"
                             />
                         </Field>
                         <Field label="Fecha fin">
-                            <Input
-                                type="datetime-local"
+                            <DateTimePicker
                                 value={isoToInput(draft.conditions.valid_until)}
-                                onChange={(e) =>
+                                onChange={(v) =>
                                     updCond({
-                                        valid_until: inputToISO(e.target.value),
+                                        valid_until: inputToISO(v),
                                     })
                                 }
+                                allowClear
                                 data-testid="rule-valid-until"
                             />
                         </Field>
