@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import RichTextEditor from "@/components/editor/RichTextEditor";
+import RichTextEditor, { FAQ_ANSWER_MAX_LENGTH } from "@/components/editor/RichTextEditor";
 import { newAgendaItem, newFaqItem } from "@/lib/eventContent";
 
 /**
@@ -269,6 +269,7 @@ export default function EventContentPanel({ content, update, disabled = false })
                                         onChange={(html) => updateFaq(i, "answer_html", html)}
                                         disabled={disabled}
                                         testid={`content-faq-answer-${i}`}
+                                        maxLength={FAQ_ANSWER_MAX_LENGTH}
                                     />
                                 </div>
                             </div>
