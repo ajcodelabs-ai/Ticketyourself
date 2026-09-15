@@ -1,6 +1,7 @@
 /**
- * Super-admin document review: group versions of the same type so a
- * re-upload after "needs correction" reads as a reply, not a duplicate.
+ * Document review (Super-admin panel and the organizer's own upload page):
+ * group versions of the same type so a re-upload after "needs correction"
+ * reads as a reply, not an ambiguous duplicate (TI-78, TI-81).
  */
 
 function uploadedAtMs(doc) {
