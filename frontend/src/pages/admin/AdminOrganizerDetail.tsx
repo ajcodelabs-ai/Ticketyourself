@@ -94,16 +94,16 @@ function uploadedLabel(iso) {
 
 function DocFileRow({
     d,
-    typeLabel,
+    typeLabel = null,
     showActions,
     canReview,
     reviewing,
-    compact,
+    compact = false,
     onPreview,
     onDownload,
-    onApprove,
-    onRequestCorrection,
-    onReject,
+    onApprove = undefined,
+    onRequestCorrection = undefined,
+    onReject = undefined,
 }) {
     const canView = !d.is_demo && isPreviewableMime(d.mime_type);
     const canDownload = !d.is_demo;

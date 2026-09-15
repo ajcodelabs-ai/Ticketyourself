@@ -587,9 +587,7 @@ def init_linktopay(
     """
     amount = cents_to_amount(amount_cents)
     currency = (currency or "USD").upper()
-    vat_amt, taxable_default, pct = vat_included_breakdown(
-        amount_cents, tax_percentage
-    )
+    vat_amt, taxable_default, pct = vat_included_breakdown(amount_cents, tax_percentage)
     vat_amt = float(vat) if vat is not None else vat_amt
     taxable = float(taxable_amount) if taxable_amount is not None else taxable_default
     success = _absolute_url(success_url)
@@ -692,9 +690,7 @@ def init_reference(
     """
     amount = cents_to_amount(amount_cents)
     currency = (currency or "USD").upper()
-    vat_amt, taxable_default, pct = vat_included_breakdown(
-        amount_cents, tax_percentage
-    )
+    vat_amt, taxable_default, pct = vat_included_breakdown(amount_cents, tax_percentage)
     vat_amt = float(vat) if vat is not None else vat_amt
     taxable = float(taxable_amount) if taxable_amount is not None else taxable_default
     body: dict[str, Any] = {
