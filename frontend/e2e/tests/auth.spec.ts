@@ -121,6 +121,35 @@ test.describe("Registration flow", () => {
     expect(refreshToken).toBeTruthy();
   });
 
+  // TI-76: the "Crear cuenta y continuar" button stayed enabled with
+  // required fields empty, and only the generic browser "Completa este
+  // campo" message pointed at what was missing after a failed submit.
+  // Required fields now carry a visible "*" and the form states the
+  // convention up front — this only checks that identification, not any
+  // enable/disable behavior on the button (out of scope, see PR).
+  test("Required fields on the registration form are marked with *", async ({ page }) => {
+    await page.goto("/register");
+    await page.getByTestId("plan-card-profesional-cta").click();
+    await expect(page.getByTestId("register-page")).toBeVisible();
+
+    await expect(page.getByTestId("register-required-legend")).toContainText(
+      "Los campos marcados con * son obligatorios",
+    );
+
+    for (const testid of [
+      "register-email-input",
+      "register-phone-input",
+      "register-password-input",
+      "register-confirm-input",
+      "register-company-input",
+      "register-legal-input",
+      "register-slug-input",
+    ]) {
+      const label = page.locator(`label[for="${await page.getByTestId(testid).getAttribute("id")}"]`);
+      await expect(label).toContainText("*");
+    }
+  });
+
   // Regression coverage for client feedback: "No me sirve el boton de Simular
   // Pago + Aprobacion. Me sale el mensaje que ya esta pero no avanza del pago."
   // Reproduces the full lifecycle — register, admin-approve, then use the
