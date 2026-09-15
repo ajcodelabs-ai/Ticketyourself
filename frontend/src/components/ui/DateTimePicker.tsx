@@ -17,25 +17,12 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { parseLocalInput } from "@/lib/events";
 
 const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
 const MINUTES = ["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"];
 const QUICK_TIMES = ["10:00", "12:00", "15:00", "18:00", "19:00", "20:00", "21:00", "22:00"];
 const DEFAULT_TIME = { hour: "20", minute: "00" };
-
-function parseLocalInput(value) {
-    if (!value || typeof value !== "string") return null;
-    const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-    if (!m) return null;
-    const y = Number(m[1]);
-    const mo = Number(m[2]);
-    const d = Number(m[3]);
-    const hh = Number(m[4]);
-    const mm = Number(m[5]);
-    const date = new Date(y, mo - 1, d, hh, mm);
-    if (Number.isNaN(date.getTime())) return null;
-    return date;
-}
 
 function toLocalInput(date, hour, minute) {
     const y = date.getFullYear();
@@ -51,6 +38,7 @@ export default function DateTimePicker({
     onChange,
     disabled = false,
     placeholder = "Elegí fecha y hora",
+    allowClear = false,
     "data-testid": testId,
     className,
 }: {
@@ -58,6 +46,7 @@ export default function DateTimePicker({
     onChange?: (value: string) => void;
     disabled?: boolean;
     placeholder?: string;
+    allowClear?: boolean;
     "data-testid"?: string;
     className?: string;
 }) {
@@ -187,7 +176,21 @@ export default function DateTimePicker({
                             </button>
                         ))}
                     </div>
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-2">
+                        {allowClear && parsed && (
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                    onChange?.("");
+                                    setOpen(false);
+                                }}
+                                data-testid={testId ? `${testId}-clear` : undefined}
+                            >
+                                Quitar
+                            </Button>
+                        )}
                         <Button
                             type="button"
                             size="sm"

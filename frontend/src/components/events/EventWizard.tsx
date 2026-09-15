@@ -119,6 +119,7 @@ import {
     EVENT_CATEGORIES,
     PRICING_LABELS,
     eventPublicUrl,
+    formatLocalDateTime,
     isoToLocalInput,
     localInputToIso,
 } from "@/lib/events";
@@ -2213,7 +2214,7 @@ function SectionFechas({ form, update, disabled, eventId, localities, hasPersist
                         <>
                             {" · "}
                             <strong className="text-foreground">
-                                {form.starts_at.replace("T", " ")}
+                                {formatLocalDateTime(form.starts_at)}
                             </strong>
                             {durationLabel ? ` · ${durationLabel}` : ""}
                             {` · ${structureLabel}`}
@@ -2475,9 +2476,16 @@ function SalesWindowBlock({ form, update, disabled }) {
                 <Field label="Inicio de ventas — fecha personalizada">
                     <DateTimePicker
                         value={form.sales_start_custom}
-                        onChange={(v) => update("sales_start_custom", v)}
+                        onChange={(v) => {
+                            update("sales_start_custom", v);
+                            // Quitar leaves "custom" selected with no date, which
+                            // silently computes to "sin restricción" on save —
+                            // fall back to a real preset instead.
+                            if (!v) update("sales_window_preset_start", "immediate");
+                        }}
                         disabled={disabled}
                         placeholder="Inicio de ventas"
+                        allowClear
                         data-testid="wiz-sales-start-custom"
                     />
                 </Field>
@@ -2486,9 +2494,13 @@ function SalesWindowBlock({ form, update, disabled }) {
                 <Field label="Fin de ventas — fecha personalizada">
                     <DateTimePicker
                         value={form.sales_end_custom}
-                        onChange={(v) => update("sales_end_custom", v)}
+                        onChange={(v) => {
+                            update("sales_end_custom", v);
+                            if (!v) update("sales_window_preset_end", "at_start");
+                        }}
                         disabled={disabled}
                         placeholder="Fin de ventas"
+                        allowClear
                         data-testid="wiz-sales-end-custom"
                     />
                 </Field>
