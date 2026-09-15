@@ -26,6 +26,10 @@ import {
 import PasswordInput from "@/components/ui/password-input";
 import PhoneInput from "@/components/ui/phone-input";
 import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
     Loader2,
     CreditCard,
     User,
@@ -38,6 +42,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { formatCents } from "@/lib/orders";
 import { IVA_PERCENT_OPTIONS } from "@/lib/einvoice";
 import { billingSuccessPath, saveBillingCheckout } from "@/lib/billingCheckout";
+import { classifyPlanChange } from "@/lib/planChange";
 
 export default function Configuracion() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -171,6 +176,10 @@ function ProfileTab() {
     );
 }
 
+const NO_CONCESSION_NOTE =
+    "El cambio se cobra completo por Nuvei. No se otorgan créditos ni reembolsos por el " +
+    "plan actual: cada cambio de plan es un cobro independiente.";
+
 function PlanTab() {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
@@ -179,6 +188,7 @@ function PlanTab() {
     const [plans, setPlans] = useState([]);
     const [loading, setLoading] = useState(true);
     const [payingCode, setPayingCode] = useState(null);
+    const [confirmChange, setConfirmChange] = useState(null);
 
     useEffect(() => {
         Promise.all([api.get("/dashboard/me"), api.get("/plans")])
@@ -217,7 +227,68 @@ function PlanTab() {
     if (!data) return null;
     const { organizer, plan } = data;
     const currentCode = organizer.plan_code || plan?.code;
-    const upgrades = plans.filter((p) => p.code !== currentCode);
+    const currentPrice = plan?.price_cents ?? 0;
+    const { upgrades, lateral, downgrades } = classifyPlanChange(
+        plans,
+        currentCode,
+        currentPrice,
+    );
+
+    const renderPlanCard = (p, mode: "upgrade" | "downgrade" | "lateral") => {
+        const needsConfirm = mode !== "upgrade";
+        const highlighted = highlightCode === p.code;
+        return (
+            <div
+                key={p.code}
+                data-testid={`cfg-${mode}-${p.code}`}
+                className={`rounded-xl border p-4 space-y-3 ${
+                    highlighted
+                        ? "border-amber-400 bg-amber-50/60 ring-1 ring-amber-200"
+                        : "bg-card"
+                }`}
+            >
+                <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-semibold">{p.name}</h3>
+                        {highlighted && (
+                            <Badge
+                                variant="outline"
+                                className="text-[10px] border-amber-300 text-amber-950 bg-white"
+                            >
+                                Recomendado para desbloquear
+                            </Badge>
+                        )}
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">
+                        {formatCents(p.price_cents)}
+                        {p.billing_period === "monthly" && " / mes"}
+                        {p.billing_period === "one_time" && " pago único"}
+                    </p>
+                    {p.description && (
+                        <p className="text-xs text-muted-foreground mt-1 leading-snug">
+                            {p.description}
+                        </p>
+                    )}
+                </div>
+                <Button
+                    size="sm"
+                    variant={needsConfirm ? "outline" : "default"}
+                    onClick={() =>
+                        needsConfirm ? setConfirmChange(p) : startUpgrade(p.code)
+                    }
+                    disabled={payingCode === p.code}
+                    data-testid={`cfg-${mode}-cta-${p.code}`}
+                >
+                    {payingCode === p.code ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                        <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    {needsConfirm ? `Cambiar a ${p.name}` : `Mejorar a ${p.name}`}
+                </Button>
+            </div>
+        );
+    };
 
     return (
         <div className="space-y-4">
@@ -283,60 +354,66 @@ function PlanTab() {
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="grid sm:grid-cols-2 gap-3">
-                    {upgrades.map((p) => {
-                        const highlighted = highlightCode === p.code;
-                        return (
-                            <div
-                                key={p.code}
-                                data-testid={`cfg-upgrade-${p.code}`}
-                                className={`rounded-xl border p-4 space-y-3 ${
-                                    highlighted
-                                        ? "border-amber-400 bg-amber-50/60 ring-1 ring-amber-200"
-                                        : "bg-card"
-                                }`}
-                            >
-                                <div>
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <h3 className="font-semibold">{p.name}</h3>
-                                        {highlighted && (
-                                            <Badge
-                                                variant="outline"
-                                                className="text-[10px] border-amber-300 text-amber-950 bg-white"
-                                            >
-                                                Recomendado para desbloquear
-                                            </Badge>
-                                        )}
-                                    </div>
-                                    <p className="text-sm text-muted-foreground mt-1">
-                                        {formatCents(p.price_cents)}
-                                        {p.billing_period === "monthly" && " / mes"}
-                                        {p.billing_period === "one_time" && " pago único"}
-                                    </p>
-                                    {p.description && (
-                                        <p className="text-xs text-muted-foreground mt-1 leading-snug">
-                                            {p.description}
-                                        </p>
-                                    )}
-                                </div>
-                                <Button
-                                    size="sm"
-                                    onClick={() => startUpgrade(p.code)}
-                                    disabled={payingCode === p.code}
-                                    data-testid={`cfg-upgrade-cta-${p.code}`}
-                                >
-                                    {payingCode === p.code ? (
-                                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                                    ) : (
-                                        <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-                                    )}
-                                    Mejorar a {p.name}
-                                </Button>
-                            </div>
-                        );
-                    })}
+                    {upgrades.map((p) => renderPlanCard(p, "upgrade"))}
                 </CardContent>
             </Card>
         )}
+
+        {lateral.length > 0 && (
+            <Card data-testid="cfg-lateral-plans">
+                <CardHeader>
+                    <CardTitle className="text-lg">Otros planes (mismo precio)</CardTitle>
+                    <CardDescription>{NO_CONCESSION_NOTE}</CardDescription>
+                </CardHeader>
+                <CardContent className="grid sm:grid-cols-2 gap-3">
+                    {lateral.map((p) => renderPlanCard(p, "lateral"))}
+                </CardContent>
+            </Card>
+        )}
+
+        {downgrades.length > 0 && (
+            <Card data-testid="cfg-downgrade-plans">
+                <CardHeader>
+                    <CardTitle className="text-lg">Cambiar a un plan menor</CardTitle>
+                    <CardDescription>{NO_CONCESSION_NOTE}</CardDescription>
+                </CardHeader>
+                <CardContent className="grid sm:grid-cols-2 gap-3">
+                    {downgrades.map((p) => renderPlanCard(p, "downgrade"))}
+                </CardContent>
+            </Card>
+        )}
+
+        <AlertDialog
+            open={!!confirmChange}
+            onOpenChange={(o) => !o && setConfirmChange(null)}
+        >
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>
+                        ¿Cambiar a {confirmChange?.name}?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                        Se te cobrará {confirmChange && formatCents(confirmChange.price_cents)}
+                        {confirmChange?.billing_period === "monthly" && " / mes"}
+                        {confirmChange?.billing_period === "one_time" && " (pago único)"}
+                        {" "}por el nuevo plan. No se otorga ningún crédito ni reembolso por el
+                        plan actual — cada cambio de plan es un cobro independiente.
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction
+                        onClick={() => {
+                            const code = confirmChange.code;
+                            setConfirmChange(null);
+                            startUpgrade(code);
+                        }}
+                    >
+                        Confirmar cambio
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
         </div>
     );
 }
