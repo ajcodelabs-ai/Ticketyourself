@@ -36,7 +36,7 @@ export default function ShareModal({ open, onOpenChange, url, companyName, heroS
                 <DialogHeader>
                     <DialogTitle>Compartir página</DialogTitle>
                     <DialogDescription>
-                        Pegá el link en tus redes o escaneá el QR para abrirlo desde el celular.
+                        Pega el link en tus redes o escanea el QR para abrirlo desde el celular.
                     </DialogDescription>
                 </DialogHeader>
 

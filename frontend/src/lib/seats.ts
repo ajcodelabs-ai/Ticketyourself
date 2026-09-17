@@ -43,15 +43,18 @@ export function seatWorldPos(element, sub_index) {
         };
     }
     if (element.kind === "seat_row_curved") {
+        // Mirrors ElementShape.tsx's CurvedRowShape / curvedRowYOffset —
+        // same parabolic offset as the reference app, not a circular arc.
         const seats = element.seats_count || 1;
-        const arcRad = ((element.curve_arc_degrees || 60) * Math.PI) / 180;
-        const cr = element.curve_radius || 240;
-        const startAngle = Math.PI / 2 + arcRad / 2;
-        const stepAngle = seats > 1 ? -arcRad / (seats - 1) : 0;
-        const a = startAngle + sub_index * stepAngle;
+        const spacing = element.seat_spacing || 24;
+        const radius = element.seat_radius || 10;
+        const curvature = Number(element.curvature) || 0;
+        const centerIndex = (seats - 1) / 2;
+        const normalized = seats > 1 ? (sub_index - centerIndex) / (seats / 2) : 0;
+        const yOffset = curvature * 30 * normalized * normalized;
         return {
-            x: element.x + cr * Math.cos(a),
-            y: element.y - cr + cr * Math.sin(a),
+            x: element.x + sub_index * spacing + radius,
+            y: element.y + yOffset + radius,
         };
     }
     if (element.kind === "seat_individual") {

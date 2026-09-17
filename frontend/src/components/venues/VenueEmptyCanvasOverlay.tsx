@@ -39,7 +39,7 @@ export default function VenueEmptyCanvasOverlay({
                 localities: [],
                 capacity_calculated: tpl.capacity_calculated,
             });
-            toast.success(`Layout "${tpl.name}" aplicado. Publicá cuando la forma esté lista.`);
+            toast.success(`Layout "${tpl.name}" aplicado. Publica cuando la forma esté lista.`);
         } catch (e) {
             toast.error(e?.response?.data?.detail || "No se pudo aplicar la plantilla");
         } finally {
@@ -71,8 +71,8 @@ export default function VenueEmptyCanvasOverlay({
                         <LayoutTemplate className="h-4 w-4" />
                     </div>
                     <div>
-                        <h3 className="font-medium text-sm">Empezá con una plantilla</h3>
-                        <p className="text-xs text-muted-foreground">Opcional · también podés dibujar desde cero</p>
+                        <h3 className="font-medium text-sm">Empieza con una plantilla</h3>
+                        <p className="text-xs text-muted-foreground">Opcional · también puedes dibujar desde cero</p>
                     </div>
                 </div>
                 <VenueTemplatePicker

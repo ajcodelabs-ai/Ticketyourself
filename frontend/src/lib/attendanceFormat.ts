@@ -134,9 +134,9 @@ export function planLayoutSeatingConflict(
 
 export const PLAN_SEATING_COPY = {
     numbered_unused:
-        "Este mapa tiene filas o asientos numerados. Tu plan no incluye butacas: solo podés asignar zonas de aforo. Las butacas no se venden hasta que mejores el plan.",
+        "Este mapa tiene filas o asientos numerados. Tu plan no incluye butacas: solo puedes asignar zonas de aforo. Las butacas no se venden hasta que mejores el plan.",
     numbered_only_blocked:
-        "Este escenario solo tiene asientos numerados y tu plan no incluye esa función. Podés dejarlo vinculado, pero para vender entradas necesitás un mapa con zonas de aforo o mejorar el plan.",
+        "Este escenario solo tiene asientos numerados y tu plan no incluye esa función. Puedes dejarlo vinculado, pero para vender entradas necesitas un mapa con zonas de aforo o mejorar el plan.",
 } as const;
 
 /** Infer event attendance format from localities first, then layout shape. */

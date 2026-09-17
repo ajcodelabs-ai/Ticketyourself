@@ -291,7 +291,7 @@ export function BlockPropertiesPanel({
         <div className="space-y-4" data-testid="block-properties-panel">
             <div>
                 <h3 className="text-sm font-semibold">{blockLabel(block.type)}</h3>
-                <p className="text-xs text-muted-foreground">Editá las propiedades de esta sección</p>
+                <p className="text-xs text-muted-foreground">Edita las propiedades de esta sección</p>
             </div>
 
             <BlockVariantFields block={block} onUpdateProps={onUpdateProps} />
@@ -330,7 +330,7 @@ export function BlockPropertiesPanel({
                     <RichTextEditor
                         value={content.about_body_html || content.about_body || ""}
                         onChange={(html) => onUpdateContent({ about_body_html: html })}
-                        placeholder="Contá la historia de tu organización…"
+                        placeholder="Cuenta la historia de tu organización…"
                         testid="prop-about-rich"
                     />
                     {!hasHtmlContent(content.about_body_html) && content.about_body && (

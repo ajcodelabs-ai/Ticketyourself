@@ -17,7 +17,7 @@ export default function BillingCancel() {
                         Cancelaste el pago
                     </CardTitle>
                     <CardDescription>
-                        No se cobró nada. Cuando quieras retomar, elegí un plan de nuevo.
+                        No se cobró nada. Cuando quieras retomar, elige un plan de nuevo.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-wrap gap-3">

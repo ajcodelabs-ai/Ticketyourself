@@ -91,7 +91,7 @@ export function PlanGateHint({
         >
             <p className="text-[11px] leading-snug text-amber-950 flex gap-2 min-w-0">
                 <Lock className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>{children || `${label}. Mejorá el plan para usar esta función.`}</span>
+                <span>{children || `${label}. Mejora el plan para usar esta función.`}</span>
             </p>
             <UpgradePlanButton feature={feature} />
         </div>

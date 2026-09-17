@@ -324,7 +324,7 @@ export default function MicrositeEditor() {
                     <h1 className="text-xl sm:text-2xl font-semibold">Tu página</h1>
                     <p className="text-sm text-muted-foreground">
                         {workspace === "simple"
-                            ? "Elegí una plantilla y ajustá logo, textos y color."
+                            ? "Elige una plantilla y ajusta logo, textos y color."
                             : microsite.published
                               ? (
                             <>
@@ -609,7 +609,7 @@ export default function MicrositeEditor() {
                             <div className="text-center py-8 text-muted-foreground space-y-2">
                                 <Settings2 className="h-8 w-8 mx-auto opacity-40" />
                                 <p className="text-sm">
-                                    Seleccioná una sección en el preview o en la lista para editar sus propiedades.
+                                    Selecciona una sección en el preview o en la lista para editar sus propiedades.
                                 </p>
                                 <Button variant="outline" size="sm" onClick={() => setSidePanel("theme")}>
                                     <Palette className="h-3.5 w-3.5 mr-1.5" />

@@ -76,7 +76,7 @@ export default function OrderByToken() {
                 <p className="text-muted-foreground max-w-md">
                     {state === "notfound"
                         ? "El link puede haber expirado o ser incorrecto."
-                        : "No se pudo cargar la orden. Intentá más tarde."}
+                        : "No se pudo cargar la orden. Intenta más tarde."}
                 </p>
                 <Link to="/" className="mt-6 inline-flex items-center gap-1 underline text-primary">
                     <ArrowLeft className="h-4 w-4" />
@@ -320,7 +320,7 @@ export default function OrderByToken() {
                                 Pago pendiente
                             </div>
                             <p className="text-sm text-amber-700">
-                                Tu reserva está confirmada. Completá el pago siguiendo las
+                                Tu reserva está confirmada. Completa el pago siguiendo las
                                 instrucciones que te enviamos por email.
                             </p>
                             {organizer?.slug && (

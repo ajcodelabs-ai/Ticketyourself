@@ -754,10 +754,14 @@ async def update_platform_settings_admin(
     from services.platform_settings import (
         get_platform_settings,
         set_pre_event_fee_required,
+        set_venue_lock_enforcement_enabled,
     )
 
     await set_pre_event_fee_required(
         session, enabled=payload.pre_event_fee_required, admin_id=admin["id"]
+    )
+    await set_venue_lock_enforcement_enabled(
+        session, enabled=payload.venue_lock_enforcement_enabled, admin_id=admin["id"]
     )
     await log_audit(
         admin["id"],

@@ -19,7 +19,7 @@ def require_publish_gates(organizer: dict, *, subject: str) -> None:
             status_code=403,
             detail={
                 "error": "plan_not_paid",
-                "message": f"Debés pagar tu plan antes de publicar {subject}.",
+                "message": f"Debes pagar tu plan antes de publicar {subject}.",
             },
         )
     v_status = organizer.get("verification_fee_status") or "none"
@@ -29,7 +29,7 @@ def require_publish_gates(organizer: dict, *, subject: str) -> None:
             detail={
                 "error": "verification_fee_pending",
                 "message": (
-                    "Debés completar el pago de verificación de cuenta "
+                    "Debes completar el pago de verificación de cuenta "
                     "antes de publicar."
                 ),
             },
@@ -39,6 +39,6 @@ def require_publish_gates(organizer: dict, *, subject: str) -> None:
             status_code=403,
             detail={
                 "error": "contract_not_signed",
-                "message": f"Debés firmar el contrato (OneShot) antes de publicar {subject}.",
+                "message": f"Debes firmar el contrato (OneShot) antes de publicar {subject}.",
             },
         )

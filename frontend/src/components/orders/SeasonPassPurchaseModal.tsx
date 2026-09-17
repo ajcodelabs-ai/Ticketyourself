@@ -129,7 +129,7 @@ export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass
 
                         {isAdmin ? (
                             <p className="text-sm text-muted-foreground">
-                                Las cuentas de administración no pueden comprar. Usá una cuenta de comprador.
+                                Las cuentas de administración no pueden comprar. Usa una cuenta de comprador.
                             </p>
                         ) : !canPurchase ? (
                             <BuyerAuthPanel />
@@ -151,7 +151,7 @@ export default function SeasonPassPurchaseModal({ open, onOpenChange, seasonPass
                                 </div>
 
                                 <p className="text-xs text-muted-foreground">
-                                    No elegís funciones todavía — eso lo hacés después, desde el link que te
+                                    No eliges funciones todavía — eso lo haces después, desde el link que te
                                     enviamos por email, cuando quieras durante la temporada.
                                 </p>
 

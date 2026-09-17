@@ -731,7 +731,7 @@ async def create_order(
                 "payment_method": "nuvei",
                 "message": (
                     "Nuvei aún no está configurado en este entorno. "
-                    "Tu reserva quedó registrada; contactá a soporte TYS."
+                    "Tu reserva quedó registrada; contacta a soporte TYS."
                 ),
                 "redirect_to": f"/o/{organizer['slug']}/orden/{order['order_number']}",
             }
@@ -820,7 +820,7 @@ async def create_order(
     raise HTTPException(
         400,
         f"El método de pago '{effective_method}' no está disponible. "
-        "Usá Nuvei, transferencia o efectivo.",
+        "Usa Nuvei, transferencia o efectivo.",
     )
 
 

@@ -374,7 +374,7 @@ export default function HeroLayerRibbon({
                 </div>
             ) : (
                 <div className="px-3 py-2 text-xs text-muted-foreground">
-                    Seleccioná una capa en el preview o en las pestañas de arriba para editarla.
+                    Selecciona una capa en el preview o en las pestañas de arriba para editarla.
                 </div>
             )}
         </div>

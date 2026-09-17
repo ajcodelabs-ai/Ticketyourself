@@ -591,7 +591,7 @@ class TicketType(Base):
     early_bird_closes_at = Column(DateTime(timezone=True), nullable=True)
 
     # §4.2.6 — purchase-quantity limits (mutually exclusive; min_quantity is
-    # "comprá al menos N", exact_quantity is "comprá exactamente N")
+    # "compra al menos N", exact_quantity is "compra exactamente N")
     min_quantity = Column(Integer, nullable=True)
     exact_quantity = Column(Integer, nullable=True)
 

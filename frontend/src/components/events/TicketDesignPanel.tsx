@@ -174,7 +174,7 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
             return;
         }
         if (file.size > 5 * 1024 * 1024) {
-            toast.error("La imagen supera los 5MB. Reducí su peso e intentá de nuevo.");
+            toast.error("La imagen supera los 5MB. Reduce su peso e intenta de nuevo.");
             return;
         }
         setUploading(true);
@@ -264,7 +264,7 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                 <p className="text-xs text-muted-foreground mb-3">
                     {hasDesign && !selectedTemplateId
                         ? "Este evento tiene un diseño hecho antes de las plantillas. Elegir una plantilla lo reemplaza por completo."
-                        : "Hoja A4 vertical: es el PDF que llega por email y se puede imprimir. Después personalizás color, logo y fondo."}
+                        : "Hoja A4 vertical: es el PDF que llega por email y se puede imprimir. Después personalizas color, logo y fondo."}
                 </p>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid={`td-templates-${slot}`}>
                     {TICKET_TEMPLATES.map((tpl) => {
@@ -451,7 +451,7 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                             style={{ width: displayW, height: displayH }}
                         >
                             <p className="text-sm text-muted-foreground max-w-xs">
-                                Elegí una plantilla A4 arriba. Si no diseñás nada, los compradores
+                                Elige una plantilla A4 arriba. Si no diseñas nada, los compradores
                                 reciben el ticket estándar de Ticket Yourself.
                             </p>
                         </div>
@@ -460,7 +460,7 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
 
                 <div className="flex-1 min-w-[200px] text-xs text-muted-foreground space-y-2 pt-1">
                     <p>
-                        La vista de la izquierda es un esquema de la hoja A4. Usá{" "}
+                        La vista de la izquierda es un esquema de la hoja A4. Usa{" "}
                         <strong>Vista previa</strong> para ver el PDF real con datos de ejemplo
                         (lo mismo que llega por email).
                     </p>
@@ -492,8 +492,8 @@ export default function TicketDesignPanel({ eventId, design, onChange, slot = "m
                 ) : (
                     <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                         {hasDesign
-                            ? "Hacé click en \"Vista previa\" para ver el ticket con datos de muestra."
-                            : "Elegí una plantilla para poder generar la vista previa."}
+                            ? "Haz click en \"Vista previa\" para ver el ticket con datos de muestra."
+                            : "Elige una plantilla para poder generar la vista previa."}
                     </div>
                 )}
             </div>

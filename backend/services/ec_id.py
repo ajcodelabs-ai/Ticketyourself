@@ -164,7 +164,7 @@ def buyer_document_error(
             return "RUC inválido. Debe tener exactamente 13 dígitos."
         if not is_valid_ec_ruc(document_id):
             return (
-                "RUC inválido. Revisá el dígito verificador y el establecimiento. "
+                "RUC inválido. Revisa el dígito verificador y el establecimiento. "
                 "Persona natural: cédula ecuatoriana válida + 001."
             )
         return None
@@ -189,7 +189,7 @@ def law_document_error(
     if cat == "senior":
         if require_document and not doc:
             return (
-                "Para el descuento de tercera edad indicá una cédula ecuatoriana "
+                "Para el descuento de tercera edad indica una cédula ecuatoriana "
                 "en el documento de verificación."
             )
         if doc and not is_valid_ec_cedula(doc):
@@ -200,7 +200,7 @@ def law_document_error(
         return None
     if not doc:
         return (
-            "Para el descuento por discapacidad indicá el número de carné "
+            "Para el descuento por discapacidad indica el número de carné "
             "CONADIS o cédula."
         )
     if is_cedula_document_type(buyer_document_type) and looks_like_ec_cedula(doc):

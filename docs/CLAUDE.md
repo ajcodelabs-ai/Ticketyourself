@@ -14,8 +14,7 @@ Preview URL: `https://ticket-poc.preview.emergentagent.com`
 
 ```
 backend/    FastAPI app (Python)
-frontend/   React SPA (CRA + craco)
-mobile/     Expo React Native app (scaffolding only — see "Mobile Architecture" below; door validation actually happens via the web scanners in frontend/)
+frontend/   React SPA (Vite)
 docs/       Project notes (PRD, STATUS, CLAUDE.md, auth_testing.md)
 ```
 
@@ -49,16 +48,6 @@ yarn start      # dev server (port 3000) — alias for `yarn dev`
 yarn build
 yarn test       # Vitest (run once)
 yarn test:watch # Vitest (watch mode)
-```
-
-### Mobile
-```bash
-cd mobile
-yarn install
-echo "EXPO_PUBLIC_BACKEND_URL=http://localhost:8000" > .env
-yarn start      # Expo DevTools; press i/a/w for iOS/Android/web
-yarn ios / yarn android
-yarn lint
 ```
 
 ## Backend Architecture
@@ -115,9 +104,7 @@ yarn lint
 
 **Event wizard** (`src/components/events/EventWizard.tsx`): 7-step form for event creation (Info, Location, Tickets, Venue, Media, Discounts, Review).
 
-## Mobile Architecture
-
-Expo Router (file-based routing under `mobile/app/`). **Correction 2026-07-08 (verified by reading `mobile/app/index.tsx`):** this is unbuilt scaffolding — a single static screen rendering one image, no camera, no QR/barcode library, no navigation, no call to `/api/tickets/validate`. It does not wrap `html5-qrcode` or perform any scanning; that library is only used by the *web* scanners at `frontend/src/pages/organizer/EventValidation.tsx` and `frontend/src/pages/staff/StaffScanner.tsx`, which are what actually handle door validation today.
+Door validation (QR scanning) is handled entirely by the web app — `frontend/src/pages/organizer/EventValidation.tsx` and `frontend/src/pages/staff/StaffScanner.tsx` (wrapping `html5-qrcode`). There is no mobile app in this repo.
 
 ## Database (PostgreSQL)
 
@@ -168,11 +155,6 @@ FRONTEND_URL=http://localhost:3000       # added to CORS allowed origins
 Required in `frontend/.env`:
 ```
 VITE_BACKEND_URL=http://localhost:8000
-```
-
-Required in `mobile/.env`:
-```
-EXPO_PUBLIC_BACKEND_URL=http://localhost:8000   # use LAN IP for physical devices
 ```
 
 ## Key Patterns

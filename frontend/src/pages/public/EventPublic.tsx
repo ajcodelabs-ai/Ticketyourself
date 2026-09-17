@@ -475,7 +475,7 @@ export default function EventPublic() {
             {event.venue_id && event.is_multi_function && functions.length > 0 && !selectedFunctionId && (
                 <section className="max-w-3xl mx-auto px-6 pb-10" data-testid="event-public-function-picker">
                     <h2 className="text-2xl font-semibold mb-4">
-                        Elegí un{isSubevent ? "" : "a"} {functionNoun}
+                        Elige un{isSubevent ? "" : "a"} {functionNoun}
                     </h2>
                     <div className="space-y-2">
                         {functions.map((fn) => (
@@ -539,8 +539,8 @@ export default function EventPublic() {
                     </h2>
                     <p className="text-sm text-muted-foreground">
                         {isMixed
-                            ? "Además del mapa numerado, podés comprar entradas de aforo general (sin butaca asignada)."
-                            : "Elegí la cantidad de entradas por localidad. No hay asignación de butaca."}
+                            ? "Además del mapa numerado, puedes comprar entradas de aforo general (sin butaca asignada)."
+                            : "Elige la cantidad de entradas por localidad. No hay asignación de butaca."}
                     </p>
                     {gaTicketCount > 0 ? (
                         <Button

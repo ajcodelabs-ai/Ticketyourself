@@ -279,7 +279,7 @@ function JsCheckout({
                             if (!NUVEI_PAID_RESULTS.has(data?.result)) {
                                 toast.error(
                                     "El pago se recibió pero aún no pudimos confirmarlo. " +
-                                        "Contactá al organizador si el problema persiste.",
+                                        "Contacta al organizador si el problema persiste.",
                                 );
                                 return;
                             }
@@ -368,7 +368,7 @@ function JsCheckout({
                 <p className="text-sm text-muted-foreground">
                     {booting
                         ? "Abriendo el formulario de Nuvei (Paymentez)…"
-                        : "Si no ves el formulario de Nuvei, pulsá pagar de nuevo. No guardamos la tarjeta en TYS."}
+                        : "Si no ves el formulario de Nuvei, pulsa pagar de nuevo. No guardamos la tarjeta en TYS."}
                 </p>
                 {missing ? (
                     <p className="text-sm text-destructive">

@@ -7,9 +7,22 @@
  * can manipulate it.
  */
 import { forwardRef, memo } from "react";
-import { Group, Rect, Text, Circle, Arc } from "react-konva";
+import { Group, Rect, Text, Circle } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
+
+/** Mirrors backend/services/seats.py::_row_seat_label numbering. */
+function rowSeatNumber(element, i, seats) {
+    const start = element.numbering_start || 1;
+    const step = element.numbering_step || 1;
+    const effectiveIndex = element.numbering_direction === "rtl" ? seats - 1 - i : i;
+    return start + effectiveIndex * step;
+}
+
+/** Hover-tooltip text for a row seat — mirrors backend/services/seats.py's label. */
+function rowSeatLabel(element, i, seats) {
+    return `${element.row_label || element.label || "?"}-${rowSeatNumber(element, i, seats)}`;
+}
 
 interface VenueElement {
     id: string;
@@ -54,6 +67,10 @@ export interface ShapeProps {
     onDragStart?: (e: KonvaEventObject<DragEvent>) => void;
     onDragMove?: (e: KonvaEventObject<DragEvent>) => void;
     onDragEnd?: (x: number, y: number) => void;
+    /** Hover a single seat/chair — reports its computed label + the raw
+     * mouse event (so the caller can position an HTML tooltip). `null` on
+     * mouse-leave. Mirrors the reference app's per-seat hover tooltip. */
+    onSeatHover?: (label: string | null, e?: KonvaEventObject<MouseEvent>) => void;
 }
 
 // ── stage ────────────────────────────────────────────────────────────────
@@ -138,7 +155,7 @@ function showSeatLabel(zoom: number, spacing: number) {
 
 // ── seat row straight ────────────────────────────────────────────────────
 const RowShape = forwardRef<Konva.Group, ShapeProps>(function RowShape(
-    { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1 }, ref,
+    { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1, onSeatHover }, ref,
 ) {
     const seats = element.seats_count || 0;
     const spacing = element.seat_spacing || 24;
@@ -168,15 +185,23 @@ const RowShape = forwardRef<Konva.Group, ShapeProps>(function RowShape(
                       stroke="#6366F1" strokeWidth={2} dash={[6, 4]} cornerRadius={6} />
             )}
             {element.row_label && (
-                <Text x={-28} y={radius - 7} text={element.row_label}
-                      fontStyle="bold" fontSize={13} fill="#374151" />
+                <>
+                    <Text x={-28} y={radius - 7} text={element.row_label}
+                          fontStyle="bold" fontSize={13} fill="#374151" />
+                    <Text x={w + 8} y={radius - 7} text={element.row_label}
+                          fontStyle="bold" fontSize={13} fill="#374151" />
+                </>
             )}
             {Array.from({ length: seats }).map((_, i) => {
-                const num = element.numbering_direction === "rtl"
-                    ? seats - i + (element.numbering_start || 1) - 1
-                    : (element.numbering_start || 1) + i;
+                const num = rowSeatNumber(element, i, seats);
                 return (
-                    <Group key={i} x={i * spacing} y={0}>
+                    <Group
+                        key={i}
+                        x={i * spacing}
+                        y={0}
+                        onMouseEnter={(e) => onSeatHover?.(rowSeatLabel(element, i, seats), e)}
+                        onMouseLeave={() => onSeatHover?.(null)}
+                    >
                         <Circle x={radius} y={radius} radius={radius}
                                 fill={color} stroke="#fff" strokeWidth={1} />
                         {showLabels && (
@@ -191,26 +216,36 @@ const RowShape = forwardRef<Konva.Group, ShapeProps>(function RowShape(
 });
 
 // ── seat row curved ──────────────────────────────────────────────────────
+// Matches the reference app's model exactly (venue-designer.component.ts
+// `_applyCurvatureToRow`): seats sit on the SAME straight baseline as a
+// straight row (baseX = i*spacing), with a parabolic Y offset that's 0 at
+// the center seat and grows toward the edges — `curvature * 30 *
+// normalizedDistance²`. Bounded (±curvature*30 at most, at the row's own
+// edges) and simple, unlike a circular arc whose depth depends on a
+// separate radius+angle and can balloon far past the anchor.
+function curvedRowYOffset(curvature: number, i: number, seats: number) {
+    if (!curvature || seats <= 1) return 0;
+    const centerIndex = (seats - 1) / 2;
+    const normalized = (i - centerIndex) / (seats / 2);
+    return curvature * 30 * normalized * normalized;
+}
+
 const CurvedRowShape = forwardRef<Konva.Group, ShapeProps>(function CurvedRowShape(
-    { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1 }, ref,
+    { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1, onSeatHover }, ref,
 ) {
     const seats = element.seats_count || 0;
     const radius = element.seat_radius || 10;
-    const cr = element.curve_radius || 240;
-    const arcDeg = element.curve_arc_degrees || 60;
-    const color = locality?.color || "#94A3B8";
     const spacing = element.seat_spacing || 24;
+    const curvature = Number(element.curvature) || 0;
+    const color = locality?.color || "#94A3B8";
     const showLabels = showSeatLabel(zoom, spacing) && seats <= 60;
 
-    // Distribute seats along an arc whose CENTER is above the anchor.
-    // The bottom of the circle touches the anchor (x, y), so seats sit
-    // just above the anchor when the arc is small. We sweep from LEFT to
-    // RIGHT so LTR numbering reads naturally in screen space.
-    const arcRad = (arcDeg * Math.PI) / 180;
-    const startAngle = Math.PI / 2 + arcRad / 2; // bottom-LEFT of arc
-    const stepAngle = seats > 1 ? -arcRad / (seats - 1) : 0; // sweep clockwise (toward right)
-    const cy = -cr; // center above the anchor
-    const cx = 0;
+    const w = (seats - 1) * spacing + radius * 2;
+    const firstY = curvedRowYOffset(curvature, 0, seats);
+    const maxAbsY = Math.max(...Array.from({ length: seats }, (_, i) => Math.abs(curvedRowYOffset(curvature, i, seats))), 0);
+    const minY = Math.min(0, curvature < 0 ? 0 : -maxAbsY);
+    const boxTop = curvature < 0 ? -radius - 6 : minY - radius - 6;
+    const boxHeight = maxAbsY + radius * 2 + 12;
 
     return (
         <Group
@@ -228,35 +263,34 @@ const CurvedRowShape = forwardRef<Konva.Group, ShapeProps>(function CurvedRowSha
             onDragEnd={(e) => onDragEnd?.(e.target.x(), e.target.y())}
         >
             {selected && (
-                <Arc
-                    x={cx} y={cy}
-                    innerRadius={cr - radius - 4}
-                    outerRadius={cr + radius + 4}
-                    angle={arcDeg}
-                    rotation={-90 - arcDeg / 2}
-                    fill="rgba(99,102,241,0.08)"
-                    stroke="#6366F1"
-                    strokeWidth={1.5}
-                    dash={[4, 4]}
-                />
+                <Rect x={-6} y={boxTop} width={w + 12} height={boxHeight}
+                      stroke="#6366F1" strokeWidth={2} dash={[6, 4]} cornerRadius={6} />
             )}
             {element.row_label && (
-                <Text x={-30} y={-12} text={element.row_label}
-                      fontStyle="bold" fontSize={13} fill="#374151" />
+                <>
+                    <Text x={-28} y={firstY + radius - 7} text={element.row_label}
+                          fontStyle="bold" fontSize={13} fill="#374151" />
+                    {/* Symmetric parabola: the last seat sits at the same Y
+                        offset as the first, so the right label reuses firstY. */}
+                    <Text x={w + 8} y={firstY + radius - 7} text={element.row_label}
+                          fontStyle="bold" fontSize={13} fill="#374151" />
+                </>
             )}
             {Array.from({ length: seats }).map((_, i) => {
-                const a = startAngle + i * stepAngle;
-                const sx = cx + cr * Math.cos(a);
-                const sy = cy + cr * Math.sin(a);
-                const num = element.numbering_direction === "rtl"
-                    ? seats - i + (element.numbering_start || 1) - 1
-                    : (element.numbering_start || 1) + i;
+                const y = curvedRowYOffset(curvature, i, seats);
+                const num = rowSeatNumber(element, i, seats);
                 return (
-                    <Group key={i}>
-                        <Circle x={sx} y={sy} radius={radius}
+                    <Group
+                        key={i}
+                        x={i * spacing}
+                        y={y}
+                        onMouseEnter={(e) => onSeatHover?.(rowSeatLabel(element, i, seats), e)}
+                        onMouseLeave={() => onSeatHover?.(null)}
+                    >
+                        <Circle x={radius} y={radius} radius={radius}
                                 fill={color} stroke="#fff" strokeWidth={1} />
                         {showLabels && (
-                            <Text x={sx - radius} y={sy - 5} width={radius * 2}
+                            <Text x={0} y={radius - 5} width={radius * 2}
                                   align="center" fontSize={9} fill="#fff" text={String(num)} />
                         )}
                     </Group>
@@ -301,7 +335,7 @@ const SeatShape = forwardRef<Konva.Group, ShapeProps>(function SeatShape(
 
 // ── round table ──────────────────────────────────────────────────────────
 const TableRoundShape = forwardRef<Konva.Group, ShapeProps>(function TableRoundShape(
-    { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1 }, ref,
+    { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1, onSeatHover }, ref,
 ) {
     const tr = element.table_radius || 40;
     const cr = element.chair_radius || 10;
@@ -338,7 +372,9 @@ const TableRoundShape = forwardRef<Konva.Group, ShapeProps>(function TableRoundS
                 const sy = (tr + cd) * Math.sin(a);
                 return (
                     <Circle key={i} x={sx} y={sy} radius={cr}
-                            fill={color} stroke="#fff" strokeWidth={1} />
+                            fill={color} stroke="#fff" strokeWidth={1}
+                            onMouseEnter={(e) => onSeatHover?.(`${element.label || "Mesa"}-${i + 1}`, e)}
+                            onMouseLeave={() => onSeatHover?.(null)} />
                 );
             })}
         </Group>
@@ -347,7 +383,7 @@ const TableRoundShape = forwardRef<Konva.Group, ShapeProps>(function TableRoundS
 
 // ── rect table ───────────────────────────────────────────────────────────
 const TableRectShape = forwardRef<Konva.Group, ShapeProps>(function TableRectShape(
-    { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1 }, ref,
+    { element, locality, selected, onClick, onContextMenu, onDragStart, onDragEnd, onDragMove, draggable, zoom = 1, onSeatHover }, ref,
 ) {
     const w = element.width || 200;
     const h = element.height || 100;
@@ -376,7 +412,10 @@ const TableRectShape = forwardRef<Konva.Group, ShapeProps>(function TableRectSha
     const bottomChairs = sideChairs(cps.bottom || 0, "x", h + cd + cr);
     const leftChairs = sideChairs(cps.left || 0, "y", -cd - cr);
     const rightChairs = sideChairs(cps.right || 0, "y", w + cd + cr);
-    const allChairs = [...topChairs, ...bottomChairs, ...leftChairs, ...rightChairs];
+    // Order must match backend/services/seats.py::expand_venue_seats — it
+    // walks top→right→bottom→left when assigning each chair's seat_id/label,
+    // so the tooltip/label shown here has to line up with the same index.
+    const allChairs = [...topChairs, ...rightChairs, ...bottomChairs, ...leftChairs];
 
     return (
         <Group
@@ -406,7 +445,9 @@ const TableRectShape = forwardRef<Konva.Group, ShapeProps>(function TableRectSha
                   text={element.label || ""} />
             {allChairs.map((c, i) => (
                 <Circle key={i} x={c.x} y={c.y} radius={cr}
-                        fill={color} stroke="#fff" strokeWidth={1} />
+                        fill={color} stroke="#fff" strokeWidth={1}
+                        onMouseEnter={(e) => onSeatHover?.(`${element.label || "Mesa"}-${i + 1}`, e)}
+                        onMouseLeave={() => onSeatHover?.(null)} />
             ))}
         </Group>
     );

@@ -288,7 +288,7 @@ def assert_feature(plan_code: Optional[str], feature: str) -> None:
         raise HTTPException(
             403,
             f"Tu plan actual no incluye esta función ({feature}). "
-            "Mejorá tu plan para usarla.",
+            "Mejora tu plan para usarla.",
         )
 
 
@@ -301,5 +301,5 @@ async def assert_feature_async(
         raise HTTPException(
             403,
             f"Tu plan actual no incluye esta función ({feature}). "
-            "Mejorá tu plan para usarla.",
+            "Mejora tu plan para usarla.",
         )

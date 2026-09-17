@@ -153,8 +153,8 @@ export default function Success() {
                             className="text-xs text-amber-700 pt-1"
                             data-testid="success-timeout-msg"
                         >
-                            El pago aún no aparece como confirmado. Refrescá la
-                            página o revisá la lista de pagos.
+                            El pago aún no aparece como confirmado. Refresca la
+                            página o revisa la lista de pagos.
                         </p>
                     )}
                     {error && (

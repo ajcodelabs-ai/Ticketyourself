@@ -37,7 +37,7 @@ export default function SuspensionAppealPanel({ event, onSubmitted }) {
     const submit = async () => {
         const text = message.trim();
         if (text.length < 10) {
-            toast.error("Contá qué pasó o qué corregiste (mínimo 10 caracteres).");
+            toast.error("Cuenta qué pasó o qué corregiste (mínimo 10 caracteres).");
             return;
         }
         const fd = new FormData();
@@ -67,7 +67,7 @@ export default function SuspensionAppealPanel({ event, onSubmitted }) {
                 <CardTitle className="text-lg">Evento suspendido</CardTitle>
                 <CardDescription className="text-orange-900/80">
                     Motivo: {event.suspended_reason || "el super admin lo bajó de venta."}{" "}
-                    Podés corregir precios, fechas o datos, y/o refutar la decisión con un
+                    Puedes corregir precios, fechas o datos, y/o refutar la decisión con un
                     mensaje y documentos.
                 </CardDescription>
             </CardHeader>
@@ -93,7 +93,7 @@ export default function SuspensionAppealPanel({ event, onSubmitted }) {
 
                 {status === "pending" && (
                     <p className="text-sm text-muted-foreground">
-                        Hay una respuesta en revisión. Si corregiste más datos, podés
+                        Hay una respuesta en revisión. Si corregiste más datos, puedes
                         actualizar el mensaje y los documentos; se reemplaza lo enviado.
                     </p>
                 )}

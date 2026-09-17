@@ -30,9 +30,9 @@ export default function PublishPendingDialog({ open, onOpenChange, resource = "e
                 <AlertDialogHeader>
                     <AlertDialogTitle>Tu cuenta está en revisión</AlertDialogTitle>
                     <AlertDialogDescription>
-                        Una vez aprobada vas a poder publicar {label}. Podés
+                        Una vez aprobada vas a poder publicar {label}. Puedes
                         seguir editándolo libremente mientras tanto y, en cuanto
-                        habilitemos tu cuenta, lo publicás con un solo click.
+                        habilitemos tu cuenta, lo publicas con un solo click.
                     </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

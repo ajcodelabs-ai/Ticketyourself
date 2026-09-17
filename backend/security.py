@@ -194,7 +194,7 @@ async def require_purchase_account(user: dict = Depends(get_current_user)) -> di
     if user.get("role") not in PURCHASE_ROLES:
         raise HTTPException(
             status_code=403,
-            detail="Iniciá sesión con tu cuenta de comprador para comprar entradas.",
+            detail="Inicia sesión con tu cuenta de comprador para comprar entradas.",
         )
     return user
 
@@ -204,7 +204,7 @@ def assert_purchase_on_organizer(user: dict, organizer_id: str) -> None:
     if user.get("organizer_id") != organizer_id:
         raise HTTPException(
             status_code=403,
-            detail="Esta cuenta no pertenece a esta página. Registrate o iniciá sesión acá.",
+            detail="Esta cuenta no pertenece a esta página. Regístrate o inicia sesión acá.",
         )
 
 

@@ -75,7 +75,7 @@ export default function EventContentPanel({ content, update, disabled = false })
                 </header>
                 {content.agenda.length === 0 ? (
                     <p className="text-sm text-muted-foreground italic">
-                        Sin bloques de agenda. Agregá horarios si el evento tiene programa.
+                        Sin bloques de agenda. Agrega horarios si el evento tiene programa.
                     </p>
                 ) : (
                     <div className="space-y-3">
@@ -150,7 +150,7 @@ export default function EventContentPanel({ content, update, disabled = false })
                         Términos y condiciones del organizador
                     </div>
                     <p className="text-sm text-muted-foreground mt-1">
-                        Si configurás una URL, el comprador verá un checkbox obligatorio antes de pagar.
+                        Si configuras una URL, el comprador verá un checkbox obligatorio antes de pagar.
                     </p>
                 </header>
                 <div className="space-y-3">
@@ -194,7 +194,7 @@ export default function EventContentPanel({ content, update, disabled = false })
                             data-testid="content-tyc-label"
                         />
                         <p className="text-[11px] text-muted-foreground mt-1">
-                            Si lo dejás vacío se mostrará "Términos y condiciones del organizador".
+                            Si lo dejas vacío se mostrará "Términos y condiciones del organizador".
                         </p>
                     </div>
                 </div>

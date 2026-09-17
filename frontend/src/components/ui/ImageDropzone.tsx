@@ -75,10 +75,10 @@ export default function ImageDropzone({
                         <ImageIcon className="h-7 w-7 text-muted-foreground" />
                         <span className="text-xs text-muted-foreground text-center px-2">
                             {isDragActive
-                                ? "Soltá la imagen aquí"
+                                ? "Suelta la imagen aquí"
                                 : multiple
-                                  ? "Arrastrá o click (varias)"
-                                  : "Arrastrá o click"}
+                                  ? "Arrastra o click (varias)"
+                                  : "Arrastra o click"}
                         </span>
                     </>
                 )}

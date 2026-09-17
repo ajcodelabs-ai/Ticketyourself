@@ -979,7 +979,7 @@ async def refund_order(
                     )
                     raise HTTPException(
                         502,
-                        "No pudimos reembolsar el cobro en Nuvei. Intentá de nuevo.",
+                        "No pudimos reembolsar el cobro en Nuvei. Intenta de nuevo.",
                     ) from e
             else:
                 logger.info(

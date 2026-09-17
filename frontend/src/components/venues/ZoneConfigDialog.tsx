@@ -33,6 +33,10 @@ export default function ZoneConfigDialog({ open, onClose, onConfirm, localities 
                     <DialogTitle>Configurar zona no numerada</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-3 py-2">
+                    <p className="text-xs text-muted-foreground -mt-1">
+                        Área sin asientos individuales — se vende por cantidad, no por
+                        asiento (de pie, gradería general, campo, etc.).
+                    </p>
                     <div className="space-y-1">
                         <Label className="text-xs">Nombre</Label>
                         <Input

@@ -31,6 +31,36 @@ export function snap(v) {
     return Math.round(v / GRID) * GRID;
 }
 
+// ── Curved-row "curvatura" slider (-10..10) ────────────────────────────────
+// Simple, signed control (paridad con el legacy): 0 = recta, positivo = arco
+// hacia arriba, negativo = hacia abajo. Se traduce a curve_radius/
+// curve_arc_degrees, que siguen siendo la fuente de verdad para el render y
+// el cálculo de posición de asientos (ver ElementShape.tsx / lib/seats.ts).
+export const CURVATURE_MIN = -10;
+export const CURVATURE_MAX = 10;
+
+export function clampCurvature(curvature) {
+    return Math.max(CURVATURE_MIN, Math.min(CURVATURE_MAX, Number(curvature) || 0));
+}
+
+export function curvatureToArcFields(curvature) {
+    const c = clampCurvature(curvature);
+    // Capped at 120° (not 180°): past that, a single row's own bulge depth
+    // (curve_radius * (1-cos(arc/2))) balloons past ~120px and easily pushes
+    // the row — or a batch of several, stacked further apart to match —
+    // outside a typical canvas. 120° still reads as a pronounced curve.
+    return {
+        curve_arc_degrees: Math.round(Math.min(120, Math.max(10, 10 + Math.abs(c) * 15))),
+        curve_radius: 240,
+    };
+}
+
+/** Seeds the slider for curved rows saved before the `curvature` field existed. */
+export function arcFieldsToCurvature(curve_arc_degrees) {
+    const arc = Number(curve_arc_degrees) || 60;
+    return Math.max(0, Math.min(CURVATURE_MAX, (arc - 10) / 15));
+}
+
 export function newId() {
     return uuid();
 }
@@ -61,7 +91,7 @@ export function makeZone({ x, y, width, height, label, capacity, locality_id }) 
 
 export function makeRow({
     x, y, row_label = "A", seats_count = 10, seat_spacing = 24,
-    seat_radius = 10, numbering_start = 1, numbering_direction = "ltr",
+    seat_radius = 10, numbering_start = 1, numbering_step = 1, numbering_direction = "ltr",
     numbering_style = "numeric", locality_id,
 }) {
     return {
@@ -70,24 +100,25 @@ export function makeRow({
         label: `Fila ${row_label}`,
         locality_id: locality_id || null, z_index: 1,
         seats_count, seat_spacing, seat_radius,
-        row_label, numbering_start, numbering_direction, numbering_style,
+        row_label, numbering_start, numbering_step, numbering_direction, numbering_style,
     };
 }
 
 export function makeCurvedRow({
     x, y, row_label = "A", seats_count = 12, seat_spacing = 24,
-    seat_radius = 10, curve_radius = 240, curve_arc_degrees = 60,
-    numbering_start = 1, numbering_direction = "ltr",
+    seat_radius = 10, curvature = 2,
+    numbering_start = 1, numbering_step = 1, numbering_direction = "ltr",
     numbering_style = "numeric", locality_id,
 }) {
+    const c = clampCurvature(curvature);
     return {
         id: newId(), kind: "seat_row_curved",
         x: snap(x), y: snap(y), rotation: 0,
         label: `Fila ${row_label} (curva)`,
         locality_id: locality_id || null, z_index: 1,
         seats_count, seat_spacing, seat_radius,
-        curve_radius, curve_arc_degrees,
-        row_label, numbering_start, numbering_direction, numbering_style,
+        curvature: c, ...curvatureToArcFields(c),
+        row_label, numbering_start, numbering_step, numbering_direction, numbering_style,
     };
 }
 
@@ -122,6 +153,7 @@ export function explodeRowToSeats(row) {
     const cos = Math.cos(rot);
     const sin = Math.sin(rot);
     const start = Number(row.numbering_start) || 1;
+    const step = Number(row.numbering_step) || 1;
     const rtl = row.numbering_direction === "rtl";
     const rowLabel = row.row_label || row.label || "?";
     const radius = row.seat_radius || 10;
@@ -133,7 +165,8 @@ export function explodeRowToSeats(row) {
         const ly = pos.y - row.y;
         const wx = row.x + lx * cos - ly * sin;
         const wy = row.y + lx * sin + ly * cos;
-        const num = rtl ? start + n - 1 - i : start + i;
+        const effectiveIndex = rtl ? n - 1 - i : i;
+        const num = start + effectiveIndex * step;
         seats.push(
             makeSeat({
                 x: wx,
@@ -242,14 +275,24 @@ export function elementBBox(e) {
                  cx: e.x + w / 2, cy: e.y + h / 2 };
     }
     if (e.kind === "seat_row_curved") {
-        const r = e.curve_radius || 240;
-        const arc = (e.curve_arc_degrees || 60) * Math.PI / 180;
-        const span = 2 * r * Math.sin(arc / 2);
-        const depth = r - r * Math.cos(arc / 2);
-        const pad = (e.seat_radius || 10) * 2;
-        return { minX: e.x - span / 2 - pad, minY: e.y - pad,
-                 maxX: e.x + span / 2 + pad, maxY: e.y + depth + pad,
-                 cx: e.x, cy: e.y + depth / 2 };
+        // Mirrors ElementShape.tsx's curvedRowYOffset — same parabolic
+        // model as the reference app: 0 at the center seat, growing toward
+        // the edges as curvature*30*normalized², sign matching curvature.
+        const seats = e.seats_count || 1;
+        const spacing = e.seat_spacing || 24;
+        const radius = e.seat_radius || 10;
+        const curvature = Number(e.curvature) || 0;
+        const w = (seats - 1) * spacing + radius * 2;
+        const centerIndex = (seats - 1) / 2;
+        const edgeNormalized = seats > 1 ? -centerIndex / (seats / 2) : 0;
+        const edgeOffset = curvature * 30 * edgeNormalized * edgeNormalized;
+        const minOffset = Math.min(0, edgeOffset);
+        const maxOffset = Math.max(0, edgeOffset);
+        return {
+            minX: e.x, minY: e.y + minOffset,
+            maxX: e.x + w, maxY: e.y + maxOffset + radius * 2,
+            cx: e.x + w / 2, cy: e.y + (minOffset + maxOffset) / 2 + radius,
+        };
     }
     if (e.kind === "seat_individual") {
         const r = e.seat_radius || 12;

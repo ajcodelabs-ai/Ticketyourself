@@ -457,7 +457,7 @@ function OrdersTab({ event }) {
                     data-testid="manual-pending-banner"
                 >
                     <span>
-                        Tenés <b>{pendingManualCount}</b> orden(es) esperando confirmación
+                        Tienes <b>{pendingManualCount}</b> orden(es) esperando confirmación
                         manual.
                     </span>
                     <button
@@ -714,7 +714,7 @@ function ManualPaymentDialog({ order, event, onClose, onChanged }) {
 
     const reject = async () => {
         if (reason.trim().length < 2) {
-            toast.error("Indicá una razón para el comprador.");
+            toast.error("Indica una razón para el comprador.");
             return;
         }
         setSubmitting(true);

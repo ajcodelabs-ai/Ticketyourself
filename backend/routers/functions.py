@@ -121,7 +121,7 @@ class TicketTypeCreate(BaseModel):
     @model_validator(mode="after")
     def _check_quantity_limits(self):
         if self.min_quantity and self.exact_quantity:
-            raise ValueError("Elegí mínimo de compra O cantidad exacta, no ambos.")
+            raise ValueError("Elige mínimo de compra O cantidad exacta, no ambos.")
         return self
 
 
@@ -145,7 +145,7 @@ class TicketTypeUpdate(BaseModel):
     @model_validator(mode="after")
     def _check_quantity_limits(self):
         if self.min_quantity and self.exact_quantity:
-            raise ValueError("Elegí mínimo de compra O cantidad exacta, no ambos.")
+            raise ValueError("Elige mínimo de compra O cantidad exacta, no ambos.")
         return self
 
 

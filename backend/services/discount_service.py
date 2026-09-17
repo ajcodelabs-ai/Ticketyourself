@@ -145,8 +145,32 @@ def _rule_payment_method_ok(rule: dict, payment_method: str | None) -> bool:
     return payment_method in methods
 
 
+def _rule_meets_min_purchase(rule: dict, items: list[dict]) -> bool:
+    """Monto Mínimo — gates on the WHOLE order's subtotal, not just the
+    items this rule targets (a locality-filtered rule shouldn't become
+    easier to unlock just by buying more of some other locality, but it
+    also shouldn't ignore the rest of the cart the buyer is checking out)."""
+    min_cents = (rule.get("conditions") or {}).get("min_purchase_amount_cents")
+    if not min_cents:
+        return True
+    subtotal = sum(int(it.get("price_cents") or 0) for it in items)
+    return subtotal >= int(min_cents)
+
+
+def _cap_eligible_per_purchase(eligible: list[dict], rule: dict) -> list[dict]:
+    """Cupo/Compra — caps how many eligible units a single purchase can
+    apply this rule to, independent of `max_per_buyer` (lifetime uses
+    across separate purchases, enforced in assert_buyer_allowed)."""
+    cap = (rule.get("conditions") or {}).get("max_per_purchase")
+    if not cap:
+        return eligible
+    return sorted(eligible, key=lambda it: it["price_cents"])[: int(cap)]
+
+
 def _apply_rule_to_items(items: list[dict], rule: dict) -> int:
     """Returns the discount amount (cents) for `rule` over the eligible items."""
+    if not _rule_meets_min_purchase(rule, items):
+        return 0
     eligible = _items_eligible_for_rule(items, rule)
     if not eligible:
         return 0
@@ -160,7 +184,9 @@ def _apply_rule_to_items(items: list[dict], rule: dict) -> int:
         if free_count <= 0:
             return 0
         cheapest = sorted(eligible, key=lambda it: it["price_cents"])[:free_count]
+        cheapest = _cap_eligible_per_purchase(cheapest, rule)
         return sum(it["price_cents"] for it in cheapest)
+    eligible = _cap_eligible_per_purchase(eligible, rule)
     eligible_subtotal = sum(it["price_cents"] for it in eligible)
     benefit = rule.get("discount") or {}
     btype = benefit.get("type")
@@ -295,6 +321,12 @@ def evaluate_promo_code(
         return None, "Este código ya alcanzó el máximo de usos."
     if not _rule_payment_method_ok(rule, payment_method):
         return None, "Este código no aplica para la forma de pago seleccionada."
+    if not _rule_meets_min_purchase(rule, items):
+        min_cents = (rule.get("conditions") or {}).get("min_purchase_amount_cents") or 0
+        return (
+            None,
+            f"Este código requiere una compra mínima de ${min_cents / 100:.2f}.",
+        )
     eligible = _items_eligible_for_rule(items, rule)
     if not eligible:
         return None, "Este código no aplica a las localidades seleccionadas."

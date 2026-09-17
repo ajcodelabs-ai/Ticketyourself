@@ -59,6 +59,20 @@ yarn test:watch
 stripe listen --forward-to http://localhost:8000/api/stripe/webhook
 ```
 
+### Lint & typecheck
+
+```bash
+# Backend (config: backend/pyproject.toml, backend/.flake8)
+cd backend && black --check . && isort --check-only . && flake8 .
+
+# Frontend
+cd frontend && yarn lint && yarn typecheck
+yarn test:coverage                                      # Vitest w/ coverage
+yarn test:e2e     # Playwright, config in frontend/e2e/playwright.config.ts
+```
+
+CI (`.github/workflows/ci.yml`) runs all of the above plus a Docker build validation job on every push/PR.
+
 ## Backend Architecture
 
 **Entry point:** `backend/server.py` — loads `.env`, wires all routers.

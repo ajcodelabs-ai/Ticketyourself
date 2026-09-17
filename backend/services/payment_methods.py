@@ -97,7 +97,7 @@ def normalize_payment_methods(
         codes = [c for c in codes if c in CATALOG_CODES]
 
     if not codes:
-        raise ValueError("Debés seleccionar al menos una forma de pago.")
+        raise ValueError("Debes seleccionar al menos una forma de pago.")
 
     transfer_in = pm.get("transfer") or {}
     cash_in = pm.get("cash") or {}

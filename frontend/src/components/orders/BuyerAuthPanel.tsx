@@ -30,12 +30,12 @@ export default function BuyerAuthPanel({ onAuthenticated = undefined }) {
         setSubmitting(true);
         try {
             if (!tenantSlug) {
-                toast.error("Abrí la página del organizador para crear tu cuenta.");
+                toast.error("Abre la página del organizador para crear tu cuenta.");
                 return;
             }
             if (mode === "register") {
                 if (form.name.trim().length < 2) {
-                    toast.error("Ingresá tu nombre.");
+                    toast.error("Ingresa tu nombre.");
                     return;
                 }
                 if (form.password.length < 8) {
@@ -74,8 +74,8 @@ export default function BuyerAuthPanel({ onAuthenticated = undefined }) {
     return (
         <div className="space-y-4" data-testid="buyer-auth-panel">
             <div className="rounded-xl border bg-secondary/40 p-3 text-sm">
-                Para comprar entradas en esta página necesitás una cuenta. Es gratis
-                y te permite ver tus tickets acá — en otra productora te registrás aparte.
+                Para comprar entradas en esta página necesitas una cuenta. Es gratis
+                y te permite ver tus tickets acá — en otra productora te registras aparte.
             </div>
             <div className="flex rounded-lg border p-0.5 bg-muted/40">
                 <button

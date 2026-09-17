@@ -26,6 +26,7 @@ function activeLocalityIds(venue): Set<string> {
 
 export default function EventVenueLink({ event, onUpdated, disabled }) {
     const [venues, setVenues] = useState([]);
+    const [draftCount, setDraftCount] = useState(0);
     const [open, setOpen] = useState(false);
     const [pickerVenueId, setPickerVenueId] = useState(event?.venue_id || "");
     const [pricing, setPricing] = useState({}); // {locality_id: price_cents}
@@ -33,8 +34,12 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
     const [previewVenue, setPreviewVenue] = useState(null);
 
     useEffect(() => {
-        venuesApi.list({ status: "published" })
-            .then((d) => setVenues(d.items.filter((v) => v.status === "published")))
+        venuesApi.list()
+            .then((d) => {
+                const items = d.items || [];
+                setVenues(items.filter((v) => v.status === "published"));
+                setDraftCount(items.filter((v) => v.status === "draft").length);
+            })
             .catch(() => setVenues([]));
     }, []);
 
@@ -124,7 +129,7 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
                         <MapPin className="h-4 w-4" /> Escenario con asientos numerados
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                        Si vinculás un escenario, el evento usa el mapa interactivo y se ignora el precio base.
+                        Si vinculas un escenario, el evento usa el mapa interactivo y se ignora el precio base.
                     </p>
                 </div>
                 {currentVenue ? (
@@ -208,12 +213,12 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
                             <Label className="text-xs">Escenario publicado</Label>
                             <Select value={pickerVenueId} onValueChange={handleSelectVenue}>
                                 <SelectTrigger data-testid="venue-picker-select">
-                                    <SelectValue placeholder="Elegí un escenario" />
+                                    <SelectValue placeholder="Elige un escenario" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {venues.length === 0 && (
                                         <SelectItem value="__none" disabled>
-                                            No tenés escenarios publicados. Andá a /app/venues primero.
+                                            No tienes escenarios publicados. Anda a /app/venues primero.
                                         </SelectItem>
                                     )}
                                     {venues.map((v) => (
@@ -223,11 +228,18 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
                                     ))}
                                 </SelectContent>
                             </Select>
+                            {draftCount > 0 && (
+                                <p className="text-[11px] text-amber-700">
+                                    Tienes {draftCount} escenario(s) en borrador que no aparecen acá
+                                    — publicalos en <span className="font-medium">/app/venues</span> para
+                                    poder elegirlos.
+                                </p>
+                            )}
                         </div>
                         {pickedVenue && (
                             <>
                                 <p className="text-xs text-muted-foreground">
-                                    Definí el precio por cada localidad activa del escenario:
+                                    Define el precio por cada localidad activa del escenario:
                                 </p>
                                 <div className="rounded-md border divide-y">
                                     {(pickedVenue.localities || [])

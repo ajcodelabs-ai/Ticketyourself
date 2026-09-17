@@ -350,7 +350,7 @@ function PlanTab() {
                 <CardHeader>
                     <CardTitle className="text-lg">Mejorar plan</CardTitle>
                     <CardDescription>
-                        Elegí un plan con las funciones que te faltan. El cobro se hace por Nuvei.
+                        Elige un plan con las funciones que te faltan. El cobro se hace por Nuvei.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="grid sm:grid-cols-2 gap-3">
@@ -425,7 +425,7 @@ function SecurityTab() {
             <CardHeader>
                 <CardTitle className="text-lg">Cambiar contraseña</CardTitle>
                 <CardDescription>
-                    Próximamente en producción. Por ahora podés solicitar el cambio
+                    Próximamente en producción. Por ahora puedes solicitar el cambio
                     contactando a soporte.
                 </CardDescription>
             </CardHeader>
@@ -556,7 +556,7 @@ function EinvoiceTab() {
                     <div>
                         <Label htmlFor="einvoice-enabled">Emitir factura al cobrar</Label>
                         <p className="text-xs text-muted-foreground">
-                            Desactivá si este organizador no debe facturar todavía.
+                            Desactiva si este organizador no debe facturar todavía.
                         </p>
                     </div>
                     <Switch

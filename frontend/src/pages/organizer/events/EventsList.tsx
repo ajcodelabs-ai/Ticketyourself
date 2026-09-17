@@ -97,10 +97,10 @@ export default function EventsList() {
                     <CardContent className="py-12 text-center space-y-3">
                         <Calendar className="h-10 w-10 mx-auto text-muted-foreground" />
                         <h3 className="text-lg font-semibold">
-                            Aún no tenés eventos
+                            Aún no tienes eventos
                         </h3>
                         <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                            Creá tu primer evento — definí fecha, lugar, precio y poster.
+                            Crea tu primer evento — define fecha, lugar, precio y poster.
                             Cuando esté listo, publicalo y aparecerá en tu página pública.
                         </p>
                         <Button

@@ -26,7 +26,7 @@ import { formatApiError } from "@/lib/api";
 
 function forbiddenMessage(err) {
     if (err?.response?.status === 403) {
-        return "Tu sesión no tiene permisos de super admin. Cerrá sesión e ingresá con admin@ticketyourself.com.";
+        return "Tu sesión no tiene permisos de super admin. Cierra sesión e ingresa con admin@ticketyourself.com.";
     }
     return formatApiError(err?.response?.data?.detail) || "Error inesperado";
 }
@@ -103,7 +103,7 @@ export default function AdminVenueTemplates() {
                     </Badge>
                     <h1 className="text-2xl font-bold">Plantillas de escenarios</h1>
                     <p className="text-sm text-muted-foreground max-w-2xl">
-                        Diseñá layouts reutilizables que los organizadores pueden clonar al crear sus escenarios.
+                        Diseña layouts reutilizables que los organizadores pueden clonar al crear sus escenarios.
                         No cuentan contra el límite de escenarios del organizador hasta que las usen.
                     </p>
                 </div>
@@ -124,7 +124,7 @@ export default function AdminVenueTemplates() {
                             Estás con una cuenta de organizador, no de super admin.
                         </p>
                         <p className="text-amber-800">
-                            Para crear plantillas usá{" "}
+                            Para crear plantillas usa{" "}
                             <span className="font-mono">admin@ticketyourself.com</span> /{" "}
                             <span className="font-mono">Admin123!</span>
                         </p>
@@ -168,7 +168,7 @@ export default function AdminVenueTemplates() {
                         <LayoutTemplate className="mx-auto h-10 w-10 text-muted-foreground/40" />
                         <p className="text-sm text-muted-foreground">
                             {items.length === 0
-                                ? "Aún no hay plantillas. Creá la primera para que los organizadores la usen."
+                                ? "Aún no hay plantillas. Crea la primera para que los organizadores la usen."
                                 : "Sin plantillas que coincidan con los filtros."}
                         </p>
                         {items.length === 0 && (

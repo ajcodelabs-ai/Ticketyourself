@@ -67,6 +67,8 @@ interface VenueCanvasElement {
     width?: number;
     height?: number;
     table_radius?: number;
+    chair_distance?: number;
+    chair_radius?: number;
     seats_count?: number;
     seat_spacing?: number;
     seat_radius?: number;
@@ -134,6 +136,20 @@ export default function EditorCanvas({
     const containerRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<Konva.Stage>(null);
     const transformerRef = useRef<Konva.Transformer>(null);
+    // Floating HTML tooltip for the seat under the pointer — mirrors the
+    // reference app's per-seat hover ("Fila 2 / Asiento #16"): {x, y} are
+    // screen-pixel coordinates relative to `containerRef`, not world coords.
+    const [seatTooltip, setSeatTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+    const handleSeatHover = useCallback((label: string | null, e?: Konva.KonvaEventObject<MouseEvent>) => {
+        if (!label || !e) {
+            setSeatTooltip(null);
+            return;
+        }
+        const rect = containerRef.current?.getBoundingClientRect();
+        const native = e.evt;
+        if (!rect || !native) return;
+        setSeatTooltip({ x: native.clientX - rect.left, y: native.clientY - rect.top, text: label });
+    }, []);
     const elementRefs = useRef<Record<string, Konva.Group>>({});
     const elementsRef = useRef(elements);
     const elementsByIdRef = useRef<Map<string, VenueCanvasElement> | null>(null);
@@ -244,21 +260,50 @@ export default function EditorCanvas({
         };
     }, []);
 
-    // Sync Transformer — only on single selection (multi-select uses group
-    // drag), and only in the select tool: its resize/rotate anchors drag
-    // independently of ElementShape's own `draggable` gating below, so a
-    // leftover selection from before a tool switch (e.g. into "pan") would
-    // otherwise leave live, undocumented drag handles sitting on the canvas.
+    // Sync Transformer — attaches to every selected node (Konva supports
+    // multi-node Transformers natively: it wraps them in one shared
+    // bounding box, and resizing/rotating that box updates each node's own
+    // x/y/scale/rotation individually — handleTransformEnd already loops
+    // over `tr.nodes()` per-node, so this "just works" for a batch resize).
+    // Only in the select tool: its resize/rotate anchors drag independently
+    // of ElementShape's own `draggable` gating below, so a leftover
+    // selection from before a tool switch (e.g. into "pan") would otherwise
+    // leave live, undocumented drag handles sitting on the canvas.
     useEffect(() => {
         const tr = transformerRef.current;
         if (!tr) return;
-        if (selection.length !== 1 || (tool && tool !== "select")) {
+        if (selection.length === 0 || (tool && tool !== "select")) {
             tr.nodes([]);
             tr.getLayer()?.batchDraw();
             return;
         }
-        const node = elementRefs.current[selection[0]];
-        tr.nodes(node ? [node] : []);
+        const nodes = selection
+            .map((id) => elementRefs.current[id])
+            .filter(Boolean);
+        tr.nodes(nodes);
+        // Mirrors the reference app's venue-designer (_applyTransformerBehaviorForSelection):
+        // seat rows and tables are never drag-resized — their "size" is a
+        // seat/chair count or a radius shared with dependent sub-elements
+        // (chairs, seat spacing), and a raw scale factor can't update those
+        // proportionally without special-casing every field (which is
+        // exactly the class of bug we kept hitting). Resize handles stay
+        // off for them; only rotation is allowed via the Transformer.
+        // Capacity/radius changes go through the Properties Panel's number
+        // inputs instead. Stage/zone are plain rectangles with no
+        // dependent sub-elements, so drag-resize stays safe for them.
+        const NO_DRAG_RESIZE_KINDS = new Set([
+            "seat_row_straight", "seat_row_curved", "table_round", "table_rect",
+        ]);
+        const hasNoDragResizeKind = selection.some((id) => {
+            const el = elements.find((e) => e.id === id);
+            return el && NO_DRAG_RESIZE_KINDS.has(el.kind);
+        });
+        tr.enabledAnchors(hasNoDragResizeKind ? [] : [
+            "top-left", "top-center", "top-right",
+            "middle-right", "bottom-right", "bottom-center",
+            "bottom-left", "middle-left",
+        ]);
+        tr.rotateEnabled(true);
         tr.getLayer()?.batchDraw();
     }, [selection, elements, tool]);
 
@@ -290,32 +335,45 @@ export default function EditorCanvas({
     }, []);
 
     /**
-     * Compute bounding box of all elements and fit into the visible viewport,
-     * leaving a 40px margin on each side. Falls back to resetView when the
-     * canvas is empty. Triggered by toolbar button + keyboard `F` / `0`.
+     * Compute bounding box of all elements — unioned with the venue's own
+     * canvas rectangle, so a couple of small/sparse elements never blow up
+     * the fit into an absurd zoom level or frame something off-center from
+     * the actual floor plan — and fit it into the visible viewport, leaving
+     * a 40px margin on each side. Falls back to resetView when there's
+     * nothing to frame. Triggered by toolbar button + keyboard `F` / `0`.
      */
     const fitToView = useCallback(() => {
-        if (!elements || elements.length === 0) {
-            resetView();
-            return;
-        }
-        const bbox = computeBoundingBox(elements);
-        if (!bbox) {
+        const elementsBox = elements && elements.length > 0 ? computeBoundingBox(elements) : null;
+        const canvasBox = {
+            x: 0, y: 0, width: canvas?.width || 1200, height: canvas?.height || 800,
+        };
+        const minX = Math.min(canvasBox.x, elementsBox?.x ?? Infinity);
+        const minY = Math.min(canvasBox.y, elementsBox?.y ?? Infinity);
+        const maxX = Math.max(
+            canvasBox.x + canvasBox.width,
+            elementsBox ? elementsBox.x + elementsBox.width : -Infinity,
+        );
+        const maxY = Math.max(
+            canvasBox.y + canvasBox.height,
+            elementsBox ? elementsBox.y + elementsBox.height : -Infinity,
+        );
+        const bbox = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+        if (!isFinite(bbox.width) || !isFinite(bbox.height) || bbox.width <= 0 || bbox.height <= 0) {
             resetView();
             return;
         }
         const margin = 40;
         const cw = containerSize.width;
         const ch = containerSize.height;
-        const scaleX = (cw - margin * 2) / Math.max(1, bbox.width);
-        const scaleY = (ch - margin * 2) / Math.max(1, bbox.height);
+        const scaleX = (cw - margin * 2) / bbox.width;
+        const scaleY = (ch - margin * 2) / bbox.height;
         const next = Math.min(3, Math.max(0.25, Math.min(scaleX, scaleY)));
         setZoom(next);
         setPan({
             x: cw / 2 - (bbox.x + bbox.width / 2) * next,
             y: ch / 2 - (bbox.y + bbox.height / 2) * next,
         });
-    }, [elements, containerSize.width, containerSize.height, resetView]);
+    }, [elements, canvas?.width, canvas?.height, containerSize.width, containerSize.height, resetView]);
 
     // Auto-center when a venue/layout loads (same as clicking "Centrar").
     useEffect(() => {
@@ -664,14 +722,23 @@ export default function EditorCanvas({
             node.scaleY(1);
             const patch: Record<string, unknown> = { x: snapVal(x), y: snapVal(y), rotation: rot };
             if (el.kind === "stage" || el.kind === "unnumbered_zone") {
-                patch.width = Math.max(20, Math.round((el.width || 100) * sx));
-                patch.height = Math.max(20, Math.round((el.height || 100) * sy));
+                patch.width = Math.max(20, Math.min(3000, Math.round((el.width || 100) * sx)));
+                patch.height = Math.max(20, Math.min(3000, Math.round((el.height || 100) * sy)));
             } else if (el.kind === "table_rect") {
-                patch.width = Math.max(80, Math.round((el.width || 200) * sx));
-                patch.height = Math.max(60, Math.round((el.height || 100) * sy));
+                // Scale the chairs (distance + own radius) along with the
+                // table body, not just width/height — otherwise the chairs
+                // stay anchored at their old size/offset while the table
+                // grows/shrinks around them, throwing the layout out of sync.
+                const sAvg = (sx + sy) / 2;
+                patch.width = Math.max(80, Math.min(1000, Math.round((el.width || 200) * sx)));
+                patch.height = Math.max(60, Math.min(600, Math.round((el.height || 100) * sy)));
+                patch.chair_distance = Math.max(6, Math.min(100, Math.round((el.chair_distance || 18) * sAvg)));
+                patch.chair_radius = Math.max(6, Math.min(24, Math.round((el.chair_radius || 10) * sAvg)));
             } else if (el.kind === "table_round") {
                 const sAvg = (sx + sy) / 2;
-                patch.table_radius = Math.max(20, Math.round((el.table_radius || 40) * sAvg));
+                patch.table_radius = Math.max(20, Math.min(200, Math.round((el.table_radius || 40) * sAvg)));
+                patch.chair_distance = Math.max(6, Math.min(100, Math.round((el.chair_distance || 22) * sAvg)));
+                patch.chair_radius = Math.max(6, Math.min(24, Math.round((el.chair_radius || 10) * sAvg)));
             } else if (el.kind === "seat_row_straight") {
                 // Resize horizontally → more/less seats; keep spacing.
                 const oldWidth = ((el.seats_count || 1) - 1) * (el.seat_spacing || 24)
@@ -684,9 +751,9 @@ export default function EditorCanvas({
                 patch.seats_count = nextCount;
             } else if (el.kind === "seat_row_curved") {
                 // Scale only the radius; keep seats_count.
-                patch.curve_radius = Math.max(60, Math.round((el.curve_radius || 240) * sx));
+                patch.curve_radius = Math.max(60, Math.min(800, Math.round((el.curve_radius || 240) * sx)));
             } else if (el.kind === "seat_individual") {
-                patch.seat_radius = Math.max(6, Math.round((el.seat_radius || 12) * ((sx + sy) / 2)));
+                patch.seat_radius = Math.max(6, Math.min(24, Math.round((el.seat_radius || 12) * ((sx + sy) / 2))));
             }
             onTransform?.(id, patch);
         }
@@ -888,6 +955,7 @@ export default function EditorCanvas({
                                 onDragMove={h.onDragMove}
                                 onDragEnd={h.onDragEnd}
                                 zoom={zoom}
+                                onSeatHover={handleSeatHover}
                             />
                         );
                     })}
@@ -928,17 +996,28 @@ export default function EditorCanvas({
                 </Layer>
             </Stage>
 
-            <div className="absolute bottom-2 right-2 flex items-center gap-1 text-xs bg-white rounded-md border px-2 py-1 shadow-sm">
+            {seatTooltip && (
+                <div
+                    className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-md bg-slate-900 px-2 py-1 text-xs font-medium text-white shadow-lg"
+                    style={{ left: seatTooltip.x, top: seatTooltip.y - 10 }}
+                    data-testid="seat-tooltip"
+                >
+                    {seatTooltip.text}
+                </div>
+            )}
+
+            <div className="absolute bottom-2 right-2 flex items-center gap-1 text-xs bg-white rounded-lg border px-2 py-1 shadow-md text-[#412963]">
                 <button onClick={() => setZoom((z) => Math.max(0.25, z / 1.15))}
-                        className="px-2 hover:bg-slate-100 rounded" data-testid="zoom-out">−</button>
+                        className="px-2 py-0.5 hover:bg-[#412963]/10 rounded" data-testid="zoom-out">−</button>
                 <span className="font-mono w-12 text-center" data-testid="zoom-level">
                     {Math.round(zoom * 100)}%
                 </span>
                 <button onClick={() => setZoom((z) => Math.min(3, z * 1.15))}
-                        className="px-2 hover:bg-slate-100 rounded" data-testid="zoom-in">+</button>
+                        className="px-2 py-0.5 hover:bg-[#412963]/10 rounded" data-testid="zoom-in">+</button>
+                <span className="w-px h-4 bg-slate-200 mx-0.5" aria-hidden />
                 <button
                     onClick={fitToView}
-                    className="px-2 py-0.5 hover:bg-slate-100 rounded ml-1 flex items-center gap-1"
+                    className="px-2 py-0.5 hover:bg-[#412963]/10 rounded flex items-center gap-1"
                     data-testid="zoom-fit"
                     title="Centrar y ajustar todo (F)"
                 >
@@ -946,7 +1025,7 @@ export default function EditorCanvas({
                     Centrar
                 </button>
                 <button onClick={resetView}
-                        className="px-2 hover:bg-slate-100 rounded"
+                        className="px-2 py-0.5 hover:bg-[#412963]/10 rounded"
                         data-testid="zoom-reset"
                         title="Volver a zoom 1:1 (0)">Reset</button>
                 <span className="hidden sm:inline text-muted-foreground pl-1" title="Espacio, o la herramienta Mover, = mano">

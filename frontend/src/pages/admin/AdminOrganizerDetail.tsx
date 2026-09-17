@@ -616,7 +616,7 @@ export default function AdminOrganizerDetail() {
                     <CardContent className="space-y-2 text-sm">
                         {!org.verificante ? (
                             <p className="text-muted-foreground">
-                                Todavía no hay consulta. Podés dispararla con «Actualizar».
+                                Todavía no hay consulta. Puedes dispararla con «Actualizar».
                             </p>
                         ) : org.verificante.status === "skipped" ? (
                             <p className="text-muted-foreground">
@@ -806,7 +806,7 @@ export default function AdminOrganizerDetail() {
                             </p>
                             <p className="text-xs text-muted-foreground">
                                 Lo eligió en el registro. No se activa solo: queda vigente
-                                cuando paga o cuando se lo asignás abajo.
+                                cuando paga o cuando se lo asignas abajo.
                             </p>
                         </div>
                         <div className="space-y-1.5">
@@ -1085,7 +1085,7 @@ export default function AdminOrganizerDetail() {
                 <CardHeader>
                     <CardTitle className="text-lg">Para poder publicar eventos</CardTitle>
                     <p className="text-sm text-muted-foreground font-normal">
-                        Plan activo, cargo de verificación y contrato. Podés marcarlos a
+                        Plan activo, cargo de verificación y contrato. Puedes marcarlos a
                         mano si el pago o la firma ocurrieron fuera de TYS.
                     </p>
                 </CardHeader>
@@ -1230,7 +1230,7 @@ export default function AdminOrganizerDetail() {
                                             data-testid={`admin-doc-correction-banner-${group.docType}`}
                                         >
                                             El organizador subió este archivo en respuesta al
-                                            pedido de corrección. Revisá este, no el de abajo.
+                                            pedido de corrección. Revisa este, no el de abajo.
                                         </p>
                                     )}
                                     <DocFileRow
@@ -1382,7 +1382,7 @@ export default function AdminOrganizerDetail() {
                             data-testid="admin-doc-review-comment"
                             value={reviewComment}
                             onChange={(e) => setReviewComment(e.target.value)}
-                            placeholder="Explicá al organizador qué debe corregir o por qué se rechaza"
+                            placeholder="Explica al organizador qué debe corregir o por qué se rechaza"
                             rows={4}
                         />
                     </div>

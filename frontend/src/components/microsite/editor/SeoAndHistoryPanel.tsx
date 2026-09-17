@@ -91,7 +91,7 @@ export function SeoPanel({
                     />
                 ) : (
                     <p className="text-xs text-muted-foreground">
-                        Si no subís una, se usa el banner o logo del tema.
+                        Si no subes una, se usa el banner o logo del tema.
                     </p>
                 )}
                 <div className="flex gap-2">

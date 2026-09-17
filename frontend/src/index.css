@@ -167,3 +167,48 @@ code {
     cursor: not-allowed;
 }
 
+/* Venue editor — legacy-style purple brand skin (toolbar + properties panel header) */
+.venue-brand-gradient {
+    background: linear-gradient(135deg, #412963 0%, #5a3a85 100%);
+}
+
+/* Venue editor — legacy-style curvature slider (CurvedRowConfigDialog / PropertiesPanel) */
+.curvature-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(to right, #dc3545 0%, #6c757d 50%, #28a745 100%);
+    outline: none;
+}
+.curvature-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #412963;
+    cursor: pointer;
+    border: 2px solid white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: transform 0.1s ease;
+}
+.curvature-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+    background: #5a3a85;
+}
+.curvature-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #412963;
+    cursor: pointer;
+    border: 2px solid white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: transform 0.1s ease;
+}
+.curvature-slider::-moz-range-thumb:hover {
+    transform: scale(1.1);
+    background: #5a3a85;
+}
+

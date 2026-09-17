@@ -33,11 +33,10 @@ def _now() -> datetime:
 def _row_seat_label(element: Dict[str, Any], i: int) -> str:
     seats = element.get("seats_count") or 0
     start = element.get("numbering_start") or 1
+    step = element.get("numbering_step") or 1
     direction = element.get("numbering_direction") or "ltr"
-    if direction == "rtl":
-        num = start + seats - 1 - i
-    else:
-        num = start + i
+    effective_i = (seats - 1 - i) if direction == "rtl" else i
+    num = start + effective_i * step
     return f"{element.get('row_label') or element.get('label') or '?'}-{num}"
 
 
@@ -364,7 +363,7 @@ async def create_seat_holds(
                     status_code=409,
                     detail={
                         "error": "seats_unavailable",
-                        "message": "Uno o más asientos fueron tomados en el último momento. Refresca el mapa y elegí de nuevo.",
+                        "message": "Uno o más asientos fueron tomados en el último momento. Refresca el mapa y elige de nuevo.",
                     },
                 )
             raise
@@ -437,7 +436,7 @@ async def consume_holds_for_order(
     if result.rowcount != len(seat_ids):
         raise HTTPException(
             status_code=409,
-            detail="Algunas reservas vencieron. Volvé al mapa y elegí asientos.",
+            detail="Algunas reservas vencieron. Vuelve al mapa y elige asientos.",
         )
 
 

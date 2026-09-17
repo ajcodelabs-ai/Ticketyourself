@@ -58,8 +58,8 @@ export function formatEinvoiceError(raw) {
     if (/punto de emisi[oó]n no existe/i.test(text)) {
         return (
             "Dátil no tiene creado ese punto de emisión en la sesión de pruebas. " +
-            "En app.datil.co activá Datos de prueba, andá a Mi negocio → Establecimientos " +
-            "y creá el establecimiento 001 con punto de emisión 001."
+            "En app.datil.co activa Datos de prueba, anda a Mi negocio → Establecimientos " +
+            "y crea el establecimiento 001 con punto de emisión 001."
         );
     }
     return text.length > 280 ? `${text.slice(0, 280)}…` : text;

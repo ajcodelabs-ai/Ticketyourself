@@ -1,8 +1,8 @@
 /**
  * EventVenueSection — pasos 4.1 Escenario y 4.2 Localidades.
  *
- *  4.1 Seleccioná el escenario (mapa = solo la forma)
- *  4.2 Creá localidades (tipo numerada o no numerada + asignación al mapa)
+ *  4.1 Selecciona el escenario (mapa = solo la forma)
+ *  4.2 Crea localidades (tipo numerada o no numerada + asignación al mapa)
  *
  * Nombre, color, tipo y precios viven en el evento (`venue_layout.localities` +
  * `locality_pricing`). El venue maestro solo aporta canvas + elementos.
@@ -11,6 +11,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
     MapPin,
+    MapPinned,
+    Users,
     Loader2,
     PlusCircle,
     Building2,
@@ -45,7 +47,7 @@ import { venuesApi, eventVenueLayoutApi, computeCapacity, unnumberedCapacityByLo
 import EditorCanvas from "@/components/venues/EditorCanvas";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePlanFeatures } from "@/hooks/queries/usePlanFeatures";
-import { LOCALITY_SEATING_TYPES, inferAttendanceFormatFromLocalities, normalizeLocalitySeatingType, planLayoutSeatingConflict, PLAN_SEATING_COPY } from "@/lib/attendanceFormat";
+import { ATTENDANCE_FORMATS, LOCALITY_SEATING_TYPES, inferAttendanceFormatFromLocalities, normalizeLocalitySeatingType, planLayoutSeatingConflict, PLAN_SEATING_COPY } from "@/lib/attendanceFormat";
 import LocalityFormDialog from "@/components/events/LocalityFormDialog";
 import { PlanGateHint } from "@/components/plans/PlanGate";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -91,7 +93,7 @@ const LOCALITY_FIELD_TIPS = {
     service:
         "Cargo de servicio configurable por ticket (PRD §4.2.1). Se suma al total del comprador.",
     admin:
-        "TicketSeguro: cobertura / seguro por ticket. Se suma al total del comprador. Dejá $0 si no aplica.",
+        "TicketSeguro: cobertura / seguro por ticket. Se suma al total del comprador. Deja $0 si no aplica.",
     vxs: "Impuestos (IVA u otros) por ticket. Se suma al total del comprador.",
     wallet:
         "Billetera Virtual: cargo o recarga asociada al ticket. Se suma al total del comprador.",
@@ -129,13 +131,13 @@ function CreateFlowSteps({ selectedVenue, eventSaved }: { selectedVenue: boolean
     const steps = [
         {
             n: 1,
-            title: "Seleccioná el escenario",
+            title: "Selecciona el escenario",
             done: selectedVenue,
             active: !selectedVenue,
         },
         {
             n: 2,
-            title: "Guardá el evento para crear localidades",
+            title: "Guarda el evento para crear localidades",
             done: eventSaved && selectedVenue,
             active: selectedVenue && !eventSaved,
         },
@@ -182,6 +184,7 @@ export default function EventVenueSection({
     disabled,
     onUpdated,
     onReturnFromVenueCreate = undefined,
+    onBeforeVenueCreate = undefined,
     pendingVenueId = null,
     onPendingVenueChange = undefined,
     panel = "all",
@@ -191,6 +194,7 @@ export default function EventVenueSection({
     disabled?: boolean;
     onUpdated?: (e: any) => void;
     onReturnFromVenueCreate?: unknown;
+    onBeforeVenueCreate?: () => Promise<unknown> | void;
     pendingVenueId?: string | null;
     onPendingVenueChange?: (id: string | null) => void;
     panel?: "all" | "escenario" | "localidades";
@@ -198,6 +202,25 @@ export default function EventVenueSection({
 }) {
     const { organizer } = useAuth();
     const { data: planFeatures } = usePlanFeatures();
+    // These links do a full-page navigation away from the wizard (they open
+    // the standalone venue editor and come back via `return_to`). Save any
+    // unsaved wizard edits first so they aren't lost on the way out.
+    //
+    // onBeforeVenueCreate (persist(false, {silent:true})) resolves to the
+    // saved event on success, or null/undefined when the save was blocked
+    // (e.g. missing title) or failed (network/API error) — persist() already
+    // toasts why in both cases. Navigating away anyway used to strand the
+    // organizer on a *new*, blank event draft (venueCreateHref falls back to
+    // "/app/eventos/nuevo" without an id), silently discarding whatever they
+    // had typed — the real cause behind "se sale de la configuración actual".
+    const goTo = async (href: string) => {
+        if (onBeforeVenueCreate) {
+            const saved = await onBeforeVenueCreate();
+            if (!saved) return;
+            toast.message("Evento guardado — vas a crear el mapa y vuelves acá al terminar.");
+        }
+        window.location.href = href;
+    };
     // Escenario is always available. This flag only limits numbered localities.
     const allowNumbered = planFeatures ? Boolean(planFeatures.numbered_seating) : true;
     const tenantSlug = organizer?.slug || event?.tenant_slug;
@@ -442,7 +465,7 @@ export default function EventVenueSection({
             onPendingVenueChange?.(vid);
             warnPlan();
             if (conflict === "none") {
-                toast.message("Escenario seleccionado. Guardá el evento para continuar.");
+                toast.message("Escenario seleccionado. Guarda el evento para continuar.");
             }
             return;
         }
@@ -461,7 +484,7 @@ export default function EventVenueSection({
             initializedRef.current = false;
             warnPlan();
             if (conflict === "none") {
-                toast.success("Mapa vinculado — ahora creá las localidades del evento");
+                toast.success("Mapa vinculado — ahora crea las localidades del evento");
             }
         } catch (e) {
             toast.error(formatApiError(e?.response?.data?.detail) || "No se pudo vincular el mapa.");
@@ -484,7 +507,7 @@ export default function EventVenueSection({
             onUpdated?.(r.data);
             toast.success(
                 next === "organizer"
-                    ? "La comisión TYS la absorbés vos. El comprador no la ve."
+                    ? "La comisión TYS la absorbes tú. El comprador no la ve."
                     : "La comisión TYS se suma al total del comprador.",
             );
         } catch (e) {
@@ -632,7 +655,7 @@ export default function EventVenueSection({
         );
         if (!ok) return;
         if ((event?.tickets_sold || 0) > 0) {
-            toast.error("No podés cambiar el mapa una vez que hay ventas confirmadas.");
+            toast.error("No puedes cambiar el mapa una vez que hay ventas confirmadas.");
             return;
         }
         setLoadingLink(true);
@@ -683,19 +706,80 @@ export default function EventVenueSection({
                 <Building2 className="h-7 w-7 text-teal-800" />
             </div>
             <div className="space-y-1">
-                <h3 className="font-semibold text-lg">Todavía no tenés un mapa</h3>
+                <h3 className="font-semibold text-lg">Todavía no tienes un mapa</h3>
                 <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                    Creá un mapa (la forma del lugar), publicalo y volvé acá. Las localidades y precios
-                    los configurás por evento.
+                    Crea un mapa (la forma del lugar), publicalo y vuelve acá. Las localidades y precios
+                    los configuras por evento.
                 </p>
             </div>
-            <Button asChild size="lg" data-testid="venue-create-cta">
-                <a href={venueCreateHref(event?.id)}>
-                    <PlusCircle className="h-5 w-5 mr-2" />
-                    Crear mapa
-                    <ArrowRight className="h-4 w-4 ml-2" />
-                </a>
+            <Button size="lg" data-testid="venue-create-cta" onClick={() => goTo(venueCreateHref(event?.id))}>
+                <PlusCircle className="h-5 w-5 mr-2" />
+                Crear mapa
+                <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
+        </div>
+    );
+
+    const currentFormat = inferAttendanceFormatFromLocalities(allLocalities);
+    const formatInfo = ATTENDANCE_FORMATS[currentFormat];
+    const hasAnyLocalities = allLocalities.length > 0;
+    // Before any locality exists, "numbered vs. aforo general" isn't defined
+    // by anything real yet — this is the organizer's upfront intent, saved on
+    // the event (`access_params.attendance_format`) so "Nueva Localidad"
+    // opens pre-set to it instead of always defaulting to "Numerada".
+    const plannedFormat = event?.access_params?.attendance_format === "general" ? "general" : "numbered";
+
+    const seatingChoice = (
+        <div className="space-y-2" data-testid="attendance-format-picker">
+            <Label className="text-xs">Tipo de evento *</Label>
+            <div className="grid sm:grid-cols-2 gap-2">
+                {[
+                    { value: "numbered", title: "Numerado", desc: "El comprador elige su butaca en un mapa.", Icon: MapPinned },
+                    { value: "general", title: "Aforo general", desc: "El comprador elige cantidad, sin butaca asignada.", Icon: Users },
+                ].map(({ value, title, desc, Icon }) => (
+                    <button
+                        key={value}
+                        type="button"
+                        onClick={() => onFormatChange?.(value)}
+                        disabled={disabled || (value === "numbered" && !allowNumbered)}
+                        className={`flex items-start gap-2.5 rounded-lg border p-3 text-left transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                            plannedFormat === value
+                                ? "border-primary bg-primary/5"
+                                : "hover:bg-secondary/40"
+                        }`}
+                        data-testid={`attendance-format-${value}`}
+                    >
+                        <Icon className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+                        <div>
+                            <p className="text-sm font-medium">{title}</p>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">{desc}</p>
+                        </div>
+                    </button>
+                ))}
+            </div>
+            {!allowNumbered && (
+                <p className="text-[11px] text-muted-foreground">
+                    Tu plan no incluye asientos numerados — solo puedes elegir aforo general.
+                </p>
+            )}
+        </div>
+    );
+
+    const seatingStatus = (
+        <div
+            className="flex items-start gap-2.5 rounded-lg border bg-secondary/30 px-3 py-2.5"
+            data-testid="attendance-format-indicator"
+        >
+            <Info className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+            <div className="text-xs">
+                <p className="font-medium text-foreground">
+                    Este evento es: {formatInfo.title}
+                </p>
+                <p className="text-muted-foreground mt-0.5">
+                    {formatInfo.description} Ya definido por las localidades creadas en
+                    &quot;4.2 Localidades&quot; — borralas todas para volver a elegir el tipo.
+                </p>
+            </div>
         </div>
     );
 
@@ -704,9 +788,11 @@ export default function EventVenueSection({
             <div>
                 <h4 className="font-semibold text-base">Escenario</h4>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Elegí el mapa del lugar. En el paso siguiente creás las localidades y las asignás al plano.
+                    Elige el mapa del lugar. En el paso siguiente creas las localidades y las asignas al plano.
                 </p>
             </div>
+
+            {hasAnyLocalities ? seatingStatus : seatingChoice}
 
             <div className="space-y-1.5">
                 <Label className="text-xs">Mapa / Lugar *</Label>
@@ -716,7 +802,7 @@ export default function EventVenueSection({
                     disabled={disabled || loadingLink || (event?.tickets_sold || 0) > 0}
                 >
                     <SelectTrigger data-testid="wiz-venue-select">
-                        <SelectValue placeholder="Elegí un mapa publicado…" />
+                        <SelectValue placeholder="Elige un mapa publicado…" />
                     </SelectTrigger>
                     <SelectContent>
                         {venues.map((v) => (
@@ -798,10 +884,13 @@ export default function EventVenueSection({
                 />
             )}
 
-            <Button variant="outline" size="sm" asChild data-testid="venue-create-link">
-                <a href={venueCreateHref(event?.id)}>
-                    <PlusCircle className="h-3.5 w-3.5 mr-1.5" /> Nuevo mapa
-                </a>
+            <Button
+                variant="outline"
+                size="sm"
+                data-testid="venue-create-link"
+                onClick={() => goTo(venueCreateHref(event?.id))}
+            >
+                <PlusCircle className="h-3.5 w-3.5 mr-1.5" /> Nuevo mapa
             </Button>
         </div>
     );
@@ -820,9 +909,9 @@ export default function EventVenueSection({
                         <h3 className="font-semibold text-base">Creación de localidades</h3>
                         <p className="text-sm text-muted-foreground mt-1.5 max-w-md mx-auto">
                             {!selectedVenueId
-                                ? "Primero seleccioná un escenario en el paso 4.1. El mapa define la forma; nombre, tipo y precios son de este evento."
+                                ? "Primero selecciona un escenario en el paso 4.1. El mapa define la forma; nombre, tipo y precios son de este evento."
                                 : !eventSaved
-                                  ? "Guardá el borrador para vincular el mapa y después crear localidades (numerada o no numerada) asignándolas al plano."
+                                  ? "Guarda el borrador para vincular el mapa y después crear localidades (numerada o no numerada) asignándolas al plano."
                                   : "Vinculando mapa…"}
                         </p>
                     </div>
@@ -839,10 +928,13 @@ export default function EventVenueSection({
                             </p>
                         </div>
                         <div className="flex gap-2">
-                            <Button variant="outline" size="sm" asChild data-testid="venue-assign-map">
-                                <a href={eventMapHref(event.id)}>
-                                    <Wand2 className="h-4 w-4 mr-1.5" /> Mapa completo
-                                </a>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                data-testid="venue-assign-map"
+                                onClick={() => goTo(eventMapHref(event.id))}
+                            >
+                                <Wand2 className="h-4 w-4 mr-1.5" /> Mapa completo
                             </Button>
                             <Button
                                 size="sm"
@@ -895,10 +987,10 @@ export default function EventVenueSection({
                         {allLocalities.length === 0 ? (
                             <div className="rounded-xl border-2 border-dashed p-6 text-center text-sm text-muted-foreground">
                                 {seatingConflict === "numbered_only_blocked"
-                                    ? "Este mapa solo tiene butacas y tu plan no las vende. Elegí un escenario con zonas de aforo o mejorá el plan."
+                                    ? "Este mapa solo tiene butacas y tu plan no las vende. Elige un escenario con zonas de aforo o mejora el plan."
                                     : seatingConflict === "numbered_unused"
-                                      ? "Creá una localidad no numerada y asignala a las zonas de aforo. Las butacas de este mapa no se venden con tu plan actual."
-                                      : "Creá una localidad: elegí si es numerada o no numerada, y asignala al mapa en el mismo paso."}
+                                      ? "Crea una localidad no numerada y asignala a las zonas de aforo. Las butacas de este mapa no se venden con tu plan actual."
+                                      : "Crea una localidad: elige si es numerada o no numerada, y asignala al mapa en el mismo paso."}
                             </div>
                         ) : (
                             <div className="rounded-xl border bg-card overflow-x-auto">
@@ -968,8 +1060,19 @@ export default function EventVenueSection({
                                                     <td className="px-3 py-2 text-right tabular-nums">
                                                         ${centsToInput(p.service_fee_cents) || "0.00"}
                                                     </td>
-                                                    <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
-                                                        {assigned}
+                                                    <td className="px-3 py-2 text-right tabular-nums">
+                                                        {assigned === 0 ? (
+                                                            <span
+                                                                className="inline-flex items-center gap-1 text-amber-700"
+                                                                title="Sin nada asignado en el mapa — no vas a poder publicar el evento hasta asignarle asientos, mesas o una zona con 'Mapa completo'."
+                                                                data-testid={`loc-unassigned-${loc.id}`}
+                                                            >
+                                                                <Info className="h-3.5 w-3.5" />
+                                                                0
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-muted-foreground">{assigned}</span>
+                                                        )}
                                                     </td>
                                                     <td className="px-3 py-2 text-right whitespace-nowrap">
                                                         <Button
@@ -1115,6 +1218,7 @@ export default function EventVenueSection({
                 allowNumbered={allowNumbered}
                 pricingType={pricingType}
                 feeBearer={feeBearer}
+                defaultSeatingType={plannedFormat === "general" ? "unnumbered" : "numbered"}
             />
         </div>
     );

@@ -1248,7 +1248,7 @@ async def _seed_demo_events() -> None:
             "title": "Concierto Acústico Demo",
             "short_description": "Una noche íntima con artistas locales.",
             "description": (
-                "Disfrutá una noche acústica con tres bandas locales en un ambiente íntimo. "
+                "Disfruta una noche acústica con tres bandas locales en un ambiente íntimo. "
                 "Sonido envolvente, luces tenues y bebida de cortesía con tu entrada."
             ),
             "category": "music",
@@ -2321,7 +2321,7 @@ async def _seed_demo_numbered_event() -> None:
             event_id = row.id
             row.title = "Función Especial — Demo Numerado"
             row.description = (
-                "Función con asientos numerados. Elegí tus butacas directamente sobre "
+                "Función con asientos numerados. Elige tus butacas directamente sobre "
                 "el mapa del Teatro Demo. Tres localidades disponibles: Platea, Tribuna y Gradería General."
             )
             row.short_description = "Función con asientos numerados — mapa interactivo."
@@ -2371,7 +2371,7 @@ async def _seed_demo_numbered_event() -> None:
                     slug=slug,
                     title="Función Especial — Demo Numerado",
                     description=(
-                        "Función con asientos numerados. Elegí tus butacas directamente sobre "
+                        "Función con asientos numerados. Elige tus butacas directamente sobre "
                         "el mapa del Teatro Demo. Tres localidades disponibles: Platea, Tribuna y Gradería General."
                     ),
                     short_description="Función con asientos numerados — mapa interactivo.",

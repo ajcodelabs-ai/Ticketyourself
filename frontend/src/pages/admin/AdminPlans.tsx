@@ -169,7 +169,7 @@ function formToPayload(form, { includeCode } = { includeCode: false }) {
     const verification_fee_cents = dollarsToCents(form.verification_fee_dollars);
     const event_fee_per_ticket_cents = dollarsToCents(form.event_fee_per_ticket_dollars);
     if (price_cents === null || verification_fee_cents === null || event_fee_per_ticket_cents === null) {
-        throw new Error("Monto inválido: usá formato 20.00");
+        throw new Error("Monto inválido: usa formato 20.00");
     }
     const payload: Record<string, any> = {
         name: form.name,
@@ -276,6 +276,8 @@ export default function AdminPlans() {
     const [saving, setSaving] = useState(false);
     const [preEventFeeRequired, setPreEventFeeRequired] = useState(false);
     const [savingPlatform, setSavingPlatform] = useState(false);
+    const [venueLockEnforcement, setVenueLockEnforcement] = useState(true);
+    const [savingVenueLock, setSavingVenueLock] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -286,6 +288,9 @@ export default function AdminPlans() {
             ]);
             setPlans(data || []);
             setPreEventFeeRequired(Boolean(platformResp.data?.pre_event_fee_required));
+            setVenueLockEnforcement(
+                platformResp.data?.venue_lock_enforcement_enabled !== false,
+            );
         } catch (err) {
             toast.error(formatApiError(err?.response?.data?.detail));
         } finally {
@@ -358,6 +363,7 @@ export default function AdminPlans() {
         try {
             const { data } = await api.put("/admin/settings/platform", {
                 pre_event_fee_required: enabled,
+                venue_lock_enforcement_enabled: venueLockEnforcement,
             });
             setPreEventFeeRequired(Boolean(data.pre_event_fee_required));
             toast.success(
@@ -370,6 +376,29 @@ export default function AdminPlans() {
             toast.error(formatApiError(err?.response?.data?.detail) || err.message);
         } finally {
             setSavingPlatform(false);
+        }
+    };
+
+    const saveVenueLockEnforcement = async (enabled) => {
+        setSavingVenueLock(true);
+        const previous = venueLockEnforcement;
+        setVenueLockEnforcement(enabled);
+        try {
+            const { data } = await api.put("/admin/settings/platform", {
+                pre_event_fee_required: preEventFeeRequired,
+                venue_lock_enforcement_enabled: enabled,
+            });
+            setVenueLockEnforcement(data.venue_lock_enforcement_enabled !== false);
+            toast.success(
+                enabled
+                    ? "El mapa vuelve a bloquearse para eventos/venues con ventas."
+                    : "El bloqueo por ventas quedó desactivado: se puede reestructurar el mapa igual con ventas activas.",
+            );
+        } catch (err) {
+            setVenueLockEnforcement(previous);
+            toast.error(formatApiError(err?.response?.data?.detail) || err.message);
+        } finally {
+            setSavingVenueLock(false);
         }
     };
 
@@ -421,6 +450,29 @@ export default function AdminPlans() {
                         disabled={loading || savingPlatform}
                         onCheckedChange={savePlatformFee}
                         data-testid="platform-pre-event-fee-switch"
+                    />
+                </CardContent>
+            </Card>
+
+            <Card className="border-border/70" data-testid="platform-venue-lock-card">
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Bloquear mapa tras ventas</CardTitle>
+                    <CardDescription>
+                        Interruptor global. Prendido (default): no se puede reestructurar
+                        el mapa de un venue/evento con tickets vendidos. Apagado: se
+                        permite igual que en el sistema anterior — riesgo de dejar tickets
+                        vendidos apuntando a un asiento inexistente.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex items-center justify-between gap-4 pt-0">
+                    <p className="text-sm text-muted-foreground">
+                        {venueLockEnforcement ? "Activo" : "Desactivado"}
+                    </p>
+                    <Switch
+                        checked={venueLockEnforcement}
+                        disabled={loading || savingVenueLock}
+                        onCheckedChange={saveVenueLockEnforcement}
+                        data-testid="platform-venue-lock-switch"
                     />
                 </CardContent>
             </Card>
@@ -538,7 +590,7 @@ export default function AdminPlans() {
                         <div className="space-y-1.5 sm:col-span-2">
                             <FieldHint
                                 label="Descripción"
-                                tip="Texto corto bajo el nombre en el showcase de planes del registro. Explicá para quién es el plan (1–2 frases)."
+                                tip="Texto corto bajo el nombre en el showcase de planes del registro. Explica para quién es el plan (1–2 frases)."
                             />
                             <Textarea value={form.description} onChange={setField("description")} rows={2} />
                         </div>
@@ -742,12 +794,12 @@ export default function AdminPlans() {
                                             </button>
                                         </TooltipTrigger>
                                         <TooltipContent className="max-w-xs text-xs">
-                                            Cobro único al aprobar la cuenta (antes de publicar). Se asigna según el plan elegido en el registro. Con 0.00 el organizador queda ‘waived’ y no ve este paso. Escribí dólares con decimales (ej. 10.00).
+                                            Cobro único al aprobar la cuenta (antes de publicar). Se asigna según el plan elegido en el registro. Con 0.00 el organizador queda ‘waived’ y no ve este paso. Escribe dólares con decimales (ej. 10.00).
                                         </TooltipContent>
                                     </Tooltip>
                                 </CardTitle>
                                 <CardDescription>
-                                    Cobro al aprobar la cuenta. Poné 0.00 para omitirlo (ej. plan Básico).
+                                    Cobro al aprobar la cuenta. Pon 0.00 para omitirlo (ej. plan Básico).
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="pb-4 space-y-1.5">

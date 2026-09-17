@@ -154,7 +154,7 @@ export default function OrganizerLayout({ children }) {
                             data-testid="org-pending-banner"
                             className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950"
                         >
-                            Tu cuenta está en revisión por TYS. Podés configurar todo, pero no
+                            Tu cuenta está en revisión por TYS. Puedes configurar todo, pero no
                             publicar eventos, Escenarios ni tu página hasta la aprobación.{" "}
                             <Link
                                 to="/onboarding"

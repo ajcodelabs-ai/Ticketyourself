@@ -117,18 +117,18 @@ export default function CustomQuestionsPanel({
     const save = () => {
         const label = (draft.label || "").trim();
         if (label.length < 2) {
-            toast.error("Indicá el nombre del campo (mín. 2 caracteres).");
+            toast.error("Indica el nombre del campo (mín. 2 caracteres).");
             return;
         }
         if (draft.type === "select" && !(draft.options || []).length) {
-            toast.error("Agregá al menos una opción a la lista.");
+            toast.error("Agrega al menos una opción a la lista.");
             return;
         }
         if (
             venueLocalities.length > 0
             && !(draft.locality_ids || []).length
         ) {
-            toast.error("Seleccioná al menos una localidad.");
+            toast.error("Selecciona al menos una localidad.");
             return;
         }
 
@@ -179,7 +179,7 @@ export default function CustomQuestionsPanel({
                     <MessageSquareText className="h-8 w-8 mx-auto text-muted-foreground/60" />
                     <p className="text-sm font-medium">No hay campos personalizados configurados</p>
                     <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                        Agregá campos extra que se solicitarán al cliente durante la compra.
+                        Agrega campos extra que se solicitarán al cliente durante la compra.
                     </p>
                     <Button
                         size="sm"

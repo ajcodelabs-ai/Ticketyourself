@@ -32,7 +32,7 @@ export default function LocalitiesPanel({
 
     const handleCreate = () => {
         if (!draft.name.trim()) {
-            toast.error("Poné un nombre a la localidad");
+            toast.error("Pon un nombre a la localidad");
             return;
         }
         onAdd(draft);
@@ -68,7 +68,7 @@ export default function LocalitiesPanel({
             <div className="min-h-0 flex-1 overflow-y-auto max-h-[280px] space-y-1.5 pr-0.5">
                 {localities.length === 0 && (
                     <p className="text-xs text-muted-foreground italic py-2">
-                        Aún sin localidades. Creá una para colorear zonas y asientos.
+                        Aún sin localidades. Crea una para colorear zonas y asientos.
                     </p>
                 )}
                 {localities.map((loc) => {

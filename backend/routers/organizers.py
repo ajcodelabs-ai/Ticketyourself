@@ -381,7 +381,7 @@ async def admin_review_doc(
     if (doc.status or "pending") != "pending":
         raise HTTPException(
             409,
-            "Este archivo ya fue revisado. Si el organizador subió una corrección, revisá el archivo nuevo.",
+            "Este archivo ya fue revisado. Si el organizador subió una corrección, revisa el archivo nuevo.",
         )
     if payload.status in ("rejected", "needs_correction") and not (
         payload.comment and payload.comment.strip()

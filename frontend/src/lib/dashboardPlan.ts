@@ -58,8 +58,8 @@ export function dashboardPlanView({
                 className: "bg-amber-100 text-amber-800",
             },
             subtitle: planName(displayPlan)
-                ? "Ya te aprobaron. Activá este plan para publicar eventos."
-                : "Elegí un plan para publicar eventos.",
+                ? "Ya te aprobaron. Activa este plan para publicar eventos."
+                : "Elige un plan para publicar eventos.",
             canManage: false,
             activateHref: "/onboarding",
             showPrice: Boolean(displayPlan),

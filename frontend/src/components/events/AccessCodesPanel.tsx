@@ -108,7 +108,7 @@ export default function AccessCodesPanel({ eventId, embedded = false }: Props) {
             <div className="flex items-center gap-2 text-muted-foreground p-4 rounded-xl border border-dashed">
                 <AlertCircle className="h-4 w-4 shrink-0" />
                 <span className="text-sm">
-                    Guardá primero la información general del evento para gestionar códigos de acceso.
+                    Guarda primero la información general del evento para gestionar códigos de acceso.
                 </span>
             </div>
         );

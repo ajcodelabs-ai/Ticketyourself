@@ -72,7 +72,7 @@ export default function SocialAuthButtons({ onAuthenticated = undefined }) {
 
     const runSocial = async (provider, idToken, extra = {}) => {
         if (!tenantSlug) {
-            toast.error("Abrí la página del organizador para crear tu cuenta.");
+            toast.error("Abre la página del organizador para crear tu cuenta.");
             return;
         }
         setBusy(provider);
@@ -107,7 +107,7 @@ export default function SocialAuthButtons({ onAuthenticated = undefined }) {
             });
             gis.prompt((notification) => {
                 if (notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()) {
-                    toast.error("No se pudo abrir Google. Revisá si el pop-up está bloqueado.");
+                    toast.error("No se pudo abrir Google. Revisa si el pop-up está bloqueado.");
                 }
             });
         } catch (err) {

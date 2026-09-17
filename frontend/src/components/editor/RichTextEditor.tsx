@@ -19,7 +19,7 @@ export const FAQ_ANSWER_MAX_LENGTH = 500;
 export default function RichTextEditor({
     value = "",
     onChange,
-    placeholder = "Escribí aquí…",
+    placeholder = "Escribe aquí…",
     disabled = false,
     className = undefined,
     testid,

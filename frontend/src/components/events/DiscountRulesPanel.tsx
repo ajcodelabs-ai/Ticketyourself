@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import DateTimePicker from "@/components/ui/DateTimePicker";
 import { Badge } from "@/components/ui/badge";
+import { centsToInput, dollarsToCents } from "@/lib/money";
 import {
     Select,
     SelectContent,
@@ -49,6 +50,7 @@ function newDraft() {
     return {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name: "",
+        description: "",
         code: "",
         enabled: true,
         modality: MODALITY.percent,
@@ -63,6 +65,8 @@ function newDraft() {
         conditions: {
             locality_ids: [],
             max_per_buyer: null,
+            max_per_purchase: null,
+            min_purchase_amount: "",
             valid_from: null,
             valid_until: null,
             payment_methods: [],
@@ -83,6 +87,7 @@ export function ruleToDraft(rule) {
     return {
         id: rule.id,
         name: rule.name || "",
+        description: rule.description || "",
         code: rule.code || "",
         enabled: rule.enabled !== false,
         modality: modalityOf(rule),
@@ -98,6 +103,8 @@ export function ruleToDraft(rule) {
         conditions: {
             locality_ids: [...(rule.conditions?.locality_ids || [])],
             max_per_buyer: rule.conditions?.max_per_buyer ?? null,
+            max_per_purchase: rule.conditions?.max_per_purchase ?? null,
+            min_purchase_amount: centsToInput(rule.conditions?.min_purchase_amount_cents) || "",
             valid_from: rule.conditions?.valid_from ?? null,
             valid_until: rule.conditions?.valid_until ?? null,
             payment_methods: [...(rule.conditions?.payment_methods || [])],
@@ -136,6 +143,7 @@ export function draftToRule(draft) {
     return {
         id: draft.id,
         name: (draft.name || "").trim(),
+        description: (draft.description || "").trim() || null,
         type,
         enabled: !!draft.enabled,
         code: hasCode ? code : null,
@@ -149,6 +157,8 @@ export function draftToRule(draft) {
         conditions: {
             locality_ids: draft.conditions?.locality_ids || [],
             max_per_buyer: draft.conditions?.max_per_buyer || null,
+            max_per_purchase: draft.conditions?.max_per_purchase || null,
+            min_purchase_amount_cents: dollarsToCents(draft.conditions?.min_purchase_amount) || null,
             valid_from: draft.conditions?.valid_from || null,
             valid_until: draft.conditions?.valid_until || null,
             payment_methods: draft.conditions?.payment_methods || [],
@@ -261,7 +271,7 @@ export default function DiscountRulesPanel({
         } else {
             const val = Number(draft.discount_value) || 0;
             if (val <= 0) {
-                toast.error("Indicá un valor de descuento válido.");
+                toast.error("Indica un valor de descuento válido.");
                 return;
             }
             if (draft.modality === MODALITY.percent && val > 100) {
@@ -320,7 +330,7 @@ export default function DiscountRulesPanel({
                 <div className="rounded-xl border border-dashed py-10 text-center space-y-2 bg-card">
                     <p className="text-sm font-medium">Sin descuentos todavía</p>
                     <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                        Creá un porcentaje, un monto fijo o una promo Lleva Y / Paga X.
+                        Crea un porcentaje, un monto fijo o una promo Lleva Y / Paga X.
                     </p>
                     <Button
                         size="sm"
@@ -539,6 +549,15 @@ function InlineDiscountForm({
                             data-testid="rule-name"
                         />
                     </Field>
+                    <Field label="Descripción">
+                        <Input
+                            value={draft.description || ""}
+                            onChange={(e) => upd({ description: e.target.value })}
+                            placeholder="Descripción breve del descuento…"
+                            maxLength={300}
+                            data-testid="rule-description"
+                        />
+                    </Field>
                     <Field label="Código">
                         <Input
                             value={draft.code || ""}
@@ -550,7 +569,7 @@ function InlineDiscountForm({
                             data-testid="rule-code"
                         />
                         <p className="text-[11px] text-muted-foreground mt-1">
-                            Opcional. Si lo dejás vacío, el descuento se aplica
+                            Opcional. Si lo dejas vacío, el descuento se aplica
                             automáticamente en checkout.
                         </p>
                     </Field>
@@ -625,7 +644,7 @@ function InlineDiscountForm({
                                 />
                             </div>
                             <p className="text-[11px] text-muted-foreground mt-1">
-                                Ej: 2 / 1 = promo 2x1 (pagás 1, llevás 2).
+                                Ej: 2 / 1 = promo 2x1 (pagas 1, llevas 2).
                             </p>
                         </Field>
                     ) : (
@@ -693,38 +712,86 @@ function InlineDiscountForm({
                             />
                         </Field>
                     </div>
-                    <Field label="Cupo total">
-                        <Input
-                            type="number"
-                            min="1"
-                            value={draft.max_uses ?? ""}
-                            onChange={(e) =>
-                                upd({
-                                    max_uses: e.target.value
-                                        ? parseInt(e.target.value, 10)
-                                        : null,
-                                })
-                            }
-                            placeholder="Ej: 100"
-                            data-testid="rule-max-uses"
-                        />
-                    </Field>
-                    <Field label="Cupo / usuario">
-                        <Input
-                            type="number"
-                            min="1"
-                            value={draft.conditions.max_per_buyer ?? ""}
-                            onChange={(e) =>
-                                updCond({
-                                    max_per_buyer: e.target.value
-                                        ? parseInt(e.target.value, 10)
-                                        : null,
-                                })
-                            }
-                            placeholder="Ej: 2"
-                            data-testid="rule-max-buyer"
-                        />
-                    </Field>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                        <Field label="Cupo total">
+                            <Input
+                                type="number"
+                                min="1"
+                                value={draft.max_uses ?? ""}
+                                onChange={(e) =>
+                                    upd({
+                                        max_uses: e.target.value
+                                            ? parseInt(e.target.value, 10)
+                                            : null,
+                                    })
+                                }
+                                placeholder="Ej: 100"
+                                data-testid="rule-max-uses"
+                            />
+                        </Field>
+                        <Field label="Monto mínimo">
+                            <div className="relative">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                    $
+                                </span>
+                                <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    className="pl-6"
+                                    value={draft.conditions.min_purchase_amount ?? ""}
+                                    onChange={(e) =>
+                                        updCond({ min_purchase_amount: e.target.value })
+                                    }
+                                    placeholder="0.00"
+                                    data-testid="rule-min-purchase"
+                                />
+                            </div>
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                                Solo aplica si el total de la compra alcanza este monto.
+                            </p>
+                        </Field>
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                        <Field label="Cupo / usuario">
+                            <Input
+                                type="number"
+                                min="1"
+                                value={draft.conditions.max_per_buyer ?? ""}
+                                onChange={(e) =>
+                                    updCond({
+                                        max_per_buyer: e.target.value
+                                            ? parseInt(e.target.value, 10)
+                                            : null,
+                                    })
+                                }
+                                placeholder="Ej: 2"
+                                data-testid="rule-max-buyer"
+                            />
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                                Usos totales por comprador, entre distintas compras.
+                            </p>
+                        </Field>
+                        <Field label="Cupo / compra">
+                            <Input
+                                type="number"
+                                min="1"
+                                value={draft.conditions.max_per_purchase ?? ""}
+                                onChange={(e) =>
+                                    updCond({
+                                        max_per_purchase: e.target.value
+                                            ? parseInt(e.target.value, 10)
+                                            : null,
+                                    })
+                                }
+                                placeholder="Ej: 1"
+                                data-testid="rule-max-per-purchase"
+                            />
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                                Cuántas unidades descuenta dentro de una misma compra.
+                            </p>
+                        </Field>
+                    </div>
                 </section>
             </div>
 
@@ -835,7 +902,7 @@ function InlineDiscountForm({
                 </div>
                 {paymentOptions.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
-                        Activá al menos una forma de pago en el paso anterior.
+                        Activa al menos una forma de pago en el paso anterior.
                     </p>
                 ) : (
                     <div className="flex flex-wrap gap-2">

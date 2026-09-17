@@ -63,7 +63,7 @@ def default_microsite(
             "about_title": "Sobre nosotros",
             "about_body": (
                 "Somos un equipo apasionado por crear experiencias inolvidables. "
-                "Descubrí nuestros próximos eventos y unite a la comunidad."
+                "Descubre nuestros próximos eventos y unite a la comunidad."
             ),
             "about_body_html": "",
             "contact_email": "",

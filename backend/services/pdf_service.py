@@ -417,7 +417,7 @@ async def render_ticket_pdf(
     c.drawCentredString(
         box_x + qr_size / 2,
         qr_y - 14,
-        "Presentá este QR en la entrada del evento.",
+        "Presenta este QR en la entrada del evento.",
     )
 
     # ── Footer ──────────────────────────────────────────────────────────────

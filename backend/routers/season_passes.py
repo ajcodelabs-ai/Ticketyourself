@@ -311,7 +311,7 @@ async def purchase_season_pass(
             "purchase_token": purchase["purchase_token"],
             "message": (
                 "Nuvei aún no está configurado en este entorno. "
-                "Tu abono quedó registrado; contactá a soporte TYS."
+                "Tu abono quedó registrado; contacta a soporte TYS."
             ),
             "redirect_to": f"/o/{organizer['slug']}/abono/{purchase['purchase_token']}",
         }

@@ -32,7 +32,7 @@ export default function RegisterBuyer() {
     const submit = async (e) => {
         e.preventDefault();
         if (form.name.trim().length < 2) {
-            toast.error("Ingresá tu nombre.");
+            toast.error("Ingresa tu nombre.");
             return;
         }
         if (form.password.length < 8) {
@@ -46,7 +46,7 @@ export default function RegisterBuyer() {
         setSubmitting(true);
         try {
             if (!tenantSlug) {
-                toast.error("Abrí la página del organizador para crear tu cuenta.");
+                toast.error("Abre la página del organizador para crear tu cuenta.");
                 return;
             }
             const data = await registerBuyer({
@@ -56,7 +56,7 @@ export default function RegisterBuyer() {
                 phone: form.phone || undefined,
                 tenant_slug: tenantSlug,
             });
-            toast.success("Cuenta creada. Ya podés comprar entradas.");
+            toast.success("Cuenta creada. Ya puedes comprar entradas.");
             const fromState = pathFromLocationState(location.state?.from);
             const nextParam = safeInternalPath(
                 new URLSearchParams(location.search).get("next"),
@@ -81,10 +81,10 @@ export default function RegisterBuyer() {
                     <div className="inline-flex items-center justify-center h-10 w-10 rounded-xl bg-primary text-primary-foreground mb-2">
                         <Ticket className="h-5 w-5" />
                     </div>
-                    <CardTitle className="text-2xl">Creá tu cuenta</CardTitle>
+                    <CardTitle className="text-2xl">Crea tu cuenta</CardTitle>
                     <CardDescription>
                         Esta cuenta vale solo para esta página. En otra productora
-                        te registrás aparte — es gratis.
+                        te registras aparte — es gratis.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -162,14 +162,14 @@ export default function RegisterBuyer() {
                             )}
                         </Button>
                         <p className="text-sm text-muted-foreground text-center">
-                            ¿Ya tenés cuenta?{" "}
+                            ¿Ya tienes cuenta?{" "}
                             <Link
                                 to={loginTo}
                                 state={location.state}
                                 className="text-primary hover:underline"
                                 data-testid="buyer-reg-to-login"
                             >
-                                Iniciá sesión
+                                Inicia sesión
                             </Link>
                         </p>
                     </form>

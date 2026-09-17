@@ -151,7 +151,7 @@ export function describeLegalIdPattern(pattern) {
         case "digits_either":
             return `Debe tener ${parsed.eitherA} o ${parsed.eitherB} números (por ejemplo cédula o RUC).`;
         default:
-            return "Este país ya tiene un formato especial. Podés dejarlo o elegir una opción más simple.";
+            return "Este país ya tiene un formato especial. Puedes dejarlo o elegir una opción más simple.";
     }
 }
 

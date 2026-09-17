@@ -196,7 +196,7 @@ async def create_checkout_session(
             order_installments_type=nuvei.get("order_installments_type"),
             amount=nuvei.get("amount"),
             currency=nuvei.get("currency"),
-            message=f"Completá el pago del plan {plan['name']} con Nuvei.",
+            message=f"Completa el pago del plan {plan['name']} con Nuvei.",
         )
 
 
