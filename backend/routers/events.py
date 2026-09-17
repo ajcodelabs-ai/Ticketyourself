@@ -52,6 +52,7 @@ from services.order_service import LOCALITY_CHARGE_FIELDS, locality_pricing_has_
 from services.organizer_gates import require_publish_gates
 from services.path_safety import resolve_path_under
 from services.plan_features import assert_feature_async, get_plan_features_async
+from services.platform_settings import is_venue_lock_enforcement_enabled
 from slugs import normalize_slug
 
 logger = logging.getLogger("tys.events")
@@ -913,6 +914,8 @@ async def get_event_venue_layout(event_id: str, user=Depends(get_current_user)):
         if not row.venue_layout:
             raise HTTPException(404, "Este evento no tiene mapa vinculado")
         sold = int(row.tickets_sold or 0)
+        enforcement_enabled = await is_venue_lock_enforcement_enabled(session)
+        locked = sold > 0 and enforcement_enabled
         return {
             "event_id": row.id,
             "venue_id": row.venue_id,
@@ -926,11 +929,11 @@ async def get_event_venue_layout(event_id: str, user=Depends(get_current_user)):
             or 0,
             "snapshotted_at": (row.venue_layout or {}).get("snapshotted_at"),
             "lock_status": {
-                "locked": sold > 0,
+                "locked": locked,
                 "tickets_sold": sold,
                 "reason": (
                     f"Hay {sold} ticket(s) vendido(s); no se pueden cambiar elementos estructurales."
-                    if sold > 0
+                    if locked
                     else None
                 ),
             },
@@ -974,7 +977,8 @@ async def put_event_venue_layout(
             )
 
         sold = int(row.tickets_sold or 0)
-        if sold > 0:
+        enforcement_enabled = await is_venue_lock_enforcement_enabled(session)
+        if sold > 0 and enforcement_enabled:
             if structural_diff(
                 old.get("elements") or [], body.elements
             ) or locality_structural_diff(old.get("localities") or [], localities):
@@ -1064,7 +1068,7 @@ async def put_event_venue_layout(
             "capacity_calculated": capacity,
             "locality_pricing": new_pricing,
             "lock_status": {
-                "locked": sold > 0,
+                "locked": sold > 0 and enforcement_enabled,
                 "tickets_sold": sold,
             },
         }

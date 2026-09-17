@@ -353,10 +353,12 @@ class DocumentTypeCreate(BaseModel):
 
 class PlatformSettingsOut(BaseModel):
     pre_event_fee_required: bool = False
+    venue_lock_enforcement_enabled: bool = True
 
 
 class PlatformSettingsUpdate(BaseModel):
     pre_event_fee_required: bool
+    venue_lock_enforcement_enabled: bool = True
 
 
 class RegistrationCountryOut(TimestampedModel):

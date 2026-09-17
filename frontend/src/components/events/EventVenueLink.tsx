@@ -26,6 +26,7 @@ function activeLocalityIds(venue): Set<string> {
 
 export default function EventVenueLink({ event, onUpdated, disabled }) {
     const [venues, setVenues] = useState([]);
+    const [draftCount, setDraftCount] = useState(0);
     const [open, setOpen] = useState(false);
     const [pickerVenueId, setPickerVenueId] = useState(event?.venue_id || "");
     const [pricing, setPricing] = useState({}); // {locality_id: price_cents}
@@ -33,8 +34,12 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
     const [previewVenue, setPreviewVenue] = useState(null);
 
     useEffect(() => {
-        venuesApi.list({ status: "published" })
-            .then((d) => setVenues(d.items.filter((v) => v.status === "published")))
+        venuesApi.list()
+            .then((d) => {
+                const items = d.items || [];
+                setVenues(items.filter((v) => v.status === "published"));
+                setDraftCount(items.filter((v) => v.status === "draft").length);
+            })
             .catch(() => setVenues([]));
     }, []);
 
@@ -223,6 +228,13 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
                                     ))}
                                 </SelectContent>
                             </Select>
+                            {draftCount > 0 && (
+                                <p className="text-[11px] text-amber-700">
+                                    Tenés {draftCount} escenario(s) en borrador que no aparecen acá
+                                    — publicalos en <span className="font-medium">/app/venues</span> para
+                                    poder elegirlos.
+                                </p>
+                            )}
                         </div>
                         {pickedVenue && (
                             <>

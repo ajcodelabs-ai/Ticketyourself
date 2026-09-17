@@ -45,7 +45,7 @@ import { venuesApi, eventVenueLayoutApi, computeCapacity, unnumberedCapacityByLo
 import EditorCanvas from "@/components/venues/EditorCanvas";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePlanFeatures } from "@/hooks/queries/usePlanFeatures";
-import { LOCALITY_SEATING_TYPES, inferAttendanceFormatFromLocalities, normalizeLocalitySeatingType, planLayoutSeatingConflict, PLAN_SEATING_COPY } from "@/lib/attendanceFormat";
+import { ATTENDANCE_FORMATS, LOCALITY_SEATING_TYPES, inferAttendanceFormatFromLocalities, normalizeLocalitySeatingType, planLayoutSeatingConflict, PLAN_SEATING_COPY } from "@/lib/attendanceFormat";
 import LocalityFormDialog from "@/components/events/LocalityFormDialog";
 import { PlanGateHint } from "@/components/plans/PlanGate";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -182,6 +182,7 @@ export default function EventVenueSection({
     disabled,
     onUpdated,
     onReturnFromVenueCreate = undefined,
+    onBeforeVenueCreate = undefined,
     pendingVenueId = null,
     onPendingVenueChange = undefined,
     panel = "all",
@@ -191,6 +192,7 @@ export default function EventVenueSection({
     disabled?: boolean;
     onUpdated?: (e: any) => void;
     onReturnFromVenueCreate?: unknown;
+    onBeforeVenueCreate?: () => Promise<unknown> | void;
     pendingVenueId?: string | null;
     onPendingVenueChange?: (id: string | null) => void;
     panel?: "all" | "escenario" | "localidades";
@@ -198,6 +200,13 @@ export default function EventVenueSection({
 }) {
     const { organizer } = useAuth();
     const { data: planFeatures } = usePlanFeatures();
+    // These links do a full-page navigation away from the wizard (they open
+    // the standalone venue editor and come back via `return_to`). Save any
+    // unsaved wizard edits first so they aren't lost on the way out.
+    const goTo = async (href: string) => {
+        await onBeforeVenueCreate?.();
+        window.location.href = href;
+    };
     // Escenario is always available. This flag only limits numbered localities.
     const allowNumbered = planFeatures ? Boolean(planFeatures.numbered_seating) : true;
     const tenantSlug = organizer?.slug || event?.tenant_slug;
@@ -689,15 +698,16 @@ export default function EventVenueSection({
                     los configurás por evento.
                 </p>
             </div>
-            <Button asChild size="lg" data-testid="venue-create-cta">
-                <a href={venueCreateHref(event?.id)}>
-                    <PlusCircle className="h-5 w-5 mr-2" />
-                    Crear mapa
-                    <ArrowRight className="h-4 w-4 ml-2" />
-                </a>
+            <Button size="lg" data-testid="venue-create-cta" onClick={() => goTo(venueCreateHref(event?.id))}>
+                <PlusCircle className="h-5 w-5 mr-2" />
+                Crear mapa
+                <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
         </div>
     );
+
+    const currentFormat = inferAttendanceFormatFromLocalities(allLocalities);
+    const formatInfo = ATTENDANCE_FORMATS[currentFormat];
 
     const escenarioPanel = (
         <div className="rounded-xl border bg-card p-5 space-y-4" data-testid="escenario-panel">
@@ -706,6 +716,23 @@ export default function EventVenueSection({
                 <p className="text-xs text-muted-foreground mt-0.5">
                     Elegí el mapa del lugar. En el paso siguiente creás las localidades y las asignás al plano.
                 </p>
+            </div>
+
+            <div
+                className="flex items-start gap-2.5 rounded-lg border bg-secondary/30 px-3 py-2.5"
+                data-testid="attendance-format-indicator"
+            >
+                <Info className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+                <div className="text-xs">
+                    <p className="font-medium text-foreground">
+                        Este evento es: {formatInfo.title}
+                    </p>
+                    <p className="text-muted-foreground mt-0.5">
+                        {formatInfo.description} Se define por el tipo de cada localidad
+                        que crees en &quot;4.2 Localidades&quot; (numerada o de aforo
+                        general) — podés combinar ambas.
+                    </p>
+                </div>
             </div>
 
             <div className="space-y-1.5">
@@ -798,10 +825,13 @@ export default function EventVenueSection({
                 />
             )}
 
-            <Button variant="outline" size="sm" asChild data-testid="venue-create-link">
-                <a href={venueCreateHref(event?.id)}>
-                    <PlusCircle className="h-3.5 w-3.5 mr-1.5" /> Nuevo mapa
-                </a>
+            <Button
+                variant="outline"
+                size="sm"
+                data-testid="venue-create-link"
+                onClick={() => goTo(venueCreateHref(event?.id))}
+            >
+                <PlusCircle className="h-3.5 w-3.5 mr-1.5" /> Nuevo mapa
             </Button>
         </div>
     );
@@ -839,10 +869,13 @@ export default function EventVenueSection({
                             </p>
                         </div>
                         <div className="flex gap-2">
-                            <Button variant="outline" size="sm" asChild data-testid="venue-assign-map">
-                                <a href={eventMapHref(event.id)}>
-                                    <Wand2 className="h-4 w-4 mr-1.5" /> Mapa completo
-                                </a>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                data-testid="venue-assign-map"
+                                onClick={() => goTo(eventMapHref(event.id))}
+                            >
+                                <Wand2 className="h-4 w-4 mr-1.5" /> Mapa completo
                             </Button>
                             <Button
                                 size="sm"

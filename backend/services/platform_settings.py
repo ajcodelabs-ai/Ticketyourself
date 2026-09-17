@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orm_models import PlatformSetting
 
 KEY_PRE_EVENT_FEE_REQUIRED = "pre_event_fee_required"
+KEY_VENUE_LOCK_ENFORCEMENT = "venue_lock_enforcement_enabled"
 
 
 def _truthy(value: Any) -> bool:
@@ -52,7 +53,44 @@ async def set_pre_event_fee_required(
     return bool(enabled)
 
 
+async def is_venue_lock_enforcement_enabled(session: AsyncSession) -> bool:
+    """Master switch: if false, venues/events can be restructured after sales."""
+    row = await session.get(PlatformSetting, KEY_VENUE_LOCK_ENFORCEMENT)
+    if row is None:
+        return True
+    return _truthy(row.value)
+
+
+async def set_venue_lock_enforcement_enabled(
+    session: AsyncSession, *, enabled: bool, admin_id: str
+) -> bool:
+    now = datetime.now(timezone.utc)
+    row = await session.get(PlatformSetting, KEY_VENUE_LOCK_ENFORCEMENT)
+    payload = {"enabled": bool(enabled)}
+    if row is None:
+        session.add(
+            PlatformSetting(
+                key=KEY_VENUE_LOCK_ENFORCEMENT,
+                value=payload,
+                updated_at=now,
+                updated_by=admin_id,
+            )
+        )
+    else:
+        row.value = payload
+        row.updated_at = now
+        row.updated_by = admin_id
+        from sqlalchemy.orm.attributes import flag_modified
+
+        flag_modified(row, "value")
+    await session.flush()
+    return bool(enabled)
+
+
 async def get_platform_settings(session: AsyncSession) -> dict[str, bool]:
     return {
         "pre_event_fee_required": await is_pre_event_fee_required(session),
+        "venue_lock_enforcement_enabled": await is_venue_lock_enforcement_enabled(
+            session
+        ),
     }

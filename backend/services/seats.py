@@ -33,11 +33,10 @@ def _now() -> datetime:
 def _row_seat_label(element: Dict[str, Any], i: int) -> str:
     seats = element.get("seats_count") or 0
     start = element.get("numbering_start") or 1
+    step = element.get("numbering_step") or 1
     direction = element.get("numbering_direction") or "ltr"
-    if direction == "rtl":
-        num = start + seats - 1 - i
-    else:
-        num = start + i
+    effective_i = (seats - 1 - i) if direction == "rtl" else i
+    num = start + effective_i * step
     return f"{element.get('row_label') or element.get('label') or '?'}-{num}"
 
 

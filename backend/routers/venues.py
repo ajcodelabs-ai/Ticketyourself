@@ -31,6 +31,7 @@ from orm_models import Event, Organizer, SubscriptionPlan, Venue
 from security import get_current_user, is_active_organizer
 from services.path_safety import resolve_path_under
 from services.plan_features import get_plan_features_async
+from services.platform_settings import is_venue_lock_enforcement_enabled
 from slugs import normalize_slug
 
 logger = logging.getLogger("tys.venues")
@@ -165,11 +166,16 @@ class VenueElement(BaseModel):
     seat_radius: Optional[int] = 10
     row_label: Optional[str] = None
     numbering_start: Optional[int] = 1
+    numbering_step: Optional[int] = 1
     numbering_direction: Optional[Literal["ltr", "rtl"]] = "ltr"
     numbering_style: Optional[Literal["numeric", "alpha"]] = "numeric"
     # Curved row only
     curve_radius: Optional[int] = None
     curve_arc_degrees: Optional[int] = None
+    # UI-only convenience: -10..10 slider that derives curve_radius/curve_arc_degrees
+    # and which side the arc bows to. curve_radius/curve_arc_degrees remain the
+    # source of truth for rendering/seat math.
+    curvature: Optional[float] = None
     # Table round
     table_radius: Optional[int] = None
     chairs_count: Optional[int] = None
@@ -274,6 +280,12 @@ def _validate_elements(elements: List[VenueElement]) -> None:
                 raise HTTPException(
                     422,
                     f"Row '{el.row_label or el.id}' seats_count must be 1..200 (got {n})",
+                )
+            step = el.numbering_step or 1
+            if not (1 <= step <= 100):
+                raise HTTPException(
+                    422,
+                    f"Row '{el.row_label or el.id}' numbering_step must be 1..100 (got {step})",
                 )
         if el.kind == "seat_row_curved":
             arc = el.curve_arc_degrees or 0
@@ -602,8 +614,9 @@ async def get_venue(
 ):
     v = await _ensure_organizer_owns(org["id"], venue_id, session)
     active = await _get_active_events_using(venue_id)
+    enforcement_enabled = await is_venue_lock_enforcement_enabled(session)
     v["lock_status"] = {
-        "locked": _is_locked(active),
+        "locked": _is_locked(active) and enforcement_enabled,
         "active_events": active,
     }
     return v
@@ -617,7 +630,8 @@ async def lock_status(
 ):
     await _ensure_organizer_owns(org["id"], venue_id, session)
     active = await _get_active_events_using(venue_id)
-    locked = _is_locked(active)
+    enforcement_enabled = await is_venue_lock_enforcement_enabled(session)
+    locked = _is_locked(active) and enforcement_enabled
     return {
         "locked": locked,
         "locked_fields": ["elements", "localities"] if locked else [],
@@ -635,7 +649,8 @@ async def update_venue(
 ):
     row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
     active = await _get_active_events_using(venue_id)
-    locked = _is_locked(active)
+    enforcement_enabled = await is_venue_lock_enforcement_enabled(session)
+    locked = _is_locked(active) and enforcement_enabled
 
     _validate_elements(body.elements)
 
@@ -898,6 +913,12 @@ async def publish_venue(
     if not row.elements:
         raise HTTPException(
             422, "Agregá al menos un elemento antes de publicar el venue."
+        )
+    if _compute_capacity(row.elements) <= 0:
+        raise HTTPException(
+            422,
+            "El venue no tiene capacidad vendible: agregá una zona, fila, "
+            "mesa o asiento (un escenario solo no alcanza).",
         )
     row.status = "published"
     row.published_at = _now()

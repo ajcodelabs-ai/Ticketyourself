@@ -148,8 +148,8 @@ const ALLOWED_MIME = [
 
 const STEPS = [
     { id: "general", label: "General" },
-    { id: "fechas", label: "Fechas y ventas" },
     { id: "media", label: "Media" },
+    { id: "fechas", label: "Fechas y ventas" },
     { id: "localidades", label: "Localidades" },
     { id: "payments", label: "Formas de pago" },
     { id: "discounts", label: "Descuentos" },
@@ -226,7 +226,7 @@ function makeInitial(d) {
             category: "other",
             venue_name: "",
             venue_address: "",
-            venue_city: "Quito",
+            venue_city: "",
             venue_country: "Ecuador",
             starts_at: "",
             // ends_at is now computed from starts_at + duration_preset on submit
@@ -288,7 +288,7 @@ function makeInitial(d) {
         category: d.category || "other",
         venue_name: d.venue_name || "",
         venue_address: d.venue_address || "",
-        venue_city: d.venue_city || "Quito",
+        venue_city: d.venue_city || "",
         venue_country: d.venue_country || "Ecuador",
         starts_at: isoToLocalInput(d.starts_at, d.timezone),
         ends_at: isoToLocalInput(d.ends_at, d.timezone),
@@ -1097,6 +1097,8 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             form={form}
                                             update={update}
                                             eventId={eventId}
+                                            currentEvent={currentEvent}
+                                            onGotoStep={handleTabChange}
                                         />
                                         <div className="flex justify-between border-t pt-4">
                                             <Button
@@ -1168,6 +1170,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             disabled={lockCritical}
                                             onUpdated={handleEventUpdated}
                                             onReturnFromVenueCreate={venuesList}
+                                            onBeforeVenueCreate={() => persist(false, { silent: true })}
                                             pendingVenueId={pendingVenueId}
                                             onPendingVenueChange={setPendingVenueId}
                                             panel="escenario"
@@ -1194,6 +1197,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             disabled={lockCritical}
                                             onUpdated={handleEventUpdated}
                                             onReturnFromVenueCreate={venuesList}
+                                            onBeforeVenueCreate={() => persist(false, { silent: true })}
                                             pendingVenueId={pendingVenueId}
                                             onPendingVenueChange={setPendingVenueId}
                                             panel="localidades"
@@ -1828,6 +1832,55 @@ function SectionGeneral({ form, update, disabled, countryCode }) {
                         </Field>
 
                         <div className="grid sm:grid-cols-2 gap-3">
+                            <Field label="Fecha y hora *">
+                                <DateTimePicker
+                                    value={form.starts_at}
+                                    onChange={(v) => update("starts_at", v)}
+                                    disabled={disabled}
+                                    placeholder="Elegí cuándo empieza"
+                                    data-testid="wiz-starts-summary"
+                                />
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Duración, zona horaria y ventana de venta se afinan en el
+                                    paso &quot;Fechas y ventas&quot;.
+                                </p>
+                            </Field>
+                            <Field label="Ciudad *">
+                                <Input
+                                    value={form.venue_city}
+                                    onChange={(e) => update("venue_city", e.target.value)}
+                                    disabled={disabled}
+                                    placeholder="Ej: Quito, Guayaquil…"
+                                    data-testid="wiz-venue-city"
+                                />
+                            </Field>
+                        </div>
+                        <div className="grid sm:grid-cols-2 gap-3">
+                            <Field label="Nombre del lugar *">
+                                <Input
+                                    value={form.venue_name}
+                                    onChange={(e) => update("venue_name", e.target.value)}
+                                    disabled={disabled}
+                                    placeholder="Ej: Teatro Nacional, Salón de eventos X"
+                                    data-testid="wiz-venue-name"
+                                />
+                            </Field>
+                            <Field label="Dirección">
+                                <Input
+                                    value={form.venue_address}
+                                    onChange={(e) => update("venue_address", e.target.value)}
+                                    disabled={disabled}
+                                    placeholder="Calle, número, referencia…"
+                                    data-testid="wiz-venue-address"
+                                />
+                            </Field>
+                        </div>
+                        <p className="text-xs text-muted-foreground -mt-2">
+                            Si más adelante vinculás un mapa interactivo (paso Localidades),
+                            el nombre del lugar se completa solo desde ese mapa.
+                        </p>
+
+                        <div className="grid sm:grid-cols-2 gap-3">
                             <Field label="Tipo de evento">
                                 <Select
                                     value={form.category}
@@ -2436,7 +2489,7 @@ function SalesWindowBlock({ form, update, disabled }) {
             className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 h-full"
         >
             <div>
-                <p className="text-sm font-medium">Ventana de venta</p>
+                <p className="text-sm font-medium">Fecha y hora para salir a la venta</p>
                 <p className="text-xs text-muted-foreground">
                     Cuándo se habilita y se cierra la compra (o reserva si es gratuito).
                 </p>
@@ -2541,13 +2594,13 @@ function SalesConfigBlock({ form, update, disabled }) {
                     <Field
                         label={
                             <LabelWithTip
-                                text="Máx. por orden"
+                                text="Máx. de tickets por compra"
                                 tip={
                                     <>
                                         Tope por <strong>transacción</strong>, sumando todos los
                                         tipos de ticket. No se acumula entre compras distintas del
-                                        mismo comprador — para eso usá &quot;Máx. por persona /
-                                        email&quot;.
+                                        mismo comprador — para eso usá &quot;Máx. de compras por
+                                        persona&quot;, más abajo.
                                     </>
                                 }
                             />
@@ -2571,7 +2624,7 @@ function SalesConfigBlock({ form, update, disabled }) {
                     <Field
                         label={
                             <LabelWithTip
-                                text="Mín. por orden"
+                                text="Mín. de tickets por compra"
                                 tip="Cantidad mínima de tickets en una misma compra."
                             />
                         }
@@ -2596,11 +2649,11 @@ function SalesConfigBlock({ form, update, disabled }) {
                 <Field
                     label={
                         <LabelWithTip
-                            text="Máx. por persona / email"
+                            text="Máx. de compras por persona en este evento"
                             tip={
                                 <>
                                     Tope acumulado entre <strong>todas las compras</strong> de un
-                                    mismo email a este evento.
+                                    mismo email a este evento (no solo una transacción).
                                 </>
                             }
                         />
@@ -2881,7 +2934,7 @@ function SectionMedia({
 }
 
 // ── Section: Ticket design (M4) ─────────────────────────────────────────────
-function SectionTicketDesign({ form, update, eventId }) {
+function SectionTicketDesign({ form, update, eventId, currentEvent, onGotoStep }) {
     // Whether the courtesy panel is shown is a local UI choice, independent
     // from whether it has any elements yet (a freshly-enabled design starts
     // empty). Persistence-wise, "off" is saved as an empty-elements design —
@@ -2923,6 +2976,42 @@ function SectionTicketDesign({ form, update, eventId }) {
                     <p className="mt-1">
                         Guardá primero la información general del evento para poder diseñar el ticket.
                     </p>
+                </div>
+            </div>
+        );
+    }
+
+    // Don't let organizers design the ticket against a blank slate — until
+    // there's a venue and/or a real price, the preview has no event data to
+    // show (no lugar, no fecha real, no localidad) and looks broken/incomplete.
+    const hasPricingSetup = !!(
+        currentEvent?.venue_id
+        || (currentEvent?.locality_pricing || []).length > 0
+        || Number(currentEvent?.base_price_cents || 0) > 0
+        || currentEvent?.pricing_type === "free"
+        || currentEvent?.pricing_type === "donation"
+    );
+    if (!hasPricingSetup) {
+        return (
+            <div className="space-y-4" data-testid="section-ticket-design">
+                {buyerNameToggle}
+                <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
+                    <p className="font-medium text-foreground">Diseño del ticket</p>
+                    <p className="mt-1">
+                        Configurá tu escenario y precios en el paso &quot;Localidades&quot;
+                        antes de diseñar el ticket — así la vista previa muestra los datos
+                        reales del evento (lugar, fecha, precio) en vez de aparecer vacía.
+                    </p>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-3"
+                        onClick={() => onGotoStep?.("localidades")}
+                        data-testid="ticket-design-goto-localidades"
+                    >
+                        Ir a Localidades
+                    </Button>
                 </div>
             </div>
         );

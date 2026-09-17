@@ -12,7 +12,7 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useNavigate, useSearchParams, Link, useLocation } from "react-router-dom";
 import {
-    ArrowLeft, Save, Send, AlertCircle, Lock, ExternalLink, Loader2, Image, Trash2,
+    ArrowLeft, Send, AlertCircle, Lock, ExternalLink, Loader2, Image, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +51,19 @@ function nextRowLabel(elements) {
         if (!used.has(lbl)) return lbl;
     }
     return "A";
+}
+
+/** A → B → … → Z → AA (used to auto-label rows created in bulk). */
+function bumpRowLabel(label) {
+    if (/^[A-Y]$/.test(label)) return String.fromCharCode(label.charCodeAt(0) + 1);
+    if (label === "Z") return "AA";
+    return bumpLabel(label);
+}
+
+/** "Mesa 3" (base label with its trailing number replaced by `i`). */
+function numberedLabel(base, i) {
+    const stripped = (base || "Mesa").replace(/\s*\d+\s*$/, "").trim();
+    return `${stripped} ${i}`;
 }
 
 export default function VenueEditor() {
@@ -239,20 +252,83 @@ export default function VenueEditor() {
     };
     const confirmRow = (cfg) => {
         const { x, y } = pendingRow;
-        mutateVenue((v) => ({ ...v, elements: [...v.elements, makeRow({ x, y, ...cfg })] }));
+        const { row_count, ...rowCfg } = cfg;
+        const count = Math.max(1, Number(row_count) || 1);
+        const gapY = (rowCfg.seat_radius || 10) * 2 + 20;
+        const rows = [];
+        let label = rowCfg.row_label;
+        for (let i = 0; i < count; i += 1) {
+            rows.push(makeRow({ ...rowCfg, x, y: y + i * gapY, row_label: label }));
+            label = bumpRowLabel(label);
+        }
+        mutateVenue((v) => ({ ...v, elements: [...v.elements, ...rows] }));
         setPendingRow(null);
         setTool("select");
     };
     const confirmCurved = (cfg) => {
         const { x, y } = pendingCurved;
-        mutateVenue((v) => ({ ...v, elements: [...v.elements, makeCurvedRow({ x, y, ...cfg })] }));
+        const { row_count, ...rowCfg } = cfg;
+        const count = Math.max(1, Number(row_count) || 1);
+        // Stack anchors far enough apart that each row's own parabolic
+        // bulge (curvature*30 at its own edges — same model as the
+        // reference app, see ElementShape.tsx's curvedRowYOffset) never
+        // overlaps the next row's. A flat pixel gap here doesn't scale with
+        // curvature and was letting rows fold into each other and drift
+        // outside the canvas for anything but a mild curve.
+        const maxBulge = Math.abs(Number(rowCfg.curvature) || 0) * 30;
+        const gapY = Math.round(maxBulge + (rowCfg.seat_radius || 10) * 2 + 24);
+        const rows = [];
+        let label = rowCfg.row_label;
+        for (let i = 0; i < count; i += 1) {
+            rows.push(makeCurvedRow({ ...rowCfg, x, y: y + i * gapY, row_label: label }));
+            label = bumpRowLabel(label);
+        }
+
+        // A pronounced curvature pushes a row's own bulge well past its
+        // anchor, and stacking several multiplies that — keep the whole
+        // batch inside the canvas instead of letting it spill past the
+        // bottom edge from wherever the organizer happened to click.
+        const margin = 20;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        for (const r of rows) {
+            const b = elementBBox(r);
+            minY = Math.min(minY, b.minY);
+            maxY = Math.max(maxY, b.maxY);
+        }
+        let shift = 0;
+        if (maxY > venue.canvas.height - margin) shift = (venue.canvas.height - margin) - maxY;
+        if (minY + shift < margin) shift = margin - minY;
+        if (shift !== 0) {
+            for (const r of rows) r.y += shift;
+        }
+
+        mutateVenue((v) => ({ ...v, elements: [...v.elements, ...rows] }));
         setPendingCurved(null);
         setTool("select");
     };
     const confirmTable = (cfg) => {
         const { x, y, kind } = pendingTable;
+        const { table_count, ...tableCfg } = cfg;
         const make = kind === "table_round" ? makeTableRound : makeTableRect;
-        mutateVenue((v) => ({ ...v, elements: [...v.elements, make({ x, y, ...cfg })] }));
+        const count = Math.max(1, Number(table_count) || 1);
+        const cols = Math.ceil(Math.sqrt(count));
+        const colGap = kind === "table_round"
+            ? ((tableCfg.table_radius || 40) + (tableCfg.chair_distance || 22) + (tableCfg.chair_radius || 10)) * 2 + 30
+            : (tableCfg.width || 200) + 40;
+        const rowGap = kind === "table_round" ? colGap : (tableCfg.height || 100) + 60;
+        const tables = [];
+        for (let i = 0; i < count; i += 1) {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            tables.push(make({
+                ...tableCfg,
+                x: x + col * colGap,
+                y: y + row * rowGap,
+                label: count > 1 ? numberedLabel(tableCfg.label, i + 1) : tableCfg.label,
+            }));
+        }
+        mutateVenue((v) => ({ ...v, elements: [...v.elements, ...tables] }));
         setPendingTable(null);
         setTool("select");
     };
@@ -802,8 +878,9 @@ export default function VenueEditor() {
 
     if (loading || !venue) {
         return (
-            <div className="flex items-center justify-center min-h-[60vh] text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin mr-2" /> Cargando editor…
+            <div className="min-h-[70vh] rounded-xl bg-secondary/30 shadow-sm flex flex-col items-center justify-center gap-4">
+                <div className="h-10 w-10 rounded-full border-[3px] border-[#412963]/20 border-t-[#412963] animate-spin" />
+                <span className="text-sm font-medium text-[#412963]">Cargando diseño…</span>
             </div>
         );
     }
@@ -855,7 +932,7 @@ export default function VenueEditor() {
                                 </p>
                             </div>
                         )}
-                        <Badge variant="secondary" className="text-[10px] font-normal shrink-0">
+                        <Badge className="bg-[#412963]/10 text-[#412963] border-[#412963]/20 hover:bg-[#412963]/10 text-[10px] font-normal shrink-0">
                             {isEventScope
                                 ? "Mapa del evento"
                                 : (isAdminTemplate ? "Plantilla" : STATUS_LABEL[venue.status])}
@@ -885,10 +962,6 @@ export default function VenueEditor() {
                                 </a>
                             </Button>
                         )}
-                        <Button size="sm" variant="outline" onClick={() => persist({ navigateAway: false })}
-                                disabled={saving} data-testid="venue-save-btn">
-                            <Save className="h-3.5 w-3.5 mr-1" /> Guardar
-                        </Button>
                         {!isEventScope && !isAdminTemplate && venue.status !== "published" && (
                             <Button size="sm" onClick={publish}
                                     disabled={saving || elements.length === 0}
@@ -1007,70 +1080,78 @@ export default function VenueEditor() {
                 </div>
             )}
 
-            <EditorToolbar
-                tool={tool}
-                onTool={setTool}
-                onUndo={undo}
-                onRedo={redo}
-                canUndo={history.length > 0}
-                canRedo={future.length > 0}
-                hideCreateTools={isEventScope}
-            />
+            <div className="rounded-xl bg-secondary/30 shadow-sm p-3 space-y-3">
+                <EditorToolbar
+                    tool={tool}
+                    onTool={setTool}
+                    onUndo={undo}
+                    onRedo={redo}
+                    canUndo={history.length > 0}
+                    canRedo={future.length > 0}
+                    hideCreateTools={isEventScope}
+                    onSave={() => persist({ navigateAway: false })}
+                    saving={saving}
+                    dirty={dirty}
+                />
 
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-3">
-                <div className="min-w-0 max-w-full overflow-hidden">
-                    <div className="relative min-w-0 max-w-full">
-                        <EditorCanvas
-                            canvas={venue.canvas}
-                            elements={elements}
-                            localitiesById={localitiesById}
-                            selection={selection}
-                            onSelect={handleSelect}
-                            onUpdate={updateElement}
-                            onBatchUpdate={updateElementsBatch}
-                            onTransform={onTransform}
-                            onContextMenu={(info) => setContextMenu(info)}
-                            tool={tool}
-                            onCanvasClick={handleCanvasClick}
-                            readOnly={locked}
-                            height={600}
-                            autoFitKey={venue.id}
-                        />
-                        {!isAdminTemplate && elements.length === 0 && !locked && !emptyOverlayDismissed && (
-                            <VenueEmptyCanvasOverlay
-                                disabled={saving}
-                                onApplied={applyTemplateLayout}
-                                onDismiss={() => setEmptyOverlayDismissed(true)}
+                <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-3">
+                    <div className="min-w-0 max-w-full overflow-hidden">
+                        <div className="relative min-w-0 max-w-full">
+                            <EditorCanvas
+                                canvas={venue.canvas}
+                                elements={elements}
+                                localitiesById={localitiesById}
+                                selection={selection}
+                                onSelect={handleSelect}
+                                onUpdate={updateElement}
+                                onBatchUpdate={updateElementsBatch}
+                                onTransform={onTransform}
+                                onContextMenu={(info) => setContextMenu(info)}
+                                tool={tool}
+                                onCanvasClick={handleCanvasClick}
+                                readOnly={locked}
+                                height={600}
+                                autoFitKey={venue.id}
                             />
-                        )}
+                            {!isAdminTemplate && elements.length === 0 && !locked && !emptyOverlayDismissed && (
+                                <VenueEmptyCanvasOverlay
+                                    disabled={saving}
+                                    onApplied={applyTemplateLayout}
+                                    onDismiss={() => setEmptyOverlayDismissed(true)}
+                                />
+                            )}
+                            {saving && (
+                                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 rounded-lg bg-white/85 backdrop-blur-[2px]">
+                                    <div className="h-12 w-12 rounded-full border-4 border-[#412963]/15 border-t-[#412963] animate-spin" />
+                                    <span className="text-sm font-medium text-[#412963]">Guardando cambios…</span>
+                                </div>
+                            )}
+                        </div>
+                        <div className="mt-2 text-xs text-muted-foreground flex flex-wrap justify-between gap-2">
+                            <span>
+                                Canvas {venue.canvas.width} × {venue.canvas.height}px · Snap {venue.canvas.grid_size}px
+                            </span>
+                            <span className="text-right">
+                                Ctrl+Z deshacer · Ctrl+click multi · click derecho menú
+                            </span>
+                        </div>
                     </div>
-                    <div className="mt-2 text-xs text-muted-foreground flex flex-wrap justify-between gap-2">
-                        <span>
-                            Canvas {venue.canvas.width} × {venue.canvas.height}px · Snap {venue.canvas.grid_size}px
-                        </span>
-                        <span className="text-right">
-                            Ctrl+Z deshacer · Ctrl+click multi · click derecho menú
-                        </span>
-                    </div>
-                </div>
 
                 <aside className="space-y-3 lg:sticky lg:top-3 lg:self-start lg:max-h-[min(720px,calc(100vh-8rem))] lg:overflow-y-auto">
-                    <div className="rounded-xl border bg-card p-4 space-y-4">
-                        <PropertiesPanel
-                            selection={selection}
-                            elements={elements}
-                            localities={isEventScope ? localities : []}
-                            onUpdate={updateElement}
-                            onDelete={deleteElement}
-                            onAlign={align}
-                            onDistribute={distribute}
-                            onBringFront={bringToFront}
-                            onSendBack={sendToBack}
-                            onDuplicate={duplicateSelection}
-                            onExplodeRows={explodeRows}
-                            readOnly={locked}
-                        />
-                    </div>
+                    <PropertiesPanel
+                        selection={selection}
+                        elements={elements}
+                        localities={isEventScope ? localities : []}
+                        onUpdate={updateElement}
+                        onDelete={deleteElement}
+                        onAlign={align}
+                        onDistribute={distribute}
+                        onBringFront={bringToFront}
+                        onSendBack={sendToBack}
+                        onDuplicate={duplicateSelection}
+                        onExplodeRows={explodeRows}
+                        readOnly={locked}
+                    />
                     {isEventScope && (
                         <div className="rounded-xl border bg-card p-4 flex flex-col min-h-0">
                             <AssignLocalityPanel
@@ -1087,6 +1168,7 @@ export default function VenueEditor() {
                         </div>
                     )}
                 </aside>
+                </div>
             </div>
 
             <ZoneConfigDialog open={!!pendingZone} onClose={() => { setPendingZone(null); setTool("select"); }}

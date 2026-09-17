@@ -23,7 +23,7 @@ interface SeatGroup {
     available_seats: number;
 }
 
-const REFRESH_MS = 15_000;
+const REFRESH_MS = 4_000;
 
 // ── Reservation timer banner — top of the seat-selection screen, colors
 // itself to match the countdown's own urgency (green → amber under 2min).
