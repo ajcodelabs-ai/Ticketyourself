@@ -59,7 +59,7 @@ export default function SeasonPassRedeem() {
                 <p className="text-muted-foreground max-w-md">
                     {state === "notfound"
                         ? "El link puede ser incorrecto."
-                        : "No se pudo cargar el abono. Intentá más tarde."}
+                        : "No se pudo cargar el abono. Intenta más tarde."}
                 </p>
                 <Link to="/" className="mt-6 inline-flex items-center gap-1 underline text-primary">
                     <ArrowLeft className="h-4 w-4" />
@@ -114,8 +114,8 @@ export default function SeasonPassRedeem() {
                 {!isPaid ? (
                     <Card className="border-amber-200 bg-amber-50">
                         <CardContent className="p-5 text-amber-800">
-                            Todavía estamos confirmando tu pago. Refrescá esta página en un
-                            momento, o revisá tu email para más detalles.
+                            Todavía estamos confirmando tu pago. Refresca esta página en un
+                            momento, o revisa tu email para más detalles.
                         </CardContent>
                     </Card>
                 ) : (
@@ -151,7 +151,7 @@ export default function SeasonPassRedeem() {
                         <div className="space-y-2">
                             <h2 className="text-lg font-semibold flex items-center gap-2">
                                 <CalendarRange className="h-5 w-5" />
-                                Elegí a qué funciones ir
+                                Elige a qué funciones ir
                             </h2>
                             {functions.length === 0 ? (
                                 <p className="text-sm text-muted-foreground">
@@ -233,7 +233,7 @@ export default function SeasonPassRedeem() {
                 )}
 
                 <p className="text-xs text-center text-muted-foreground pb-4">
-                    Guardá este link — es tu acceso al abono sin necesidad de cuenta.
+                    Guarda este link — es tu acceso al abono sin necesidad de cuenta.
                     <br />
                     También te enviamos cada ticket por email a <strong>{purchase.buyer?.email}</strong>.
                 </p>

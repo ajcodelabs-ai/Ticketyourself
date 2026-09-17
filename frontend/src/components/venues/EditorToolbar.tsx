@@ -18,7 +18,7 @@ const TOOL_GROUPS = [
             { id: "select", label: "Seleccionar (V)", short: "Sel", icon: MousePointer },
             {
                 id: "pan",
-                label: "Mover mapa — arrastrá para desplazarte sin modificar elementos",
+                label: "Mover mapa — arrastra para desplazarte sin modificar elementos",
                 short: "Mover",
                 icon: Hand,
             },

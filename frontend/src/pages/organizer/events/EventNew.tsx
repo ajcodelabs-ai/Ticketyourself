@@ -22,10 +22,10 @@ export default function EventNew() {
             <header>
                 <div className="text-sm text-muted-foreground">Nuevo evento</div>
                 <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight mt-1">
-                    Configurá tu evento
+                    Configura tu evento
                 </h1>
                 <p className="text-sm text-muted-foreground mt-1">
-                    Completá las secciones del wizard. Podés guardar como borrador y volver luego.
+                    Completa las secciones del wizard. Puedes guardar como borrador y volver luego.
                 </p>
             </header>
             <EventWizard mode="create" />

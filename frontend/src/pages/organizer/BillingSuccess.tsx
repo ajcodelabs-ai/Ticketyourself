@@ -150,8 +150,8 @@ export default function BillingSuccess() {
                 <AlertTriangle className="h-12 w-12 text-amber-500 mb-3" />
                 <h1 className="text-2xl font-semibold mb-2">Pago no encontrado</h1>
                 <p className="text-muted-foreground max-w-md mb-6">
-                    No encontramos este cobro de plan. Si ya pagaste, esperá un momento o
-                    volvé a elegir el plan.
+                    No encontramos este cobro de plan. Si ya pagaste, espera un momento o
+                    vuelve a elegir el plan.
                 </p>
                 <Link to="/onboarding" className="underline text-primary">
                     Volver al plan
@@ -290,7 +290,7 @@ export default function BillingSuccess() {
                             ) : (
                                 <>
                                     <p className="text-sm text-muted-foreground">
-                                        Completá el pago en Nuvei o, en preview, simulá la
+                                        Completa el pago en Nuvei o, en preview, simula la
                                         confirmación del banco.
                                     </p>
                                     <Button
@@ -322,7 +322,7 @@ export default function BillingSuccess() {
                                     Modo preview
                                 </p>
                                 <p className="text-muted-foreground">
-                                    En preview los webhooks de Nuvei pueden no llegar. Podés
+                                    En preview los webhooks de Nuvei pueden no llegar. Puedes
                                     simular el pago para activar el plan.
                                 </p>
                             </div>

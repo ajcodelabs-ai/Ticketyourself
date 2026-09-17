@@ -105,15 +105,15 @@ def friendly_datil_error(body: str | None, fallback: str = "") -> str:
     if re.search(r"punto de emisi[oó]n no existe", text, re.I):
         return (
             "Dátil no tiene creado ese punto de emisión en la sesión de pruebas. "
-            "En app.datil.co activá Datos de prueba, andá a Mi negocio → "
-            "Establecimientos y creá el establecimiento 001 con punto de emisión 001 "
+            "En app.datil.co activa Datos de prueba, anda a Mi negocio → "
+            "Establecimientos y crea el establecimiento 001 con punto de emisión 001 "
             "(aunque Dátil te pida usar 001, hay que darlo de alta en el panel)."
         )
     if re.search(r"establecimiento no existe", text, re.I):
         return (
             "Dátil no tiene creado ese establecimiento en la sesión de pruebas. "
             "En app.datil.co → Datos de prueba → Mi negocio → Establecimientos, "
-            "creá el código 001."
+            "crea el código 001."
         )
     return text[:400]
 
@@ -219,7 +219,7 @@ def record_datil_exchange(
         "captured_at": ts,
         "note": (
             "Intercambio TYS → Dátil. X-Key y X-Password no se guardan. "
-            "Adjuntá este archivo al equipo de Dátil."
+            "Adjunta este archivo al equipo de Dátil."
         ),
         "request": {
             "method": method,

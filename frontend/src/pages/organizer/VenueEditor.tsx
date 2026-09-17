@@ -10,7 +10,7 @@
  *  - Alignment + distribute helpers for multi-selection.
  */
 import { useEffect, useState, useMemo, useRef } from "react";
-import { useParams, useNavigate, useSearchParams, Link, useLocation } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import {
     ArrowLeft, Send, AlertCircle, Lock, ExternalLink, Loader2, Image, Trash2,
 } from "lucide-react";
@@ -180,7 +180,7 @@ export default function VenueEditor() {
         const handler = (e) => {
             if (!dirtyRef.current) return;
             e.preventDefault();
-            e.returnValue = "Tenés cambios sin guardar.";
+            e.returnValue = "Tienes cambios sin guardar.";
         };
         window.addEventListener("beforeunload", handler);
         return () => window.removeEventListener("beforeunload", handler);
@@ -381,7 +381,7 @@ export default function VenueEditor() {
     const assignLocalityToSelection = (locId) => {
         const affected = elements.filter((e) => selection.includes(e.id) && elementAcceptsLocality(e.kind));
         if (affected.length === 0) {
-            toast.error("Seleccioná elementos asignables (zonas, asientos, mesas).");
+            toast.error("Selecciona elementos asignables (zonas, asientos, mesas).");
             return;
         }
         mutateVenue((v) => ({
@@ -397,7 +397,7 @@ export default function VenueEditor() {
     const clearLocalityFromSelection = () => {
         const affected = elements.filter((e) => selection.includes(e.id) && e.locality_id);
         if (affected.length === 0) {
-            toast.error("Seleccioná elementos con localidad asignada.");
+            toast.error("Selecciona elementos con localidad asignada.");
             return;
         }
         mutateVenue((v) => ({
@@ -506,7 +506,7 @@ export default function VenueEditor() {
         const targetIds = ids?.length ? ids : selection;
         const rows = elements.filter((e) => targetIds.includes(e.id) && isSeatRowKind(e.kind));
         if (rows.length === 0) {
-            toast.message("Seleccioná una fila (recta o curva) para convertir.");
+            toast.message("Selecciona una fila (recta o curva) para convertir.");
             return;
         }
         const newIds = [];
@@ -522,7 +522,7 @@ export default function VenueEditor() {
         setSelection(newIds);
         toast.success(
             rows.length === 1
-                ? `Fila convertida en ${newIds.length} asientos. Ahora podés seleccionarlos por separado.`
+                ? `Fila convertida en ${newIds.length} asientos. Ahora puedes seleccionarlos por separado.`
                 : `${rows.length} filas → ${newIds.length} asientos individuales.`,
         );
     };
@@ -856,7 +856,7 @@ export default function VenueEditor() {
         const elId = contextMenu.elementId;
         if (action === "edit") {
             // No-op — sidebar already focused via selection
-            toast.message("Editá las propiedades en el panel derecho.");
+            toast.message("Edita las propiedades en el panel derecho.");
         } else if (action === "duplicate") {
             duplicateSelection();
         } else if (action === "explode") {
@@ -871,7 +871,7 @@ export default function VenueEditor() {
             if (!isEventScope) {
                 toast.message("Las localidades se configuran al crear el evento.");
             } else {
-                toast.message("Usá el panel de Localidades para asignar.");
+                toast.message("Usa el panel de Localidades para asignar.");
             }
         }
     };
@@ -892,10 +892,22 @@ export default function VenueEditor() {
             <header className="space-y-2">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="flex items-center gap-2 min-w-0">
-                        <Button asChild variant="ghost" size="icon">
-                            <Link to={listPath} aria-label="Volver">
-                                <ArrowLeft className="h-4 w-4" />
-                            </Link>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Volver"
+                            onClick={async () => {
+                                // Unlike a plain <Link>, this waits for the pending
+                                // autosave before leaving — otherwise an assignment
+                                // made in the last AUTO_SAVE_MS gets silently lost,
+                                // since React Router's client-side navigation never
+                                // fires the beforeunload warning below.
+                                if (dirty) await persist({ silent: true });
+                                navigate(listPath);
+                            }}
+                            data-testid="venue-editor-back"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
                         </Button>
                         {isEventScope ? (
                             <div className="min-w-0">
@@ -1046,7 +1058,7 @@ export default function VenueEditor() {
                 <div className="rounded-xl border bg-card p-3 text-sm text-muted-foreground flex items-start gap-2">
                     <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" />
                     <p>
-                        Cuando termines, hacé clic en <strong className="text-foreground">Publicar</strong> para
+                        Cuando termines, haz clic en <strong className="text-foreground">Publicar</strong> para
                         volver a tu evento y vincular este escenario.
                     </p>
                 </div>
@@ -1073,8 +1085,8 @@ export default function VenueEditor() {
                         </p>
                         <p className="text-amber-800 text-xs mt-0.5">
                             {isEventScope
-                                ? "Hay tickets vendidos en este evento. Podés editar colores y etiquetas no estructurales."
-                                : `${activeEvents.length} evento(s) con ventas activas. Podés editar nombre, descripción y colores.`}
+                                ? "Hay tickets vendidos en este evento. Puedes editar colores y etiquetas no estructurales."
+                                : `${activeEvents.length} evento(s) con ventas activas. Puedes editar nombre, descripción y colores.`}
                         </p>
                     </div>
                 </div>

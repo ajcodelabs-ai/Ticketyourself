@@ -22,7 +22,7 @@ export default function Login() {
                 </div>
             }
             title="Iniciar sesión"
-            description="Ingresá con tu email y contraseña para comprar o ver tus entradas en esta página."
+            description="Ingresa con tu email y contraseña para comprar o ver tus entradas en esta página."
             submitIcon={<LogIn className="h-4 w-4 mr-2" />}
             submitLabel="Iniciar sesión"
             submitClassName="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
@@ -36,7 +36,7 @@ export default function Login() {
                             data-testid="login-to-buyer-register-link"
                             className="text-primary hover:underline"
                         >
-                            Creá tu cuenta de comprador
+                            Crea tu cuenta de comprador
                         </Link>
                     </p>
                     <p>
@@ -46,7 +46,7 @@ export default function Login() {
                             data-testid="login-to-register-link"
                             className="text-primary hover:underline"
                         >
-                            Registrate como organizador
+                            Regístrate como organizador
                         </Link>
                     </p>
                 </div>

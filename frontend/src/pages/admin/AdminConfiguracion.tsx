@@ -225,7 +225,7 @@ function CountryDraftForm({ draft, onChange, isEcuador }) {
                     )}
                     {format.kind === "custom" && (
                         <p className="text-xs text-muted-foreground">
-                            Este país ya tiene un formato especial. Podés dejarlo o elegir
+                            Este país ya tiene un formato especial. Puedes dejarlo o elegir
                             otra opción de la lista para reemplazarlo.
                         </p>
                     )}
@@ -689,7 +689,7 @@ export default function AdminConfiguracion() {
                             País
                         </h2>
                         <p className="text-xs text-muted-foreground mt-1">
-                            Elegí la jurisdicción. “Por defecto” se usa cuando un país no
+                            Elige la jurisdicción. “Por defecto” se usa cuando un país no
                             tiene documentos propios.
                         </p>
                     </div>

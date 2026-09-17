@@ -177,7 +177,7 @@ export default function SeasonPassPanel({ eventId, hasVenue = false, timezone = 
                     <p className="text-sm text-muted-foreground mt-1">
                         El comprador paga una sola vez y recibe un paquete de <strong>créditos</strong>.
                         Cada crédito le da acceso a <strong>una función</strong> del evento que él mismo elige
-                        después, dentro del período de redención que vos definís.
+                        después, dentro del período de redención que defines.
                     </p>
                 </div>
 
@@ -232,7 +232,7 @@ export default function SeasonPassPanel({ eventId, hasVenue = false, timezone = 
                 </div>
 
                 <div className="rounded-lg border-l-4 border-l-primary bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-                    <strong className="text-foreground">Ventaja clave:</strong> Recaudás el dinero antes de que el comprador
+                    <strong className="text-foreground">Ventaja clave:</strong> Recaudas el dinero antes de que el comprador
                     elija funciones — y él tiene la flexibilidad de decidir cuándo ir.
                     El aforo de cada función se reserva recién cuando canjea el crédito.
                 </div>
@@ -244,7 +244,7 @@ export default function SeasonPassPanel({ eventId, hasVenue = false, timezone = 
                     <span>
                         <strong>Disponible solo para eventos sin escenario numerado.</strong>{" "}
                         El abono de temporada requiere que las funciones sean de admisión general
-                        (sin selección de asiento específico). Desvinculá el escenario para habilitarlo.
+                        (sin selección de asiento específico). Desvincula el escenario para habilitarlo.
                     </span>
                 </div>
             )}
@@ -274,8 +274,8 @@ export default function SeasonPassPanel({ eventId, hasVenue = false, timezone = 
                     <Ticket className="h-7 w-7 mx-auto mb-2 opacity-40" />
                     <p className="text-sm font-medium">Sin abonos configurados</p>
                     <p className="text-xs mt-1">
-                        Si tu evento tiene varias funciones y querés ofrecer un paquete de
-                        accesos con descuento, creá tu primer abono arriba.
+                        Si tu evento tiene varias funciones y quieres ofrecer un paquete de
+                        accesos con descuento, crea tu primer abono arriba.
                     </p>
                 </div>
             ) : (
@@ -390,7 +390,7 @@ export default function SeasonPassPanel({ eventId, hasVenue = false, timezone = 
                             </div>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                            Dejá las fechas de redención vacías para permitir redimir en
+                            Deja las fechas de redención vacías para permitir redimir en
                             cualquier momento mientras el abono esté activo.
                         </p>
                     </div>

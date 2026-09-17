@@ -316,7 +316,7 @@ export default function OrderSuccess() {
                             {!invoice.ride_url && invoice.estado !== "ERROR" && (
                                 <p className="text-xs text-muted-foreground">
                                     Dátil tarda unos segundos en autorizar el comprobante con el SRI.
-                                    Si no ves el PDF, recargá en un momento.
+                                    Si no ves el PDF, recarga en un momento.
                                 </p>
                             )}
                         </CardContent>
@@ -333,7 +333,7 @@ export default function OrderSuccess() {
                                     Modo preview
                                 </p>
                                 <p className="text-muted-foreground">
-                                    En preview los webhooks de Nuvei pueden no llegar. Podés simular el pago
+                                    En preview los webhooks de Nuvei pueden no llegar. Puedes simular el pago
                                     para emitir los tickets.
                                 </p>
                             </div>
@@ -378,7 +378,7 @@ export default function OrderSuccess() {
                     <div className="rounded-2xl border bg-card p-5 text-sm text-muted-foreground space-y-3">
                         <p>
                             Te enviamos los tickets a <strong>{order.buyer.email}</strong>. Si
-                            no llegan en unos minutos, revisá tu carpeta de spam o solicitá un
+                            no llegan en unos minutos, revisa tu carpeta de spam o solicita un
                             reenvío al organizador {organizer?.company_name || ""}.
                         </p>
                         <Button asChild variant="outline" size="sm">

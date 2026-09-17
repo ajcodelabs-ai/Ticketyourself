@@ -207,7 +207,7 @@ export default function PaymentInstructions() {
                                 {order.refund_reason
                                     ? `(${order.refund_reason})`
                                     : ""}
-                                . Si fue un error, reintentá la compra.
+                                . Si fue un error, reintenta la compra.
                             </div>
                         </CardContent>
                     </Card>
@@ -255,7 +255,7 @@ export default function PaymentInstructions() {
                         <CardContent className="py-4 flex flex-wrap items-center justify-between gap-3">
                             <div className="text-sm">
                                 <span className="text-amber-900 font-medium">
-                                    Usá este número como referencia de la transferencia:
+                                    Usa este número como referencia de la transferencia:
                                 </span>
                                 <div className="font-mono text-xl mt-1">
                                     {order.order_number}

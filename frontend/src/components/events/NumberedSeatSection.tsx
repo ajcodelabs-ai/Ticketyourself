@@ -170,7 +170,7 @@ export default function NumberedSeatSection({
         }
         const withoutGroup = selected.filter((p) => !group.seat_ids.includes(p.seat_id));
         if (withoutGroup.length + groupSeats.length > 10) {
-            toast.error("Máximo 10 asientos por compra. Limpiá la selección actual primero.");
+            toast.error("Máximo 10 asientos por compra. Limpia la selección actual primero.");
             return;
         }
         setSelected([...withoutGroup, ...groupSeats]);
@@ -268,7 +268,7 @@ export default function NumberedSeatSection({
                     prev.filter((s) => !detail.unavailable_seat_ids.includes(s.seat_id)),
                 );
             } else {
-                toast.error(detail || "No pudimos reservar. Probá de nuevo.");
+                toast.error(detail || "No pudimos reservar. Prueba de nuevo.");
             }
         } finally {
             setHoldsLoading(false);
@@ -291,7 +291,7 @@ export default function NumberedSeatSection({
             refreshSeats();
             toast.success("Reserva cancelada — los asientos quedaron liberados.");
         } catch {
-            toast.error("No pudimos cancelar la reserva. Probá de nuevo.");
+            toast.error("No pudimos cancelar la reserva. Prueba de nuevo.");
         } finally {
             setCancelingHold(false);
         }
@@ -321,7 +321,7 @@ export default function NumberedSeatSection({
             data-testid="event-public-seat-section"
         >
             <h2 className="text-2xl font-semibold mb-4">
-                Elegí tus asientos
+                Elige tus asientos
                 {functionName && (
                     <span className="text-base font-normal text-muted-foreground"> — {functionName}</span>
                 )}
@@ -335,7 +335,7 @@ export default function NumberedSeatSection({
                         setActiveHoldExpiresAt(null);
                         setSelected([]);
                         refreshSeats();
-                        toast.warning("Tu reserva de asientos venció. Elegí nuevamente.");
+                        toast.warning("Tu reserva de asientos venció. Elige nuevamente.");
                     }}
                     onCancel={cancelReservation}
                     canceling={cancelingHold}

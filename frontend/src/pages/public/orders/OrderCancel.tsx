@@ -129,7 +129,7 @@ export default function OrderCancel() {
                                     Modo preview
                                 </p>
                                 <p className="text-xs text-muted-foreground mb-2">
-                                    Para demos sin Nuvei real, podés marcar esta orden como
+                                    Para demos sin Nuvei real, puedes marcar esta orden como
                                     pagada y emitir los tickets.
                                 </p>
                                 <Button

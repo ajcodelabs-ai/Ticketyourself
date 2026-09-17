@@ -138,7 +138,7 @@ export default function AdminEventDetail() {
     const suspend = () => {
         const reason = comment.trim();
         if (reason.length < 3) {
-            toast.error("Escribí el motivo (mínimo 3 caracteres).");
+            toast.error("Escribe el motivo (mínimo 3 caracteres).");
             return;
         }
         return act(
@@ -185,7 +185,7 @@ export default function AdminEventDetail() {
     const rejectAppeal = () => {
         const note = comment.trim();
         if (note.length < 3) {
-            toast.error("Indicá por qué se rechaza.");
+            toast.error("Indica por qué se rechaza.");
             return;
         }
         return act(
@@ -624,7 +624,7 @@ export default function AdminEventDetail() {
                         <DialogTitle>Suspender evento</DialogTitle>
                         <DialogDescription>
                             Sale del microsite y se cortan las compras. Los tickets ya
-                            emitidos siguen válidos. Podés reactivarlo después.
+                            emitidos siguen válidos. Puedes reactivarlo después.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-2">
@@ -655,7 +655,7 @@ export default function AdminEventDetail() {
                         <DialogTitle>Cancelar evento</DialogTitle>
                         <DialogDescription>
                             Cancelar es definitivo (no se reactiva como publicado). Para
-                            bajarlo temporalmente usá Suspender.
+                            bajarlo temporalmente usa Suspender.
                         </DialogDescription>
                     </DialogHeader>
                     <Textarea

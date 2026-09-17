@@ -27,16 +27,16 @@ export default function Ticket() {
 
     const submit = async () => {
         if (!tenantSlug) {
-            toast.error("No hay tenant activo. Definí ?tenant=demo-org.");
+            toast.error("No hay tenant activo. Define ?tenant=demo-org.");
             return;
         }
         const amountFloat = parseFloat(amountUsd);
         if (!eventName.trim()) {
-            toast.error("Ingresá un nombre de evento.");
+            toast.error("Ingresa un nombre de evento.");
             return;
         }
         if (!amountFloat || amountFloat <= 0) {
-            toast.error("Ingresá un monto mayor a 0.");
+            toast.error("Ingresa un monto mayor a 0.");
             return;
         }
         setSubmitting(true);

@@ -65,13 +65,13 @@ export default function PropertiesPanel({
                     <div>
                         <h3 className="text-sm font-medium">Propiedades</h3>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            Seleccioná un elemento en el canvas para editarlo.
+                            Selecciona un elemento en el canvas para editarlo.
                         </p>
                     </div>
                     <ul className="text-xs text-muted-foreground space-y-1.5 rounded-lg border border-dashed bg-card p-3">
                         <li>Click = seleccionar · Ctrl/Cmd+Click = multi</li>
                         <li>Drag en vacío = marquee · Drag elemento = mover</li>
-                        <li>Fila = objeto completo → convertí a individuales para editar asientos sueltos</li>
+                        <li>Fila = objeto completo → convierte a individuales para editar asientos sueltos</li>
                         <li>Delete = eliminar · Ctrl+Z = deshacer</li>
                         <li>Click derecho = menú contextual</li>
                     </ul>
@@ -116,7 +116,7 @@ export default function PropertiesPanel({
                         <Input value="" disabled placeholder="Selección múltiple" className="h-8" />
                     </Field>
                     <p className="text-[11px] text-muted-foreground -mt-2">
-                        El nombre es individual. Seleccioná un solo elemento para editarlo.
+                        El nombre es individual. Selecciona un solo elemento para editarlo.
                     </p>
 
                     {sizeField && (
@@ -197,8 +197,8 @@ export default function PropertiesPanel({
                         </p>
                     ) : (
                         <p className="text-xs text-muted-foreground rounded-lg border border-dashed p-2.5">
-                            Arrastrá cualquiera de las esquinas del recuadro punteado en el
-                            canvas para escalar todo el grupo junto (mantené presionado{" "}
+                            Arrastra cualquiera de las esquinas del recuadro punteado en el
+                            canvas para escalar todo el grupo junto (mantén presionado{" "}
                             <kbd className="px-1 py-0.5 rounded border bg-secondary/50 text-[10px]">Shift</kbd>{" "}
                             para escalar proporcionalmente).
                         </p>
@@ -232,7 +232,7 @@ export default function PropertiesPanel({
                         </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                        Usá el panel de Localidades para asignar la misma localidad a todos.
+                        Usa el panel de Localidades para asignar la misma localidad a todos.
                     </p>
                 </div>
             </section>

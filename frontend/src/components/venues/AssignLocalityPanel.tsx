@@ -47,7 +47,7 @@ export default function AssignLocalityPanel({
                 <div>
                     <h3 className="text-sm font-medium">Localidades</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        Seleccioná elementos en el mapa (click o Shift+arrastrar) y asignalos a una localidad.
+                        Selecciona elementos en el mapa (click o Shift+arrastrar) y asignalos a una localidad.
                     </p>
                 </div>
                 <div className="flex gap-1.5 shrink-0">

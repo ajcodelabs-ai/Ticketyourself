@@ -504,7 +504,7 @@ async def register_buyer(
     if existing:
         raise HTTPException(
             status_code=409,
-            detail="Este email ya tiene una cuenta en esta página. Iniciá sesión para comprar.",
+            detail="Este email ya tiene una cuenta en esta página. Inicia sesión para comprar.",
         )
 
     now = datetime.now(timezone.utc)
@@ -526,7 +526,7 @@ async def register_buyer(
         await session.rollback()
         raise HTTPException(
             status_code=409,
-            detail="Este email ya tiene una cuenta en esta página. Iniciá sesión para comprar.",
+            detail="Este email ya tiene una cuenta en esta página. Inicia sesión para comprar.",
         )
     await _claim_guest_purchases(session, user_row.id, email, org_row.id)
 
@@ -700,7 +700,7 @@ async def social_login(
         if not email:
             raise HTTPException(
                 status_code=400,
-                detail="No pudimos obtener tu email. Autorizá el email en Google/Apple o registrate con contraseña.",
+                detail="No pudimos obtener tu email. Autoriza el email en Google/Apple o registrate con contraseña.",
             )
         now = datetime.now(timezone.utc)
         user_row = User(
@@ -720,7 +720,7 @@ async def social_login(
             await session.rollback()
             raise HTTPException(
                 status_code=409,
-                detail="Este email ya tiene una cuenta en esta página. Iniciá sesión para comprar.",
+                detail="Este email ya tiene una cuenta en esta página. Inicia sesión para comprar.",
             )
         await _claim_guest_purchases(session, user_row.id, email, org_row.id)
 

@@ -167,7 +167,7 @@ async def _require_can_publish_microsite(user) -> dict:
                 "error": "organizer_pending_review",
                 "message": (
                     "Tu cuenta está en revisión. Una vez aprobada vas a poder "
-                    "publicar tu microsite. Podés seguir editándolo libremente "
+                    "publicar tu microsite. Puedes seguir editándolo libremente "
                     "mientras tanto."
                 ),
             },

@@ -155,7 +155,7 @@ export default function PreEventFeeDialog({
                     </DialogTitle>
                     <DialogDescription>
                         Tu plan cobra un cargo de TYS al publicar el evento. Pagalo acá
-                        y después podés publicarlo.
+                        y después puedes publicarlo.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -166,11 +166,11 @@ export default function PreEventFeeDialog({
                 ) : alreadyPaid ? (
                     <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
                         Este cargo ya está {fee?.current_status === "waived" ? "exonerado" : "pagado"}.
-                        Podés publicar el evento.
+                        Puedes publicar el evento.
                     </p>
                 ) : !required ? (
                     <p className="text-sm text-muted-foreground">
-                        Este evento no tiene cargo de plataforma. Podés publicarlo.
+                        Este evento no tiene cargo de plataforma. Puedes publicarlo.
                     </p>
                 ) : nuveiCheckout ? (
                     <div data-testid="pre-event-fee-nuvei">

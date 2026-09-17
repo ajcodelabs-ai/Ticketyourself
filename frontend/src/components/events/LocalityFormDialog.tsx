@@ -70,7 +70,7 @@ const FIELD_TIPS = {
     service:
         "Cargo de servicio configurable por ticket. Se suma al total del comprador.",
     admin:
-        "TicketSeguro: cobertura / seguro por ticket. Dejá $0 si no aplica.",
+        "TicketSeguro: cobertura / seguro por ticket. Deja $0 si no aplica.",
     vxs: "Impuestos (IVA u otros) por ticket.",
     wallet: "Billetera Virtual: cargo o recarga asociada al ticket.",
     reservedQuota:
@@ -227,6 +227,7 @@ export default function LocalityFormDialog({
     allowNumbered = true,
     pricingType = "paid",
     feeBearer = "buyer",
+    defaultSeatingType = "numbered",
 }) {
     const [name, setName] = useState("");
     const [color, setColor] = useState(LOCALITY_PALETTE[0]);
@@ -267,7 +268,7 @@ export default function LocalityFormDialog({
             ) {
                 toast.message(
                     nextType === "numbered"
-                        ? "Esta localidad era mixta. Ahora es numerada; las zonas de aforo se desasignaron. Creá otra localidad no numerada para ellas."
+                        ? "Esta localidad era mixta. Ahora es numerada; las zonas de aforo se desasignaron. Crea otra localidad no numerada para ellas."
                         : "Esta localidad era mixta. Ahora es no numerada (solo zonas de aforo).",
                 );
             }
@@ -301,7 +302,7 @@ export default function LocalityFormDialog({
             setName("");
             setColor(LOCALITY_PALETTE[0]);
             setDescription("");
-            setSeatingType(allowNumbered ? "numbered" : "unnumbered");
+            setSeatingType(allowNumbered ? defaultSeatingType : "unnumbered");
             setMoney(emptyDraftMoney);
             setAddedServices([]);
             setAssignedIds([]);
@@ -310,7 +311,7 @@ export default function LocalityFormDialog({
             // should stay enabled the whole time, same as before this change.
             setSavedSnapshot(null);
         }
-    }, [open, initial, elements, allowNumbered]);
+    }, [open, initial, elements, allowNumbered, defaultSeatingType]);
 
     useEffect(() => {
         if (!open) {
@@ -396,9 +397,9 @@ export default function LocalityFormDialog({
         if (!elementMatchesSeatingType(el.kind, seatingType)) {
             const hint =
                 seatingType === "unnumbered"
-                    ? "En una localidad no numerada solo podés asignar zonas de aforo."
+                    ? "En una localidad no numerada solo puedes asignar zonas de aforo."
                     : seatingType === "numbered"
-                      ? "En una localidad numerada asigná filas, asientos o mesas."
+                      ? "En una localidad numerada asigna filas, asientos o mesas."
                       : "Ese elemento no es asignable.";
             toast.error(hint);
             return;
@@ -410,12 +411,12 @@ export default function LocalityFormDialog({
 
     const handleSubmit = () => {
         if (!name.trim()) {
-            toast.error("Poné un nombre a la localidad");
+            toast.error("Pon un nombre a la localidad");
             return;
         }
         if (pricingType !== "free") {
             if (String(money.price).trim() === "") {
-                toast.error("Poné el precio de la entrada");
+                toast.error("Pon el precio de la entrada");
                 return;
             }
             if (dollarsToCents(money.price) == null) {
@@ -673,7 +674,7 @@ export default function LocalityFormDialog({
                         <div>
                             <Label className="text-xs">Asignar en el mapa</Label>
                             <p className="text-[11px] text-muted-foreground mt-0.5">
-                                Tocá{" "}
+                                Toca{" "}
                                 {seatingType === "unnumbered"
                                     ? "zonas de aforo"
                                     : "filas, asientos o mesas"}{" "}

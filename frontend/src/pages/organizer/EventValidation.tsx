@@ -332,7 +332,7 @@ export default function EventValidation() {
                             <div className="absolute inset-0 flex items-center justify-center text-white text-center p-6 pointer-events-none rounded-xl">
                                 <div>
                                     <Camera className="h-10 w-10 mx-auto mb-2 opacity-70" />
-                                    <p className="text-sm opacity-90">Pulsá "Iniciar cámara" para empezar</p>
+                                    <p className="text-sm opacity-90">Pulsa "Iniciar cámara" para empezar</p>
                                 </div>
                             </div>
                         )}
@@ -375,7 +375,7 @@ export default function EventValidation() {
                     <div className="w-full max-w-md space-y-2 pt-2 border-t mt-2">
                         <p className="text-xs text-muted-foreground flex items-center gap-1.5">
                             <ClipboardPaste className="h-3.5 w-3.5" />
-                            Si la cámara no funciona, pegá el JWT del QR:
+                            Si la cámara no funciona, pega el JWT del QR:
                         </p>
                         <div className="flex gap-2">
                             <Input

@@ -197,7 +197,7 @@ export default function Dashboard() {
 
             <p className="text-xs text-muted-foreground">
                 <Link to="/configuracion" className="text-primary hover:underline">
-                    Editá tu perfil
+                    Edita tu perfil
                 </Link>{" "}
                 · El slug es inmutable.
             </p>
@@ -249,7 +249,7 @@ function StatusCard({ organizer }) {
                                 </>
                             ) : (
                                 <>
-                                    Próximamente disponible en producción. Mientras tanto, accedé desde la vista previa en{" "}
+                                    Próximamente disponible en producción. Mientras tanto, accede desde la vista previa en{" "}
                                     <Link
                                         to={previewMicrositePath(organizer.slug)}
                                         className="underline font-medium"
@@ -299,7 +299,7 @@ function StatusCard({ organizer }) {
                             Tu cuenta está suspendida
                         </CardTitle>
                         <CardDescription className="text-amber-800">
-                            Contactá a soporte para reactivarla. Revisá los comentarios del equipo abajo.
+                            Contacta a soporte para reactivarla. Revisa los comentarios del equipo abajo.
                         </CardDescription>
                     </div>
                 </CardHeader>

@@ -73,11 +73,11 @@ export default function TemplateGallery({
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <LayoutTemplate className="h-5 w-5 text-primary" />
-                        Elegí una plantilla
+                        Elige una plantilla
                     </DialogTitle>
                     <DialogDescription>
-                        Ya viene armada: secciones, colores y textos. Después solo subís logo y
-                        ajustás el nombre.
+                        Ya viene armada: secciones, colores y textos. Después solo subes logo y
+                        ajustas el nombre.
                     </DialogDescription>
                 </DialogHeader>
 

@@ -61,7 +61,7 @@ export default function PublicLayout({ children }) {
                                     size="sm"
                                     data-testid="nav-register"
                                     className="bg-primary hover:bg-primary/90 text-primary-foreground"
-                                    title="Elegí un plan y completá el registro"
+                                    title="Elige un plan y completa el registro"
                                 >
                                     <Link to="/registro">Elegir plan</Link>
                                 </Button>

@@ -153,6 +153,14 @@ class PaymentMethodConfig(BaseModel):
 class DiscountConditions(BaseModel):
     locality_ids: Optional[List[str]] = None
     max_per_buyer: Optional[int] = Field(default=None, ge=1)
+    # Cupo/Compra (reference): caps how many eligible units this rule
+    # discounts within a SINGLE purchase — independent of max_per_buyer,
+    # which caps uses across a buyer's separate purchases over time.
+    max_per_purchase: Optional[int] = Field(default=None, ge=1)
+    # Monto Mínimo (reference): rule only applies once the order's full
+    # subtotal (all items, not just the ones this rule targets) reaches
+    # this amount.
+    min_purchase_amount_cents: Optional[int] = Field(default=None, ge=0)
     valid_from: Optional[datetime] = None
     valid_until: Optional[datetime] = None
     payment_methods: Optional[List[Literal["nuvei", "transfer", "cash"]]] = None
@@ -166,6 +174,7 @@ class DiscountBenefit(BaseModel):
 class DiscountRule(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = Field(min_length=2, max_length=80)
+    description: Optional[str] = Field(default=None, max_length=300)
     type: Literal["promo_code", "auto", "quantity", "buy_n_get_m"]
     enabled: bool = True
     code: Optional[str] = Field(default=None, max_length=40)
@@ -581,7 +590,7 @@ async def _require_organizer_can_publish(user) -> dict:
                 "error": "organizer_pending_review",
                 "message": (
                     "Tu cuenta está en revisión. Una vez aprobada vas a poder "
-                    "publicar este evento. Podés seguir editándolo libremente "
+                    "publicar este evento. Puedes seguir editándolo libremente "
                     "mientras tanto."
                 ),
             },
@@ -737,7 +746,28 @@ def _publish_validation(doc: dict, *, allow_numbered: bool = True) -> None:
             ):
                 missing.append(
                     "marcar el evento como 'Pagado' en Tipo de recaudación "
-                    "(tenés localidades con costo pero el evento está como Gratuito)"
+                    "(tienes localidades con costo pero el evento está como Gratuito)"
+                )
+            # A locality can be priced before it's assigned to anything on the
+            # map (organizers stage price first, "Asignar en Mapa" later —
+            # see put_event_venue_layout) but publishing with a locality that
+            # never got assigned means selling tickets nobody can be seated
+            # for (numbered) or that draw from zero real capacity
+            # (unnumbered). Same bug class as the empty-venue capacity check
+            # in routers/venues.py::publish_venue.
+            from services.seats import active_localities
+
+            assigned_loc_ids = set(active_localities(layout))
+            unassigned = [
+                lp.get("locality_id")
+                for lp in pricing
+                if lp.get("locality_id") not in assigned_loc_ids
+            ]
+            if unassigned:
+                missing.append(
+                    "asignar cada localidad a algo en el mapa (tienes "
+                    "localidad(es) con precio pero sin asientos, mesas o "
+                    "zonas asignadas — usa 'Asignar en Mapa')"
                 )
     if missing:
         raise HTTPException(
@@ -841,7 +871,7 @@ async def link_venue_to_event(
                 422,
                 "El evento es Gratuito: las localidades no pueden tener costo "
                 "(precio, cargo servicio, TicketSeguro, impuestos ni billetera). "
-                "Marcá el evento como 'Pagado' o dejá todos los montos en $0.",
+                "Marca el evento como 'Pagado' o deja todos los montos en $0.",
             )
 
         reserved_total = sum(lp.reserved_quota for lp in body.locality_pricing)
@@ -958,12 +988,12 @@ async def put_event_venue_layout(
             raise HTTPException(404, "Evento no encontrado")
         if not row.venue_id:
             raise HTTPException(
-                409, "Vinculá un venue al evento antes de editar el mapa."
+                409, "Vincula un venue al evento antes de editar el mapa."
             )
         old = row.venue_layout or {}
         if not old:
             raise HTTPException(
-                404, "Este evento no tiene mapa; vinculá un venue primero."
+                404, "Este evento no tiene mapa; vincula un venue primero."
             )
 
         localities = normalize_layout_localities(body.localities)
@@ -973,7 +1003,7 @@ async def put_event_venue_layout(
         ):
             raise HTTPException(
                 403,
-                "Tu plan no incluye localidades numeradas. Usá zonas de aforo o mejorá el plan.",
+                "Tu plan no incluye localidades numeradas. Usa zonas de aforo o mejora el plan.",
             )
 
         sold = int(row.tickets_sold or 0)
@@ -1044,7 +1074,7 @@ async def put_event_venue_layout(
                 422,
                 f"Este cambio de mapa deja el aforo en {capacity}, por debajo "
                 f"de los {reserved_total} cupo(s) ya reservados en localidades. "
-                "Bajá los cupos reservados antes de achicar el mapa.",
+                "Baja los cupos reservados antes de achicar el mapa.",
             )
         net_capacity = _capacity_after_reserved(capacity, reserved_total)
         if sold > 0 and net_capacity < sold:
@@ -1199,13 +1229,13 @@ async def _assert_pricing_type_allowed(
         if not features.get("allows_free_events", True):
             raise HTTPException(
                 403,
-                "Tu plan no permite eventos gratuitos. Mejorá tu plan o elegí Pagado / Por Donación.",
+                "Tu plan no permite eventos gratuitos. Mejora tu plan o elige Pagado / Por Donación.",
             )
     elif pricing_type in ("paid", "donation"):
         if not features.get("allows_paid_events", True):
             raise HTTPException(
                 403,
-                "Tu plan no permite eventos con cobro (Pagado o Por Donación). Mejorá tu plan.",
+                "Tu plan no permite eventos con cobro (Pagado o Por Donación). Mejora tu plan.",
             )
 
 
@@ -1301,7 +1331,7 @@ async def create_my_event(payload: EventCreate, user=Depends(get_current_user)):
                 )
             )
             if existing:
-                raise HTTPException(409, "Ya tenés un evento en ese venue y fecha")
+                raise HTTPException(409, "Ya tienes un evento en ese venue y fecha")
 
         now = _now()
         row = Event(
@@ -1459,8 +1489,8 @@ async def update_my_event(
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        "No se puede marcar el evento como Gratuito: ya tenés "
-                        "localidades con costo (precio o fees). Poné todos los "
+                        "No se puede marcar el evento como Gratuito: ya tienes "
+                        "localidades con costo (precio o fees). Pon todos los "
                         "montos en $0 primero."
                     ),
                 )
@@ -1554,7 +1584,7 @@ async def publish_event(event_id: str, user=Depends(get_current_user)):
                     detail={
                         "error": "pre_event_fee_required",
                         "message": (
-                            "Debés pagar el cargo de plataforma del evento "
+                            "Debes pagar el cargo de plataforma del evento "
                             "antes de publicarlo."
                         ),
                         "fee_cents": breakdown["fee_cents"],
@@ -1740,7 +1770,7 @@ async def pay_pre_event_fee(
                 "order_description": nuvei.get("order_description"),
                 "order_vat": nuvei.get("order_vat"),
                 "order_installments_type": nuvei.get("order_installments_type"),
-                "message": "Completá el cargo de plataforma con Nuvei.",
+                "message": "Completa el cargo de plataforma con Nuvei.",
             }
 
         raise HTTPException(400, f"Unsupported payment_method: {payment_method}")
@@ -2645,7 +2675,7 @@ async def public_create_holds(tenant_slug: str, event_slug: str, body: SeatHolds
 
     _, event, venue = await _resolve_public_event(tenant_slug, event_slug)
     if not body.seat_ids:
-        raise HTTPException(422, "Tenés que elegir al menos un asiento.")
+        raise HTTPException(422, "Tienes que elegir al menos un asiento.")
     if len(body.seat_ids) > 20:
         raise HTTPException(422, "Máximo 20 asientos por compra.")
     await _validate_active_function(event["id"], body.function_id)
@@ -3161,7 +3191,7 @@ async def admin_reject_suspension_appeal(
     note = (payload.comment or "").strip()
     if len(note) < 3:
         raise HTTPException(
-            status_code=422, detail="Indicá por qué se rechaza la apelación"
+            status_code=422, detail="Indica por qué se rechaza la apelación"
         )
     async with AsyncSessionLocal() as session:
         row = await session.scalar(select(Event).where(Event.id == event_id))

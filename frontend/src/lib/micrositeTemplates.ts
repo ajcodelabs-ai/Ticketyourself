@@ -9,7 +9,7 @@ export const FACTORY_CONTENT = {
     hero_cta_text: "Ver eventos",
     about_title: "Sobre nosotros",
     about_body:
-        "Somos un equipo apasionado por crear experiencias inolvidables. Descubrí nuestros próximos eventos y unite a la comunidad.",
+        "Somos un equipo apasionado por crear experiencias inolvidables. Descubre nuestros próximos eventos y unite a la comunidad.",
 };
 
 export type TemplateBranding = {
@@ -84,7 +84,7 @@ export const MICROSITE_TEMPLATES: MicrositeTemplatePreset[] = [
     {
         code: "evento_unico",
         name: "Telón",
-        blurb: "Un evento protagonista. Ideal si vendés una sola función.",
+        blurb: "Un evento protagonista. Ideal si vendes una sola función.",
         audience: "Teatro y danza",
         category: "Listo para usar",
         branding: {
@@ -96,7 +96,7 @@ export const MICROSITE_TEMPLATES: MicrositeTemplatePreset[] = [
             density: "spacious",
         },
         content: {
-            hero_subtitle: "Una función. Una historia. Reservá tu butaca.",
+            hero_subtitle: "Una función. Una historia. Reserva tu butaca.",
             hero_cta_text: "Reservar entradas",
             about_title: "La compañía",
             about_body:
@@ -122,7 +122,7 @@ export const MICROSITE_TEMPLATES: MicrositeTemplatePreset[] = [
             hero_cta_text: "Ver agenda",
             about_title: "Quiénes somos",
             about_body:
-                "Organizamos encuentros para aprender y conectar. Inscribite a la próxima fecha o recorré las que vienen.",
+                "Organizamos encuentros para aprender y conectar. Inscribite a la próxima fecha o recorre las que vienen.",
         },
     },
     {
@@ -161,11 +161,11 @@ export const MICROSITE_TEMPLATES: MicrositeTemplatePreset[] = [
             density: "cozy",
         },
         content: {
-            hero_subtitle: "Tres días, un mismo pulso. Mirá la grilla y asegurá tu pase.",
+            hero_subtitle: "Tres días, un mismo pulso. Mira la grilla y asegura tu pase.",
             hero_cta_text: "Ver grilla",
             about_title: "El festival",
             about_body:
-                "Música, comida y calle. Subí tus fotos de ediciones anteriores desde el editor cuando las tengas.",
+                "Música, comida y calle. Sube tus fotos de ediciones anteriores desde el editor cuando las tengas.",
         },
     },
     {
@@ -187,7 +187,7 @@ export const MICROSITE_TEMPLATES: MicrositeTemplatePreset[] = [
             hero_cta_text: "Quiero mi entrada",
             about_title: "Por qué ir",
             about_body:
-                "Artistas, horario y cómo llegar. Completá las preguntas frecuentes desde el editor en un minuto.",
+                "Artistas, horario y cómo llegar. Completa las preguntas frecuentes desde el editor en un minuto.",
         },
     },
     {

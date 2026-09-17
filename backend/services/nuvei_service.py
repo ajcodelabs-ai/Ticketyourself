@@ -56,7 +56,7 @@ class NuveiError(Exception):
 
 _LOG_PAYLOAD_MAX = 4000
 _GENERIC_CHECKOUT_ERROR = (
-    "No pudimos iniciar el pago con Nuvei. Intentá de nuevo en unos minutos."
+    "No pudimos iniciar el pago con Nuvei. Intenta de nuevo en unos minutos."
 )
 
 

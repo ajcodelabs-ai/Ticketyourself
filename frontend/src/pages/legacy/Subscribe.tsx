@@ -56,7 +56,7 @@ export default function Subscribe() {
 
     const submit = async () => {
         if (!tenantSlug) {
-            toast.error("No hay tenant activo. Definí ?tenant=demo-org.");
+            toast.error("No hay tenant activo. Define ?tenant=demo-org.");
             return;
         }
         setSubmitting(true);
@@ -90,7 +90,7 @@ export default function Subscribe() {
                     Suscripción de organizador
                 </Badge>
                 <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
-                    Elegí un plan para{" "}
+                    Elige un plan para{" "}
                     <span className="text-primary">
                         {tenant?.name || tenantSlug || "tu organización"}
                     </span>

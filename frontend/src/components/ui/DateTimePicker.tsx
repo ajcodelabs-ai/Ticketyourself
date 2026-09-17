@@ -37,7 +37,7 @@ export default function DateTimePicker({
     value = "",
     onChange,
     disabled = false,
-    placeholder = "Elegí fecha y hora",
+    placeholder = "Elige fecha y hora",
     allowClear = false,
     "data-testid": testId,
     className,

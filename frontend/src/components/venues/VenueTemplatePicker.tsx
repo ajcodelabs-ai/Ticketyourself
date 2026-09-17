@@ -60,7 +60,7 @@ export default function VenueTemplatePicker({
         <>
         <div className="space-y-4" data-testid="venue-template-picker">
             <p className="text-xs text-muted-foreground">
-                Elegí un layout listo o empezá en blanco y diseñalo en el editor.
+                Elige un layout listo o empieza en blanco y diseñalo en el editor.
             </p>
 
             {disabled && disabledReason && (

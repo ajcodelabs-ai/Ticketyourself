@@ -281,7 +281,7 @@ export default function TicketTypesPanel({
                     <h3 className="font-semibold">Tipos de ticket</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
                         {localities.length > 0
-                            ? "Opcional para este evento numerado: la venta ya está habilitada por los precios de \"Precios por localidad\". Crea tipos (VIP, Early Bird…) solo si necesitás categorías adicionales dentro de una misma localidad."
+                            ? "Opcional para este evento numerado: la venta ya está habilitada por los precios de \"Precios por localidad\". Crea tipos (VIP, Early Bird…) solo si necesitas categorías adicionales dentro de una misma localidad."
                             : "Define las categorías disponibles (VIP, General, Early Bird…) y su precio. Crea al menos una para habilitar la venta."}
                     </p>
                 </div>
@@ -390,13 +390,13 @@ export default function TicketTypesPanel({
                                 {selectedLocality ? (
                                     <p className="text-xs text-muted-foreground">
                                         Usando los valores de <strong>{selectedLocality.name}</strong>:
-                                        precio, capacidad, color y máx. por comprador. Podés ajustar
+                                        precio, capacidad, color y máx. por comprador. Puedes ajustar
                                         cualquiera de estos campos abajo si este tipo debe ser distinto.
                                     </p>
                                 ) : (
                                     <p className="text-xs text-muted-foreground">
                                         Al elegir una localidad se completan precio, capacidad, color y
-                                        máx. por comprador con sus valores. Podés ajustarlos después.
+                                        máx. por comprador con sus valores. Puedes ajustarlos después.
                                     </p>
                                 )}
                             </div>
@@ -472,7 +472,7 @@ export default function TicketTypesPanel({
 
                         {/* Sale window */}
                         <div className="space-y-1.5">
-                            <Label>Ventana de venta</Label>
+                            <Label>Fecha y hora para salir a la venta</Label>
                             <p className="text-xs text-muted-foreground">
                                 Por defecto sigue la del evento (las fechas ya están cargadas
                                 abajo). Cambiala solo si este tipo debe abrir o cerrar en otro
@@ -524,9 +524,9 @@ export default function TicketTypesPanel({
                                         </TooltipTrigger>
                                         <TooltipContent className="max-w-xs">
                                             Límite de unidades de <strong>este tipo de ticket</strong> por
-                                            comprador. Es independiente del "Máx. por orden" en Fechas y
-                                            ventas, que aplica a la compra completa sumando todos los
-                                            tipos.
+                                            comprador. Es independiente del "Máx. de tickets por compra" en
+                                            Fechas y ventas, que aplica a la compra completa sumando todos
+                                            los tipos.
                                         </TooltipContent>
                                     </Tooltip>
                                 </TooltipProvider>

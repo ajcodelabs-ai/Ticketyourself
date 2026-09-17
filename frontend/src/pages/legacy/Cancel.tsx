@@ -21,7 +21,7 @@ export default function Cancel() {
                         No te cobramos
                     </CardTitle>
                     <CardDescription>
-                        Podés volver a intentar cuando quieras. El registro en
+                        Puedes volver a intentar cuando quieras. El registro en
                         la DB queda como <b>pending</b> y nunca se marca como
                         pagado.
                     </CardDescription>

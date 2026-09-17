@@ -93,10 +93,10 @@ def normalize_fee_amounts(
     bps = max(0, int(fee_percent_bps or 0))
     if mode == "fixed":
         if fixed <= 0:
-            raise ValueError("Indicá un monto fijo mayor a 0.")
+            raise ValueError("Indica un monto fijo mayor a 0.")
         return mode, fixed, 0
     if bps <= 0:
-        raise ValueError("Indicá un porcentaje mayor a 0.")
+        raise ValueError("Indica un porcentaje mayor a 0.")
     return mode, 0, bps
 
 

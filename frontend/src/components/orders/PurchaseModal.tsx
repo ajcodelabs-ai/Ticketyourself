@@ -229,11 +229,11 @@ export default function PurchaseModal({
     const checkAccess = async () => {
         setAccessError("");
         if (accessType === "access_code" && !accessCode.trim() && !allowContinueWithoutCode) {
-            setAccessError("Ingresá el código de acceso.");
+            setAccessError("Ingresa el código de acceso.");
             return;
         }
         if (accessType === "verified_list" && !checkEmail.trim() && !checkCedula.trim()) {
-            setAccessError("Ingresá tu correo o cédula.");
+            setAccessError("Ingresa tu correo o cédula.");
             return;
         }
         // Optional code path: skip verification and continue.
@@ -256,7 +256,7 @@ export default function PurchaseModal({
                 },
             );
             if (!data.ok) {
-                setAccessError(data.reason || "No tenés acceso a este evento.");
+                setAccessError(data.reason || "No tienes acceso a este evento.");
                 return;
             }
             setAccessVerified(true);
@@ -598,7 +598,7 @@ export default function PurchaseModal({
         if (!isSeatNumbered && !hasTypes && (quantity < 1 || quantity > maxPerPurchase))
             e.quantity = `Entre 1 y ${maxPerPurchase}`;
         if (hasTypes && !isSeatNumbered && totalQtyFromTypes < 1)
-            e.ticketTypes = "Seleccioná al menos 1 ticket";
+            e.ticketTypes = "Selecciona al menos 1 ticket";
         if (hasTypes && !isSeatNumbered && totalQtyFromTypes > maxPerPurchase)
             e.ticketTypes = `Máximo ${maxPerPurchase} entradas por compra`;
         for (const tt of ticketTypes) {
@@ -612,7 +612,7 @@ export default function PurchaseModal({
             }
         }
         if (event?.is_multi_function && functions.length > 0 && !selectedFunctionId)
-            e.function = `Seleccioná un${isSubevent ? "" : "a"} ${functionNoun}`;
+            e.function = `Selecciona un${isSubevent ? "" : "a"} ${functionNoun}`;
         if (lawCategory) {
             const lawErr = lawDocumentError(
                 lawCategory,
@@ -630,7 +630,7 @@ export default function PurchaseModal({
             }
         }
         if (hasTyc && !tycAccepted) {
-            e.tyc = "Debés aceptar los términos y condiciones para continuar.";
+            e.tyc = "Debes aceptar los términos y condiciones para continuar.";
         }
         setErrors(e);
         return Object.keys(e).length === 0;
@@ -736,7 +736,7 @@ export default function PurchaseModal({
                 return;
             }
             if (data.checkout_url) {
-                toast.error("Este método de pago ya no está disponible. Usá Nuvei.");
+                toast.error("Este método de pago ya no está disponible. Usa Nuvei.");
                 return;
             }
             toast.error("No se pudo generar la orden.");
@@ -785,7 +785,7 @@ export default function PurchaseModal({
                                     expiresAt={seatHoldsInfo.expires_at}
                                     onExpire={() => {
                                         onOpenChange(false);
-                                        toast.warning("Tu reserva de asientos venció. Elegí nuevamente.");
+                                        toast.warning("Tu reserva de asientos venció. Elige nuevamente.");
                                     }}
                                 />
                             </div>
@@ -796,8 +796,8 @@ export default function PurchaseModal({
 
                 {isAdmin ? (
                     <p className="text-sm text-muted-foreground py-4" data-testid="purchase-admin-blocked">
-                        Las cuentas de administración no pueden comprar entradas. Cerrá sesión y
-                        usá una cuenta de comprador.
+                        Las cuentas de administración no pueden comprar entradas. Cierra sesión y
+                        usa una cuenta de comprador.
                     </p>
                 ) : !canPurchase ? (
                     <BuyerAuthPanel />
@@ -822,7 +822,7 @@ export default function PurchaseModal({
                                 <div className="flex items-start gap-2 text-sm text-muted-foreground">
                                     <Users className="h-4 w-4 mt-0.5 shrink-0" />
                                     <span>
-                                        Este evento es solo para invitados. Ingresá tu correo o
+                                        Este evento es solo para invitados. Ingresa tu correo o
                                         cédula para verificar que estás en la lista.
                                     </span>
                                 </div>
@@ -879,7 +879,7 @@ export default function PurchaseModal({
                         {functions.length > 0 && (
                             <div className="space-y-2" data-testid="function-selector">
                                 <Label className="font-medium">
-                                    Seleccioná un{isSubevent ? "" : "a"} {functionNoun} *
+                                    Selecciona un{isSubevent ? "" : "a"} {functionNoun} *
                                 </Label>
                                 {errors.function && (
                                     <p className="text-xs text-red-600">{errors.function}</p>
@@ -925,7 +925,7 @@ export default function PurchaseModal({
                         {/* ── Ticket type selectors ─────────────────────────── */}
                         {hasTypes && !isSeatNumbered && (
                             <div className="space-y-2" data-testid="ticket-type-selector">
-                                <Label className="font-medium">Seleccioná tus tickets</Label>
+                                <Label className="font-medium">Selecciona tus tickets</Label>
                                 {errors.ticketTypes && (
                                     <p className="text-xs text-red-600">{errors.ticketTypes}</p>
                                 )}
@@ -1045,7 +1045,7 @@ export default function PurchaseModal({
                                     ))}
                                 </div>
                                 <p className="text-[10px] text-muted-foreground">
-                                    Tu reserva vence en 10 minutos. Si no completás el pago, los
+                                    Tu reserva vence en 10 minutos. Si no completas el pago, los
                                     asientos vuelven a estar disponibles.
                                 </p>
                             </div>
@@ -1145,7 +1145,7 @@ export default function PurchaseModal({
                                     placeholder={
                                         optionalDonation
                                             ? "Monto opcional"
-                                            : "O escribí un monto"
+                                            : "O escribe un monto"
                                     }
                                     value={donation}
                                     onChange={(e) => setDonation(e.target.value)}
@@ -1335,7 +1335,7 @@ export default function PurchaseModal({
                                                 className="w-full text-sm border rounded-md px-3 py-2 bg-background"
                                                 data-testid={`cq-select-${q.id}`}
                                             >
-                                                <option value="">Seleccioná una opción</option>
+                                                <option value="">Selecciona una opción</option>
                                                 {(q.options || []).map((opt: string) => (
                                                     <option key={opt} value={opt}>
                                                         {opt}
@@ -1371,7 +1371,7 @@ export default function PurchaseModal({
                                 </Label>
                                 <Input
                                     id="optional-access-code"
-                                    placeholder="Si tenés un código, ingresalo"
+                                    placeholder="Si tienes un código, ingresalo"
                                     value={accessCode}
                                     onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
                                     data-testid="optional-access-code-input"
@@ -1425,9 +1425,9 @@ export default function PurchaseModal({
                                         <p className="text-[11px] text-muted-foreground">
                                             {lawCategory === "senior"
                                                 ? isCedulaDocumentType(buyer.document_type)
-                                                    ? "Si lo dejás vacío usamos la cédula de facturación. El descuento de tercera edad es para cédula ecuatoriana."
+                                                    ? "Si lo dejas vacío usamos la cédula de facturación. El descuento de tercera edad es para cédula ecuatoriana."
                                                     : "Este descuento pide cédula ecuatoriana, no el ID del exterior ni pasaporte."
-                                                : "Declarás que la información es correcta; el organizador puede verificarla en puerta."}
+                                                : "Declaras que la información es correcta; el organizador puede verificarla en puerta."}
                                         </p>
                                     </div>
                                 )}
@@ -1465,7 +1465,7 @@ export default function PurchaseModal({
                                 ) : (
                                     <div className="flex gap-2">
                                         <Input
-                                            placeholder="¿Tenés un código de compra / descuento?"
+                                            placeholder="¿Tienes un código de compra / descuento?"
                                             value={promoCodeInput}
                                             onChange={(e) =>
                                                 setPromoCodeInput(e.target.value.toUpperCase())

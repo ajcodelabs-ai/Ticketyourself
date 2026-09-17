@@ -225,7 +225,7 @@ export function AboutBlockView({
                         enabled
                         multiline
                         className="text-lg leading-relaxed text-foreground/80 whitespace-pre-wrap"
-                        placeholder="Contenido (usá el panel para rich text)"
+                        placeholder="Contenido (usa el panel para rich text)"
                     />
                 ) : hasPlain ? (
                     <p className="text-lg leading-relaxed text-foreground/80 whitespace-pre-wrap">
@@ -397,7 +397,7 @@ function EmptyEventsSection({ blockId }: { blockId?: string }) {
                     Eventos en preparación
                 </h2>
                 <p className="text-muted-foreground max-w-xl mx-auto">
-                    Estamos cargando los próximos eventos. Volvé pronto o seguinos en redes
+                    Estamos cargando los próximos eventos. Vuelve pronto o seguinos en redes
                     sociales para no perderte ninguno.
                 </p>
             </div>
@@ -599,7 +599,7 @@ export function ImageBlockView({ block, blockId }: { block: MicrositeBlock; bloc
         return (
             <section className="py-12 px-6" data-testid="ms-image-empty">
                 <div className="max-w-4xl mx-auto h-48 rounded-[var(--ms-radius)] border border-dashed grid place-items-center text-muted-foreground text-sm">
-                    Añadí una imagen desde el panel de propiedades
+                    Añade una imagen desde el panel de propiedades
                 </div>
             </section>
         );
@@ -637,7 +637,7 @@ export function GalleryBlockView({ block, blockId }: { block: MicrositeBlock; bl
         return (
             <section className="py-12 px-6" data-testid="ms-gallery-empty">
                 <div className="max-w-5xl mx-auto h-40 rounded-[var(--ms-radius)] border border-dashed grid place-items-center text-muted-foreground text-sm">
-                    Añadí imágenes a la galería
+                    Añade imágenes a la galería
                 </div>
             </section>
         );

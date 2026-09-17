@@ -169,7 +169,7 @@ function formToPayload(form, { includeCode } = { includeCode: false }) {
     const verification_fee_cents = dollarsToCents(form.verification_fee_dollars);
     const event_fee_per_ticket_cents = dollarsToCents(form.event_fee_per_ticket_dollars);
     if (price_cents === null || verification_fee_cents === null || event_fee_per_ticket_cents === null) {
-        throw new Error("Monto inválido: usá formato 20.00");
+        throw new Error("Monto inválido: usa formato 20.00");
     }
     const payload: Record<string, any> = {
         name: form.name,
@@ -590,7 +590,7 @@ export default function AdminPlans() {
                         <div className="space-y-1.5 sm:col-span-2">
                             <FieldHint
                                 label="Descripción"
-                                tip="Texto corto bajo el nombre en el showcase de planes del registro. Explicá para quién es el plan (1–2 frases)."
+                                tip="Texto corto bajo el nombre en el showcase de planes del registro. Explica para quién es el plan (1–2 frases)."
                             />
                             <Textarea value={form.description} onChange={setField("description")} rows={2} />
                         </div>
@@ -794,12 +794,12 @@ export default function AdminPlans() {
                                             </button>
                                         </TooltipTrigger>
                                         <TooltipContent className="max-w-xs text-xs">
-                                            Cobro único al aprobar la cuenta (antes de publicar). Se asigna según el plan elegido en el registro. Con 0.00 el organizador queda ‘waived’ y no ve este paso. Escribí dólares con decimales (ej. 10.00).
+                                            Cobro único al aprobar la cuenta (antes de publicar). Se asigna según el plan elegido en el registro. Con 0.00 el organizador queda ‘waived’ y no ve este paso. Escribe dólares con decimales (ej. 10.00).
                                         </TooltipContent>
                                     </Tooltip>
                                 </CardTitle>
                                 <CardDescription>
-                                    Cobro al aprobar la cuenta. Poné 0.00 para omitirlo (ej. plan Básico).
+                                    Cobro al aprobar la cuenta. Pon 0.00 para omitirlo (ej. plan Básico).
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="pb-4 space-y-1.5">

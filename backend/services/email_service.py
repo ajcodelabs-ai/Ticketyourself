@@ -242,11 +242,11 @@ def render_welcome_html(*, company_name: str, continue_url: str) -> str:
         <tr>
           <td style="padding:32px;line-height:1.55;font-size:15px;color:#33334a;">
             <p style="margin:0 0 12px;">Gracias por crear tu cuenta de organizador.</p>
-            <p style="margin:0 0 16px;">Para activarla, completá estos pasos:</p>
+            <p style="margin:0 0 16px;">Para activarla, completa estos pasos:</p>
             <ol style="margin:0 0 20px 22px;padding:0;color:#33334a;">
-              <li style="margin-bottom:6px;">Subí tus documentos (cédula o RUC).</li>
-              <li style="margin-bottom:6px;">Elegí un plan que se adapte a tus eventos.</li>
-              <li>Completá el pago con Stripe y tu cuenta queda lista.</li>
+              <li style="margin-bottom:6px;">Sube tus documentos (cédula o RUC).</li>
+              <li style="margin-bottom:6px;">Elige un plan que se adapte a tus eventos.</li>
+              <li>Completa el pago con Stripe y tu cuenta queda lista.</li>
             </ol>
             <table cellpadding="0" cellspacing="0" border="0">
               <tr>
@@ -260,7 +260,7 @@ def render_welcome_html(*, company_name: str, continue_url: str) -> str:
               </tr>
             </table>
             <p style="margin:24px 0 0;color:#6e6e84;font-size:13px;">
-              El link es válido por 7 días. Si tenés dudas, respondé este correo y te ayudamos.
+              El link es válido por 7 días. Si tienes dudas, responde este correo y te ayudamos.
             </p>
           </td>
         </tr>
@@ -281,8 +281,8 @@ async def send_welcome_email(*, to: str, company_name: str, continue_url: str) -
     text = (
         f"Bienvenido a Ticket Yourself, {company_name}.\n\n"
         "Para activar tu cuenta:\n"
-        "1. Subí tus documentos.\n"
-        "2. Elegí un plan.\n"
+        "1. Sube tus documentos.\n"
+        "2. Elige un plan.\n"
         "3. Pagá la suscripción.\n\n"
         f"Continuar: {continue_url}\n"
     )
@@ -318,7 +318,7 @@ def render_organizer_approved_html(*, company_name: str, continue_url: str) -> s
             <p style="margin:0 0 12px;">Hola {company_name},</p>
             <p style="margin:0 0 16px;">
               Revisamos tus documentos y tu cuenta de organizador ya está habilitada.
-              Completá el pago del plan (si aún no lo hiciste) y publicá tus eventos,
+              Completa el pago del plan (si aún no lo hiciste) y publica tus eventos,
               venues y microsite cuando quieras.
             </p>
             <table cellpadding="0" cellspacing="0" border="0">
@@ -379,7 +379,7 @@ def render_organizer_rejected_html(
               {safe_reason}
             </p>
             <p style="margin:0 0 16px;">
-              Podés corregir o reemplazar los documentos y reenviar tu solicitud desde el
+              Puedes corregir o reemplazar los documentos y reenviar tu solicitud desde el
               onboarding.
             </p>
             <table cellpadding="0" cellspacing="0" border="0">
@@ -416,7 +416,7 @@ async def send_organizer_approved_email(
     text = (
         f"Hola {company_name},\n\n"
         "Tu cuenta de organizador en Ticket Yourself fue aprobada.\n"
-        "Completá el plan si aún no lo hiciste y publicá cuando quieras.\n\n"
+        "Completa el plan si aún no lo hiciste y publica cuando quieras.\n\n"
         f"Continuar: {continue_url}\n"
     )
     return await send_email(
@@ -437,7 +437,7 @@ async def send_organizer_rejected_email(
         f"Hola {company_name},\n\n"
         "No pudimos aprobar tu cuenta de organizador por ahora.\n"
         f"Motivo: {reason}\n\n"
-        f"Corregí y reenviá desde: {continue_url}\n"
+        f"Corrige y reenvía desde: {continue_url}\n"
     )
     return await send_email(
         to=to,
@@ -588,7 +588,7 @@ def render_season_pass_html(
         </p>
         {receipt_html}
         <p style="margin:0 0 16px;color:#6e6e84;">
-          Todavía no elegiste a qué funciones vas a ir — entrá al link de abajo cuando quieras
+          Todavía no elegiste a qué funciones vas a ir — entra al link de abajo cuando quieras
           durante la temporada para redimir tus créditos, función por función.
         </p>
 
@@ -601,7 +601,7 @@ def render_season_pass_html(
           </td></tr>
         </table>
         <p style="margin:24px 0 0;color:#6e6e84;font-size:13px;">
-          Guardá este link — es tu acceso para administrar el abono y ver tus tickets.
+          Guarda este link — es tu acceso para administrar el abono y ver tus tickets.
         </p>
       </td></tr>
       <tr><td style="background:#f4f4f9;padding:16px 32px;color:#8c8ca6;font-size:12px;text-align:center;">
@@ -688,7 +688,7 @@ def render_manual_instructions_html(
     <div style="font-size:13px;color:#92400e">Orden <b>{order["order_number"]}</b></div>
   </div>
   <p>Hola {order["buyer"].get("name","")}, recibimos tu reserva. Para confirmarla
-  tenés que completar el pago vía <b>{title}</b>.</p>
+  tienes que completar el pago vía <b>{title}</b>.</p>
   <table style="width:100%;border-collapse:collapse;margin:16px 0">
     <tr><td><b>Monto a pagar</b></td><td><b>{total}</b></td></tr>
     {rows}
@@ -696,7 +696,7 @@ def render_manual_instructions_html(
     <tr><td><b>Fecha límite</b></td><td>{deadline}</td></tr>
   </table>
   <p style="background:#f3f4f6;border-radius:8px;padding:12px;font-size:13px;color:#4b5563">
-    <b>Importante:</b> tu reserva se libera automáticamente si no completás el pago
+    <b>Importante:</b> tu reserva se libera automáticamente si no completas el pago
     antes de la fecha límite. Cuando confirmes el pago,
     <b>{organizer.get("company_name","el organizador")}</b> te enviará tus tickets
     por email.
@@ -744,8 +744,8 @@ async def send_manual_payment_rejected(
   </div>
   <p>Hola {order["buyer"].get("name","")}, lamentablemente tu reserva fue cancelada por el organizador.</p>
   <p><b>Motivo:</b><br/><i>{(reason or "Sin detalles")[:500]}</i></p>
-  <p>Tu cupo fue liberado. Si crees que es un error, contactá al organizador
-  ({organizer.get("email","")}) o reintentá la compra.</p>
+  <p>Tu cupo fue liberado. Si crees que es un error, contacta al organizador
+  ({organizer.get("email","")}) o reintenta la compra.</p>
   <p><a href="{event_link}" style="display:inline-block;background:#4f46e5;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Volver al evento</a></p>
   <p style="font-size:12px;color:#9ca3af;margin-top:24px">TYS · Ticket Yourself</p>
 </body></html>

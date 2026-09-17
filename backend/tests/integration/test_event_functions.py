@@ -92,7 +92,7 @@ def _create_publishable_event(org_client):
                     "bank_name": "Banco Test",
                     "account_number": "123",
                     "account_holder": "Test",
-                    "instructions": "Transferí y subí el comprobante",
+                    "instructions": "Transfiere y sube el comprobante",
                 },
             },
         },

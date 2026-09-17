@@ -173,11 +173,11 @@ export default function AdminSalesFees() {
     const save = async () => {
         const payload = formToPayload(form);
         if (!payload) {
-            toast.error("Revisá los montos. Usá números (ej. 10.00).");
+            toast.error("Revisa los montos. Usa números (ej. 10.00).");
             return;
         }
         if (!payload.plan_code) {
-            toast.error("Elegí un plan.");
+            toast.error("Elige un plan.");
             return;
         }
         setSaving(true);
@@ -247,7 +247,7 @@ export default function AdminSalesFees() {
                         </div>
                     ) : rules.length === 0 ? (
                         <p className="text-sm text-muted-foreground py-8 text-center">
-                            Todavía no hay combinaciones. Creá la primera para dejar de usar el % general.
+                            Todavía no hay combinaciones. Crea la primera para dejar de usar el % general.
                         </p>
                     ) : (
                         <Table>
@@ -328,7 +328,7 @@ export default function AdminSalesFees() {
                                     onValueChange={(v) => setForm((f) => ({ ...f, plan_code: v }))}
                                 >
                                     <SelectTrigger data-testid="sales-fee-plan">
-                                        <SelectValue placeholder="Elegí un plan" />
+                                        <SelectValue placeholder="Elige un plan" />
                                     </SelectTrigger>
                                     <SelectContent>
                                         {plans.map((p) => (

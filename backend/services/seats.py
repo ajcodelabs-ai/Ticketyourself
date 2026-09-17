@@ -363,7 +363,7 @@ async def create_seat_holds(
                     status_code=409,
                     detail={
                         "error": "seats_unavailable",
-                        "message": "Uno o más asientos fueron tomados en el último momento. Refresca el mapa y elegí de nuevo.",
+                        "message": "Uno o más asientos fueron tomados en el último momento. Refresca el mapa y elige de nuevo.",
                     },
                 )
             raise
@@ -436,7 +436,7 @@ async def consume_holds_for_order(
     if result.rowcount != len(seat_ids):
         raise HTTPException(
             status_code=409,
-            detail="Algunas reservas vencieron. Volvé al mapa y elegí asientos.",
+            detail="Algunas reservas vencieron. Vuelve al mapa y elige asientos.",
         )
 
 

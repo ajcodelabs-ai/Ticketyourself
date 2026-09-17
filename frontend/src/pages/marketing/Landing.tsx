@@ -162,10 +162,10 @@ export default function Landing() {
                         Planes
                     </Badge>
                     <h2 className="text-3xl sm:text-4xl font-semibold tracking-tight">
-                        Elegí el plan que se adapta a vos
+                        Elige el plan que se adapta a ti
                     </h2>
                     <p className="text-sm text-muted-foreground max-w-lg mx-auto">
-                        El registro empieza acá: elegís un plan y después completás tus datos y el
+                        El registro empieza acá: eliges un plan y después completas tus datos y el
                         pago. No hay cuenta gratuita sin plan.
                     </p>
                 </div>
@@ -201,7 +201,7 @@ export default function Landing() {
                         Tu próximo evento te está esperando.
                     </h2>
                     <p className="text-muted-foreground max-w-xl mx-auto">
-                        Elegí un plan, registrate, subí tus documentos y completá el pago para
+                        Elige un plan, registrate, sube tus documentos y completa el pago para
                         empezar a vender.
                     </p>
                     <Button

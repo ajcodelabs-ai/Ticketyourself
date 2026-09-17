@@ -62,7 +62,7 @@ export function assetUrl(relativeOrFull) {
 }
 
 export function shareTargets({ url, company, hero }) {
-    const text = `Mirá ${company} en Ticket Yourself: ${hero || ""}`.trim();
+    const text = `Mira ${company} en Ticket Yourself: ${hero || ""}`.trim();
     const encUrl = encodeURIComponent(url);
     const encText = encodeURIComponent(text);
     return {

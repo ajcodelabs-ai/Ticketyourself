@@ -74,7 +74,7 @@ async def _require_approved_organizer(user) -> Dict[str, Any]:
                 "error": "organizer_pending_review",
                 "message": (
                     "Tu cuenta está en revisión. Una vez aprobada vas a poder "
-                    "publicar este venue. Podés seguir editándolo libremente "
+                    "publicar este venue. Puedes seguir editándolo libremente "
                     "mientras tanto."
                 ),
             },
@@ -512,7 +512,7 @@ async def create_venue(
         if active >= max_v:
             raise HTTPException(
                 403,
-                f"Tu plan permite hasta {max_v} venue(s) activos. Archivá uno para crear otro.",
+                f"Tu plan permite hasta {max_v} venue(s) activos. Archiva uno para crear otro.",
             )
     base = normalize_slug(body.name)
     venue_slug = await _unique_slug(org["id"], base, session)
@@ -568,7 +568,7 @@ async def create_from_template(
         if active >= max_v:
             raise HTTPException(
                 403,
-                f"Tu plan permite hasta {max_v} venue(s). Archivá uno para usar una plantilla.",
+                f"Tu plan permite hasta {max_v} venue(s). Archiva uno para usar una plantilla.",
             )
     result = await session.execute(
         select(Venue).where(Venue.id == template_id, Venue.is_template.is_(True))
@@ -912,12 +912,12 @@ async def publish_venue(
     row = await _ensure_organizer_owns_row(org["id"], venue_id, session)
     if not row.elements:
         raise HTTPException(
-            422, "Agregá al menos un elemento antes de publicar el venue."
+            422, "Agrega al menos un elemento antes de publicar el venue."
         )
     if _compute_capacity(row.elements) <= 0:
         raise HTTPException(
             422,
-            "El venue no tiene capacidad vendible: agregá una zona, fila, "
+            "El venue no tiene capacidad vendible: agrega una zona, fila, "
             "mesa o asiento (un escenario solo no alcanza).",
         )
     row.status = "published"

@@ -360,7 +360,7 @@ export default function Onboarding() {
                     ¡Bienvenido!
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                    Seguí estos pasos para activar tu cuenta.
+                    Sigue estos pasos para activar tu cuenta.
                 </p>
             </header>
 
@@ -375,14 +375,14 @@ export default function Onboarding() {
                         <CardDescription>
                             {requiredDocTypes.length > 0 ? (
                                 <>
-                                    Subí{" "}
+                                    Sube{" "}
                                     {requiredDocTypes
                                         .map((rt) => docTypes.find((t) => t.code === rt)?.label || rt)
                                         .join(" y ")}{" "}
-                                    (obligatorio). Podés agregar otros documentos de respaldo.
+                                    (obligatorio). Puedes agregar otros documentos de respaldo.
                                 </>
                             ) : (
-                                "Subí los documentos que respalden tu cuenta."
+                                "Sube los documentos que respalden tu cuenta."
                             )}{" "}
                             PDF/JPG/PNG, hasta 10MB.
                         </CardDescription>
@@ -411,13 +411,13 @@ export default function Onboarding() {
                 <Card className="border-amber-300 bg-amber-50/40 tys-soft-shadow" data-testid="onboarding-review-panel">
                     <CardHeader>
                         <CardTitle className="text-lg flex items-center gap-2 text-amber-900">
-                            <Clock className="h-5 w-5" /> Documentos recibidos — podés seguir
+                            <Clock className="h-5 w-5" /> Documentos recibidos — puedes seguir
                         </CardTitle>
                         <CardDescription>
                             El equipo TYS revisará tu cuenta (normalmente en 48 h laborables) y te
-                            avisamos por correo. Mientras tanto podés configurar escenarios, eventos y
+                            avisamos por correo. Mientras tanto puedes configurar escenarios, eventos y
                             tu página; la publicación queda bloqueada hasta la aprobación. Si
-                            tenés dudas, escribinos a{" "}
+                            tienes dudas, escribinos a{" "}
                             <a
                                 href="mailto:soporte@ticketyourself.com"
                                 className="text-primary underline underline-offset-2"
@@ -468,7 +468,7 @@ export default function Onboarding() {
                     </CardHeader>
                     <CardContent className="space-y-5">
                         <p className="text-sm text-muted-foreground">
-                            Corregí o reemplazá los documentos señalados y reenviá tu solicitud.
+                            Corrige o reemplaza los documentos señalados y reenvía tu solicitud.
                         </p>
                         <DocumentsUploader
                             docTypes={docTypes}
@@ -507,7 +507,7 @@ export default function Onboarding() {
                             <ShieldAlert className="h-5 w-5" /> Tu cuenta está suspendida
                         </CardTitle>
                         <CardDescription className="text-red-900/80">
-                            Contactá a soporte para reactivarla.
+                            Contacta a soporte para reactivarla.
                         </CardDescription>
                     </CardHeader>
                 </Card>
@@ -521,7 +521,7 @@ export default function Onboarding() {
                         </CardTitle>
                         <CardDescription>
                             {pendingIntent ? (
-                                <>Hay un pago de plan en proceso. Podés ver el estado o iniciar uno nuevo.</>
+                                <>Hay un pago de plan en proceso. Puedes ver el estado o iniciar uno nuevo.</>
                             ) : chosenPlan ? (
                                 <>
                                     Al registrarte elegiste el plan{" "}
@@ -529,7 +529,7 @@ export default function Onboarding() {
                                     para activarlo.
                                 </>
                             ) : (
-                                <>Elegí un plan y la forma de pago para activar tu cuenta.</>
+                                <>Elige un plan y la forma de pago para activar tu cuenta.</>
                             )}
                         </CardDescription>
                     </CardHeader>
@@ -540,7 +540,7 @@ export default function Onboarding() {
                                 data-testid="onboarding-pending-payment"
                             >
                                 <p className="text-sm font-medium text-amber-950">
-                                    Tenés un pago de{" "}
+                                    Tienes un pago de{" "}
                                     {pendingIntent.plan_name || pendingIntent.plan_code} en
                                     proceso.
                                 </p>

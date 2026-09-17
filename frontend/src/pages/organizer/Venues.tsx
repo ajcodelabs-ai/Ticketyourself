@@ -95,7 +95,7 @@ export default function Venues() {
 
     const canCreate = maxV === -1 || activeCount < maxV;
     const limitReason = !canCreate
-        ? `Llegaste al límite de ${maxV} escenario(s) de tu plan. Archivá uno para crear otro.`
+        ? `Llegaste al límite de ${maxV} escenario(s) de tu plan. Archiva uno para crear otro.`
         : null;
 
     const editorUrl = (venueId, extraParams = {}) => {
@@ -133,7 +133,7 @@ export default function Venues() {
 
     const promptTemplateName = (tpl) => {
         if (!canCreate) {
-            toast.error(`Tu plan permite hasta ${maxV} escenario(s). Archivá uno para usar una plantilla.`);
+            toast.error(`Tu plan permite hasta ${maxV} escenario(s). Archiva uno para usar una plantilla.`);
             return;
         }
         setPendingTemplate(tpl);
@@ -178,7 +178,7 @@ export default function Venues() {
     const handleUseTemplate = async () => {
         if (!pendingTemplate || !newName.trim()) return;
         if (!canCreate) {
-            toast.error(`Tu plan permite hasta ${maxV} escenario(s). Archivá uno para usar una plantilla.`);
+            toast.error(`Tu plan permite hasta ${maxV} escenario(s). Archiva uno para usar una plantilla.`);
             return;
         }
         setUsingTemplate(pendingTemplate.id);
@@ -225,7 +225,7 @@ export default function Venues() {
 
             {!canCreate && (
                 <PlanGateHint feature="max_venues">
-                    Llegaste al límite de {maxV} escenario(s) de tu plan. Archivá uno o mejorá el plan para crear más.
+                    Llegaste al límite de {maxV} escenario(s) de tu plan. Archiva uno o mejora el plan para crear más.
                 </PlanGateHint>
             )}
 
@@ -233,8 +233,8 @@ export default function Venues() {
                 <div className="rounded-xl border bg-card p-4 flex items-start gap-3 text-sm">
                     <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
                     <p className="text-muted-foreground">
-                        Estás creando un escenario para tu evento. Elegí una plantilla o empezá en blanco,
-                        diseñá el mapa y <strong className="text-foreground">publicá</strong> —
+                        Estás creando un escenario para tu evento. Elige una plantilla o empieza en blanco,
+                        diseña el mapa y <strong className="text-foreground">publica</strong> —
                         te llevamos de vuelta al evento.
                     </p>
                 </div>
@@ -248,7 +248,7 @@ export default function Venues() {
                             1. Plantillas de la plataforma
                         </h2>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            Empezá con un layout prediseñado y personalizalo.
+                            Empieza con un layout prediseñado y personalizalo.
                         </p>
                     </div>
                     {!canCreate && (
@@ -310,7 +310,7 @@ export default function Venues() {
                 <div>
                     <h2 className="text-sm font-medium">2. Tus escenarios</h2>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        Abrí el diseñador para editar la forma del mapa.
+                        Abre el diseñador para editar la forma del mapa.
                     </p>
                 </div>
 
@@ -356,7 +356,7 @@ export default function Venues() {
                         <MapPin className="mx-auto h-10 w-10 text-muted-foreground/40" />
                         <p className="text-sm text-muted-foreground max-w-sm mx-auto">
                             {items.length === 0
-                                ? "Todavía no tenés escenarios. Usá una plantilla o creá uno nuevo para vincularlo a un evento."
+                                ? "Todavía no tienes escenarios. Usa una plantilla o crea uno nuevo para vincularlo a un evento."
                                 : "Sin escenarios que coincidan con los filtros."}
                         </p>
                         {items.length === 0 && (
@@ -483,7 +483,7 @@ export default function Venues() {
                                 <strong className="text-foreground">
                                     {pendingTemplate?.name}
                                 </strong>
-                                . Elegí un nombre propio para tu escenario (la plantilla de la
+                                . Elige un nombre propio para tu escenario (la plantilla de la
                                 plataforma no se modifica).
                             </p>
                             <div className="space-y-1.5">
@@ -524,7 +524,7 @@ export default function Venues() {
                     ) : (
                         <div className="space-y-4">
                             <p className="text-xs text-muted-foreground">
-                                Canvas vacío para diseñar a mano. Ideal si ya conocés el editor.
+                                Canvas vacío para diseñar a mano. Ideal si ya conoces el editor.
                             </p>
                             <div className="rounded-xl border bg-card p-4 space-y-3">
                                 <div className="space-y-1.5">

@@ -43,7 +43,7 @@ export function collectEventWizardIssues({
         push(
             "fechas",
             "starts_at",
-            "Definí la fecha y hora de inicio en Fechas y ventas.",
+            "Define la fecha y hora de inicio en Fechas y ventas.",
         );
     }
 
@@ -56,8 +56,8 @@ export function collectEventWizardIssues({
             "fechas",
             "duration",
             form?.duration_preset === "custom"
-                ? "Indicá la duración personalizada en minutos (mayor a 0)."
-                : "Elegí cuánto dura el evento en Fechas y ventas.",
+                ? "Indica la duración personalizada en minutos (mayor a 0)."
+                : "Elige cuánto dura el evento en Fechas y ventas.",
         );
     }
 
@@ -65,14 +65,14 @@ export function collectEventWizardIssues({
         push(
             "fechas",
             "sales_start_custom",
-            "Elegiste inicio de venta personalizado: completá esa fecha.",
+            "Elegiste inicio de venta personalizado: completa esa fecha.",
         );
     }
     if (form?.sales_window_preset_end === "custom" && !form?.sales_end_custom) {
         push(
             "fechas",
             "sales_end_custom",
-            "Elegiste fin de venta personalizado: completá esa fecha.",
+            "Elegiste fin de venta personalizado: completa esa fecha.",
         );
     }
 
@@ -81,7 +81,7 @@ export function collectEventWizardIssues({
         push(
             "general",
             "organizer_pending",
-            "Tu cuenta todavía está en revisión por TYS. Podés guardar el borrador, pero no publicar hasta la aprobación.",
+            "Tu cuenta todavía está en revisión por TYS. Puedes guardar el borrador, pero no publicar hasta la aprobación.",
         );
     }
 
@@ -90,7 +90,7 @@ export function collectEventWizardIssues({
         push(
             "media",
             "poster",
-            "Subí la imagen principal en Media (obligatoria para publicar).",
+            "Sube la imagen principal en Media (obligatoria para publicar).",
         );
     }
 
@@ -105,13 +105,13 @@ export function collectEventWizardIssues({
         push(
             "localidades",
             "venue",
-            "Seleccioná un escenario (mapa) publicado en Localidades → 4.1.",
+            "Selecciona un escenario (mapa) publicado en Localidades → 4.1.",
         );
     } else if (pendingVenueId && !currentEvent?.venue_id) {
         push(
             "localidades",
             "locality_pricing_pending",
-            "Guardá el borrador para vincular el mapa y después creá las localidades en 4.2.",
+            "Guarda el borrador para vincular el mapa y después crea las localidades en 4.2.",
         );
     } else if (
         planLayoutSeatingConflict(
@@ -122,13 +122,13 @@ export function collectEventWizardIssues({
         push(
             "localidades",
             "plan_numbered_blocked",
-            "Este escenario solo tiene asientos numerados y tu plan no incluye butacas. Elegí un mapa con zonas de aforo o mejorá el plan.",
+            "Este escenario solo tiene asientos numerados y tu plan no incluye butacas. Elige un mapa con zonas de aforo o mejora el plan.",
         );
     } else if (!localityPricing.length) {
         push(
             "localidades",
             "locality_pricing",
-            "Creá al menos una localidad con precio en Localidades → 4.2.",
+            "Crea al menos una localidad con precio en Localidades → 4.2.",
         );
     } else {
         const invalid = localityPricing.filter(
@@ -138,7 +138,7 @@ export function collectEventWizardIssues({
             push(
                 "localidades",
                 "locality_price_invalid",
-                "Hay localidades sin precio válido. Revisá la tabla de precios.",
+                "Hay localidades sin precio válido. Revisa la tabla de precios.",
             );
         }
         const hasPaidLocality = localityPricing.some(
@@ -148,7 +148,7 @@ export function collectEventWizardIssues({
             push(
                 "general",
                 "pricing_type_mismatch",
-                "Tenés localidades con precio pero el tipo de recaudación es Gratuito. Cambialo a Pagado en General.",
+                "Tienes localidades con precio pero el tipo de recaudación es Gratuito. Cambialo a Pagado en General.",
             );
         }
     }
@@ -161,7 +161,7 @@ export function collectEventWizardIssues({
             push(
                 "payments",
                 "payment_methods",
-                "Activá al menos una forma de pago en Formas de pago.",
+                "Activa al menos una forma de pago en Formas de pago.",
             );
         }
     }

@@ -196,7 +196,7 @@ export default function BlockListPanel({
 
             {blocks.length === 0 && (
                 <p className="text-sm text-muted-foreground text-center py-4">
-                    Añadí bloques para construir tu página.
+                    Añade bloques para construir tu página.
                 </p>
             )}
         </div>

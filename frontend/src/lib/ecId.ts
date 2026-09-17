@@ -136,7 +136,7 @@ export function buyerDocumentError(documentType: string, documentId: string): st
         }
         if (!isValidEcRuc(documentId)) {
             return (
-                "RUC inválido. Revisá el dígito verificador y el establecimiento. " +
+                "RUC inválido. Revisa el dígito verificador y el establecimiento. " +
                 "Persona natural: cédula ecuatoriana válida + 001."
             );
         }
@@ -156,7 +156,7 @@ export function lawDocumentError(
     const doc = resolveLawDocumentId(lawDocumentId, documentType, documentId);
     if (cat === "senior") {
         if (!doc) {
-            return "Para el descuento de tercera edad indicá una cédula ecuatoriana en el documento de verificación.";
+            return "Para el descuento de tercera edad indica una cédula ecuatoriana en el documento de verificación.";
         }
         if (!isValidEcCedula(doc)) {
             return (
@@ -167,7 +167,7 @@ export function lawDocumentError(
         return null;
     }
     if (!doc) {
-        return "Para el descuento por discapacidad indicá el número de carné CONADIS o cédula.";
+        return "Para el descuento por discapacidad indica el número de carné CONADIS o cédula.";
     }
     if (isCedulaDocumentType(documentType) && digitsOnly(doc).length === 10 && !isValidEcCedula(doc)) {
         return "El documento de verificación no es una cédula ecuatoriana válida.";

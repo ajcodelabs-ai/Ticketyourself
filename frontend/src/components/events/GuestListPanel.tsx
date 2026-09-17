@@ -53,7 +53,7 @@ export default function GuestListPanel({ eventId, embedded = false }: Props) {
     const handleAdd = async () => {
         if (!eventId) return;
         if (!form.email.trim() && !form.cedula.trim()) {
-            toast.error("Indicá email o cédula");
+            toast.error("Indica email o cédula");
             return;
         }
         setSaving(true);
@@ -111,7 +111,7 @@ export default function GuestListPanel({ eventId, embedded = false }: Props) {
             <div className="flex items-center gap-2 text-muted-foreground p-4 rounded-xl border border-dashed">
                 <AlertCircle className="h-4 w-4 shrink-0" />
                 <span className="text-sm">
-                    Guardá primero la información general del evento para gestionar la lista de invitados.
+                    Guarda primero la información general del evento para gestionar la lista de invitados.
                 </span>
             </div>
         );

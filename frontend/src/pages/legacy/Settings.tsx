@@ -62,7 +62,7 @@ export default function Settings() {
             <Card className="border-border/70 tys-soft-shadow">
                 <CardHeader>
                     <CardTitle className="text-lg">Datos del organizador</CardTitle>
-                    <CardDescription>Actualizá lo que necesites.</CardDescription>
+                    <CardDescription>Actualiza lo que necesites.</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={save} className="space-y-4">

@@ -129,7 +129,7 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
                         <MapPin className="h-4 w-4" /> Escenario con asientos numerados
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                        Si vinculás un escenario, el evento usa el mapa interactivo y se ignora el precio base.
+                        Si vinculas un escenario, el evento usa el mapa interactivo y se ignora el precio base.
                     </p>
                 </div>
                 {currentVenue ? (
@@ -213,12 +213,12 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
                             <Label className="text-xs">Escenario publicado</Label>
                             <Select value={pickerVenueId} onValueChange={handleSelectVenue}>
                                 <SelectTrigger data-testid="venue-picker-select">
-                                    <SelectValue placeholder="Elegí un escenario" />
+                                    <SelectValue placeholder="Elige un escenario" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {venues.length === 0 && (
                                         <SelectItem value="__none" disabled>
-                                            No tenés escenarios publicados. Andá a /app/venues primero.
+                                            No tienes escenarios publicados. Anda a /app/venues primero.
                                         </SelectItem>
                                     )}
                                     {venues.map((v) => (
@@ -230,7 +230,7 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
                             </Select>
                             {draftCount > 0 && (
                                 <p className="text-[11px] text-amber-700">
-                                    Tenés {draftCount} escenario(s) en borrador que no aparecen acá
+                                    Tienes {draftCount} escenario(s) en borrador que no aparecen acá
                                     — publicalos en <span className="font-medium">/app/venues</span> para
                                     poder elegirlos.
                                 </p>
@@ -239,7 +239,7 @@ export default function EventVenueLink({ event, onUpdated, disabled }) {
                         {pickedVenue && (
                             <>
                                 <p className="text-xs text-muted-foreground">
-                                    Definí el precio por cada localidad activa del escenario:
+                                    Define el precio por cada localidad activa del escenario:
                                 </p>
                                 <div className="rounded-md border divide-y">
                                     {(pickedVenue.localities || [])

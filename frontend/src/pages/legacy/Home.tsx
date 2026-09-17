@@ -44,7 +44,7 @@ export default function Home() {
                             Estamos validando dos integraciones críticas antes
                             de invertir en el resto: <b>Stripe end-to-end</b> y
                             la <b>resolución de tenant</b> por subdominio /
-                            path. Usá los botones para probar.
+                            path. Usa los botones para probar.
                         </p>
 
                         <div className="flex flex-wrap gap-3 pt-2">

@@ -91,15 +91,15 @@ const MODE_LABELS = {
         addButton: "Agregar función",
         panelTitle: "Funciones (multifunción)",
         panelSubtitle:
-            "Agregá las repeticiones del mismo evento en distintas fechas u horarios. Todas ocurren en el escenario que elijas para el evento (lugar y aforo se heredan).",
+            "Agrega las repeticiones del mismo evento en distintas fechas u horarios. Todas ocurren en el escenario que elijas para el evento (lugar y aforo se heredan).",
         emptyTitle: "Aún no hay funciones.",
-        emptyHint: "Agregá al menos una función para un evento multifunción.",
+        emptyHint: "Agrega al menos una función para un evento multifunción.",
         namePlaceholder: "Función 1 — Sábado 14 de junio",
         descPlaceholder: "Detalles adicionales de esta función…",
         venueSectionTitle: "Lugar de esta función",
         capacityLabel: "Aforo de esta función",
         capacityHelp:
-            "Si lo dejás vacío, esta función comparte el aforo general del evento. Si pones un número, esta función tiene su propio cupo independiente de las demás.",
+            "Si lo dejas vacío, esta función comparte el aforo general del evento. Si pones un número, esta función tiene su propio cupo independiente de las demás.",
         overlapHelp:
             "Todas las funciones ocurren en el mismo escenario. Si dos horarios se superponen, no vas a poder guardar.",
         dialogCreate: "Nueva función",
@@ -120,13 +120,13 @@ const MODE_LABELS = {
         panelSubtitle:
             "Agrega experiencias independientes (sala VIP, cena, meet & greet). Cada una puede tener su propio escenario, aforo y precios — y puede coincidir en horario con el evento principal u otros subeventos.",
         emptyTitle: "Aún no hay subeventos.",
-        emptyHint: "Agregá uno si tu evento incluye experiencias que se compran por separado.",
+        emptyHint: "Agrega uno si tu evento incluye experiencias que se compran por separado.",
         namePlaceholder: "Cena VIP — Sábado 14 de junio",
         descPlaceholder: "Detalles adicionales de este subevento…",
         venueSectionTitle: "Lugar de este subevento",
         capacityLabel: "Aforo de este subevento",
         capacityHelp:
-            "Si lo dejás vacío, este subevento comparte el aforo general del evento. Si pones un número, tiene su propio cupo independiente de los demás.",
+            "Si lo dejas vacío, este subevento comparte el aforo general del evento. Si pones un número, tiene su propio cupo independiente de los demás.",
         overlapHelp:
             "Los subeventos son experiencias independientes: pueden coincidir en horario con el evento principal u otros subeventos sin problema.",
         dialogCreate: "Nuevo subevento",
@@ -329,8 +329,8 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
         if (conflict) {
             toast.error(
                 rowKind === "function"
-                    ? `El horario se superpone con "${conflict.name}". Todas las funciones ocurren en el mismo escenario — ajustá el horario.`
-                    : `El horario se superpone con "${conflict.name}" en el mismo lugar. Ajustá el horario o cambiá el lugar.`,
+                    ? `El horario se superpone con "${conflict.name}". Todas las funciones ocurren en el mismo escenario — ajusta el horario.`
+                    : `El horario se superpone con "${conflict.name}" en el mismo lugar. Ajusta el horario o cambia el lugar.`,
             );
             return;
         }
@@ -590,8 +590,8 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                                     Precio y aforo por tipo de ticket
                                 </p>
                                 <p className="text-xs text-muted-foreground -mt-1">
-                                    Dejá vacío para heredar el precio/aforo general del tipo de
-                                    ticket. Desactivá un tipo si no se vende en esta función.
+                                    Deja vacío para heredar el precio/aforo general del tipo de
+                                    ticket. Desactiva un tipo si no se vende en esta función.
                                 </p>
                                 <div className="divide-y">
                                     {ticketTypes.map((tt) => {
@@ -654,7 +654,7 @@ export default function EventFunctionsPanel({ eventId, localities = [], mode = "
                                     Precio por localidad
                                 </p>
                                 <p className="text-xs text-muted-foreground -mt-1">
-                                    Dejá vacío para usar el precio que configuraste a nivel evento
+                                    Deja vacío para usar el precio que configuraste a nivel evento
                                     para esa localidad.
                                 </p>
                                 <div className="divide-y">

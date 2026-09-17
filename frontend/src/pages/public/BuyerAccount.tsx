@@ -79,7 +79,7 @@ export default function BuyerAccount() {
             <div className="max-w-lg mx-auto px-5 py-16 text-center" data-testid="cuenta-error">
                 <Frown className="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
                 <h1 className="text-xl font-semibold mb-2">No pudimos cargar tus entradas</h1>
-                <p className="text-muted-foreground text-sm">Probá de nuevo en un momento.</p>
+                <p className="text-muted-foreground text-sm">Prueba de nuevo en un momento.</p>
             </div>
         );
     }
@@ -108,7 +108,7 @@ export default function BuyerAccount() {
                     )}
                 </TabsList>
                 <TabsContent value="upcoming" className="mt-6">
-                    <OrderList items={upcoming} empty="Todavía no tenés entradas para eventos próximos." />
+                    <OrderList items={upcoming} empty="Todavía no tienes entradas para eventos próximos." />
                 </TabsContent>
                 <TabsContent value="past" className="mt-6">
                     <OrderList items={past} empty="No hay eventos anteriores." />
@@ -304,7 +304,7 @@ function InvoiceBlock({ invoice, order, organizer }) {
             {!invoice.ride_url && invoice.estado !== "ERROR" && (
                 <p className="text-xs text-muted-foreground">
                     El PDF de la factura aparece cuando el SRI autoriza el comprobante.
-                    Si no está, abrí el detalle y recargá en un momento.
+                    Si no está, abre el detalle y recarga en un momento.
                 </p>
             )}
             <div className="flex flex-wrap gap-2">
