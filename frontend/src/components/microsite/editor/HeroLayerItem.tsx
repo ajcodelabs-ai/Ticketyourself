@@ -10,6 +10,7 @@ import {
     layerInlineStyle,
     layerTypographyClasses,
     normalizeLayer,
+    rowGeometryFromGrid,
     snapColSpan,
     snapColStart,
     snapRow,
@@ -98,7 +99,11 @@ export default function HeroLayerItem({
                 setPreview({
                     colStart: snapColStart(ev.clientX, rect, layer.colSpan),
                     colSpan: layer.colSpan,
-                    row: snapRow(ev.clientY, rect),
+                    // Read fresh, not just once at gesture start — rows are
+                    // `auto`-sized, so moving the dragged layer's own preview
+                    // into an emptier/fuller row changes that row's real
+                    // height mid-drag.
+                    row: snapRow(ev.clientY, rect, rowGeometryFromGrid(grid)?.bounds),
                 });
             } else {
                 setPreview({
@@ -117,7 +122,7 @@ export default function HeroLayerItem({
                     normalizeLayer({
                         ...layer,
                         colStart: snapColStart(ev.clientX, rect, layer.colSpan),
-                        row: snapRow(ev.clientY, rect),
+                        row: snapRow(ev.clientY, rect, rowGeometryFromGrid(grid)?.bounds),
                     }),
                 );
             } else {

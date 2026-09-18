@@ -1,7 +1,7 @@
 /**
  * Individual microsite block renderers — shared by public view and editor preview.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
     Instagram,
@@ -36,7 +36,9 @@ import { patchHeroLayer } from "@/lib/heroLayerActions";
 import {
     normalizeLayer,
     resolveHeroLayers,
+    rowGeometryFromGrid,
     type HeroLayer,
+    type RowGeometry,
 } from "@/lib/micrositeLayers";
 import { cn } from "@/lib/utils";
 
@@ -121,13 +123,72 @@ export function HeroBlockView({
         editorCtx?.onUpdateBlockProps?.(block.id, { layers: next });
     };
 
+    // The grid is always in normal flow (never absolutely positioned) so it
+    // sizes the section itself, in both grid-edit mode and the public page —
+    // one layout, no separate invisible copy needed to predict its height.
+    // Rows use `auto` tracks, so a long title/subtitle grows its own row
+    // instead of overlapping the next one; a banner tall enough to avoid
+    // crop-zooming a wide image on mobile would otherwise force long
+    // titles/subtitles into a too-short fixed row and they'd overlap.
+    // GridOverlay's line drawing and the pointer-based row/col
+    // snapping in HeroLayerItem read the grid's *resolved* row boundaries
+    // (rowGeometryFromGrid) rather than assuming equal division, so both
+    // stay correct however the rows actually end up sized.
+    const interactive = editorMode && showGrid;
+    const gridRef = useRef<HTMLDivElement>(null);
+    const [rowGeometry, setRowGeometry] = useState<RowGeometry | undefined>(undefined);
+
+    useLayoutEffect(() => {
+        if (!interactive || !gridRef.current) {
+            setRowGeometry(undefined);
+            return undefined;
+        }
+        const el = gridRef.current;
+        const sync = () => {
+            const next = rowGeometryFromGrid(el) ?? undefined;
+            setRowGeometry((prev) =>
+                prev && next && prev.bounds.every((b, i) => b === next.bounds[i]) ? prev : next,
+            );
+        };
+        sync();
+        const observers: { disconnect: () => void }[] = [];
+        if (typeof ResizeObserver !== "undefined") {
+            const ro = new ResizeObserver(sync);
+            ro.observe(el);
+            observers.push(ro);
+        }
+        // Editing text, or dropping a layer into a different row, can change
+        // which row needs more room without changing the grid's own outer box
+        // size (e.g. it's still shorter than the min-height floor either
+        // way) — ResizeObserver alone would miss that, so also watch the DOM
+        // for text edits (childList/characterData) and row reassignment
+        // (the `style` attribute HeroLayerItem sets gridRow/gridColumn on).
+        if (typeof MutationObserver !== "undefined") {
+            const mo = new MutationObserver(sync);
+            mo.observe(el, {
+                childList: true,
+                subtree: true,
+                characterData: true,
+                attributes: true,
+                attributeFilter: ["style"],
+            });
+            observers.push(mo);
+        }
+        return () => observers.forEach((o) => o.disconnect());
+    }, [interactive]);
+
+    // Same floor for grid mode and the public page — the section grows past
+    // it to fit content either way, so shrinking it at narrow widths doesn't
+    // risk clipping anything, and previewing with grid mode on matches the
+    // real mobile height.
+    const minHeightClass = huge
+        ? "min-h-[460px] sm:min-h-[520px] md:min-h-[640px]"
+        : "min-h-[360px] sm:min-h-[420px] md:min-h-[520px]";
+
     return (
         <section
             id={blockId ? `block-${blockId}` : undefined}
-            className={cn(
-                "relative overflow-hidden",
-                huge ? "min-h-[520px] md:min-h-[640px]" : "min-h-[420px] md:min-h-[520px]",
-            )}
+            className={cn("relative overflow-hidden flex flex-col", minHeightClass)}
             style={{
                 background: banner
                     ? `linear-gradient(rgba(15,15,40,.55), rgba(15,15,40,.55)), url(${banner}) center/cover`
@@ -136,7 +197,7 @@ export function HeroBlockView({
             }}
             data-testid="ms-hero"
         >
-            {editorMode && showGrid && <GridOverlay />}
+            {interactive && <GridOverlay rowGeometry={rowGeometry} />}
 
             {logo && (
                 <img
@@ -148,11 +209,16 @@ export function HeroBlockView({
             )}
 
             <div
+                ref={gridRef}
                 data-hero-grid
                 className={cn(
-                    "absolute inset-0 z-[6]",
-                    "max-w-6xl mx-auto left-0 right-0 px-6 sm:px-10",
-                    "grid grid-cols-12 grid-rows-6 gap-x-2 gap-y-1",
+                    "relative w-full flex-1 z-[6] max-w-6xl mx-auto px-6 sm:px-10 grid grid-cols-12 gap-x-2 gap-y-1 py-10 md:py-14 content-center",
+                    // Grid mode gives empty rows a floor so they stay droppable
+                    // targets — plain `auto` rows collapse to ~0px, leaving
+                    // only the ~4px gap band to aim a drag at. The public page
+                    // never drags, so it stays tight instead of reserving
+                    // blank space for rows nothing uses.
+                    interactive ? "grid-rows-[repeat(6,minmax(24px,auto))]" : "grid-rows-[repeat(6,auto)]",
                 )}
             >
                 {allLayers.map((layer) => (

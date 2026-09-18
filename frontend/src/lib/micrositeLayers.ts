@@ -104,8 +104,54 @@ export function snapColStart(pointerX: number, rect: DOMRect, colSpan: number): 
     return Math.max(1, Math.min(GRID_COLS - colSpan + 1, raw));
 }
 
-export function snapRow(pointerY: number, rect: DOMRect): number {
+export interface RowGeometry {
+    /** Cumulative row boundaries (px, length GRID_ROWS+1, gaps and any
+     * centering offset included) — where snapRow looks up which row a
+     * pointer position falls into. */
+    bounds: number[];
+    /** Per-track heights (px, length GRID_ROWS, gaps *not* included — a
+     * `${h}px` CSS list of these is what actually reproduces the grid's own
+     * `grid-template-rows`). */
+    heights: number[];
+}
+
+/** Reads a grid's *resolved* `grid-template-rows` — rows aren't necessarily
+ * equal height when they use `auto`/`minmax(min-content,…)` tracks to fit
+ * long hero text. Returns null when the browser hasn't resolved
+ * real pixel tracks yet (e.g. not laid out), so callers can fall back to
+ * equal division. */
+export function rowGeometryFromGrid(gridEl: Element): RowGeometry | null {
+    const cs = getComputedStyle(gridEl);
+    const heights = cs.gridTemplateRows
+        .split(/\s+/)
+        .map((v) => parseFloat(v))
+        .filter((v) => !Number.isNaN(v));
+    if (heights.length !== GRID_ROWS) return null;
+    const gap = parseFloat(cs.rowGap) || 0;
+    const bounds = [0];
+    heights.forEach((h, i) => {
+        const start = bounds[bounds.length - 1] + (i > 0 ? gap : 0);
+        bounds.push(start + h);
+    });
+    // `align-content: center` (used so a short hero's rows sit centered in a
+    // taller min-height box) leaves leftover space above row 1 whenever the
+    // tracks don't fill the element's full box — shift every boundary down by
+    // half that leftover so snapping still lines up with the real, rendered
+    // row positions instead of assuming row 1 starts at the element's edge.
+    if (cs.alignContent === "center") {
+        const leftover = gridEl.getBoundingClientRect().height - bounds[bounds.length - 1];
+        const offset = leftover > 0 ? leftover / 2 : 0;
+        return { bounds: bounds.map((b) => b + offset), heights };
+    }
+    return { bounds, heights };
+}
+
+export function snapRow(pointerY: number, rect: DOMRect, rowBounds?: number[] | null): number {
     const rel = pointerY - rect.top;
+    if (rowBounds) {
+        const rowOf = rowBounds.findIndex((b, i) => i > 0 && rel < b);
+        return rowOf === -1 ? GRID_ROWS : Math.max(1, Math.min(GRID_ROWS, rowOf));
+    }
     const rowHeight = rect.height / GRID_ROWS;
     const raw = Math.floor(rel / rowHeight) + 1;
     return Math.max(1, Math.min(GRID_ROWS, raw));
