@@ -19,7 +19,11 @@ function App() {
                             <AppRoutes />
                         </AuthProvider>
                     </TenantProvider>
-                    <Toaster richColors position="bottom-right" />
+                    {/* top-right, not bottom: several pages (event wizard, venue
+                        editor) have a sticky action bar pinned to the bottom of
+                        the viewport that a bottom-right toast would sit on top of
+                        and cover ("Guardar"/"Siguiente" became unclickable). */}
+                    <Toaster richColors position="top-right" />
                 </BrowserRouter>
             </QueryClientProvider>
         </div>

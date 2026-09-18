@@ -350,7 +350,7 @@ TicketDesignField = Literal[
 
 class TicketDesignElement(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    type: Literal["logo", "qr", "text"]
+    type: Literal["logo", "qr", "text", "shape"]
     x: float = Field(ge=0, le=1)
     y: float = Field(ge=0, le=1)
     width: float = Field(gt=0, le=1)
@@ -362,8 +362,14 @@ class TicketDesignElement(BaseModel):
     field: Optional[TicketDesignField] = None
     text: Optional[str] = Field(default=None, max_length=200)  # field="custom"
     font_size: Optional[int] = Field(default=14, ge=6, le=72)
+    # type="text": fill color. type="shape": fill color (None = outline-only).
     color: Optional[str] = Field(default="#1f1f33", max_length=7)
     align: Optional[Literal["left", "center", "right"]] = "left"
+    # type="shape": outline (color blocks, accent bars, dividers, cards).
+    # A dashed shape reads as a perforation/divider line.
+    stroke: Optional[str] = Field(default=None, max_length=7)
+    stroke_width: Optional[float] = Field(default=1, gt=0, le=20)
+    dash: bool = False
 
     @model_validator(mode="after")
     def _check_shape(self):
@@ -462,6 +468,20 @@ class EventBase(BaseModel):
         starts = info.data.get("starts_at")
         if starts and v and v <= starts:
             raise ValueError("ends_at must be after starts_at")
+        return v
+
+    @field_validator("sales_end")
+    @classmethod
+    def _sales_end_not_past_event_end(cls, v: Optional[datetime], info):
+        # None means "closes at starts_at" (see computeSalesEnd in
+        # eventPresets.ts) — only an explicit sales_end can leave tickets on
+        # sale after the event is already over.
+        ends = info.data.get("ends_at")
+        if ends and v and v > ends:
+            raise ValueError(
+                "sales_end no puede ser posterior a ends_at (la venta no "
+                "puede seguir abierta después de que termine el evento)"
+            )
         return v
 
     @field_validator("keywords")
@@ -1530,6 +1550,18 @@ async def update_my_event(
         if new_starts and new_ends and new_ends <= new_starts:
             raise HTTPException(
                 status_code=422, detail="ends_at must be after starts_at"
+            )
+        # sales_end=None means "closes at starts_at" (see computeSalesEnd in
+        # eventPresets.ts) — only an explicit sales_end can be past ends_at,
+        # which would leave tickets on sale after the event is already over.
+        new_sales_end = diff.get("sales_end", row.sales_end)
+        if new_sales_end and new_ends and new_sales_end > new_ends:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "La venta no puede seguir abierta después de que "
+                    "termine el evento."
+                ),
             )
 
         for k, v in diff.items():

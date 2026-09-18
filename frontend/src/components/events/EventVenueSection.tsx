@@ -1,11 +1,13 @@
 /**
- * EventVenueSection — pasos 4.1 Escenario y 4.2 Localidades.
+ * EventVenueSection — pasos 4.1 Escenario, 4.2 Localidades y 4.3 Asignar.
  *
  *  4.1 Selecciona el escenario (mapa = solo la forma)
- *  4.2 Crea localidades (tipo numerada o no numerada + asignación al mapa)
+ *  4.2 Crea localidades (tipo numerada o no numerada, nombre, precio)
+ *  4.3 Asigna esas localidades a elementos del mapa (asientos, mesas, zonas)
  *
  * Nombre, color, tipo y precios viven en el evento (`venue_layout.localities` +
- * `locality_pricing`). El venue maestro solo aporta canvas + elementos.
+ * `locality_pricing`). El venue maestro solo aporta canvas + elementos —
+ * agregar filas/mesas/zonas nuevas se hace ahí, no en el mapa del evento.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -43,11 +45,12 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip";
 import api, { formatApiError } from "@/lib/api";
-import { venuesApi, eventVenueLayoutApi, computeCapacity, unnumberedCapacityByLocality, newId } from "@/lib/venues";
+import { venuesApi, eventVenueLayoutApi, computeCapacity, unnumberedCapacityByLocality, elementAcceptsLocality, newId } from "@/lib/venues";
 import EditorCanvas from "@/components/venues/EditorCanvas";
+import AssignLocalityPanel from "@/components/venues/AssignLocalityPanel";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePlanFeatures } from "@/hooks/queries/usePlanFeatures";
-import { ATTENDANCE_FORMATS, LOCALITY_SEATING_TYPES, inferAttendanceFormatFromLocalities, normalizeLocalitySeatingType, planLayoutSeatingConflict, PLAN_SEATING_COPY } from "@/lib/attendanceFormat";
+import { ATTENDANCE_FORMATS, LOCALITY_SEATING_TYPES, elementMatchesSeatingType, inferAttendanceFormatFromLocalities, normalizeLocalitySeatingType, planLayoutSeatingConflict, PLAN_SEATING_COPY } from "@/lib/attendanceFormat";
 import LocalityFormDialog from "@/components/events/LocalityFormDialog";
 import { PlanGateHint } from "@/components/plans/PlanGate";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -104,11 +107,6 @@ function venueCreateHref(eventId: string | null | undefined) {
         ? encodeURIComponent(`/app/eventos/${eventId}/editar?tab=localidades`)
         : encodeURIComponent("/app/eventos/nuevo?tab=localidades");
     return `/app/venues?create=1&return_to=${returnTo}`;
-}
-
-function eventMapHref(eventId: string) {
-    const returnTo = encodeURIComponent(`/app/eventos/${eventId}/editar?tab=localidades`);
-    return `/app/eventos/${eventId}/mapa?return_to=${returnTo}`;
 }
 
 function layoutAsLinkedVenue(event, tenantSlug) {
@@ -188,7 +186,16 @@ export default function EventVenueSection({
     pendingVenueId = null,
     onPendingVenueChange = undefined,
     panel = "all",
+    // Live, not-yet-saved value of form.attendance_format from the wizard —
+    // `event.access_params.attendance_format` only reflects the last SAVE,
+    // so using that instead made the selector below look unresponsive: it
+    // called onFormatChange correctly on click, but kept rendering the old
+    // choice as "selected" until the next persist() round-trip.
+    plannedAttendanceFormat = null,
     onFormatChange,
+    // Jumps the wizard to the "4.3 Asignar" substep — assigning localities
+    // to map elements lives there now, not inline in this panel.
+    onGotoAssign = undefined,
 }: {
     event: any;
     disabled?: boolean;
@@ -197,8 +204,10 @@ export default function EventVenueSection({
     onBeforeVenueCreate?: () => Promise<unknown> | void;
     pendingVenueId?: string | null;
     onPendingVenueChange?: (id: string | null) => void;
-    panel?: "all" | "escenario" | "localidades";
+    panel?: "all" | "escenario" | "localidades" | "asignar";
+    plannedAttendanceFormat?: string | null;
     onFormatChange?: (format: string) => void;
+    onGotoAssign?: () => void;
 }) {
     const { organizer } = useAuth();
     const { data: planFeatures } = usePlanFeatures();
@@ -227,13 +236,13 @@ export default function EventVenueSection({
     const [venues, setVenues] = useState([]);
     const [linkedVenue, setLinkedVenue] = useState(null);
     const [loadingLink, setLoadingLink] = useState(false);
-    const [highlightLocality, setHighlightLocality] = useState(null);
-    const [mapOpen, setMapOpen] = useState(false);
     const [pricing, setPricing] = useState<Record<string, LocalityPricingEntry>>({});
     const [formOpen, setFormOpen] = useState(false);
     const [editingLocality, setEditingLocality] = useState(null);
     const [savingForm, setSavingForm] = useState(false);
     const [feeQuotes, setFeeQuotes] = useState({});
+    const [assignSelection, setAssignSelection] = useState<string[]>([]);
+    const [savingAssign, setSavingAssign] = useState(false);
     const initializedRef = useRef(false);
     const pricingType = event?.pricing_type || "paid";
     const feeBearer = event?.platform_fee_bearer === "organizer" ? "organizer" : "buyer";
@@ -561,23 +570,32 @@ export default function EventVenueSection({
         try {
             const locId = values.id || editingLocality?.id || newId();
             const isEdit = allLocalities.some((l) => l.id === locId);
-            const assigned = new Set(values.assigned_element_ids || []);
+            const newSeatingType = normalizeLocalitySeatingType(values.seating_type);
             const entry = {
                 id: locId,
                 name: values.name,
                 color: values.color,
                 description: values.description,
                 default_price_cents: values.price_cents,
-                seating_type: normalizeLocalitySeatingType(values.seating_type),
+                seating_type: newSeatingType,
             };
             const nextLocalities = isEdit
                 ? allLocalities.map((l) => (l.id === locId ? { ...l, ...entry } : l))
                 : [...allLocalities, entry];
-            const nextElements = (linkedVenue.elements || []).map((e) => {
-                if (assigned.has(e.id)) return { ...e, locality_id: locId };
-                if (e.locality_id === locId) return { ...e, locality_id: null };
-                return e;
-            });
+            // Creating a locality never touches map elements — assignment
+            // always happens afterward in "4.3 Asignar". Editing one can
+            // change its seating type though, which can make some of its
+            // existing assignments invalid (e.g. numbered -> unnumbered no
+            // longer matches an assigned seat row) — unassign only those.
+            let unassignedCount = 0;
+            const nextElements = isEdit
+                ? (linkedVenue.elements || []).map((e) => {
+                      if (e.locality_id !== locId) return e;
+                      if (elementMatchesSeatingType(e.kind, newSeatingType)) return e;
+                      unassignedCount += 1;
+                      return { ...e, locality_id: null };
+                  })
+                : linkedVenue.elements || [];
 
             await persistLayout(nextElements, nextLocalities);
 
@@ -607,7 +625,20 @@ export default function EventVenueSection({
             await syncGaTicketTypes(event.id, nextLocalities, nextPricing, nextElements);
             onFormatChange?.(inferAttendanceFormatFromLocalities(nextLocalities));
 
-            toast.success(isEdit ? "Localidad actualizada" : "Localidad creada y asignada");
+            if (isEdit) {
+                toast.success(
+                    unassignedCount > 0
+                        ? `Localidad actualizada — se desasignaron ${unassignedCount} elemento(s) que ya no coinciden con el tipo`
+                        : "Localidad actualizada",
+                );
+            } else {
+                toast.success("Localidad creada", {
+                    description: "Asígnala a asientos, mesas o zonas en \"4.3 Asignar\".",
+                    action: onGotoAssign
+                        ? { label: "4.3 Asignar", onClick: onGotoAssign }
+                        : undefined,
+                });
+            }
             setFormOpen(false);
             setEditingLocality(null);
         } catch (e) {
@@ -645,6 +676,109 @@ export default function EventVenueSection({
         }
     };
 
+    // ── 4.3 Asignar: map element <-> locality assignment ────────────────────
+    // Saves immediately per action (not batched), matching the reference
+    // app's assignment screen — persistLayout alone doesn't refresh
+    // `linkedVenue` (only persistLink's onUpdated round-trip does), so every
+    // handler below calls both.
+    const persistElementsChange = async (nextElements) => {
+        await persistLayout(nextElements, allLocalities);
+        await persistLink({
+            venue_id: linkedVenue.id,
+            locality_pricing: pricingPayload(pricing, allLocalities),
+            seat_holds_window_minutes: event?.seat_holds_window_minutes || 10,
+        });
+    };
+
+    const handleAssignSelect = (ids, { additive, replace }: { additive?: boolean; replace?: boolean } = {}) => {
+        setAssignSelection((prev) => {
+            if (replace || !additive) return ids;
+            const set = new Set(prev);
+            ids.forEach((id) => (set.has(id) ? set.delete(id) : set.add(id)));
+            return [...set];
+        });
+    };
+
+    const assignLocalityToSelection = async (locId) => {
+        const affected = elements.filter(
+            (e) => assignSelection.includes(e.id) && elementAcceptsLocality(e.kind),
+        );
+        if (!affected.length) {
+            toast.error("Selecciona elementos asignables (zonas, asientos, mesas).");
+            return;
+        }
+        setSavingAssign(true);
+        try {
+            const nextElements = elements.map((e) =>
+                assignSelection.includes(e.id) && elementAcceptsLocality(e.kind)
+                    ? { ...e, locality_id: locId }
+                    : e,
+            );
+            await persistElementsChange(nextElements);
+            toast.success(
+                `${affected.length} elemento(s) asignado(s) a "${localitiesById[locId]?.name || "localidad"}".`,
+            );
+        } catch (e) {
+            toast.error(e?.response?.data?.detail || "No se pudo asignar.");
+        } finally {
+            setSavingAssign(false);
+        }
+    };
+
+    const clearLocalityFromSelection = async () => {
+        const affected = elements.filter((e) => assignSelection.includes(e.id) && e.locality_id);
+        if (!affected.length) {
+            toast.error("Selecciona elementos con localidad asignada.");
+            return;
+        }
+        setSavingAssign(true);
+        try {
+            const nextElements = elements.map((e) =>
+                assignSelection.includes(e.id) ? { ...e, locality_id: null } : e,
+            );
+            await persistElementsChange(nextElements);
+            toast.success(`Se quitó la localidad de ${affected.length} elemento(s).`);
+        } catch (e) {
+            toast.error(e?.response?.data?.detail || "No se pudo quitar la asignación.");
+        } finally {
+            setSavingAssign(false);
+        }
+    };
+
+    const clearLocalityAssignments = async (locId) => {
+        const n = elements.filter((e) => e.locality_id === locId).length;
+        if (!n) return;
+        setSavingAssign(true);
+        try {
+            const nextElements = elements.map((e) =>
+                e.locality_id === locId ? { ...e, locality_id: null } : e,
+            );
+            await persistElementsChange(nextElements);
+            toast.success(`Se quitó la asignación de ${n} elemento(s).`);
+        } catch (e) {
+            toast.error(e?.response?.data?.detail || "No se pudo quitar la asignación.");
+        } finally {
+            setSavingAssign(false);
+        }
+    };
+
+    const clearAllLocalityAssignments = async () => {
+        const n = elements.filter((e) => e.locality_id).length;
+        if (!n) return;
+        const ok = window.confirm("¿Quitar todas las asignaciones de localidades del mapa?");
+        if (!ok) return;
+        setSavingAssign(true);
+        try {
+            const nextElements = elements.map((e) => ({ ...e, locality_id: null }));
+            await persistElementsChange(nextElements);
+            toast.success("Mapa sin asignaciones");
+        } catch (e) {
+            toast.error(e?.response?.data?.detail || "No se pudo limpiar.");
+        } finally {
+            setSavingAssign(false);
+        }
+    };
+
     const handleUnlink = async () => {
         if (!event?.id) {
             onPendingVenueChange?.(null);
@@ -679,15 +813,6 @@ export default function EventVenueSection({
         }
     };
 
-    const onCanvasSelect = (ids) => {
-        if (!ids || ids.length === 0) return setHighlightLocality(null);
-        const el = elements.find((e) => e.id === ids[0]);
-        if (!el?.locality_id) return setHighlightLocality(null);
-        setHighlightLocality(el.locality_id);
-        const row = document.querySelector(`[data-testid="loc-row-${el.locality_id}"]`);
-        if (row) row.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    };
-
     const localitiesById = useMemo(() => {
         const m = {};
         for (const l of allLocalities) m[l.id] = l;
@@ -699,6 +824,7 @@ export default function EventVenueSection({
 
     const showEscenario = panel === "all" || panel === "escenario";
     const showLocalidades = panel === "all" || panel === "localidades";
+    const showAsignar = panel === "all" || panel === "asignar";
 
     const emptyState = (
         <div className="rounded-xl border-2 border-dashed p-8 bg-card text-center space-y-4" data-testid="venue-empty-state">
@@ -724,10 +850,14 @@ export default function EventVenueSection({
     const formatInfo = ATTENDANCE_FORMATS[currentFormat];
     const hasAnyLocalities = allLocalities.length > 0;
     // Before any locality exists, "numbered vs. aforo general" isn't defined
-    // by anything real yet — this is the organizer's upfront intent, saved on
-    // the event (`access_params.attendance_format`) so "Nueva Localidad"
-    // opens pre-set to it instead of always defaulting to "Numerada".
-    const plannedFormat = event?.access_params?.attendance_format === "general" ? "general" : "numbered";
+    // by anything real yet — this is the organizer's upfront intent. Prefer
+    // the wizard's live (unsaved) form value so clicking a card reflects
+    // immediately; fall back to the last-saved value for callers that don't
+    // pass it (or once the draft has actually been persisted).
+    const plannedFormat =
+        (plannedAttendanceFormat ?? event?.access_params?.attendance_format) === "general"
+            ? "general"
+            : "numbered";
 
     const seatingChoice = (
         <div className="space-y-2" data-testid="attendance-format-picker">
@@ -911,7 +1041,7 @@ export default function EventVenueSection({
                             {!selectedVenueId
                                 ? "Primero selecciona un escenario en el paso 4.1. El mapa define la forma; nombre, tipo y precios son de este evento."
                                 : !eventSaved
-                                  ? "Guarda el borrador para vincular el mapa y después crear localidades (numerada o no numerada) asignándolas al plano."
+                                  ? "Guarda el borrador para vincular el mapa. Después creas las localidades (numerada o no numerada) en este paso, y las asignas al plano en \"4.3 Asignar\"."
                                   : "Vinculando mapa…"}
                         </p>
                     </div>
@@ -923,19 +1053,22 @@ export default function EventVenueSection({
                         <div>
                             <h4 className="font-semibold">Localidades</h4>
                             <p className="text-xs text-muted-foreground mt-0.5">
-                                Cada localidad es numerada o no numerada, con su precio y
-                                asignación en el mapa. Un evento mixto se arma combinando ambos tipos.
+                                Cada localidad es numerada o no numerada, con su precio.
+                                Asignala al mapa en &quot;4.3 Asignar&quot;. Un evento mixto
+                                se arma combinando ambos tipos.
                             </p>
                         </div>
                         <div className="flex gap-2">
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                data-testid="venue-assign-map"
-                                onClick={() => goTo(eventMapHref(event.id))}
-                            >
-                                <Wand2 className="h-4 w-4 mr-1.5" /> Mapa completo
-                            </Button>
+                            {onGotoAssign && (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    data-testid="venue-goto-assign"
+                                    onClick={onGotoAssign}
+                                >
+                                    <Wand2 className="h-4 w-4 mr-1.5" /> 4.3 Asignar
+                                </Button>
+                            )}
                             <Button
                                 size="sm"
                                 onClick={openCreateForm}
@@ -949,48 +1082,14 @@ export default function EventVenueSection({
 
                     <PlanSeatingNotice conflict={seatingConflict} />
 
-                    <div className="rounded-xl border bg-card overflow-hidden min-w-0 max-w-full">
-                        <div className="px-4 py-2.5 border-b text-sm flex items-center justify-between">
-                            <span className="font-medium">Plano del evento</span>
-                            <button
-                                type="button"
-                                className="text-xs text-muted-foreground hover:text-foreground"
-                                onClick={() => setMapOpen((v) => !v)}
-                            >
-                                {mapOpen ? "Ocultar" : "Mostrar"}
-                            </button>
-                        </div>
-                        {(mapOpen || panel === "localidades") && (
-                            <div className="min-w-0 max-w-full">
-                                <EditorCanvas
-                                    canvas={canvas}
-                                    elements={elements}
-                                    localitiesById={localitiesById}
-                                    selection={highlightLocality
-                                        ? elements.filter((e) => e.locality_id === highlightLocality).map((e) => e.id)
-                                        : []}
-                                    onSelect={onCanvasSelect}
-                                    onUpdate={() => {}}
-                                    onTransform={() => {}}
-                                    onContextMenu={() => {}}
-                                    onCanvasClick={() => setHighlightLocality(null)}
-                                    tool="select"
-                                    readOnly
-                                    height={280}
-                                    autoFitKey={event?.id ? `${event.id}:${event.venue_id || ""}` : undefined}
-                                />
-                            </div>
-                        )}
-                    </div>
-
                     <div className="space-y-3" data-testid="locality-pricing-table">
                         {allLocalities.length === 0 ? (
                             <div className="rounded-xl border-2 border-dashed p-6 text-center text-sm text-muted-foreground">
                                 {seatingConflict === "numbered_only_blocked"
                                     ? "Este mapa solo tiene butacas y tu plan no las vende. Elige un escenario con zonas de aforo o mejora el plan."
                                     : seatingConflict === "numbered_unused"
-                                      ? "Crea una localidad no numerada y asignala a las zonas de aforo. Las butacas de este mapa no se venden con tu plan actual."
-                                      : "Crea una localidad: elige si es numerada o no numerada, y asignala al mapa en el mismo paso."}
+                                      ? "Crea una localidad no numerada y después asignala a las zonas de aforo en \"4.3 Asignar\". Las butacas de este mapa no se venden con tu plan actual."
+                                      : "Crea una localidad — elige si es numerada o no numerada — y después asignala al mapa en \"4.3 Asignar\"."}
                             </div>
                         ) : (
                             <div className="rounded-xl border bg-card overflow-x-auto">
@@ -1027,14 +1126,12 @@ export default function EventVenueSection({
                                         {allLocalities.map((loc, idx) => {
                                             const p = pricing[loc.id] || {};
                                             const assigned = assignedCountByLocality[loc.id] || 0;
-                                            const highlighted = highlightLocality === loc.id;
                                             const seating = normalizeLocalitySeatingType(loc.seating_type);
                                             return (
                                                 <tr
                                                     key={loc.id}
-                                                    className={`border-b last:border-0 ${highlighted ? "bg-teal-700/5" : ""}`}
+                                                    className="border-b last:border-0"
                                                     data-testid={`loc-row-${loc.id}`}
-                                                    onMouseEnter={() => setHighlightLocality(loc.id)}
                                                 >
                                                     <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
                                                     <td className="px-3 py-2 font-medium">{loc.name}</td>
@@ -1064,7 +1161,7 @@ export default function EventVenueSection({
                                                         {assigned === 0 ? (
                                                             <span
                                                                 className="inline-flex items-center gap-1 text-amber-700"
-                                                                title="Sin nada asignado en el mapa — no vas a poder publicar el evento hasta asignarle asientos, mesas o una zona con 'Mapa completo'."
+                                                                title="Sin nada asignado en el mapa — no vas a poder publicar el evento hasta asignarle asientos, mesas o una zona en '4.3 Asignar'."
                                                                 data-testid={`loc-unassigned-${loc.id}`}
                                                             >
                                                                 <Info className="h-3.5 w-3.5" />
@@ -1198,6 +1295,94 @@ export default function EventVenueSection({
         </section>
     );
 
+    const asignarPanel = (
+        <section className="space-y-3 min-w-0" data-testid="asignar-panel">
+            {showCreateGate ? (
+                <div
+                    className="rounded-xl border bg-card min-h-[280px] flex flex-col items-center justify-center text-center p-8 gap-3"
+                    data-testid="asignar-save-gate"
+                >
+                    <div className="h-14 w-14 rounded-full bg-secondary flex items-center justify-center">
+                        <Wand2 className="h-7 w-7 text-muted-foreground" />
+                    </div>
+                    <h3 className="font-semibold text-base">Asignar al mapa</h3>
+                    <p className="text-sm text-muted-foreground mt-1.5 max-w-md mx-auto">
+                        Primero vincula un escenario en 4.1 y crea al menos una localidad
+                        en 4.2 — recién ahí hay algo que asignar.
+                    </p>
+                </div>
+            ) : allLocalities.length === 0 ? (
+                <div
+                    className="rounded-xl border bg-card min-h-[280px] flex flex-col items-center justify-center text-center p-8 gap-3"
+                    data-testid="asignar-empty-gate"
+                >
+                    <div className="h-14 w-14 rounded-full bg-secondary flex items-center justify-center">
+                        <Wand2 className="h-7 w-7 text-muted-foreground" />
+                    </div>
+                    <h3 className="font-semibold text-base">Asignar al mapa</h3>
+                    <p className="text-sm text-muted-foreground mt-1.5 max-w-md mx-auto">
+                        Todavía no creaste ninguna localidad. Volvé a 4.2 Localidades para
+                        crear una — ahí eliges nombre, tipo y precio.
+                    </p>
+                </div>
+            ) : (
+                <>
+                    <div>
+                        <h4 className="font-semibold">Asignar al mapa</h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Selecciona elementos del mapa (clic, o Shift+arrastrar) y
+                            asígnalos a una localidad. Cada asignación se guarda al
+                            instante. Para agregar filas, mesas o zonas nuevas, edita el
+                            escenario maestro desde &quot;Mapas&quot;.
+                        </p>
+                    </div>
+                    <div className="grid lg:grid-cols-[minmax(0,1fr)_320px] gap-3 min-w-0">
+                        <div
+                            className="rounded-xl border overflow-hidden min-w-0 max-w-full relative"
+                            data-testid="asignar-canvas-wrap"
+                        >
+                            <EditorCanvas
+                                canvas={canvas}
+                                elements={elements}
+                                localitiesById={localitiesById}
+                                selection={assignSelection}
+                                onSelect={handleAssignSelect}
+                                onUpdate={() => {}}
+                                onTransform={() => {}}
+                                onContextMenu={() => {}}
+                                onCanvasClick={() => setAssignSelection([])}
+                                tool="select"
+                                readOnly={disabled}
+                                height={520}
+                                autoFitKey={event?.id ? `asignar:${event.id}` : undefined}
+                            />
+                            {savingAssign && (
+                                <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70 backdrop-blur-[1px]">
+                                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                </div>
+                            )}
+                        </div>
+                        <aside className="lg:sticky lg:top-3 lg:self-start min-w-0">
+                            <div className="rounded-xl border bg-card p-4 flex flex-col min-h-0 max-h-[560px]">
+                                <AssignLocalityPanel
+                                    localities={allLocalities}
+                                    elements={elements}
+                                    selection={assignSelection}
+                                    pricingById={pricing}
+                                    onAssign={assignLocalityToSelection}
+                                    onClearSelection={clearLocalityFromSelection}
+                                    onClearLocality={clearLocalityAssignments}
+                                    onClearAll={clearAllLocalityAssignments}
+                                    readOnly={disabled || savingAssign}
+                                />
+                            </div>
+                        </aside>
+                    </div>
+                </>
+            )}
+        </section>
+    );
+
     if (venues.length === 0 && !linkedVenue && !pendingVenueId && showEscenario) {
         return emptyState;
     }
@@ -1206,15 +1391,14 @@ export default function EventVenueSection({
         <div className="space-y-4" data-testid="venue-localidades-layout">
             {showEscenario ? escenarioPanel : null}
             {showLocalidades ? localidadesPanel : null}
+            {showAsignar ? asignarPanel : null}
             <LocalityFormDialog
                 open={formOpen}
                 onClose={() => { setFormOpen(false); setEditingLocality(null); }}
                 onSubmit={submitLocalityForm}
                 initial={editingLocality}
                 saving={savingForm}
-                canvas={canvas}
                 elements={elements}
-                localitiesById={localitiesById}
                 allowNumbered={allowNumbered}
                 pricingType={pricingType}
                 feeBearer={feeBearer}

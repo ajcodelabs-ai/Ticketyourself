@@ -12,7 +12,7 @@ export const A4_WH = 595.27 / 841.89;
 
 export type TicketDesignElement = {
     id: string;
-    type: "logo" | "qr" | "text";
+    type: "logo" | "qr" | "text" | "shape";
     x: number;
     y: number;
     width: number;
@@ -22,8 +22,13 @@ export type TicketDesignElement = {
     field?: string | null;
     text?: string | null;
     font_size?: number;
-    color?: string;
+    color?: string | null;
     align?: "left" | "center" | "right";
+    // shape-only: fill (`color`, above) and/or an outline. A dashed shape
+    // reads as a divider/perforation line rather than a solid block.
+    stroke?: string | null;
+    stroke_width?: number;
+    dash?: boolean;
 };
 
 export type TicketDesign = {
@@ -73,6 +78,36 @@ function text(
     });
 }
 
+/** A filled and/or outlined rectangle — color blocks, accent bars, dividers,
+ * "card" backgrounds behind grouped text or the QR. Dashed reads as a
+ * perforation/divider line rather than a solid block. */
+function shape(
+    id: string,
+    opts: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        color?: string | null;
+        stroke?: string | null;
+        stroke_width?: number;
+        dash?: boolean;
+    },
+): TicketDesignElement {
+    return el({
+        id,
+        type: "shape",
+        x: opts.x,
+        y: opts.y,
+        width: opts.width,
+        height: opts.height,
+        color: opts.color ?? null,
+        stroke: opts.stroke ?? null,
+        stroke_width: opts.stroke_width ?? 1,
+        dash: !!opts.dash,
+    });
+}
+
 /** Square box on an A4 portrait page (frac width → matching frac height). */
 function square(fracW: number): { width: number; height: number } {
     return { width: fracW, height: fracW * A4_WH };
@@ -92,84 +127,111 @@ export type TicketTemplate = {
     build: (format?: TicketFormat) => TicketDesign;
 };
 
-/** Classic light A4 — header, event details, large QR for the door. */
+/** Classic light A4, refreshed — brand bar, accent rule, a grouped "card"
+ * for event details and a framed QR instead of loose text on white. */
 function buildClasico(format: TicketFormat = TICKET_PAGE_FORMAT): TicketDesign {
     const ink = "#0f172a";
     const muted = "#64748b";
-    const qr = centeredSquare(0.42, 0.58);
-    const logo = square(0.16);
+    const accent = "#0d9488";
+    const card = "#f1f5f9";
+    const line = "#e2e8f0";
+    const qr = centeredSquare(0.40, 0.68);
+    const logo = square(0.14);
     return {
         format,
         template_id: "clasico",
         background_url: null,
         background_color: "#ffffff",
         elements: [
-            el({ id: "clasico-logo", type: "logo", x: 0.08, y: 0.05, ...logo, image_url: null }),
+            shape("clasico-topbar", { x: 0, y: 0, width: 1, height: 0.014, color: accent }),
+            el({ id: "clasico-logo", type: "logo", x: 0.08, y: 0.06, ...logo, image_url: null }),
             text("clasico-org", "organizer_name", {
-                x: 0.28, y: 0.06, width: 0.64, height: 0.08, font_size: 12, color: muted,
+                x: 0.26, y: 0.075, width: 0.66, height: 0.06, font_size: 12, color: muted,
             }),
+            shape("clasico-divider", { x: 0.08, y: 0.19, width: 0.84, height: 0.004, color: line }),
+            shape("clasico-title-accent", { x: 0.08, y: 0.235, width: 0.012, height: 0.09, color: accent }),
             text("clasico-title", "title", {
-                x: 0.08, y: 0.18, width: 0.84, height: 0.10, font_size: 26, color: ink,
+                x: 0.115, y: 0.22, width: 0.80, height: 0.12, font_size: 25, color: ink,
             }),
+            shape("clasico-card", { x: 0.08, y: 0.38, width: 0.84, height: 0.20, color: card }),
             text("clasico-date", "starts_at", {
-                x: 0.08, y: 0.30, width: 0.84, height: 0.05, font_size: 13, color: muted,
+                x: 0.11, y: 0.41, width: 0.78, height: 0.05, font_size: 13, color: muted,
             }),
             text("clasico-venue", "venue", {
-                x: 0.08, y: 0.36, width: 0.84, height: 0.05, font_size: 13, color: muted,
+                x: 0.11, y: 0.47, width: 0.78, height: 0.05, font_size: 13, color: muted,
             }),
             text("clasico-holder", "holder_name", {
-                x: 0.08, y: 0.44, width: 0.84, height: 0.05, font_size: 14, color: ink,
+                x: 0.11, y: 0.53, width: 0.78, height: 0.05, font_size: 14, color: ink,
             }),
             text("clasico-price", "price", {
-                x: 0.08, y: 0.50, width: 0.40, height: 0.05, font_size: 14, color: "#0d9488",
+                x: 0.08, y: 0.60, width: 0.42, height: 0.05, font_size: 14, color: accent,
             }),
             text("clasico-order", "order_number", {
-                x: 0.50, y: 0.50, width: 0.42, height: 0.05, font_size: 12, color: muted, align: "right",
+                x: 0.50, y: 0.60, width: 0.42, height: 0.05, font_size: 12, color: muted, align: "right",
+            }),
+            shape("clasico-qr-card", {
+                x: qr.x - 0.03, y: qr.y - 0.02, width: qr.width + 0.06, height: qr.height + 0.04,
+                color: "#ffffff", stroke: line, stroke_width: 1,
             }),
             el({ id: "clasico-qr", type: "qr", ...qr }),
         ],
     };
 }
 
-/** Dark concert page — title first, QR lower third. */
+/** Dark concert page, refreshed — a full-height accent spine, an editorial
+ * kicker line above the title, and a light "spotlight" card framing the QR
+ * against the dark background. */
 function buildNoche(format: TicketFormat = TICKET_PAGE_FORMAT): TicketDesign {
     const fg = "#f8fafc";
     const soft = "#94a3b8";
-    const qr = centeredSquare(0.40, 0.58);
-    const logo = square(0.14);
+    const accent = "#f43f5e";
+    const qr = centeredSquare(0.38, 0.68);
+    const logo = square(0.13);
     return {
         format,
         template_id: "noche",
         background_url: null,
         background_color: "#0f172a",
         elements: [
-            el({ id: "noche-logo", type: "logo", x: 0.08, y: 0.05, ...logo, image_url: null }),
+            shape("noche-spine", { x: 0, y: 0, width: 0.025, height: 1, color: accent }),
+            el({ id: "noche-logo", type: "logo", x: 0.10, y: 0.06, ...logo, image_url: null }),
             text("noche-org", "organizer_name", {
-                x: 0.26, y: 0.06, width: 0.66, height: 0.07, font_size: 11, color: soft,
+                x: 0.27, y: 0.075, width: 0.63, height: 0.06, font_size: 11, color: soft,
             }),
+            shape("noche-kicker", { x: 0.10, y: 0.20, width: 0.14, height: 0.008, color: accent }),
             text("noche-title", "title", {
-                x: 0.08, y: 0.18, width: 0.84, height: 0.14, font_size: 28, color: fg,
+                x: 0.10, y: 0.215, width: 0.82, height: 0.15, font_size: 30, color: fg,
             }),
             text("noche-date", "starts_at", {
-                x: 0.08, y: 0.34, width: 0.84, height: 0.05, font_size: 13, color: soft,
+                x: 0.10, y: 0.40, width: 0.82, height: 0.05, font_size: 13, color: soft,
             }),
             text("noche-venue", "venue", {
-                x: 0.08, y: 0.40, width: 0.84, height: 0.05, font_size: 13, color: soft,
+                x: 0.10, y: 0.46, width: 0.82, height: 0.05, font_size: 13, color: soft,
             }),
             text("noche-holder", "holder_name", {
-                x: 0.08, y: 0.48, width: 0.84, height: 0.05, font_size: 14, color: fg,
+                x: 0.10, y: 0.53, width: 0.82, height: 0.05, font_size: 14, color: fg,
+            }),
+            shape("noche-perforation", {
+                x: 0.10, y: 0.62, width: 0.80, height: 0.003, color: soft, dash: true,
+            }),
+            shape("noche-qr-card", {
+                x: qr.x - 0.035, y: qr.y - 0.024, width: qr.width + 0.07, height: qr.height + 0.048,
+                color: fg,
             }),
             el({ id: "noche-qr", type: "qr", ...qr }),
         ],
     };
 }
 
-/** Centered sparse A4 — plenty of white space for a clean email PDF. */
+/** Centered minimal A4, refreshed — one accent rule and a thin outlined QR
+ * frame do the work instead of flat, unrelated lines of text. */
 function buildMinimal(format: TicketFormat = TICKET_PAGE_FORMAT): TicketDesign {
     const ink = "#1e293b";
     const soft = "#64748b";
-    const logo = square(0.18);
-    const qr = centeredSquare(0.36, 0.58);
+    const accent = "#0ea5e9";
+    const line = "#e2e8f0";
+    const logo = square(0.16);
+    const qr = centeredSquare(0.34, 0.65);
     return {
         format,
         template_id: "minimal",
@@ -180,32 +242,44 @@ function buildMinimal(format: TicketFormat = TICKET_PAGE_FORMAT): TicketDesign {
                 id: "min-logo",
                 type: "logo",
                 x: (1 - logo.width) / 2,
-                y: 0.06,
+                y: 0.07,
                 ...logo,
                 image_url: null,
             }),
+            shape("min-accent", { x: 0.42, y: 0.20, width: 0.16, height: 0.006, color: accent }),
             text("min-title", "title", {
-                x: 0.08, y: 0.22, width: 0.84, height: 0.10, font_size: 24, color: ink, align: "center",
+                x: 0.08, y: 0.24, width: 0.84, height: 0.10, font_size: 24, color: ink, align: "center",
             }),
             text("min-date", "starts_at", {
-                x: 0.08, y: 0.34, width: 0.84, height: 0.05, font_size: 13, color: soft, align: "center",
+                x: 0.08, y: 0.36, width: 0.84, height: 0.05, font_size: 13, color: soft, align: "center",
             }),
             text("min-venue", "venue", {
-                x: 0.08, y: 0.40, width: 0.84, height: 0.05, font_size: 13, color: soft, align: "center",
+                x: 0.08, y: 0.42, width: 0.84, height: 0.05, font_size: 13, color: soft, align: "center",
             }),
             text("min-holder", "holder_name", {
-                x: 0.08, y: 0.48, width: 0.84, height: 0.05, font_size: 14, color: ink, align: "center",
+                x: 0.08, y: 0.49, width: 0.84, height: 0.05, font_size: 14, color: ink, align: "center",
+            }),
+            shape("min-divider", { x: 0.30, y: 0.60, width: 0.40, height: 0.004, color: line }),
+            shape("min-qr-frame", {
+                x: qr.x - 0.02, y: qr.y - 0.014, width: qr.width + 0.04, height: qr.height + 0.028,
+                stroke: line, stroke_width: 1,
             }),
             el({ id: "min-qr", type: "qr", ...qr }),
         ],
     };
 }
 
-/** Strong color page — big type, QR in the lower third. */
+/** Strong two-tone page, refreshed — a darker "stub" band with a
+ * perforation line splits the page like a real ticket, and an accent chip
+ * lifts the price instead of letting it blend into the body text. */
 function buildBold(format: TicketFormat = TICKET_PAGE_FORMAT): TicketDesign {
     const fg = "#ffffff";
     const soft = "#ccfbf1";
-    const qr = centeredSquare(0.40, 0.56);
+    const dark = "#042f2e";
+    const accent = "#fbbf24";
+    // Stub takes 40% of the page (not 28%) so the QR card can be bigger and
+    // there's no dead gap between the venue line and the perforation.
+    const qr = centeredSquare(0.30, 0.694);
     const logo = square(0.14);
     return {
         format,
@@ -214,23 +288,30 @@ function buildBold(format: TicketFormat = TICKET_PAGE_FORMAT): TicketDesign {
         background_color: "#0f766e",
         elements: [
             text("bold-org", "organizer_name", {
-                x: 0.08, y: 0.05, width: 0.55, height: 0.06, font_size: 12, color: soft,
+                x: 0.08, y: 0.05, width: 0.44, height: 0.06, font_size: 12, color: soft,
             }),
+            shape("bold-price-chip", { x: 0.55, y: 0.045, width: 0.37, height: 0.06, color: accent }),
             text("bold-price", "price", {
-                x: 0.55, y: 0.05, width: 0.37, height: 0.06, font_size: 14, color: fg, align: "right",
+                x: 0.57, y: 0.05, width: 0.33, height: 0.05, font_size: 14, color: dark, align: "right",
             }),
-            el({ id: "bold-logo", type: "logo", x: 0.08, y: 0.13, ...logo, image_url: null }),
+            el({ id: "bold-logo", type: "logo", x: 0.08, y: 0.14, ...logo, image_url: null }),
             text("bold-title", "title", {
-                x: 0.08, y: 0.26, width: 0.84, height: 0.12, font_size: 28, color: fg,
+                x: 0.08, y: 0.27, width: 0.84, height: 0.12, font_size: 27, color: fg,
             }),
             text("bold-holder", "holder_name", {
-                x: 0.08, y: 0.40, width: 0.84, height: 0.05, font_size: 14, color: fg,
+                x: 0.08, y: 0.41, width: 0.84, height: 0.05, font_size: 14, color: fg,
             }),
             text("bold-date", "starts_at", {
-                x: 0.08, y: 0.46, width: 0.84, height: 0.04, font_size: 12, color: soft,
+                x: 0.08, y: 0.47, width: 0.84, height: 0.04, font_size: 12, color: soft,
             }),
             text("bold-venue", "venue", {
-                x: 0.08, y: 0.51, width: 0.84, height: 0.04, font_size: 12, color: soft,
+                x: 0.08, y: 0.52, width: 0.84, height: 0.04, font_size: 12, color: soft,
+            }),
+            shape("bold-stub", { x: 0, y: 0.60, width: 1, height: 0.40, color: dark }),
+            shape("bold-perforation", { x: 0, y: 0.595, width: 1, height: 0.004, color: fg, dash: true }),
+            shape("bold-qr-card", {
+                x: qr.x - 0.03, y: qr.y - 0.022, width: qr.width + 0.06, height: qr.height + 0.044,
+                color: fg,
             }),
             el({ id: "bold-qr", type: "qr", ...qr }),
         ],

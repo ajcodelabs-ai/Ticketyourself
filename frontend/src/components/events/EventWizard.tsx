@@ -1,15 +1,17 @@
 /**
  * EventWizard — organizer event create/edit.
  *
- * 8 sections (sidebar stepper):
+ * 9 sections (sidebar stepper):
  *  1. General — info principal · descripción · keywords · contenido avanzado
- *  2. Fechas y ventas — fechas · ventana de venta · límites y envío del eTicket · Funciones
- *  3. Media — portada · principal · miniatura · gallery · Diseño de ticket
- *  4. Localidades — 4.1 escenario · 4.2 localidades (tipo + mapa)
- *  5. Formas de pago
- *  6. Descuentos
- *  7. Accesos — visibilidad · quién puede comprar · lista/códigos
- *  8. Parámetros — preguntas al comprador (asociadas a localidades)
+ *  2. Media — portada · principal · miniatura · galería
+ *  3. Fechas y ventas — fechas · ventana de venta · límites y envío del eTicket · Funciones
+ *  4. Localidades — 4.1 escenario · 4.2 localidades · 4.3 asignar al mapa
+ *  5. Diseño de ticket — vive después de Localidades porque la vista previa
+ *     necesita lugar/fecha/precio reales, que recién existen ahí
+ *  6. Formas de pago
+ *  7. Descuentos
+ *  8. Accesos — visibilidad · quién puede comprar · lista/códigos
+ *  9. Parámetros — preguntas al comprador (asociadas a localidades)
  *
  * Used in both create (/app/eventos/nuevo) and edit (/app/eventos/:id/editar).
  */
@@ -151,20 +153,17 @@ const STEPS = [
     { id: "media", label: "Media" },
     { id: "fechas", label: "Fechas y ventas" },
     { id: "localidades", label: "Localidades" },
+    { id: "ticket", label: "Diseño de ticket" },
     { id: "payments", label: "Formas de pago" },
     { id: "discounts", label: "Descuentos" },
     { id: "access", label: "Accesos" },
     { id: "params", label: "Campos personalizados" },
 ];
 
-const MEDIA_SUBSTEPS = [
-    { id: "images", label: "Imágenes", num: "3.1" },
-    { id: "ticket", label: "Diseño de ticket", num: "3.2" },
-];
-
 const LOCALIDADES_SUBSTEPS = [
     { id: "escenario", label: "Escenario", num: "4.1" },
     { id: "localidades", label: "Localidades", num: "4.2" },
+    { id: "asignar", label: "Asignar", num: "4.3" },
 ];
 
 /** Legacy ?tab= values → current step ids (deep-links / bookmarks). */
@@ -175,7 +174,7 @@ const TAB_ALIASES = {
     tipos_ticket: "localidades",
     abono: "localidades",
     funciones: "fechas",
-    ticket_design: "media",
+    ticket_design: "ticket",
 };
 
 function defaultPayments() {
@@ -537,8 +536,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     const [small, setSmall] = useState(initial?.small_url || null);
     const [gallery, setGallery] = useState(initial?.gallery_urls || []);
     const [uploadingKind, setUploadingKind] = useState(null);
-    const [mediaSubStep, setMediaSubStep] = useState("images"); // images | ticket
-    const [localidadesSubStep, setLocalidadesSubStep] = useState("escenario"); // escenario | localidades
+    const [localidadesSubStep, setLocalidadesSubStep] = useState("escenario"); // escenario | localidades | asignar
 
     useEffect(() => {
         if (initial) {
@@ -922,23 +920,23 @@ export default function EventWizard({ initial = null, mode = "create" }) {
     };
     const idx = STEPS.findIndex((s) => s.id === activeStep);
     const goPrev = () => {
-        if (activeStep === "localidades" && localidadesSubStep === "localidades") {
-            setLocalidadesSubStep("escenario");
+        if (activeStep === "localidades" && localidadesSubStep === "asignar") {
+            setLocalidadesSubStep("localidades");
             return;
         }
-        if (activeStep === "media" && mediaSubStep === "ticket") {
-            setMediaSubStep("images");
+        if (activeStep === "localidades" && localidadesSubStep === "localidades") {
+            setLocalidadesSubStep("escenario");
             return;
         }
         handleTabChange(STEPS[Math.max(0, idx - 1)].id);
     };
     const goNext = () => {
-        if (activeStep === "media" && mediaSubStep === "images") {
-            setMediaSubStep("ticket");
-            return;
-        }
         if (activeStep === "localidades" && localidadesSubStep === "escenario") {
             setLocalidadesSubStep("localidades");
+            return;
+        }
+        if (activeStep === "localidades" && localidadesSubStep === "localidades") {
+            setLocalidadesSubStep("asignar");
             return;
         }
         handleTabChange(STEPS[Math.min(STEPS.length - 1, idx + 1)].id);
@@ -1016,104 +1014,20 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                             />
                         </TabsContent>
                         <TabsContent value="media">
-                            <div className="space-y-5" data-testid="media-substeps">
-                                {/* Mobile only: substep picker (desktop uses sidebar 3.1 / 3.2) */}
-                                <div className="lg:hidden flex flex-wrap items-center justify-between gap-3">
-                                    <p className="text-xs text-muted-foreground">
-                                        Media · paso{" "}
-                                        <strong className="text-foreground">
-                                            {mediaSubStep === "images" ? "1" : "2"} de 2
-                                        </strong>
-                                    </p>
-                                    <div
-                                        className="inline-flex rounded-lg border bg-card p-0.5"
-                                        role="tablist"
-                                        aria-label="Subpasos de Media"
-                                    >
-                                        <button
-                                            type="button"
-                                            role="tab"
-                                            aria-selected={mediaSubStep === "images"}
-                                            onClick={() => setMediaSubStep("images")}
-                                            className={`rounded-md px-3 py-1.5 text-sm transition ${
-                                                mediaSubStep === "images"
-                                                    ? "bg-primary text-primary-foreground shadow-sm"
-                                                    : "text-muted-foreground hover:text-foreground"
-                                            }`}
-                                            data-testid="media-substep-images"
-                                        >
-                                            3.1 Imágenes
-                                        </button>
-                                        <button
-                                            type="button"
-                                            role="tab"
-                                            aria-selected={mediaSubStep === "ticket"}
-                                            onClick={() => setMediaSubStep("ticket")}
-                                            className={`rounded-md px-3 py-1.5 text-sm transition ${
-                                                mediaSubStep === "ticket"
-                                                    ? "bg-primary text-primary-foreground shadow-sm"
-                                                    : "text-muted-foreground hover:text-foreground"
-                                            }`}
-                                            data-testid="media-substep-ticket"
-                                        >
-                                            3.2 Diseño de ticket
-                                            {form.ticket_design?.elements?.length > 0 && (
-                                                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" />
-                                            )}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {mediaSubStep === "images" ? (
-                                    <div className="space-y-4">
-                                        <SectionMedia
-                                            poster={poster}
-                                            banner={banner}
-                                            small={small}
-                                            gallery={gallery}
-                                            uploadingKind={uploadingKind}
-                                            onUpload={uploadImages}
-                                            onDeleteGallery={deleteGalleryAt}
-                                            onReorderGallery={reorderGallery}
-                                            eventId={eventId}
-                                            tenantSlug={organizer?.slug || currentEvent?.tenant_slug}
-                                            eventSlug={currentEvent?.slug}
-                                            isPublished={currentEvent?.status === "published"}
-                                        />
-                                        <div className="flex justify-end border-t pt-4">
-                                            <Button
-                                                type="button"
-                                                onClick={() => setMediaSubStep("ticket")}
-                                                data-testid="media-goto-ticket"
-                                            >
-                                                Continuar a 3.2 Diseño de ticket
-                                                <ChevronRight className="h-4 w-4 ml-1" />
-                                            </Button>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-4">
-                                        <SectionTicketDesign
-                                            form={form}
-                                            update={update}
-                                            eventId={eventId}
-                                            currentEvent={currentEvent}
-                                            onGotoStep={handleTabChange}
-                                        />
-                                        <div className="flex justify-between border-t pt-4">
-                                            <Button
-                                                type="button"
-                                                variant="outline"
-                                                onClick={() => setMediaSubStep("images")}
-                                                data-testid="media-goto-images"
-                                            >
-                                                <ChevronLeft className="h-4 w-4 mr-1" />
-                                                Volver a 3.1 Imágenes
-                                            </Button>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
+                            <SectionMedia
+                                poster={poster}
+                                banner={banner}
+                                small={small}
+                                gallery={gallery}
+                                uploadingKind={uploadingKind}
+                                onUpload={uploadImages}
+                                onDeleteGallery={deleteGalleryAt}
+                                onReorderGallery={reorderGallery}
+                                eventId={eventId}
+                                tenantSlug={organizer?.slug || currentEvent?.tenant_slug}
+                                eventSlug={currentEvent?.slug}
+                                isPublished={currentEvent?.status === "published"}
+                            />
                         </TabsContent>
                         <TabsContent value="localidades">
                             <div className="space-y-5" data-testid="localidades-substeps">
@@ -1121,49 +1035,40 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                     <p className="text-xs text-muted-foreground">
                                         Localidades · paso{" "}
                                         <strong className="text-foreground">
-                                            {localidadesSubStep === "escenario" ? "1" : "2"} de 2
-                                        </strong>
+                                            {LOCALIDADES_SUBSTEPS.findIndex((s) => s.id === localidadesSubStep) + 1}
+                                        </strong>{" "}
+                                        de {LOCALIDADES_SUBSTEPS.length}
                                     </p>
                                     <div
                                         className="inline-flex rounded-lg border bg-card p-0.5"
                                         role="tablist"
                                         aria-label="Subpasos de Localidades"
                                     >
-                                        <button
-                                            type="button"
-                                            role="tab"
-                                            aria-selected={localidadesSubStep === "escenario"}
-                                            onClick={() => setLocalidadesSubStep("escenario")}
-                                            className={`rounded-md px-3 py-1.5 text-sm transition ${
-                                                localidadesSubStep === "escenario"
-                                                    ? "bg-primary text-primary-foreground shadow-sm"
-                                                    : "text-muted-foreground hover:text-foreground"
-                                            }`}
-                                            data-testid="localidades-substep-escenario"
-                                        >
-                                            4.1 Escenario
-                                        </button>
-                                        <button
-                                            type="button"
-                                            role="tab"
-                                            aria-selected={localidadesSubStep === "localidades"}
-                                            onClick={() => setLocalidadesSubStep("localidades")}
-                                            className={`rounded-md px-3 py-1.5 text-sm transition ${
-                                                localidadesSubStep === "localidades"
-                                                    ? "bg-primary text-primary-foreground shadow-sm"
-                                                    : "text-muted-foreground hover:text-foreground"
-                                            }`}
-                                            data-testid="localidades-substep-localidades"
-                                        >
-                                            4.2 Localidades
-                                            {(currentEvent?.venue_layout?.localities || []).length > 0 && (
-                                                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" />
-                                            )}
-                                        </button>
+                                        {LOCALIDADES_SUBSTEPS.map((sub) => (
+                                            <button
+                                                key={sub.id}
+                                                type="button"
+                                                role="tab"
+                                                aria-selected={localidadesSubStep === sub.id}
+                                                onClick={() => setLocalidadesSubStep(sub.id)}
+                                                className={`rounded-md px-3 py-1.5 text-sm transition ${
+                                                    localidadesSubStep === sub.id
+                                                        ? "bg-primary text-primary-foreground shadow-sm"
+                                                        : "text-muted-foreground hover:text-foreground"
+                                                }`}
+                                                data-testid={`localidades-substep-${sub.id}`}
+                                            >
+                                                {sub.num} {sub.label}
+                                                {sub.id === "localidades"
+                                                    && (currentEvent?.venue_layout?.localities || []).length > 0 && (
+                                                    <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" />
+                                                )}
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
 
-                                {localidadesSubStep === "escenario" ? (
+                                {localidadesSubStep === "escenario" && (
                                     <div className="space-y-4">
                                         <EventVenueSection
                                             event={currentEvent}
@@ -1174,6 +1079,7 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             pendingVenueId={pendingVenueId}
                                             onPendingVenueChange={setPendingVenueId}
                                             panel="escenario"
+                                            plannedAttendanceFormat={form.attendance_format}
                                             onFormatChange={(fmt) => {
                                                 update("attendance_format", fmt);
                                                 update("no_seating_mode", false);
@@ -1190,7 +1096,8 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             </Button>
                                         </div>
                                     </div>
-                                ) : (
+                                )}
+                                {localidadesSubStep === "localidades" && (
                                     <div className="space-y-4">
                                         <EventVenueSection
                                             event={currentEvent}
@@ -1201,10 +1108,12 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             pendingVenueId={pendingVenueId}
                                             onPendingVenueChange={setPendingVenueId}
                                             panel="localidades"
+                                            plannedAttendanceFormat={form.attendance_format}
                                             onFormatChange={(fmt) => {
                                                 update("attendance_format", fmt);
                                                 update("no_seating_mode", false);
                                             }}
+                                            onGotoAssign={() => setLocalidadesSubStep("asignar")}
                                         />
                                         <div className="flex justify-between border-t pt-4">
                                             <Button
@@ -1216,10 +1125,57 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                                 <ChevronLeft className="h-4 w-4 mr-1" />
                                                 Volver a 4.1 Escenario
                                             </Button>
+                                            <Button
+                                                type="button"
+                                                onClick={() => setLocalidadesSubStep("asignar")}
+                                                data-testid="localidades-goto-asignar"
+                                            >
+                                                Continuar a 4.3 Asignar
+                                                <ChevronRight className="h-4 w-4 ml-1" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )}
+                                {localidadesSubStep === "asignar" && (
+                                    <div className="space-y-4">
+                                        <EventVenueSection
+                                            event={currentEvent}
+                                            disabled={lockCritical}
+                                            onUpdated={handleEventUpdated}
+                                            onReturnFromVenueCreate={venuesList}
+                                            onBeforeVenueCreate={() => persist(false, { silent: true })}
+                                            pendingVenueId={pendingVenueId}
+                                            onPendingVenueChange={setPendingVenueId}
+                                            panel="asignar"
+                                            plannedAttendanceFormat={form.attendance_format}
+                                            onFormatChange={(fmt) => {
+                                                update("attendance_format", fmt);
+                                                update("no_seating_mode", false);
+                                            }}
+                                        />
+                                        <div className="flex justify-between border-t pt-4">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={() => setLocalidadesSubStep("localidades")}
+                                                data-testid="localidades-goto-localidades-back"
+                                            >
+                                                <ChevronLeft className="h-4 w-4 mr-1" />
+                                                Volver a 4.2 Localidades
+                                            </Button>
                                         </div>
                                     </div>
                                 )}
                             </div>
+                        </TabsContent>
+                        <TabsContent value="ticket">
+                            <SectionTicketDesign
+                                form={form}
+                                update={update}
+                                eventId={eventId}
+                                currentEvent={currentEvent}
+                                onGotoStep={handleTabChange}
+                            />
                         </TabsContent>
                         <TabsContent value="payments">
                             <SectionPayments form={form} update={update} />
@@ -1265,18 +1221,20 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                     st === "error" ? "text-red-600 dark:text-red-400" :
                                     "text-muted-foreground"
                                 );
-                                const goMediaSub = (subId) => {
-                                    setMediaSubStep(subId);
-                                    if (activeStep !== "media") handleTabChange("media");
-                                };
                                 const goLocalidadesSub = (subId) => {
                                     setLocalidadesSubStep(subId);
                                     if (activeStep !== "localidades") handleTabChange("localidades");
                                 };
-                                const imagesOk = !!poster;
-                                const ticketOk = !!form.ticket_design?.elements?.length;
                                 const escenarioOk = hasVenueSelected;
-                                const locsOk = (currentEvent?.venue_layout?.localities || []).length > 0;
+                                const wizardLocalities = currentEvent?.venue_layout?.localities || [];
+                                const locsOk = wizardLocalities.length > 0;
+                                const assignedLocIds = new Set(
+                                    (currentEvent?.venue_layout?.elements || [])
+                                        .map((e) => e.locality_id)
+                                        .filter(Boolean),
+                                );
+                                const asignarOk =
+                                    locsOk && wizardLocalities.every((l) => assignedLocIds.has(l.id));
 
                                 return (
                                     <div key={s.id} className="w-full space-y-0.5">
@@ -1287,7 +1245,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                                        ${rowBg}`}
                                             data-testid={`tab-${s.id}`}
                                             onClick={() => {
-                                                if (s.id === "media") setMediaSubStep("images");
                                                 if (s.id === "localidades") setLocalidadesSubStep("escenario");
                                             }}
                                         >
@@ -1300,52 +1257,6 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                             </span>
                                         </TabsTrigger>
 
-                                        {s.id === "media" && (
-                                            <div
-                                                className="pl-3 ml-2 border-l border-border/70 space-y-0.5"
-                                                data-testid="media-sidebar-substeps"
-                                            >
-                                                {MEDIA_SUBSTEPS.map((sub) => {
-                                                    const subActive =
-                                                        isActive && mediaSubStep === sub.id;
-                                                    const subDone =
-                                                        sub.id === "images" ? imagesOk : ticketOk;
-                                                    return (
-                                                        <button
-                                                            key={sub.id}
-                                                            type="button"
-                                                            onClick={() => goMediaSub(sub.id)}
-                                                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition ${
-                                                                subActive
-                                                                    ? "bg-primary/15 text-primary font-medium"
-                                                                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                                                            }`}
-                                                            data-testid={`tab-media-${sub.id}`}
-                                                            aria-current={subActive ? "step" : undefined}
-                                                        >
-                                                            <span
-                                                                className={`h-3.5 w-3.5 shrink-0 rounded-full border flex items-center justify-center ${
-                                                                    subDone
-                                                                        ? "border-emerald-500 bg-emerald-500/15 text-emerald-600"
-                                                                        : "border-muted-foreground/40"
-                                                                }`}
-                                                            >
-                                                                {subDone && (
-                                                                    <Check className="h-2.5 w-2.5" />
-                                                                )}
-                                                            </span>
-                                                            <span className="tabular-nums shrink-0 opacity-70">
-                                                                {sub.num}
-                                                            </span>
-                                                            <span className="leading-tight truncate">
-                                                                {sub.label}
-                                                            </span>
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        )}
-
                                         {s.id === "localidades" && (
                                             <div
                                                 className="pl-3 ml-2 border-l border-border/70 space-y-0.5"
@@ -1355,7 +1266,11 @@ export default function EventWizard({ initial = null, mode = "create" }) {
                                                     const subActive =
                                                         isActive && localidadesSubStep === sub.id;
                                                     const subDone =
-                                                        sub.id === "escenario" ? escenarioOk : locsOk;
+                                                        sub.id === "escenario"
+                                                            ? escenarioOk
+                                                            : sub.id === "localidades"
+                                                              ? locsOk
+                                                              : asignarOk;
                                                     return (
                                                         <button
                                                             key={sub.id}
@@ -1536,10 +1451,11 @@ function evalStepStatus(form, poster, currentEvent, pendingVenueId = null, allow
     s.fechas = startsOk && durationOk ? "ok" : startsOk ? "warn" : "error";
 
     // Media: warn until there's a poster (strongly recommended but not required).
-    // Custom ticket design bumps it to ok even without poster.
-    s.media = poster || currentEvent?.ticket_design?.elements?.length > 0
-        ? "ok"
-        : "warn";
+    s.media = poster ? "ok" : "warn";
+
+    // Diseño de ticket: fully optional (falls back to the standard TYS
+    // format), so an unused one is neutral, not a warning.
+    s.ticket = currentEvent?.ticket_design?.elements?.length > 0 ? "ok" : undefined;
 
     // Localidades: escenario vinculado; localidades creadas marcan ok.
     const hasLocalities = (currentEvent?.venue_layout?.localities || []).length > 0
@@ -2236,6 +2152,27 @@ function SectionFechas({ form, update, disabled, eventId, localities, hasPersist
             : SHOW_SUBEVENT_STRUCTURE && structure === "subevent"
               ? "Con subeventos"
               : "Evento único";
+    const eventDurationMinutes =
+        form.duration_preset === "custom"
+            ? Number(form.duration_minutes_custom) || 0
+            : DURATION_PRESETS.find((p) => p.key === form.duration_preset)?.minutes || 0;
+
+    // "Fin de ventas" presets are offsets *after* starts_at (door sales) —
+    // without this, an organizer could pick e.g. "1 semana después de
+    // iniciado" on a 2-hour event and tickets would stay on sale for a week
+    // after the event is already over. Auto-correct back to "Al iniciar el
+    // evento" the moment a shorter duration makes the current pick invalid.
+    useEffect(() => {
+        if (!eventDurationMinutes || form.sales_window_preset_end === "custom") return;
+        const def = SALES_END_PRESETS.find((p) => p.key === form.sales_window_preset_end);
+        if (def && def.offsetMinutes != null && def.offsetMinutes > eventDurationMinutes) {
+            update("sales_window_preset_end", "at_start");
+            toast.message("Fin de ventas ajustado a \"Al iniciar el evento\"", {
+                description: "No puede quedar más allá de la duración del evento.",
+            });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [eventDurationMinutes, form.sales_window_preset_end]);
 
     // Fail closed: if plan doesn't allow multifunción, force single.
     // Subeventos are hidden for now — leftover drafts map onto multifunción.
@@ -2393,7 +2330,12 @@ function SectionFechas({ form, update, disabled, eventId, localities, hasPersist
                     </p>
                 </div>
                 <div className="grid lg:grid-cols-2 gap-4 items-start">
-                    <SalesWindowBlock form={form} update={update} disabled={disabled} />
+                    <SalesWindowBlock
+                        form={form}
+                        update={update}
+                        disabled={disabled}
+                        eventDurationMinutes={eventDurationMinutes}
+                    />
                     <SalesConfigBlock form={form} update={update} disabled={disabled} />
                 </div>
             </section>
@@ -2482,8 +2424,13 @@ function CuandoBlock({ form, update, disabled }) {
     );
 }
 
-function SalesWindowBlock({ form, update, disabled }) {
+function SalesWindowBlock({ form, update, disabled, eventDurationMinutes = 0 }) {
     const startsValid = !!form.starts_at;
+    // Hide "fin de ventas" offsets that would leave tickets on sale past the
+    // event's own end (see the auto-correct effect in SectionFechas).
+    const endPresets = SALES_END_PRESETS.filter(
+        (p) => p.offsetMinutes == null || !eventDurationMinutes || p.offsetMinutes <= eventDurationMinutes,
+    );
     return (
         <div
             data-testid="sales-window-block"
@@ -2529,13 +2476,17 @@ function SalesWindowBlock({ form, update, disabled }) {
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            {SALES_END_PRESETS.map((p) => (
+                            {endPresets.map((p) => (
                                 <SelectItem key={p.key} value={p.key}>
                                     {p.label}
                                 </SelectItem>
                             ))}
                         </SelectContent>
                     </Select>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                        Relativo al inicio del evento — nunca queda más allá de
+                        cuándo termina.
+                    </p>
                 </Field>
             </div>
 

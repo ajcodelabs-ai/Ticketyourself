@@ -1,9 +1,10 @@
 /**
- * Create/edit a locality with seating type + in-dialog map assignment.
+ * Create/edit a locality: name, color, description, seating type, price.
  *
- * Numbered / unnumbered lives on the locality. Event mixed is inferred when
- * both types exist. Clicking map elements (filtered by that type) assigns
- * them in the same save as name and prices.
+ * Assigning it to map elements is a separate step ("Mapa completo") — this
+ * dialog only defines the locality itself, matching the reference app's
+ * two-phase flow (define first, assign after) instead of bundling both in
+ * one place with an embedded mini-map.
  */
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -26,13 +27,11 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { LOCALITY_PALETTE, elementAcceptsLocality, newId } from "@/lib/venues";
+import { LOCALITY_PALETTE, newId } from "@/lib/venues";
 import {
     LOCALITY_SEATING_TYPES,
-    elementMatchesSeatingType,
     coerceLocalitySeatingType,
 } from "@/lib/attendanceFormat";
-import EditorCanvas from "@/components/venues/EditorCanvas";
 import { PlanLockBadge, UpgradePlanButton } from "@/components/plans/PlanGate";
 import api from "@/lib/api";
 import { centsToInput, centsToDollars, dollarsToCents } from "@/lib/money";
@@ -92,16 +91,15 @@ export function servicesWithAmount(initial) {
 }
 
 // Comparable snapshot of the editable fields, for dirty-checking against the
-// last-saved values (TI-152). assignedIds/addedServices are sorted so
-// toggling an item off and back on doesn't read as "changed" just because
-// the array order shifted.
-function snapshotOf({ name, color, description, seatingType, assignedIds, money, addedServices, reservedQuota }) {
+// last-saved values (TI-152). addedServices is sorted so toggling an item
+// off and back on doesn't read as "changed" just because the array order
+// shifted.
+function snapshotOf({ name, color, description, seatingType, money, addedServices, reservedQuota }) {
     return JSON.stringify({
         name,
         color,
         description,
         seatingType,
-        assignedIds: [...assignedIds].sort(),
         money,
         addedServices: [...addedServices].sort(),
         // Numeric compare, not string: the field itself renders "" for a
@@ -221,9 +219,11 @@ export default function LocalityFormDialog({
     onSubmit,
     initial,
     saving,
-    canvas,
+    // Kept only so an existing locality's legacy "mixed" seating_type (pre
+    // dating the explicit numbered/unnumbered field) can still be coerced
+    // from whatever it's currently assigned to — see coerceLocalitySeatingType
+    // below. Not used to render or interact with the map anymore.
     elements = [],
-    localitiesById = {},
     allowNumbered = true,
     pricingType = "paid",
     feeBearer = "buyer",
@@ -237,7 +237,6 @@ export default function LocalityFormDialog({
     const [addedServices, setAddedServices] = useState([]);
     const [seatingType, setSeatingType] = useState("numbered");
     const [draftId, setDraftId] = useState("");
-    const [assignedIds, setAssignedIds] = useState([]);
     const [feeQuote, setFeeQuote] = useState(null);
     const [savedSnapshot, setSavedSnapshot] = useState(null);
 
@@ -253,25 +252,11 @@ export default function LocalityFormDialog({
             setName(initial.name || "");
             setColor(initial.color || LOCALITY_PALETTE[0]);
             setDescription(initial.description || "");
-            const assigned = (elements || []).filter((e) => e.locality_id === initial.id);
-            let nextType = coerceLocalitySeatingType(
-                initial.seating_type,
-                assigned.map((e) => e.kind),
-            );
+            const assignedKinds = (elements || [])
+                .filter((e) => e.locality_id === initial.id)
+                .map((e) => e.kind);
+            let nextType = coerceLocalitySeatingType(initial.seating_type, assignedKinds);
             if (!allowNumbered) nextType = "unnumbered";
-            const nextAssigned = assigned
-                .filter((e) => elementMatchesSeatingType(e.kind, nextType))
-                .map((e) => e.id);
-            if (
-                initial.seating_type === "mixed" &&
-                nextAssigned.length !== assigned.length
-            ) {
-                toast.message(
-                    nextType === "numbered"
-                        ? "Esta localidad era mixta. Ahora es numerada; las zonas de aforo se desasignaron. Crea otra localidad no numerada para ellas."
-                        : "Esta localidad era mixta. Ahora es no numerada (solo zonas de aforo).",
-                );
-            }
             setSeatingType(nextType);
             const nextMoney = {
                 price: centsToInput(initial.price_cents) || "",
@@ -284,7 +269,6 @@ export default function LocalityFormDialog({
             const nextQuota = initial.reserved_quota ? String(initial.reserved_quota) : "";
             setMoney(nextMoney);
             setAddedServices(nextServices);
-            setAssignedIds(nextAssigned);
             setReservedQuota(nextQuota);
             setSavedSnapshot(
                 snapshotOf({
@@ -292,7 +276,6 @@ export default function LocalityFormDialog({
                     color: initial.color || LOCALITY_PALETTE[0],
                     description: initial.description || "",
                     seatingType: nextType,
-                    assignedIds: nextAssigned,
                     money: nextMoney,
                     addedServices: nextServices,
                     reservedQuota: nextQuota,
@@ -305,7 +288,6 @@ export default function LocalityFormDialog({
             setSeatingType(allowNumbered ? defaultSeatingType : "unnumbered");
             setMoney(emptyDraftMoney);
             setAddedServices([]);
-            setAssignedIds([]);
             setReservedQuota("");
             // No "saved" state to diff against when creating — Guardar/Crear
             // should stay enabled the whole time, same as before this change.
@@ -335,14 +317,6 @@ export default function LocalityFormDialog({
             return;
         }
         setSeatingType(next);
-        const kept = assignedIds.filter((id) => {
-            const el = elements.find((e) => e.id === id);
-            return el && elementMatchesSeatingType(el.kind, next);
-        });
-        if (kept.length !== assignedIds.length) {
-            toast.message("Se quitaron del mapa elementos que no coinciden con este tipo.");
-        }
-        setAssignedIds(kept);
     };
 
     // Only meaningful in edit mode (savedSnapshot is null while creating) —
@@ -352,27 +326,9 @@ export default function LocalityFormDialog({
     const isDirty = useMemo(
         () =>
             savedSnapshot == null ||
-            snapshotOf({ name, color, description, seatingType, assignedIds, money, addedServices, reservedQuota }) !==
+            snapshotOf({ name, color, description, seatingType, money, addedServices, reservedQuota }) !==
                 savedSnapshot,
-        [savedSnapshot, name, color, description, seatingType, assignedIds, money, addedServices, reservedQuota],
-    );
-
-    const previewLocalitiesById = useMemo(
-        () => ({
-            ...localitiesById,
-            [draftId]: { id: draftId, name: name || "Nueva", color },
-        }),
-        [localitiesById, draftId, name, color],
-    );
-
-    const previewElements = useMemo(
-        () =>
-            (elements || []).map((e) => {
-                if (assignedIds.includes(e.id)) return { ...e, locality_id: draftId };
-                if (e.locality_id === draftId) return { ...e, locality_id: null };
-                return e;
-            }),
-        [elements, assignedIds, draftId],
+        [savedSnapshot, name, color, description, seatingType, money, addedServices, reservedQuota],
     );
 
     const buyerBreakdown = useMemo(
@@ -385,29 +341,6 @@ export default function LocalityFormDialog({
             }),
         [money, addedServices, feeQuote, feeBearer],
     );
-
-    const onCanvasSelect = (ids) => {
-        const id = ids?.[0];
-        if (!id) return;
-        const el = elements.find((e) => e.id === id);
-        if (!el || !elementAcceptsLocality(el.kind)) {
-            toast.error("Ese elemento no se puede asignar a una localidad.");
-            return;
-        }
-        if (!elementMatchesSeatingType(el.kind, seatingType)) {
-            const hint =
-                seatingType === "unnumbered"
-                    ? "En una localidad no numerada solo puedes asignar zonas de aforo."
-                    : seatingType === "numbered"
-                      ? "En una localidad numerada asigna filas, asientos o mesas."
-                      : "Ese elemento no es asignable.";
-            toast.error(hint);
-            return;
-        }
-        setAssignedIds((prev) =>
-            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-        );
-    };
 
     const handleSubmit = () => {
         if (!name.trim()) {
@@ -430,7 +363,6 @@ export default function LocalityFormDialog({
             color,
             description: description.trim() || null,
             seating_type: seatingType,
-            assigned_element_ids: assignedIds,
             reserved_quota: Math.max(0, parseInt(reservedQuota, 10) || 0),
             ...moneyPayload(pricingType, money),
         });
@@ -439,14 +371,9 @@ export default function LocalityFormDialog({
     return (
         <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
             <DialogContent
-                className="max-w-4xl max-h-[90vh] overflow-y-auto"
+                className="max-w-2xl max-h-[90vh] overflow-y-auto"
                 data-testid="locality-form-dialog"
                 onOpenAutoFocus={(e) => e.preventDefault()}
-                onWheel={(e) => {
-                    if ((e.target as HTMLElement)?.closest?.("[data-testid='venue-canvas-wrap']")) {
-                        e.stopPropagation();
-                    }
-                }}
             >
                 <DialogHeader>
                     <DialogTitle>{initial ? "Editar localidad" : "Nueva localidad"}</DialogTitle>
@@ -670,39 +597,13 @@ export default function LocalityFormDialog({
                         </div>
                     ) : null}
 
-                    <div className="space-y-2">
-                        <div>
-                            <Label className="text-xs">Asignar en el mapa</Label>
-                            <p className="text-[11px] text-muted-foreground mt-0.5">
-                                Toca{" "}
-                                {seatingType === "unnumbered"
-                                    ? "zonas de aforo"
-                                    : "filas, asientos o mesas"}{" "}
-                                para asignarlas a esta localidad.
-                                {assignedIds.length > 0
-                                    ? ` ${assignedIds.length} elemento${assignedIds.length !== 1 ? "s" : ""} seleccionado${assignedIds.length !== 1 ? "s" : ""}.`
-                                    : " Todavía no hay elementos asignados."}
-                            </p>
-                        </div>
-                        <div
-                            className="rounded-lg border overflow-hidden"
-                            data-testid="locality-assign-map"
-                        >
-                            <EditorCanvas
-                                canvas={canvas || { width: 1000, height: 600 }}
-                                elements={previewElements}
-                                localitiesById={previewLocalitiesById}
-                                selection={assignedIds}
-                                onSelect={onCanvasSelect}
-                                onUpdate={() => {}}
-                                onTransform={() => {}}
-                                onContextMenu={() => {}}
-                                tool="select"
-                                readOnly
-                                height={280}
-                                autoFitKey={open ? `loc-assign:${draftId}` : undefined}
-                            />
-                        </div>
+                    <div
+                        className="rounded-lg border bg-secondary/30 px-3 py-2.5 text-[11px] text-muted-foreground"
+                        data-testid="locality-assign-hint"
+                    >
+                        {initial
+                            ? "Para cambiar qué asientos, mesas o zonas tiene asignados esta localidad, usa \"Mapa completo\"."
+                            : "Después de guardar, asignala a asientos, mesas o zonas del mapa desde \"Mapa completo\"."}
                     </div>
                 </div>
                 <DialogFooter>

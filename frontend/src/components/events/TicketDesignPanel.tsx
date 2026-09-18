@@ -6,7 +6,7 @@
  * the wizard simple; the stored JSON shape is unchanged for pdf_service.
  */
 import { useEffect, useState } from "react";
-import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
+import { Stage, Layer, Rect, Text, Image as KonvaImage, Group, Line } from "react-konva";
 import { toast } from "sonner";
 import {
     Upload, Loader2, Eye, ExternalLink, Check, RotateCcw,
@@ -508,6 +508,42 @@ function DesignElementNode({ el, displayW, displayH }) {
     const h = el.height * displayH;
     const logoImg = useHtmlImage(el.type === "logo" ? backendAbsoluteUrl(el.image_url) : null);
 
+    if (el.type === "shape") {
+        // A dashed shape reads as a divider/perforation line, not a solid
+        // block — Konva (like ReportLab) only dashes strokes, never fills,
+        // so a filled Rect with `dash` set silently rendered as a solid
+        // bar. Draw it as an actual stroked line instead, through its
+        // midline, using `color` as the line color when no `stroke` was set.
+        if (el.dash) {
+            const strokeColor = el.stroke || el.color || "#000000";
+            const strokeW = el.stroke_width || Math.min(w, h) || 1;
+            const horizontal = w >= h;
+            const points = horizontal
+                ? [0, h / 2, w, h / 2]
+                : [w / 2, 0, w / 2, h];
+            return (
+                <Line
+                    x={x}
+                    y={y}
+                    points={points}
+                    stroke={strokeColor}
+                    strokeWidth={strokeW}
+                    dash={[6, 4]}
+                />
+            );
+        }
+        return (
+            <Rect
+                x={x}
+                y={y}
+                width={w}
+                height={h}
+                fill={el.color || undefined}
+                stroke={el.stroke || undefined}
+                strokeWidth={el.stroke ? (el.stroke_width || 1) : 0}
+            />
+        );
+    }
     if (el.type === "qr") {
         return (
             <Group x={x} y={y} width={w} height={h}>
