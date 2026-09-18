@@ -152,6 +152,38 @@ def _draw_text_element(
         c.drawString(x, baseline_y, text)
 
 
+def _draw_shape_element(c, el: dict, *, x: float, y: float, w: float, h: float) -> None:
+    """Color blocks, accent bars, dividers and card backgrounds — mirrors
+    the frontend's DesignElementNode (fill=`color`, outline=`stroke`,
+    `dash` reads as a perforation/divider line)."""
+    fill_hex = el.get("color")
+    stroke_hex = el.get("stroke")
+    c.saveState()
+    if el.get("dash"):
+        # A dashed shape is a divider/perforation line, not a solid block —
+        # ReportLab only dashes strokes, never fills, so a filled rect with
+        # setDash() silently renders as a solid bar. Draw an actual stroked
+        # line through its midline instead, using `color` as the line color
+        # when no explicit `stroke` was set.
+        c.setDash(6, 4)
+        c.setStrokeColor(_hex_to_color(stroke_hex or fill_hex or "#000000"))
+        c.setLineWidth(float(el.get("stroke_width") or min(w, h) or 1))
+        if w >= h:
+            mid_y = y + h / 2
+            c.line(x, mid_y, x + w, mid_y)
+        else:
+            mid_x = x + w / 2
+            c.line(mid_x, y, mid_x, y + h)
+    else:
+        if fill_hex:
+            c.setFillColor(_hex_to_color(fill_hex))
+        if stroke_hex:
+            c.setStrokeColor(_hex_to_color(stroke_hex))
+            c.setLineWidth(float(el.get("stroke_width") or 1))
+        c.rect(x, y, w, h, fill=1 if fill_hex else 0, stroke=1 if stroke_hex else 0)
+    c.restoreState()
+
+
 async def render_ticket_pdf_from_design(
     *,
     design: dict,
@@ -193,7 +225,9 @@ async def render_ticket_pdf_from_design(
         y = page_h - (frac_y * page_h) - h  # flip: canvas y-down → PDF y-up
 
         kind = el.get("type")
-        if kind == "qr":
+        if kind == "shape":
+            _draw_shape_element(c, el, x=x, y=y, w=w, h=h)
+        elif kind == "qr":
             qr_img = qrcode.make(ticket.get("qr_token", ""))
             qr_buf = io.BytesIO()
             qr_img.save(qr_buf, format="PNG")

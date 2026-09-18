@@ -34,6 +34,7 @@ test.describe("Event wizard", () => {
       "tab-fechas",
       "tab-media",
       "tab-localidades",
+      "tab-ticket",
       "tab-payments",
       "tab-discounts",
       "tab-access",
@@ -348,8 +349,7 @@ test.describe("Event wizard", () => {
     await page.getByTestId("event-edit-btn").click();
     await expect(page.getByTestId("event-wizard")).toBeVisible({ timeout: 15_000 });
 
-    await page.getByTestId("tab-media").click();
-    await page.getByTestId("media-goto-ticket").click();
+    await page.getByTestId("tab-ticket").click();
     await expect(page.getByTestId("section-ticket-design")).toBeVisible();
     await expect(page.getByTestId("ticket-design-panel-main")).toContainText("A4");
     await expect(page.getByTestId("td-format-main")).toHaveCount(0);
