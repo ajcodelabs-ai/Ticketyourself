@@ -496,7 +496,7 @@ export default function MicrositeEditor() {
                                 {previewWidth ? `${previewWidth}px` : "—"}
                             </span>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center flex-wrap gap-2">
                             {workspace === "advanced" && (
                             <Button
                                 variant={showGrid ? "default" : "outline"}
