@@ -224,7 +224,7 @@ export function RevisionsPanel({
 
     return (
         <div className="space-y-4" data-testid="revisions-panel">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
                     <h3 className="text-sm font-semibold flex items-center gap-1.5">
                         <History className="h-4 w-4" />
